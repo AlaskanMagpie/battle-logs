@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "world": { "halfExtents": 80, "groundY": 0 },
+  "tapSlots": [
+    { "id": "tap_a", "x": -25, "z": 15 },
+    { "id": "tap_b", "x": -35, "z": -10 },
+    { "id": "tap_c", "x": -15, "z": -25 }
+  ],
+  "playerRelaySlots": [
+    { "id": "p_relay_1", "x": -18, "z": 28 },
+    { "id": "p_relay_2", "x": -5, "z": 32 }
+  ],
+  "enemyRelaySlots": [
+    { "id": "e_relay_1", "x": 48, "z": -8 }
+  ],
+  "playerStart": { "x": -20, "z": 20 },
+  "enemyCamps": [
+    {
+      "id": "camp_alpha",
+      "origin": { "x": 42, "z": 5 },
+      "aggroRadius": 14,
+      "wakeRadius": 28
+    }
+  ],
+  "decor": []
+}

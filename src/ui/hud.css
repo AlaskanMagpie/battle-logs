@@ -1,0 +1,1202 @@
+* {
+  box-sizing: border-box;
+}
+:root {
+  /* In-match doctrine: fixed 4×4 grid (no horizontal pan). */
+  --doctrine-tray-h: clamp(200px, 42dvh, 400px);
+  /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
+  --tcg-aspect-w: 5;
+  --tcg-aspect-h: 7;
+  --tcg-card-aspect: 5 / 7;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, Segoe UI, Roboto, sans-serif;
+  background: #0b0f14;
+  color: #e8eef7;
+}
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+#hud-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+#hud-root * {
+  pointer-events: auto;
+}
+.hud-top {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  font-size: 14px;
+  text-shadow: 0 1px 2px #000a;
+}
+.hud-top strong {
+  font-weight: 650;
+}
+.hud-phase {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+.hud-msg {
+  position: absolute;
+  left: 12px;
+  bottom: calc(10px + var(--doctrine-tray-h) + 8px);
+  max-width: min(720px, 92vw);
+  max-height: calc(100dvh - var(--doctrine-tray-h) - 120px);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  font-size: clamp(11px, 1.1vw, 13px);
+  line-height: 1.35;
+  opacity: 0.92;
+  text-shadow: 0 1px 2px #000a;
+}
+.doctrine-wrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--doctrine-tray-h);
+  padding: 4px 6px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+  background: linear-gradient(0deg, #0b0f14f5, #0b0f1400);
+}
+.doctrine-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.doctrine-track {
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.doctrine-track-grid-4x4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: clamp(3px, 0.55vw, 7px);
+  align-content: stretch;
+  justify-items: stretch;
+}
+.doctrine-pan-row {
+  flex-shrink: 0;
+}
+.slot {
+  position: relative;
+  container-type: size;
+  container-name: doctrine-cell;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border-radius: clamp(6px, 1.2cqw, 11px);
+  border: 1px solid #2a3545;
+  background: radial-gradient(120% 80% at 50% 0%, #1a2230, #0e1218);
+  color: #dbe7ff;
+  font-size: clamp(7px, 2.8cqw, 10px);
+  cursor: default;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 3px 2px 2px;
+  text-align: left;
+  line-height: 1.2;
+  overflow: hidden;
+}
+/* Portrait doctrine cards only (5:7 — never wider than tall). Sized to fit cell. */
+.doctrine-track-grid-4x4 .slot {
+  position: relative;
+  padding-bottom: 26px;
+  align-items: center;
+  justify-content: flex-start;
+}
+:is(.doctrine-track-grid-4x4 .slot, .picker-deck-track.picker-deck-grid-4x4 > .pick-slot) .doctrine-card-compact {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.doctrine-track-grid-4x4 .slot .doctrine-card-compact {
+  aspect-ratio: var(--tcg-card-aspect);
+  width: min(100cqi, calc((100cqb - 22px) * var(--tcg-aspect-w) / var(--tcg-aspect-h)));
+  height: auto;
+  max-width: 100%;
+  max-height: calc(100cqb - 22px);
+  margin-inline: auto;
+}
+:is(.doctrine-track-grid-4x4 .slot, .picker-deck-track.picker-deck-grid-4x4 > .pick-slot) .doctrine-card-compact .tcg-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.doctrine-track-grid-4x4 .slot-live {
+  position: absolute;
+  z-index: 2;
+  left: 3px;
+  right: 3px;
+  bottom: 2px;
+  flex-shrink: 0;
+  max-height: 22px;
+  margin-top: 0;
+  padding-top: 2px;
+  font-size: clamp(5px, 11cqw, 8px);
+  border-top: 1px solid #2f3d52;
+}
+.slot:not(.slot-empty):not(.slot-locked) {
+  cursor: grab;
+}
+.tcg-deck-no {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  min-width: 14px;
+  padding: 0 4px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  font-size: 8px;
+  font-weight: 900;
+  color: rgba(220, 232, 255, 0.55);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.slot-live {
+  margin-top: auto;
+  padding-top: 5px;
+  font-size: clamp(6px, 2.2cqw, 8px);
+  border-top: 1px solid #2f3d52;
+  color: #b9cced;
+  overflow: hidden;
+  max-height: 28%;
+}
+.slot-live .live-warn {
+  color: #ffb86b;
+  font-weight: 600;
+}
+.slot.active {
+  outline: 2px solid #6aa6ff;
+  border-color: #6aa6ff;
+}
+.slot.slot-sigwarn:not(.slot-locked) {
+  border-color: #8a5a2a;
+  box-shadow: inset 0 0 0 1px rgba(255, 160, 80, 0.25);
+}
+.slot.slot-ready {
+  border-color: #2a5c42;
+  box-shadow: inset 0 0 0 1px rgba(72, 200, 120, 0.18);
+}
+.slot.slot-locked {
+  opacity: 0.38;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.slot.slot-empty {
+  opacity: 0.42;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* —— TCG doctrine cards (HUD + picker) —— */
+.tcg {
+  --tcg-h: 210;
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.doctrine-card-compact.tcg {
+  flex: 0 0 auto;
+}
+
+.doctrine-card-compact .tcg-frame {
+  padding: clamp(2px, 1.1cqw, 6px) clamp(2px, 1cqw, 6px) 3px;
+}
+.doctrine-card-compact .tcg-art.tcg-art--portrait {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: clamp(5px, 7.5cqw, 10px) 2px 1px clamp(12px, 16cqw, 19px);
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+.doctrine-card-compact .tcg-portrait-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 5px;
+}
+.tcg-class-line {
+  flex-shrink: 0;
+  font-size: clamp(6px, 7cqw, 9px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.78;
+  text-align: center;
+  padding: 2px 4px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doctrine-card-compact.tcg--empty .tcg-class-line {
+  opacity: 0.55;
+}
+
+.tcg--full .tcg-art.tcg-art--full-bleed {
+  position: relative;
+  margin: clamp(8px, 10cqw, 12px) 3px 2px clamp(16px, 18cqw, 22px);
+}
+.tcg--full .tcg-art--full-bleed .tcg-portrait-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+}
+.tcg--full .tcg-art--full-bleed .tcg-art-mono--overlay,
+.tcg--full .tcg-art--full-bleed .tcg-art-line--overlay,
+.tcg--full .tcg-art--full-bleed .tcg-art-meta {
+  position: relative;
+  z-index: 1;
+}
+.tcg-art-mono--overlay {
+  font-size: clamp(12px, 16cqw, 22px);
+  font-weight: 850;
+  letter-spacing: -0.04em;
+  color: rgba(255, 255, 255, 0.88);
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.65);
+  line-height: 1;
+  margin-top: 4px;
+}
+.tcg-art-line--overlay {
+  font-size: clamp(6px, 7cqw, 9px);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.9;
+}
+
+.tcg--detail-pop {
+  width: min(380px, 100%);
+  max-width: 100%;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.tcg--detail-pop .tcg-frame {
+  max-height: none;
+  overflow: hidden;
+}
+.tcg--detail-pop .tcg-rules {
+  overflow: hidden;
+}
+.tcg--detail-pop .tcg-rule {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+}
+.tcg--detail-pop .tcg-name {
+  white-space: normal;
+}
+.tcg--detail-pop .tcg-type-line {
+  white-space: normal;
+}
+/* Compact card in catalog strip: same portrait ratio as everywhere else. */
+.catalog-card .doctrine-card-compact {
+  flex: 0 0 auto;
+  width: 100%;
+  aspect-ratio: var(--tcg-card-aspect);
+  height: auto;
+  max-width: 100%;
+}
+.tcg-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  border-radius: clamp(6px, 1.5cqw, 10px);
+  border: 2px solid hsl(calc(var(--tcg-h) + 18), 28%, 36%);
+  background: linear-gradient(
+    168deg,
+    hsl(calc(var(--tcg-h) + 12), 16%, 16%) 0%,
+    hsl(var(--tcg-h), 20%, 9%) 48%,
+    #07090d 100%
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.07) inset,
+    0 10px 22px rgba(0, 0, 0, 0.5);
+  padding: clamp(3px, 1.2cqw, 7px) clamp(3px, 1cqw, 6px) 4px;
+}
+.tcg--structure .tcg-frame {
+  border-color: hsl(calc(var(--tcg-h) + 50), 32%, 40%);
+}
+.tcg--command .tcg-frame {
+  border-color: hsl(26, 42%, 44%);
+  background: linear-gradient(168deg, hsl(26, 18%, 15%), hsl(18, 16%, 8%) 55%, #07090d 100%);
+}
+.tcg--empty .tcg-frame {
+  border-style: dashed;
+  border-color: #3a4558;
+  opacity: 0.88;
+}
+.tcg--unknown .tcg-frame {
+  border-color: #444;
+}
+
+.tcg-pip {
+  position: absolute;
+  z-index: 3;
+  width: clamp(18px, 22cqw, 24px);
+  height: clamp(18px, 22cqw, 24px);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(7px, 8cqw, 9px);
+  font-weight: 800;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  background: radial-gradient(circle at 32% 22%, #3a455c, #151a24);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.55);
+  color: #eef4ff;
+}
+.tcg-pip--muted {
+  font-weight: 750;
+  opacity: 0.75;
+  background: radial-gradient(circle at 32% 22%, #2a3140, #12151c);
+}
+.tcg-pip-tl {
+  top: -2px;
+  left: -2px;
+  font-size: 8px;
+}
+.tcg-pip-tr {
+  top: -5px;
+  right: -5px;
+  width: clamp(22px, 28cqw, 34px);
+  height: clamp(22px, 28cqw, 34px);
+  font-size: clamp(9px, 12cqw, 14px);
+  line-height: 1;
+  color: #fff;
+  border-color: rgba(255, 214, 160, 0.55);
+  background: radial-gradient(circle at 28% 18%, hsl(var(--tcg-h), 58%, 52%), hsl(var(--tcg-h), 45%, 22%));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 3px 10px rgba(0, 0, 0, 0.55);
+}
+.tcg-pip-bl {
+  bottom: -2px;
+  left: -2px;
+  font-size: 8px;
+}
+.tcg-pip-br {
+  bottom: -2px;
+  right: -2px;
+  font-size: 8px;
+}
+
+/* Corner pips — one scale for all compact doctrine surfaces (HUD / picker / catalog). */
+.doctrine-card-compact .tcg-pip {
+  width: clamp(16px, 20cqw, 22px);
+  height: clamp(16px, 20cqw, 22px);
+  font-size: clamp(6.5px, 7.5cqw, 9px);
+}
+.doctrine-card-compact .tcg-pip-tr {
+  width: clamp(20px, 25cqw, 30px);
+  height: clamp(20px, 25cqw, 30px);
+  font-size: clamp(9px, 10.5cqw, 13px);
+}
+
+.tcg-sig-edge {
+  position: absolute;
+  z-index: 2;
+  left: 4px;
+  top: 26px;
+  bottom: 30%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+}
+.tcg-sig-pip {
+  width: clamp(10px, 12cqw, 14px);
+  height: clamp(10px, 12cqw, 14px);
+  border-radius: 50%;
+  font-size: clamp(5px, 6cqw, 7px);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #141c28;
+  border: 1px solid #4a5d78;
+  color: #dbe7ff;
+}
+
+.tcg-art {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: clamp(8px, 10cqw, 12px) 3px 2px clamp(16px, 18cqw, 22px);
+  border-radius: 6px;
+  border: 2px solid rgba(0, 0, 0, 0.45);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    inset 0 -20px 40px rgba(0, 0, 0, 0.25);
+  background: linear-gradient(
+    148deg,
+    hsl(var(--tcg-h), 46%, 32%) 0%,
+    hsl(calc(var(--tcg-h) + 48), 30%, 14%) 100%
+  );
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
+}
+.tcg-art--empty {
+  flex: 0 1 36%;
+  min-height: 36px;
+  background: linear-gradient(148deg, #252b38, #12151c);
+}
+.tcg-art-mono {
+  font-size: clamp(14px, 20cqw, 34px);
+  font-weight: 850;
+  letter-spacing: -0.04em;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+  line-height: 1;
+}
+.tcg-art-line {
+  font-size: clamp(6px, 7cqw, 9px);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.88;
+}
+.tcg-art-meta {
+  font-size: clamp(5px, 6cqw, 7px);
+  opacity: 0.68;
+  margin-top: 2px;
+  text-align: center;
+  max-width: 100%;
+  padding: 0 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcg-title-band {
+  flex-shrink: 0;
+  margin-top: 3px;
+  padding: 3px 5px;
+  background: linear-gradient(90deg, #06080d, #121822 55%, #0a0d12);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+.tcg-name {
+  display: block;
+  font-size: clamp(8px, 9cqw, 12px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcg-type-line {
+  flex-shrink: 0;
+  font-size: clamp(5px, 5.5cqw, 7px);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.52;
+  padding: 1px 5px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tcg-rules {
+  flex: 0 3 auto;
+  min-height: 0;
+  margin-top: 2px;
+  padding: 3px 4px 4px;
+  border-radius: 0 0 5px 5px;
+  background: rgba(3, 5, 9, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: none;
+  overflow: hidden;
+}
+.tcg-rule {
+  margin: 0 0 2px;
+  font-size: clamp(5.5px, 6.5cqw, 8px);
+  line-height: 1.25;
+  opacity: 0.94;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.tcg-rule:last-child {
+  margin-bottom: 0;
+}
+.tcg-rule-label {
+  font-weight: 800;
+  color: #8ebfff;
+  margin-right: 2px;
+}
+
+.tcg-id-watermark {
+  flex-shrink: 0;
+  text-align: center;
+  font-size: clamp(4px, 5cqw, 6px);
+  opacity: 0.28;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container doctrine-cell (max-height: 200px) {
+  .tcg-id-watermark {
+    display: none;
+  }
+}
+
+/* One query container name for every compact doctrine card (HUD, picker, catalog). */
+.catalog-card,
+.pick-slot {
+  container-type: size;
+  container-name: doctrine-cell;
+  min-height: 0;
+}
+
+.hud-actions {
+  position: absolute;
+  right: 12px;
+  bottom: calc(10px + var(--doctrine-tray-h) + 52px);
+  display: flex;
+  gap: 8px;
+}
+button.hud-btn {
+  border: 1px solid #2a3545;
+  background: #141b24;
+  color: #e8eef7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+button.hud-btn:hover {
+  border-color: #4b5b73;
+}
+
+#doctrine-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  background: rgba(8, 10, 14, 0.94);
+  pointer-events: auto;
+  overflow: hidden;
+  min-height: 0;
+}
+.picker-shell {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: min(1600px, 100%);
+  margin: 0 auto;
+}
+@media (max-width: 820px) {
+  .picker-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+.picker-shell.picker-shell--solo {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  max-width: min(960px, 100%);
+}
+
+.picker-deck-solo-stack {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.picker-deck-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.picker-deck-track.picker-deck-grid-4x4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  height: 100%;
+  align-content: stretch;
+  justify-items: stretch;
+}
+
+.picker-deck-track.picker-deck-grid-4x4 > .pick-slot {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  container-type: size;
+  container-name: doctrine-cell;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.picker-deck-track.picker-deck-grid-4x4 .pick-slot-filled {
+  justify-content: center;
+}
+
+/* Same 5:7 portrait cap as HUD grid (full cell height — no live strip in picker slots). */
+.picker-deck-track.picker-deck-grid-4x4 .pick-slot .doctrine-card-compact {
+  aspect-ratio: var(--tcg-card-aspect);
+  width: min(100cqi, calc(100cqb * var(--tcg-aspect-w) / var(--tcg-aspect-h)));
+  height: auto;
+  max-width: 100%;
+  max-height: 100cqb;
+  margin-inline: auto;
+}
+
+.picker-deck-track.picker-deck-grid-4x4 .pick-slot-empty {
+  aspect-ratio: 1 / 1;
+  width: min(100cqi, 100cqb) !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100cqb;
+  flex: 0 0 auto !important;
+}
+
+.pick-slot-active {
+  outline: 2px solid #6aa6ff;
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+.picker-catalog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.picker-catalog-overlay[hidden] {
+  display: none !important;
+}
+
+.picker-catalog-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: rgba(4, 6, 10, 0.72);
+  cursor: pointer;
+}
+
+.picker-catalog-overlay-panel {
+  position: relative;
+  z-index: 1;
+  width: min(760px, 100%);
+  max-height: min(88dvh, 920px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid #2f3d52;
+  background: #121822;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.picker-catalog-overlay-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px 0;
+}
+
+.picker-catalog-overlay-head h2 {
+  margin: 0;
+  font-size: clamp(15px, 1.5vw, 18px);
+}
+
+.picker-catalog-close-x {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #2a3545;
+  background: #1a2230;
+  color: #e8eef7;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.picker-catalog-close-x:hover {
+  border-color: #4b5b73;
+}
+
+.picker-catalog-overlay-panel .pick-hint {
+  padding: 0 12px;
+  margin: 0 0 6px;
+}
+
+.picker-catalog-overlay-footer {
+  flex-shrink: 0;
+  padding: 8px 12px 10px;
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid #232d3d;
+}
+
+.picker-col {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.picker-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #2a3545;
+  background: #121822;
+  padding: 10px 12px;
+}
+.picker-panel h2 {
+  margin: 0 0 6px;
+  font-size: clamp(14px, 1.4vw, 17px);
+  flex-shrink: 0;
+}
+.pick-hint {
+  margin: 0 0 8px;
+  font-size: clamp(10px, 1.05vw, 12px);
+  opacity: 0.85;
+  line-height: 1.35;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.picker-card-stack {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: hidden;
+}
+.picker-card-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.picker-card-track {
+  display: grid;
+  grid-template-columns: repeat(var(--picker-cols, 4), minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+  justify-items: stretch;
+  will-change: transform;
+}
+.picker-card-track .catalog-card,
+.picker-card-track > .pick-slot {
+  width: 100%;
+  min-width: 0;
+}
+#picker-catalog-wrap.picker-catalog-drop,
+.picker-catalog-overlay-body.picker-catalog-drop {
+  outline: 2px dashed #f26464;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.catalog-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  border-radius: 10px;
+  border: 1px solid #3d4d66;
+  background: radial-gradient(100% 80% at 50% 0%, #1c2432, #10151d);
+  padding: 3px;
+  cursor: grab;
+  touch-action: none;
+  font-size: clamp(7px, 2.5cqw, 9px);
+  line-height: 1.2;
+  color: #dbe7ff;
+  text-align: left;
+  overflow: hidden;
+}
+.catalog-card:active {
+  cursor: grabbing;
+}
+.pick-slot {
+  min-height: 0;
+  border-radius: 10px;
+  border: 2px dashed #2f3d52;
+  background: rgba(12, 16, 22, 0.65);
+  padding: 3px;
+  touch-action: none;
+  overflow: hidden;
+}
+.pick-slot-hover {
+  border-color: #6aa6ff !important;
+  background: rgba(26, 40, 62, 0.55);
+}
+.pick-slot-empty {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #6b7c95;
+  font-size: clamp(10px, 4cqw, 12px);
+  aspect-ratio: var(--tcg-card-aspect);
+}
+.pick-slot-filled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-style: solid;
+  border-width: 1px;
+  border-color: #3d4f66;
+  background: #141b24;
+  cursor: grab;
+  font-size: clamp(7px, 2.4cqw, 9px);
+  line-height: 1.2;
+  color: #dbe7ff;
+  text-align: left;
+}
+.pick-slot-filled:active {
+  cursor: grabbing;
+}
+.pick-slot-ix {
+  font-size: 9px;
+  opacity: 0.5;
+  display: block;
+  margin-bottom: 2px;
+}
+.pick-slot-drop-hint {
+  opacity: 0.7;
+}
+.picker-pan-stack {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.picker-pan-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.picker-pan-label {
+  flex: 0 0 72px;
+  font-size: 10px;
+  opacity: 0.78;
+}
+.picker-pan-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: #6aa6ff;
+  height: 8px;
+}
+.pick-actions {
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding-top: 4px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.pick-actions button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #2a3545;
+  background: #1a2230;
+  color: #e8eef7;
+  cursor: pointer;
+  font-size: clamp(11px, 1.15vw, 13px);
+}
+.pick-actions button:hover {
+  border-color: #4b5b73;
+}
+
+/* Full doctrine card (long-press) */
+.card-detail-pop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.card-detail-pop[hidden] {
+  display: none !important;
+}
+.card-detail-pop-backdrop {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: rgba(4, 6, 10, 0.75);
+  cursor: pointer;
+}
+.card-detail-pop-panel {
+  position: relative;
+  z-index: 1;
+  width: min(440px, 100%);
+  max-height: min(90dvh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid #334155;
+  background: #0e131c;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.card-detail-pop-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #232d3d;
+}
+.card-detail-pop-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  opacity: 0.9;
+}
+.card-detail-pop-close {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #2a3545;
+  background: #1a2230;
+  color: #e8eef7;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.card-detail-pop-close:hover {
+  border-color: #4b5b73;
+}
+.card-detail-pop-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-detail-pop-fit {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.card-detail-pop-body .tcg {
+  flex: 0 0 auto;
+}
+
+.doctrine-drag-ghost {
+  position: fixed;
+  z-index: 100;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  max-width: 200px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #4b6a9a;
+  background: rgba(18, 26, 38, 0.96);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font-size: 10px;
+  color: #e8eef7;
+}
+.ghost-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ghost-tcg {
+  --tcg-h: 200;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--tcg-h), 30%, 42%);
+  background: linear-gradient(135deg, hsl(var(--tcg-h), 22%, 18%), #0c1016);
+}
+.ghost-tcg-mono {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 900;
+  background: linear-gradient(145deg, hsl(var(--tcg-h), 45%, 36%), hsl(calc(var(--tcg-h) + 40), 25%, 14%));
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.ghost-title {
+  font-weight: 650;
+  font-size: 11px;
+  flex: 1 1 120px;
+}
+.ghost-tag {
+  font-size: 9px;
+  opacity: 0.55;
+}
+.ghost-flux {
+  font-size: 12px;
+  font-weight: 800;
+  color: #cfe6ff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.hud-doctrine-hint {
+  position: absolute;
+  left: 12px;
+  bottom: calc(10px + var(--doctrine-tray-h) + 26px);
+  max-width: min(520px, 90vw);
+  font-size: 11px;
+  opacity: 0.72;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000a;
+}
+.rules-toast {
+  position: fixed;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: min(520px, 94vw);
+  max-height: min(72dvh, 380px);
+  padding: 12px 16px 10px;
+  border-radius: 10px;
+  border: 1px solid #3a4a63;
+  background: rgba(18, 24, 34, 0.96);
+  box-shadow: 0 10px 40px #000a;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e8eef7;
+  pointer-events: auto;
+  cursor: pointer;
+  overflow: hidden;
+}
+.rules-toast-title {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: #cfe0ff;
+}
+.rules-toast-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  overflow: hidden;
+  max-height: min(52dvh, 280px);
+}
+.rules-toast-list li {
+  margin-bottom: 4px;
+}
+.rules-toast-dismiss {
+  margin-top: 8px;
+  font-size: 10px;
+  opacity: 0.65;
+}

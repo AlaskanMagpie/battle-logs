@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-ts
+public/map.local.json
+.env.local
+*.log
+# Mesh exports are huge; keep manifest + README; copy GLBs locally for playtest
+public/assets/units/*.glb
