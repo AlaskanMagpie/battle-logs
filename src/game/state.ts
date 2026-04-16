@@ -101,6 +101,8 @@ export interface MatchStats {
   salvageRecovered: number;
   enemyKills: number;
   commandsCast: number;
+  /** Enemy units spawned this match (initial camps + reinforcements). Win "routed" only counts if this is > 0. */
+  enemyUnitsSpawned: number;
 }
 
 export interface GameState {
@@ -279,6 +281,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       salvageRecovered: 0,
       enemyKills: 0,
       commandsCast: 0,
+      enemyUnitsSpawned: 0,
     },
     enemyCampCoreHp: {},
   };
@@ -318,6 +321,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       });
     }
   }
+
+  state.stats.enemyUnitsSpawned = state.units.filter((u) => u.team === "enemy").length;
 
   return state;
 }

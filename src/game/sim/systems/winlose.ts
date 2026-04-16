@@ -21,7 +21,9 @@ export function loseCheck(s: GameState): void {
 export function winCheck(s: GameState): void {
   const relaysDead =
     s.enemyRelays.length > 0 ? s.enemyRelays.every((r) => r.hp <= 0) : false;
-  const enemiesDead = !s.units.some((u) => u.team === "enemy" && u.hp > 0);
+  /** Without this gate, zero spawned enemies (e.g. empty `enemyCamps` after map merge) reads as "all dead" and wins instantly. */
+  const enemiesDead =
+    s.stats.enemyUnitsSpawned > 0 && !s.units.some((u) => u.team === "enemy" && u.hp > 0);
   const hasCoreObjective = s.map.enemyCamps.some(
     (c) => typeof c.coreMaxHp === "number" && c.coreMaxHp > 0,
   );

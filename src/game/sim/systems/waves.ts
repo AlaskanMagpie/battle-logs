@@ -34,4 +34,5 @@ export function maybeEnemyReinforcements(s: GameState): void {
     dmgPerTick: st.dmgPerTick * dmgMult,
     visualSeed: randU32(s),
   });
+  s.stats.enemyUnitsSpawned += 1;
 }
