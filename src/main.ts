@@ -214,7 +214,12 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     const pendingIntents: PlayerIntent[] = [];
     const doctrineDragRef = { active: false };
 
-    mountHud(hudRoot, state, () => pendingIntents.push({ type: "clear_placement" }));
+    mountHud(
+      hudRoot,
+      state,
+      () => pendingIntents.push({ type: "clear_placement" }),
+      (intent) => pendingIntents.push(intent),
+    );
     showRulesToast();
 
     wireDoctrineDragToMap(

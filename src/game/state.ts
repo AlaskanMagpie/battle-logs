@@ -4,7 +4,15 @@ import {
   INFRA_PLACE_RADIUS,
   PLAYER_STARTING_FLUX,
 } from "./constants";
-import type { CatalogEntry, MapData, SignalType, TeamId, UnitSizeClass, Vec2 } from "./types";
+import type {
+  CatalogEntry,
+  MapData,
+  SignalType,
+  TeamId,
+  UnitSizeClass,
+  UnitTrait,
+  Vec2,
+} from "./types";
 import { isStructureEntry } from "./types";
 
 export interface TapRuntime {
@@ -32,6 +40,8 @@ export interface EnemyRelayRuntime {
   z: number;
   hp: number;
   maxHp: number;
+  /** Prod-silence on Shatter (tick at which silence ends). */
+  silencedUntilTick: number;
 }
 
 export interface StructureRuntime {
@@ -51,6 +61,12 @@ export interface StructureRuntime {
   rallyZ: number;
   /** True if placed via forward placement (not near Tap/Relay). */
   placementForward: boolean;
+  /** Fortify damage reduction end tick (0 if inactive). */
+  damageReductionUntilTick: number;
+  /** Production silence end tick (Shatter / signal loss uses requirement check separately). */
+  productionSilenceUntilTick: number;
+  /** Hold orders — produced units don't advance to rally, only engage foes in range. */
+  holdOrders: boolean;
 }
 
 export interface UnitRuntime {
@@ -68,6 +84,20 @@ export interface UnitRuntime {
   dmgPerTick: number;
   visualSeed: number;
   antiClass?: UnitSizeClass;
+  trait?: UnitTrait;
+  aoeRadius?: number;
+  flying?: boolean;
+  /** Signal inherited from parent structure (for coloring). */
+  signal?: SignalType;
+}
+
+export interface MatchStats {
+  structuresBuilt: number;
+  structuresLost: number;
+  unitsProduced: number;
+  unitsLost: number;
+  salvageRecovered: number;
+  enemyKills: number;
 }
 
 export interface GameState {
@@ -89,10 +119,32 @@ export interface GameState {
   selectedDoctrineIndex: number | null;
   selectedStructureId: number | null;
   pendingPlacementCatalogId: string | null;
+  /** Slot index awaiting a signal-type choice before build proceeds. */
+  pendingRelaySignalSlot: number | null;
   enemyCampAwake: Record<string, boolean>;
   playerRelaysEverBuilt: number;
   loseGraceTicksRemaining: number;
   lastMessage: string;
+  /** Seeded RNG state (xorshift32). */
+  rngState: number;
+  /** Per-match counters for end-screen / telemetry. */
+  stats: MatchStats;
+}
+
+/** Seeded xorshift32 PRNG on state. Returns [0, 1). */
+export function rand(s: GameState): number {
+  let x = s.rngState | 0;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  s.rngState = x >>> 0;
+  return (s.rngState & 0xffffffff) / 0x100000000;
+}
+
+/** Seeded random u32. */
+export function randU32(s: GameState): number {
+  rand(s);
+  return s.rngState >>> 0;
 }
 
 function dist2(a: Vec2, b: Vec2): number {
@@ -174,7 +226,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     destroyed: false,
     hp: 0,
     maxHp: 260,
-    signalTypes: ["Vanguard"] as SignalType[],
+    signalTypes: [] as SignalType[],
   }));
 
   const enemyRelays: EnemyRelayRuntime[] = map.enemyRelaySlots.map((r) => ({
@@ -183,7 +235,11 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: r.z,
     hp: 520,
     maxHp: 520,
+    silencedUntilTick: 0,
   }));
+
+  const hpMult = map.difficulty?.enemyHpMult ?? 1;
+  const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
 
   const state: GameState = {
     map,
@@ -203,39 +259,52 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     selectedDoctrineIndex: null,
     selectedStructureId: null,
     pendingPlacementCatalogId: null,
+    pendingRelaySignalSlot: null,
     enemyCampAwake: Object.fromEntries(map.enemyCamps.map((c) => [c.id, false])),
     playerRelaysEverBuilt: 0,
     loseGraceTicksRemaining: 0,
     lastMessage:
-      "Pick Doctrine (or defaults), Start. Tap → Relay (Shift+click built Relay to cycle Signal) → place Structures / Commands.",
+      "Pick Doctrine (or defaults), Start. Tap → build Relay (choose Signal) → place Structures / Commands.",
+    rngState: 0xc0ffee01 >>> 0,
+    stats: {
+      structuresBuilt: 0,
+      structuresLost: 0,
+      unitsProduced: 0,
+      unitsLost: 0,
+      salvageRecovered: 0,
+      enemyKills: 0,
+    },
   };
 
-  const camp = map.enemyCamps[0];
-  if (camp) {
-    const offsets: Vec2[] = [
-      { x: 4, z: 0 },
-      { x: -3, z: 3 },
-      { x: 0, z: -4 },
-      { x: 6, z: 4 },
-      { x: -5, z: -2 },
-    ];
-    for (let i = 0; i < offsets.length; i++) {
-      const sz: UnitSizeClass = i % 2 === 0 ? "Line" : "Swarm";
-      const st = unitStats(sz);
+  const defaultOffsets: Vec2[] = [
+    { x: 4, z: 0 },
+    { x: -3, z: 3 },
+    { x: 0, z: -4 },
+    { x: 6, z: 4 },
+    { x: -5, z: -2 },
+  ];
+  for (const camp of map.enemyCamps) {
+    const roster = camp.roster ?? defaultOffsets.map((o, i) => ({
+      sizeClass: (i % 2 === 0 ? "Line" : "Swarm") as UnitSizeClass,
+      offset: o,
+    }));
+    for (const r of roster) {
+      const base = unitStats(r.sizeClass);
+      const hp = Math.round(base.maxHp * hpMult);
       state.units.push({
         id: state.nextId.unit++,
         team: "enemy",
         structureId: null,
-        x: camp.origin.x + offsets[i]!.x,
-        z: camp.origin.z + offsets[i]!.z,
-        hp: st.maxHp,
-        maxHp: st.maxHp,
-        sizeClass: sz,
-        pop: st.pop,
-        speedPerSec: st.speedPerSec,
-        range: st.range,
-        dmgPerTick: st.dmgPerTick,
-        visualSeed: (Math.random() * 0xffffffff) >>> 0,
+        x: camp.origin.x + r.offset.x,
+        z: camp.origin.z + r.offset.z,
+        hp,
+        maxHp: hp,
+        sizeClass: r.sizeClass,
+        pop: base.pop,
+        speedPerSec: base.speedPerSec,
+        range: base.range,
+        dmgPerTick: base.dmgPerTick * dmgMult,
+        visualSeed: randU32(state),
       });
     }
   }
@@ -285,8 +354,25 @@ export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
+/**
+ * War Camp aura: safe_deploy_radius extends "near infra" (safe placement) around
+ * its own position so new structures don't suffer forward-placement penalties.
+ */
+export function nearSafeDeployAura(s: GameState, pos: Vec2): boolean {
+  for (const st of s.structures) {
+    if (st.team !== "player" || !st.complete) continue;
+    const def = getCatalogEntry(st.catalogId);
+    if (!def || !isStructureEntry(def) || !def.aura) continue;
+    if (def.aura.kind !== "safe_deploy_radius") continue;
+    const r = def.aura.radius;
+    if (dist2(pos, st) <= r * r) return true;
+  }
+  return false;
+}
+
 export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
   if (nearFriendlyInfra(s, pos)) return false;
+  if (nearSafeDeployAura(s, pos)) return false;
   const r2 = FORWARD_PLACE_RADIUS * FORWARD_PLACE_RADIUS;
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
@@ -322,8 +408,39 @@ export function canPlaceStructureHere(
   if (slotErr) return slotErr;
   if (s.flux < entry.fluxCost) return "Not enough Flux.";
   if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy (aggro).";
-  const infra = nearFriendlyInfra(s, pos);
+  const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
   const fwd = nearFriendlyForward(s, pos);
-  if (!infra && !fwd) return "Must place near Tap/Relay, or forward near a friendly unit/structure (not on infra).";
+  if (!infra && !fwd) return "Must place near Tap/Relay, War Camp aura, or forward near a friendly unit/structure.";
   return null;
+}
+
+/** Map signal → display color (HSL). Used by 3D and cards for visual consistency. */
+export function signalColorHex(sig: SignalType | undefined): number {
+  switch (sig) {
+    case "Vanguard":
+      return 0xe06b3a;
+    case "Bastion":
+      return 0x4da3ff;
+    case "Reclaim":
+      return 0x5fc48a;
+    default:
+      return 0x8ea0b8;
+  }
+}
+
+/** Dominant signal for a structure's visual. */
+export function dominantSignal(entry: CatalogEntry | null): SignalType | undefined {
+  if (!entry || !isStructureEntry(entry)) return undefined;
+  if (entry.signalTypes.length === 0) return undefined;
+  const counts: Record<SignalType, number> = { Vanguard: 0, Bastion: 0, Reclaim: 0 };
+  for (const s of entry.signalTypes) counts[s]++;
+  let best: SignalType = entry.signalTypes[0]!;
+  let bestN = -1;
+  for (const k of Object.keys(counts) as SignalType[]) {
+    if (counts[k] > bestN) {
+      bestN = counts[k];
+      best = k;
+    }
+  }
+  return best;
 }

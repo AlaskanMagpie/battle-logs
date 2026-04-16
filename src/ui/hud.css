@@ -1160,6 +1160,161 @@ button.hud-btn:hover {
   pointer-events: none;
   text-shadow: 0 1px 2px #000a;
 }
+/* Relay signal picker popup (shown when player clicks an unbuilt Relay slot) */
+.relay-signal-pop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 6, 10, 0.48);
+  pointer-events: auto;
+}
+.relay-signal-pop[hidden] {
+  display: none !important;
+}
+.relay-signal-pop-panel {
+  width: min(440px, 100%);
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: #0e131c;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.relay-signal-pop-title {
+  font-size: 14px;
+  font-weight: 700;
+  opacity: 0.92;
+}
+.relay-signal-pop-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.relay-signal-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.relay-sig-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #2a3545;
+  background: #141b24;
+  color: #e8eef7;
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+  min-height: 64px;
+}
+.relay-sig-btn b {
+  font-size: 12px;
+  font-weight: 700;
+}
+.relay-sig-btn span:last-child {
+  opacity: 0.7;
+  font-size: 10px;
+}
+.relay-sig-btn:hover {
+  border-color: #4b5b73;
+}
+.relay-sig-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: block;
+}
+.relay-sig-Vanguard .relay-sig-dot {
+  background: #e06b3a;
+  box-shadow: 0 0 8px #e06b3a88;
+}
+.relay-sig-Bastion .relay-sig-dot {
+  background: #4da3ff;
+  box-shadow: 0 0 8px #4da3ff88;
+}
+.relay-sig-Reclaim .relay-sig-dot {
+  background: #5fc48a;
+  box-shadow: 0 0 8px #5fc48a88;
+}
+.relay-sig-Vanguard:hover {
+  border-color: #e06b3a;
+}
+.relay-sig-Bastion:hover {
+  border-color: #4da3ff;
+}
+.relay-sig-Reclaim:hover {
+  border-color: #5fc48a;
+}
+
+/* End-of-match overlay with per-match stats */
+.match-end-pop {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 6, 10, 0.74);
+  pointer-events: auto;
+}
+.match-end-pop[hidden] {
+  display: none !important;
+}
+.match-end-panel {
+  width: min(480px, 100%);
+  border-radius: 14px;
+  border: 1px solid #334155;
+  background: #0e131c;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.match-end-title {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.match-end-sub {
+  font-size: 12px;
+  opacity: 0.82;
+}
+.match-end-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.match-end-stats > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.match-end-stats span {
+  opacity: 0.76;
+}
+.match-end-stats strong {
+  font-weight: 700;
+}
+.match-end-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
 .rules-toast {
   position: fixed;
   left: 50%;

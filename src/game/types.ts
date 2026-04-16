@@ -30,6 +30,13 @@ export interface EnemyCampDef {
   origin: Vec2;
   aggroRadius: number;
   wakeRadius: number;
+  /** Optional per-camp roster overriding default. Each entry is one hostile unit. */
+  roster?: { sizeClass: UnitSizeClass; offset: Vec2 }[];
+}
+
+export interface MapDifficulty {
+  enemyHpMult: number;
+  enemyDmgMult: number;
 }
 
 export interface MapData {
@@ -40,11 +47,27 @@ export interface MapData {
   enemyRelaySlots: RelaySlotDef[];
   playerStart: Vec2;
   enemyCamps: EnemyCampDef[];
+  difficulty?: MapDifficulty;
   decor?: unknown[];
 }
 
 /** Minimum built relays of each signal type (count relays whose `signalTypes` includes that type). */
 export type SignalCountRequirement = Partial<Record<SignalType, number>>;
+
+export type StructureAuraKind =
+  | "heal_structures"
+  | "salvage_bonus"
+  | "turret"
+  | "safe_deploy_radius";
+
+export interface StructureAura {
+  kind: StructureAuraKind;
+  radius: number;
+  /** Damage/tick for turret, hp/sec for heal, fractional bonus for salvage (+0.2 = +20%), unused for safe_deploy. */
+  value: number;
+}
+
+export type UnitTrait = "lifesteal" | "anti_building";
 
 export interface StructureCatalogEntry {
   id: string;
@@ -63,15 +86,32 @@ export interface StructureCatalogEntry {
   producedPop: number;
   localPopCap: number;
   maxHp: number;
+  /** Deprecated: generic tick damage. Prefer `aura.kind === "turret"`. Kept for legacy. */
   damagePerTick: number;
   /** +50% damage vs this enemy size class when set. */
   producedAntiClass?: UnitSizeClass;
   maxCharges: number;
   chargeCooldownSeconds: number;
+  /** Data-driven structure effect applied while alive. */
+  aura?: StructureAura;
+  /** Per-structure salvage refund override (0..1). Default resolves via constants. */
+  salvageRefundFrac?: number;
+  /** Trait applied to units produced by this structure. */
+  unitTrait?: UnitTrait;
+  /** Produced unit's AoE radius (world units). 0 / undefined = single-target. */
+  unitAoeRadius?: number;
+  /** Produced unit ignores ground collision / walks over obstacles (flying). */
+  unitFlying?: boolean;
+  /** Flavor: what the structure produces (UI copy only). */
+  producedFlavor?: string;
 }
 
 export type CommandEffect =
   | { type: "recycle_structure" }
+  | { type: "aoe_damage"; radius: number; damage: number }
+  | { type: "buff_structure"; damageReductionPct: number; durationSeconds: number }
+  | { type: "muster_structure" }
+  | { type: "shatter_structure"; damage: number; silenceSeconds: number }
   | { type: "noop" };
 
 export interface CommandCatalogEntry {

@@ -1,26 +1,71 @@
 {
-  "version": 1,
-  "world": { "halfExtents": 80, "groundY": 0 },
+  "version": 2,
+  "world": { "halfExtents": 90, "groundY": 0 },
   "tapSlots": [
-    { "id": "tap_a", "x": -25, "z": 15 },
-    { "id": "tap_b", "x": -35, "z": -10 },
-    { "id": "tap_c", "x": -15, "z": -25 }
+    { "id": "tap_a", "x": -32, "z": 20 },
+    { "id": "tap_b", "x": -42, "z": -6 },
+    { "id": "tap_c", "x": -22, "z": -28 },
+    { "id": "tap_d", "x": -8, "z": 34 },
+    { "id": "tap_e", "x": 6, "z": -18 }
   ],
   "playerRelaySlots": [
-    { "id": "p_relay_1", "x": -18, "z": 28 },
-    { "id": "p_relay_2", "x": -5, "z": 32 }
+    { "id": "p_relay_1", "x": -28, "z": 32 },
+    { "id": "p_relay_2", "x": -10, "z": 38 },
+    { "id": "p_relay_3", "x": -40, "z": 8 },
+    { "id": "p_relay_4", "x": -14, "z": 4 }
   ],
   "enemyRelaySlots": [
-    { "id": "e_relay_1", "x": 48, "z": -8 }
+    { "id": "e_relay_1", "x": 56, "z": -10 },
+    { "id": "e_relay_2", "x": 62, "z": 28 }
   ],
-  "playerStart": { "x": -20, "z": 20 },
+  "playerStart": { "x": -22, "z": 22 },
   "enemyCamps": [
     {
       "id": "camp_alpha",
-      "origin": { "x": 42, "z": 5 },
+      "origin": { "x": 28, "z": 18 },
       "aggroRadius": 14,
-      "wakeRadius": 28
+      "wakeRadius": 28,
+      "roster": [
+        { "sizeClass": "Swarm", "offset": { "x": 3, "z": 0 } },
+        { "sizeClass": "Swarm", "offset": { "x": -2, "z": 2 } },
+        { "sizeClass": "Line", "offset": { "x": 0, "z": -3 } }
+      ]
+    },
+    {
+      "id": "camp_beta",
+      "origin": { "x": 34, "z": -16 },
+      "aggroRadius": 14,
+      "wakeRadius": 28,
+      "roster": [
+        { "sizeClass": "Line", "offset": { "x": 2, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -2, "z": 1 } },
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -3 } }
+      ]
+    },
+    {
+      "id": "camp_gamma",
+      "origin": { "x": 52, "z": 6 },
+      "aggroRadius": 14,
+      "wakeRadius": 28,
+      "roster": [
+        { "sizeClass": "Heavy", "offset": { "x": 2, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -3, "z": 2 } },
+        { "sizeClass": "Swarm", "offset": { "x": 4, "z": -3 } },
+        { "sizeClass": "Swarm", "offset": { "x": 0, "z": 4 } }
+      ]
+    },
+    {
+      "id": "camp_delta",
+      "origin": { "x": 64, "z": 18 },
+      "aggroRadius": 14,
+      "wakeRadius": 28,
+      "roster": [
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": 0 } },
+        { "sizeClass": "Heavy", "offset": { "x": -3, "z": 2 } },
+        { "sizeClass": "Titan", "offset": { "x": 3, "z": -3 } }
+      ]
     }
   ],
+  "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
   "decor": []
 }

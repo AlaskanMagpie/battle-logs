@@ -31,10 +31,6 @@ export const SALVAGE_FLUX_CAP_PER_SEC = 15;
 /** % of structure build cost returned to Salvage on destroy (PRD 80%). */
 export const SALVAGE_RETURN_STRUCTURE_FRAC = 0.8;
 
-/** Player unit death: fraction of parent structure cost that would notionally recycle (playtest tuning). */
-export const SALVAGE_RETURN_UNIT_DEATH_FRAC = 0.8;
-export const SALVAGE_UNIT_DEATH_COST_SHARE = 0.06;
-
 /** Forward build: time multiplier. */
 export const FORWARD_BUILD_TIME_MULT = 2;
 /** Forward build: incoming damage multiplier while constructing. */
