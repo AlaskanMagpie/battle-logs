@@ -365,5 +365,5 @@ export function doctrineCardBody(slotIndex: number, catalogId: string | null): s
       </div>
     </div>`;
   }
-  return tcgCardCompactHtml(catalogId, "hud", slotIndex);
+  return tcgCardCompactHtml(catalogId, "picker", slotIndex);
 }

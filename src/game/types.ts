@@ -32,6 +32,10 @@ export interface EnemyCampDef {
   wakeRadius: number;
   /** Optional per-camp roster overriding default. Each entry is one hostile unit. */
   roster?: { sizeClass: UnitSizeClass; offset: Vec2 }[];
+  /** Optional scenario objective: destroy this HP pool at camp origin to help win. */
+  coreMaxHp?: number;
+  /** Initial sleeping defenders spawned near this camp's origin when no roster is given. */
+  initialUnitCount?: number;
 }
 
 export interface MapDifficulty {
@@ -104,6 +108,8 @@ export interface StructureCatalogEntry {
   unitFlying?: boolean;
   /** Flavor: what the structure produces (UI copy only). */
   producedFlavor?: string;
+  /** Extra damage multiplier when this structure's units attack enemy structures (e.g. Siege Works). */
+  producedDamageVsStructuresMult?: number;
 }
 
 export type CommandEffect =

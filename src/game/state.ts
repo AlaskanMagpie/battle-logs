@@ -89,6 +89,8 @@ export interface UnitRuntime {
   flying?: boolean;
   /** Signal inherited from parent structure (for coloring). */
   signal?: SignalType;
+  /** Bonus vs enemy relays / structures (Siege Works). Default 1 when unset. */
+  damageVsStructuresMult?: number;
 }
 
 export interface MatchStats {
@@ -98,6 +100,7 @@ export interface MatchStats {
   unitsLost: number;
   salvageRecovered: number;
   enemyKills: number;
+  commandsCast: number;
 }
 
 export interface GameState {
@@ -129,6 +132,8 @@ export interface GameState {
   rngState: number;
   /** Per-match counters for end-screen / telemetry. */
   stats: MatchStats;
+  /** Per camp id: remaining HP for optional scenario core (see `EnemyCampDef.coreMaxHp`). */
+  enemyCampCoreHp: Record<string, number>;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -273,7 +278,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       unitsLost: 0,
       salvageRecovered: 0,
       enemyKills: 0,
+      commandsCast: 0,
     },
+    enemyCampCoreHp: {},
   };
 
   const defaultOffsets: Vec2[] = [
@@ -284,6 +291,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     { x: -5, z: -2 },
   ];
   for (const camp of map.enemyCamps) {
+    if (typeof camp.coreMaxHp === "number" && camp.coreMaxHp > 0) {
+      state.enemyCampCoreHp[camp.id] = camp.coreMaxHp;
+    }
     const roster = camp.roster ?? defaultOffsets.map((o, i) => ({
       sizeClass: (i % 2 === 0 ? "Line" : "Swarm") as UnitSizeClass,
       offset: o,

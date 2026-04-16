@@ -51,7 +51,7 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
     <div class="picker-shell picker-shell--solo">
       <div class="picker-panel picker-deck-panel picker-deck-solo">
         <h2>Doctrine deck</h2>
-        <p class="pick-hint">4×4 roster — <strong>tap a slot</strong> to open the catalog and pick a card. <strong>Hold</strong> any card for full stats. Drag between slots to swap, or onto the catalog panel while open to clear.</p>
+        <p class="pick-hint">4×4 roster — <strong>tap a slot</strong> to open the catalog and pick a card. <strong>Press and hold</strong> any card for full stats. Drag between slots to swap, or onto the catalog panel while open to clear.</p>
         <div class="picker-deck-solo-stack">
           <div class="picker-deck-view" id="picker-deck-view">
             <div class="picker-card-track picker-deck-track picker-deck-grid-4x4" id="picker-deck-track" role="grid" aria-label="Doctrine slots"></div>
@@ -143,7 +143,7 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
   function openCatalog(slotIndex: number): void {
     activeSlotIndex = slotIndex;
     paintDeck();
-    subtitle.textContent = `Slot ${slotIndex + 1} — click a card to assign, or drag it onto the deck.`;
+    subtitle.textContent = `Slot ${slotIndex + 1} — tap or click a card to assign, or drag it onto the deck.`;
     overlay.hidden = false;
     overlay.setAttribute("aria-hidden", "false");
     layoutCatalogCols();
@@ -201,6 +201,11 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
     window.removeEventListener("pointercancel", onWinUp);
     const { dragging, from, ghost } = session;
     session = null;
+    try {
+      if (document.body.hasPointerCapture(ev.pointerId)) document.body.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* ignore */
+    }
     destroyDragGhost(ghost);
 
     if (!dragging) return;
@@ -230,6 +235,11 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
     if (!session.dragging && dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
       session.dragging = true;
       slotTap = null;
+      try {
+        document.body.setPointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
       session.ghost = makeDragGhost(
         `<div class="ghost-compact">${doctrineCardGhostSummary(session.from.catalogId)}</div>`,
       );
@@ -274,12 +284,22 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
     y: number;
     detailTimer: ReturnType<typeof setTimeout> | null;
     detailShown: boolean;
+    captureEl: HTMLElement;
   };
 
   let deckDragPending: DeckPending | null = null;
 
   function clearDeckPending(): void {
-    if (deckDragPending?.detailTimer) clearTimeout(deckDragPending.detailTimer);
+    if (deckDragPending) {
+      if (deckDragPending.detailTimer) clearTimeout(deckDragPending.detailTimer);
+      try {
+        if (deckDragPending.captureEl.hasPointerCapture(deckDragPending.pointerId)) {
+          deckDragPending.captureEl.releasePointerCapture(deckDragPending.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     deckDragPending = null;
     window.removeEventListener("pointermove", onDeckPendingMove);
     window.removeEventListener("pointerup", onDeckPendingUp);
@@ -318,13 +338,23 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
     y: number;
     detailTimer: ReturnType<typeof setTimeout> | null;
     detailShown: boolean;
+    captureEl: HTMLElement;
   };
 
   let catalogDragPending: CatalogPending | null = null;
   let suppressNextCatalogClick = false;
 
   function clearCatalogPending(): void {
-    if (catalogDragPending?.detailTimer) clearTimeout(catalogDragPending.detailTimer);
+    if (catalogDragPending) {
+      if (catalogDragPending.detailTimer) clearTimeout(catalogDragPending.detailTimer);
+      try {
+        if (catalogDragPending.captureEl.hasPointerCapture(catalogDragPending.pointerId)) {
+          catalogDragPending.captureEl.releasePointerCapture(catalogDragPending.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     catalogDragPending = null;
     window.removeEventListener("pointermove", onCatalogPendingMove);
     window.removeEventListener("pointerup", onCatalogPendingUp);
@@ -360,6 +390,11 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
       slotTap = null;
       clearCatalogPending();
       const downPid = ev.pointerId;
+      try {
+        card.setPointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
       catalogDragPending = {
         pointerId: downPid,
         catalogId: id,
@@ -367,6 +402,7 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
         y: ev.clientY,
         detailTimer: null,
         detailShown: false,
+        captureEl: card,
       };
       catalogDragPending.detailTimer = setTimeout(() => {
         if (!catalogDragPending || catalogDragPending.pointerId !== downPid) return;
@@ -389,6 +425,11 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
         slotTap = null;
         clearDeckPending();
         const downPid = ev.pointerId;
+        try {
+          slot.setPointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
         deckDragPending = {
           pointerId: downPid,
           fromIndex: i,
@@ -397,6 +438,7 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
           y: ev.clientY,
           detailTimer: null,
           detailShown: false,
+          captureEl: slot,
         };
         deckDragPending.detailTimer = setTimeout(() => {
           if (!deckDragPending || deckDragPending.pointerId !== downPid) return;

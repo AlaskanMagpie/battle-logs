@@ -1,5 +1,7 @@
 # Signal Wars — Phase 1 playtest (Three.js + Vite)
 
+Design reference: **[docs/prd-v2.md](docs/prd-v2.md)** (Vibejam PRD v2).
+
 ## Run
 
 ```bash
@@ -7,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Open the printed `http://localhost:5173` URL.
+Open the dev URL (e.g. `http://localhost:2222/` if using the project Vite port).
 
 ## Controls (Phase 1)
 

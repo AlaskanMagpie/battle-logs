@@ -79,6 +79,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     maxHp: 380,
     damagePerTick: 0,
     producedAntiClass: "Line",
+    producedDamageVsStructuresMult: 1.5,
     maxCharges: 2,
     chargeCooldownSeconds: 45,
     unitTrait: "anti_building",

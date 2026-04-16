@@ -22,10 +22,21 @@ export function winCheck(s: GameState): void {
   const relaysDead =
     s.enemyRelays.length > 0 ? s.enemyRelays.every((r) => r.hp <= 0) : false;
   const enemiesDead = !s.units.some((u) => u.team === "enemy" && u.hp > 0);
-  if (relaysDead || enemiesDead) {
+  const hasCoreObjective = s.map.enemyCamps.some(
+    (c) => typeof c.coreMaxHp === "number" && c.coreMaxHp > 0,
+  );
+  const coresDestroyed =
+    hasCoreObjective &&
+    s.map.enemyCamps.every((c) => {
+      if (!(typeof c.coreMaxHp === "number" && c.coreMaxHp > 0)) return true;
+      return (s.enemyCampCoreHp[c.id] ?? 0) <= 0;
+    });
+  if (relaysDead || enemiesDead || coresDestroyed) {
     s.phase = "win";
-    s.lastMessage = relaysDead
-      ? "Victory — enemy Relays eliminated."
-      : "Victory — hostile force routed.";
+    s.lastMessage = coresDestroyed
+      ? "Victory — camp core destroyed."
+      : relaysDead
+        ? "Victory — enemy Relays eliminated."
+        : "Victory — hostile force routed.";
   }
 }

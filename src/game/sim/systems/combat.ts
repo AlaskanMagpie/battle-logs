@@ -1,5 +1,7 @@
 import {
   ANTI_CLASS_DAMAGE_MULT,
+  CAMP_CORE_ATTACK_RADIUS,
+  CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
 } from "../../constants";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
@@ -97,5 +99,19 @@ export function combat(s: GameState): void {
         st.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
       }
     }
+  }
+
+  // Player units within a camp's core-attack radius chip its core while the camp is awake.
+  for (const camp of s.map.enemyCamps) {
+    const cur = s.enemyCampCoreHp[camp.id];
+    if (cur === undefined || cur <= 0) continue;
+    if (!s.enemyCampAwake[camp.id]) continue;
+    const r2 = CAMP_CORE_ATTACK_RADIUS * CAMP_CORE_ATTACK_RADIUS;
+    let dmg = 0;
+    for (const u of s.units) {
+      if (u.team !== "player" || u.hp <= 0) continue;
+      if (dist2(u, camp.origin) <= r2) dmg += CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK;
+    }
+    if (dmg > 0) s.enemyCampCoreHp[camp.id] = Math.max(0, cur - dmg);
   }
 }

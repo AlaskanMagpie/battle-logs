@@ -7,6 +7,7 @@ import { cleanupDead } from "./systems/deaths";
 import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/economy";
 import { applyPlayerIntents } from "./systems/intents";
 import { buildProgress, production } from "./systems/production";
+import { maybeEnemyReinforcements } from "./systems/waves";
 import { loseCheck, winCheck } from "./systems/winlose";
 
 export { applyPlayerIntents } from "./systems/intents";
@@ -22,6 +23,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   production(s);
   auras(s);
   wakeCamps(s);
+  maybeEnemyReinforcements(s);
   movement(s);
   combat(s);
   cleanupDead(s);

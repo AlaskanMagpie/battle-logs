@@ -25,6 +25,7 @@
       "origin": { "x": 28, "z": 18 },
       "aggroRadius": 14,
       "wakeRadius": 28,
+      "coreMaxHp": 420,
       "roster": [
         { "sizeClass": "Swarm", "offset": { "x": 3, "z": 0 } },
         { "sizeClass": "Swarm", "offset": { "x": -2, "z": 2 } },
