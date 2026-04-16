@@ -15,13 +15,27 @@ import {
   pointInRect,
 } from "./ui/doctrineDrag";
 import { mountDoctrinePicker } from "./ui/doctrinePicker";
-import { mountHud, updateHud } from "./ui/hud";
+import { attachDoctrineHandPeek, mountHud, updateHud } from "./ui/hud";
 import { showRulesToast } from "./ui/rulesToast";
 import { isStructureEntry } from "./game/types";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
 const pickerRoot = document.querySelector<HTMLElement>("#doctrine-picker")!;
+
+function viewportCssSize(): { w: number; h: number } {
+  const vv = window.visualViewport;
+  if (vv) return { w: Math.max(1, vv.width), h: Math.max(1, vv.height) };
+  return { w: Math.max(1, window.innerWidth), h: Math.max(1, window.innerHeight) };
+}
+
+function releasePointerSafe(el: Element, pointerId: number): void {
+  try {
+    if (el.hasPointerCapture(pointerId)) el.releasePointerCapture(pointerId);
+  } catch {
+    /* ignore */
+  }
+}
 
 /** GLB art on by default; set `VITE_USE_UNIT_GLB=false` to force cubes only. */
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
@@ -34,6 +48,7 @@ function wireDoctrineDragToMap(
   pendingIntents: PlayerIntent[],
   onShortClickSelect: (index: number) => void,
   dragRef: { active: boolean },
+  consumeRelayShiftChord: () => boolean,
 ): void {
   const doctrine = hudRoot.querySelector("#doctrine-track") as HTMLElement | null;
   if (!doctrine) return;
@@ -56,10 +71,12 @@ function wireDoctrineDragToMap(
     catalogId: string;
     detailTimer: ReturnType<typeof setTimeout> | null;
     detailShown: boolean;
+    captureEl: HTMLElement;
   } | null = null;
 
   function clearPending(): void {
     if (pending?.detailTimer) clearTimeout(pending.detailTimer);
+    if (pending) releasePointerSafe(pending.captureEl, pending.pointerId);
     pending = null;
   }
 
@@ -74,6 +91,7 @@ function wireDoctrineDragToMap(
     window.removeEventListener("pointermove", onPendingMove);
     window.removeEventListener("pointerup", onPendingUp);
     window.removeEventListener("pointercancel", onPendingUp);
+    releasePointerSafe(snap.captureEl, snap.pointerId);
     session = {
       pointerId: snap.pointerId,
       startX: snap.startX,
@@ -83,6 +101,11 @@ function wireDoctrineDragToMap(
       catalogId: snap.catalogId,
       ghost: null,
     };
+    try {
+      canvas.setPointerCapture(snap.pointerId);
+    } catch {
+      /* ignore */
+    }
     window.addEventListener("pointermove", onWinMove);
     window.addEventListener("pointerup", onWinUp);
     window.addEventListener("pointercancel", onWinUp);
@@ -97,6 +120,7 @@ function wireDoctrineDragToMap(
     if (pending.detailTimer) clearTimeout(pending.detailTimer);
     const snap = pending;
     pending = null;
+    releasePointerSafe(snap.captureEl, ev.pointerId);
     if (snap.detailShown) return;
     const dx = ev.clientX - snap.startX;
     const dy = ev.clientY - snap.startY;
@@ -111,6 +135,7 @@ function wireDoctrineDragToMap(
     if (!session.dragging && dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
       session.dragging = true;
       dragRef.active = true;
+      hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       renderer.setControlsEnabled(false);
       session.ghost = makeDragGhost(
         `<div class="ghost-compact">${doctrineCardGhostSummary(session.catalogId)}</div>`,
@@ -142,6 +167,7 @@ function wireDoctrineDragToMap(
 
     const snap = session;
     session = null;
+    releasePointerSafe(canvas, ev.pointerId);
 
     if (!snap.dragging) {
       return;
@@ -159,11 +185,13 @@ function wireDoctrineDragToMap(
     const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
     if (!hit) return;
 
+    const shift = consumeRelayShiftChord() || ev.shiftKey;
     pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
     pendingIntents.push({
       type: "try_click_world",
       pos: { x: hit.x, z: hit.z },
-      shiftKey: ev.shiftKey,
+      shiftKey: shift,
+      altKey: ev.altKey,
     });
   }
 
@@ -178,6 +206,11 @@ function wireDoctrineDragToMap(
     if (!id) return;
     ev.preventDefault();
     clearPending();
+    try {
+      slot.setPointerCapture(ev.pointerId);
+    } catch {
+      /* ignore */
+    }
     pending = {
       pointerId: ev.pointerId,
       startX: ev.clientX,
@@ -186,6 +219,7 @@ function wireDoctrineDragToMap(
       catalogId: id,
       detailTimer: null,
       detailShown: false,
+      captureEl: slot,
     };
     const downPid = ev.pointerId;
     pending.detailTimer = setTimeout(() => {
@@ -202,20 +236,89 @@ function wireDoctrineDragToMap(
 function runMatch(initialDoctrine: (string | null)[]): void {
   void (async () => {
     const map = await loadMapMerged();
-    const state: GameState = createInitialState(map, initialDoctrine);
+    let state: GameState = createInitialState(map, initialDoctrine);
 
     const renderer = new GameRenderer(canvas);
     const resize = (): void => {
-      renderer.setSize(window.innerWidth, window.innerHeight);
+      const { w, h } = viewportCssSize();
+      renderer.setSize(w, h);
     };
     resize();
     window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("scroll", resize);
 
     const pendingIntents: PlayerIntent[] = [];
     const doctrineDragRef = { active: false };
 
-    mountHud(hudRoot, state, () => pendingIntents.push({ type: "clear_placement" }));
+    let relayShiftNextTap = false;
+    const relayShiftBtn = (): HTMLButtonElement | null => hudRoot.querySelector("#btn-relay-shift");
+    const syncRelayShiftUi = (): void => {
+      const b = relayShiftBtn();
+      if (!b) return;
+      b.classList.toggle("hud-btn--armed", relayShiftNextTap);
+      b.setAttribute("aria-pressed", relayShiftNextTap ? "true" : "false");
+    };
+    const consumeRelayShiftChord = (): boolean => {
+      if (!relayShiftNextTap) return false;
+      relayShiftNextTap = false;
+      syncRelayShiftUi();
+      return true;
+    };
+
+    let acc = 0;
+    let last = performance.now();
+    let rafId = 0;
+
+    const tick = (now: number): void => {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      acc += dt;
+
+      let first = true;
+      while (acc >= 1 / TICK_HZ) {
+        const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
+        first = false;
+        advanceTick(state, chunk);
+        acc -= 1 / TICK_HZ;
+      }
+
+      if (!state.pendingPlacementCatalogId && !doctrineDragRef.active) {
+        renderer.setPlacementGhost(null, false);
+      }
+
+      renderer.sync(state, USE_GLB);
+      renderer.render();
+      updateHud(state);
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const rematch = (): void => {
+      cancelAnimationFrame(rafId);
+      pendingIntents.length = 0;
+      state = createInitialState(map, initialDoctrine);
+      renderer.setPlacementGhost(null, false);
+      acc = 0;
+      last = performance.now();
+      rafId = requestAnimationFrame(tick);
+    };
+
+    mountHud(hudRoot, state, {
+      onClear: () => pendingIntents.push({ type: "clear_placement" }),
+      onRematch: rematch,
+      onEditDoctrine: () => {
+        window.location.reload();
+      },
+    });
+    const doctrineTrackEl = hudRoot.querySelector("#doctrine-track");
+    if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
     showRulesToast();
+
+    relayShiftBtn()?.addEventListener("click", () => {
+      relayShiftNextTap = !relayShiftNextTap;
+      syncRelayShiftUi();
+    });
 
     wireDoctrineDragToMap(
       canvas,
@@ -231,17 +334,21 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
       },
       doctrineDragRef,
+      consumeRelayShiftChord,
     );
 
     canvas.addEventListener("pointerdown", (ev) => {
+      hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       if (state.phase !== "playing") return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
+      const shift = consumeRelayShiftChord() || ev.shiftKey;
       pendingIntents.push({
         type: "try_click_world",
         pos: { x: hit.x, z: hit.z },
-        shiftKey: ev.shiftKey,
+        shiftKey: shift,
+        altKey: ev.altKey,
       });
     });
 
@@ -268,34 +375,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       if (!doctrineDragRef.active) renderer.setPlacementGhost(null, false);
     });
 
-    let acc = 0;
-    let last = performance.now();
-
-    const tick = (now: number): void => {
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
-      acc += dt;
-
-      let first = true;
-      while (acc >= 1 / TICK_HZ) {
-        const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
-        first = false;
-        advanceTick(state, chunk);
-        acc -= 1 / TICK_HZ;
-      }
-
-      if (!state.pendingPlacementCatalogId && !doctrineDragRef.active) {
-        renderer.setPlacementGhost(null, false);
-      }
-
-      renderer.sync(state, USE_GLB);
-      renderer.render();
-      updateHud(state);
-
-      requestAnimationFrame(tick);
-    };
-
-    requestAnimationFrame(tick);
+    rafId = requestAnimationFrame(tick);
   })().catch((e) => {
     // eslint-disable-next-line no-console
     console.error(e);

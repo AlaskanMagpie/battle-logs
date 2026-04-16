@@ -41,3 +41,27 @@ export const FORWARD_BUILD_TIME_MULT = 2;
 export const FORWARD_BUILD_INCOMING_DAMAGE_MULT = 2;
 
 export const ANTI_CLASS_DAMAGE_MULT = 1.5;
+
+/** Commands: friendly unit or completed player structure must be within this radius of the cast point (world units). */
+export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 12;
+
+/** Fortify: duration and incoming damage multiplier while active (50% DR → multiply incoming by this). */
+export const FORTIFY_DURATION_SEC = 15;
+export const FORTIFY_INCOMING_DAMAGE_MULT = 0.5;
+
+/** Firestorm: radius and burst damage to each enemy unit in the area. */
+export const FIRESTORM_RADIUS = 11;
+export const FIRESTORM_DAMAGE_PER_UNIT = 38;
+
+/** Shatter (interim vs enemy relay): pick radius and burst damage; production pause when enemy structures exist uses structure runtime. */
+export const SHATTER_TARGET_RADIUS = 9;
+export const SHATTER_DAMAGE = 300;
+export const SHATTER_PRODUCTION_PAUSE_SEC = 10;
+
+/** Optional camp scenario: player units within this range of a camp origin damage the camp core while the camp is awake. */
+export const CAMP_CORE_ATTACK_RADIUS = 7;
+export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.45;
+
+/** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
+export const ENEMY_WAVE_EVERY_TICKS = 18 * TICK_HZ;
+export const ENEMY_WAVE_GLOBAL_CAP = 22;

@@ -1,6 +1,15 @@
 import { getCatalogEntry } from "../catalog";
 import {
   ANTI_CLASS_DAMAGE_MULT,
+  CAMP_CORE_ATTACK_RADIUS,
+  CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
+  COMMAND_FRIENDLY_PRESENCE_RADIUS,
+  ENEMY_WAVE_EVERY_TICKS,
+  ENEMY_WAVE_GLOBAL_CAP,
+  FIRESTORM_DAMAGE_PER_UNIT,
+  FIRESTORM_RADIUS,
+  FORTIFY_DURATION_SEC,
+  FORTIFY_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_TIME_MULT,
   GLOBAL_POP_CAP,
@@ -12,6 +21,9 @@ import {
   SALVAGE_RETURN_STRUCTURE_FRAC,
   SALVAGE_RETURN_UNIT_DEATH_FRAC,
   SALVAGE_UNIT_DEATH_COST_SHARE,
+  SHATTER_DAMAGE,
+  SHATTER_PRODUCTION_PAUSE_SEC,
+  SHATTER_TARGET_RADIUS,
   TAP_ACTIVATE_COST,
   TAP_FLUX_PER_SEC,
   TICK_HZ,
@@ -30,7 +42,7 @@ import {
   type StructureRuntime,
   type UnitRuntime,
 } from "../state";
-import type { SignalType, Vec2 } from "../types";
+import type { CommandCatalogEntry, SignalType, Vec2 } from "../types";
 import { isCommandEntry, isStructureEntry } from "../types";
 
 const PICK_TAP = 4;
@@ -98,6 +110,52 @@ function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
     }
   }
   return best;
+}
+
+function friendlyPresenceNear(s: GameState, pos: Vec2, radius: number): boolean {
+  const r2 = radius * radius;
+  for (const u of s.units) {
+    if (u.team !== "player" || u.hp <= 0) continue;
+    if (dist2(u, pos) <= r2) return true;
+  }
+  for (const st of s.structures) {
+    if (st.team !== "player" || !st.complete) continue;
+    if (dist2(st, pos) <= r2) return true;
+  }
+  for (const pr of s.playerRelays) {
+    if (!pr.built || pr.destroyed) continue;
+    if (dist2(pr, pos) <= r2) return true;
+  }
+  for (const t of s.taps) {
+    if (!t.active) continue;
+    if (dist2(t, pos) <= r2) return true;
+  }
+  return false;
+}
+
+function toggleHoldNear(s: GameState, pos: Vec2): void {
+  const r = 5;
+  const r2 = r * r;
+  let n = 0;
+  for (const u of s.units) {
+    if (u.team !== "player" || u.hp <= 0) continue;
+    if (dist2(u, pos) > r2) continue;
+    u.hold = !u.hold;
+    n++;
+  }
+  s.lastMessage = n > 0 ? `Hold ${n} unit(s) toggled (Alt+click).` : "Alt+click near friendly units to toggle hold.";
+}
+
+function deductCommandCast(s: GameState, cmd: CommandCatalogEntry, slotIdx: number): void {
+  s.flux -= cmd.fluxCost;
+  s.salvage += (cmd.fluxCost * cmd.salvagePctOnCast) / 100;
+  s.doctrineChargesRemaining[slotIdx] = Math.max(0, s.doctrineChargesRemaining[slotIdx]! - 1);
+  if (s.doctrineChargesRemaining[slotIdx]! <= 0) {
+    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * TICK_HZ);
+  }
+  s.pendingPlacementCatalogId = null;
+  s.selectedDoctrineIndex = null;
+  s.matchStats.commandsCast += 1;
 }
 
 function relayBuildCostForSlot(s: GameState, slotIndex: number): number {
@@ -176,6 +234,7 @@ function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
   const def = getCatalogEntry(st.catalogId);
   if (!def || !isStructureEntry(def)) return;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
+  const mult = def.producedDamageVsStructuresMult;
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team: "player",
@@ -191,8 +250,11 @@ function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
     dmgPerTick: stStats.dmgPerTick,
     visualSeed: (Math.random() * 0xffffffff) >>> 0,
     antiClass: def.producedAntiClass,
+    hold: false,
+    damageVsStructuresMult: mult !== undefined && mult !== 1 ? mult : undefined,
   };
   s.units.push(u);
+  s.matchStats.unitsSpawned += 1;
 }
 
 function structureLocalCap(st: StructureRuntime): number {
@@ -237,8 +299,11 @@ function tryPlaceStructure(
     rallyX: pos.x + 12,
     rallyZ: pos.z,
     placementForward,
+    fortifyExpiresAtTick: 0,
+    productionPausedUntilTick: 0,
   };
   s.structures.push(st);
+  s.matchStats.structuresPlaced += 1;
   s.doctrineChargesRemaining[doctrineSlotIndex] = Math.max(0, s.doctrineChargesRemaining[doctrineSlotIndex]! - 1);
   if (s.doctrineChargesRemaining[doctrineSlotIndex]! <= 0) {
     s.doctrineCooldownTicks[doctrineSlotIndex] = Math.round(def.chargeCooldownSeconds * TICK_HZ);
@@ -282,22 +347,109 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     }
     s.pendingPlacementCatalogId = null;
     s.selectedDoctrineIndex = null;
+    s.matchStats.commandsCast += 1;
     s.lastMessage = "Recycle — structure scrapped, Salvage refunded.";
     return;
   }
 
-  s.flux -= cmd.fluxCost;
-  s.salvage += (cmd.fluxCost * cmd.salvagePctOnCast) / 100;
-  s.doctrineChargesRemaining[slotIdx] = Math.max(0, s.doctrineChargesRemaining[slotIdx]! - 1);
-  if (s.doctrineChargesRemaining[slotIdx]! <= 0) {
-    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * TICK_HZ);
+  const needPresence =
+    cmd.effect.type === "fortify_structure" ||
+    cmd.effect.type === "firestorm_aoe" ||
+    cmd.effect.type === "muster_production" ||
+    cmd.effect.type === "shatter_enemy";
+
+  if (needPresence && !friendlyPresenceNear(s, pos, COMMAND_FRIENDLY_PRESENCE_RADIUS)) {
+    s.lastMessage = "Need friendly presence near the target area.";
+    return;
   }
-  s.pendingPlacementCatalogId = null;
-  s.selectedDoctrineIndex = null;
-  s.lastMessage = `${cmd.name} spent (Phase 2 stub — no extra effect yet).`;
+
+  if (cmd.effect.type === "fortify_structure") {
+    const stId = pickPlayerStructure(s, pos);
+    if (stId === null) {
+      s.lastMessage = "Fortify: click one of your structures.";
+      return;
+    }
+    const st = s.structures.find((x) => x.id === stId);
+    if (!st || st.team !== "player" || !st.complete) {
+      s.lastMessage = "Fortify: target must be a completed friendly structure.";
+      return;
+    }
+    deductCommandCast(s, cmd, slotIdx);
+    st.fortifyExpiresAtTick = s.tick + Math.round(FORTIFY_DURATION_SEC * TICK_HZ);
+    s.lastMessage = "Fortify — structure takes reduced damage for 15s.";
+    return;
+  }
+
+  if (cmd.effect.type === "firestorm_aoe") {
+    deductCommandCast(s, cmd, slotIdx);
+    const r2 = FIRESTORM_RADIUS * FIRESTORM_RADIUS;
+    let hit = 0;
+    for (const u of s.units) {
+      if (u.team !== "enemy" || u.hp <= 0) continue;
+      if (dist2(u, pos) > r2) continue;
+      u.hp -= FIRESTORM_DAMAGE_PER_UNIT;
+      hit++;
+    }
+    s.lastMessage = `Firestorm — ${hit} hostile(s) burned.`;
+    return;
+  }
+
+  if (cmd.effect.type === "muster_production") {
+    const stId = pickPlayerStructure(s, pos);
+    if (stId === null) {
+      s.lastMessage = "Muster: click one of your structures.";
+      return;
+    }
+    const st = s.structures.find((x) => x.id === stId);
+    const def = st ? getCatalogEntry(st.catalogId) : null;
+    if (!st || st.team !== "player" || !st.complete || !def || !isStructureEntry(def)) {
+      s.lastMessage = "Muster: target must be a completed friendly production structure.";
+      return;
+    }
+    deductCommandCast(s, cmd, slotIdx);
+    st.productionTicksRemaining = 0;
+    s.lastMessage = "Muster — production ready immediately.";
+    return;
+  }
+
+  if (cmd.effect.type === "shatter_enemy") {
+    const maxR2 = SHATTER_TARGET_RADIUS * SHATTER_TARGET_RADIUS;
+    let best: (typeof s.enemyRelays)[0] | null = null;
+    let bestD = Infinity;
+    for (const er of s.enemyRelays) {
+      if (er.hp <= 0) continue;
+      const d = dist2(pos, er);
+      if (d <= maxR2 && d < bestD) {
+        bestD = d;
+        best = er;
+      }
+    }
+    if (!best) {
+      s.lastMessage = "Shatter: no enemy Relay in range.";
+      return;
+    }
+    deductCommandCast(s, cmd, slotIdx);
+    best.hp -= SHATTER_DAMAGE;
+    for (const st of s.structures) {
+      if (st.team !== "enemy") continue;
+      const d = dist2(pos, st);
+      if (d > maxR2) continue;
+      st.productionPausedUntilTick = s.tick + Math.round(SHATTER_PRODUCTION_PAUSE_SEC * TICK_HZ);
+    }
+    s.lastMessage = "Shatter — enemy Relay hammered.";
+    return;
+  }
+
+  deductCommandCast(s, cmd, slotIdx);
+  s.lastMessage = `${cmd.name} spent (no effect).`;
 }
 
-function handleWorldClick(s: GameState, pos: Vec2, shiftKey: boolean): void {
+function handleWorldClick(s: GameState, pos: Vec2, shiftKey: boolean, altKey: boolean): void {
+  if (altKey) {
+    toggleHoldNear(s, pos);
+    return;
+  }
+
   const tapI = pickNearestTap(s, pos);
   if (tapI !== null && !s.taps[tapI]!.active) {
     tryActivateTap(s, tapI);
@@ -366,14 +518,20 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.pendingPlacementCatalogId = id;
       s.selectedStructureId = null;
       s.lastMessage = e
-        ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast (Recycle = your structure)." : "click map to place."}`
+        ? `Selected ${e.name} — ${
+            isCommandEntry(e)
+              ? "click to cast (Recycle/Fortify/Muster = your structure; Firestorm/Shatter = ground; needs nearby friendlies)."
+              : "click map to place."
+          }`
         : `Selected ${id}`;
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
       s.lastMessage = "Cleared placement selection.";
     } else if (it.type === "try_click_world") {
-      handleWorldClick(s, it.pos, Boolean(it.shiftKey));
+      handleWorldClick(s, it.pos, Boolean(it.shiftKey), Boolean(it.altKey));
+    } else if (it.type === "toggle_hold_at") {
+      toggleHoldNear(s, it.pos);
     }
   }
 }
@@ -423,6 +581,7 @@ function production(s: GameState): void {
     const def = getCatalogEntry(st.catalogId);
     if (!def || !isStructureEntry(def)) continue;
     if (!meetsSignalRequirements(s, def)) continue;
+    if (s.tick < st.productionPausedUntilTick) continue;
 
     st.productionTicksRemaining -= 1;
     if (st.productionTicksRemaining > 0) continue;
@@ -534,6 +693,10 @@ function movement(s: GameState): void {
 
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
+    if (u.hold) {
+      clampToWorld(s, u);
+      continue;
+    }
     const st = s.structures.find((x) => x.id === u.structureId);
     const rally: Vec2 = st ? { x: st.rallyX, z: st.rallyZ } : { x: u.x, z: u.z };
     const detect = Math.max(10, u.range * 3);
@@ -566,11 +729,9 @@ function combat(s: GameState): void {
 
   for (const st of s.structures) {
     if (!st.complete || st.team !== "player") continue;
-    if (st.catalogId !== "root_bunker" && st.catalogId !== "bastion_keep" && st.catalogId !== "dragon_roost")
-      continue;
     const def = getCatalogEntry(st.catalogId);
     if (!def || !isStructureEntry(def) || def.damagePerTick <= 0) continue;
-    const turretRange = 6;
+    const turretRange = def.turretRange ?? 6;
     const r2 = turretRange * turretRange;
     let best: UnitRuntime | null = null;
     let bestD = r2;
@@ -600,6 +761,7 @@ function combat(s: GameState): void {
     if (best) {
       let incoming = u.dmgPerTick * 0.35;
       if (!best.complete && best.placementForward) incoming *= FORWARD_BUILD_INCOMING_DAMAGE_MULT;
+      if (s.tick < best.fortifyExpiresAtTick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
       best.hp -= incoming;
     }
 
@@ -621,9 +783,23 @@ function combat(s: GameState): void {
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
       if (dist2(u, er) <= u.range * u.range) {
-        er.hp -= u.dmgPerTick * 0.5;
+        const mult = u.damageVsStructuresMult ?? 1;
+        er.hp -= u.dmgPerTick * 0.5 * mult;
       }
     }
+  }
+
+  for (const camp of s.map.enemyCamps) {
+    const cur = s.enemyCampCoreHp[camp.id];
+    if (cur === undefined || cur <= 0) continue;
+    if (!s.enemyCampAwake[camp.id]) continue;
+    const r2 = CAMP_CORE_ATTACK_RADIUS * CAMP_CORE_ATTACK_RADIUS;
+    let dmg = 0;
+    for (const u of s.units) {
+      if (u.team !== "player" || u.hp <= 0) continue;
+      if (dist2(u, camp.origin) <= r2) dmg += CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK;
+    }
+    if (dmg > 0) s.enemyCampCoreHp[camp.id] = Math.max(0, cur - dmg);
   }
 }
 
@@ -699,6 +875,39 @@ function wakeCamps(s: GameState): void {
   }
 }
 
+function maybeEnemyReinforcements(s: GameState): void {
+  let anyAwake = false;
+  for (const c of s.map.enemyCamps) {
+    if (s.enemyCampAwake[c.id]) {
+      anyAwake = true;
+      break;
+    }
+  }
+  if (!anyAwake) return;
+  if (s.tick === 0 || s.tick % ENEMY_WAVE_EVERY_TICKS !== 0) return;
+  const alive = s.units.filter((u) => u.team === "enemy" && u.hp > 0).length;
+  if (alive >= ENEMY_WAVE_GLOBAL_CAP) return;
+  const camp = s.map.enemyCamps.find((c) => s.enemyCampAwake[c.id]) ?? s.map.enemyCamps[0];
+  if (!camp) return;
+  const st = unitStatsForCatalog("Swarm");
+  s.units.push({
+    id: s.nextId.unit++,
+    team: "enemy",
+    structureId: null,
+    x: camp.origin.x + (Math.random() - 0.5) * 4,
+    z: camp.origin.z + (Math.random() - 0.5) * 4,
+    hp: st.maxHp,
+    maxHp: st.maxHp,
+    sizeClass: "Swarm",
+    pop: st.pop,
+    speedPerSec: st.speedPerSec,
+    range: st.range,
+    dmgPerTick: st.dmgPerTick,
+    visualSeed: (Math.random() * 0xffffffff) >>> 0,
+    hold: false,
+  });
+}
+
 function loseCheck(s: GameState): void {
   const active = builtPlayerRelayCount(s);
   if (s.playerRelaysEverBuilt > 0 && active === 0) {
@@ -720,9 +929,20 @@ function winCheck(s: GameState): void {
   const relaysDead =
     s.enemyRelays.length > 0 ? s.enemyRelays.every((r) => r.hp <= 0) : false;
   const enemiesDead = !s.units.some((u) => u.team === "enemy" && u.hp > 0);
-  if (relaysDead || enemiesDead) {
+  const hasCoreObjective = s.map.enemyCamps.some(
+    (c) => typeof c.coreMaxHp === "number" && c.coreMaxHp > 0,
+  );
+  const coresDestroyed =
+    hasCoreObjective &&
+    s.map.enemyCamps.every((c) => {
+      if (!(typeof c.coreMaxHp === "number" && c.coreMaxHp > 0)) return true;
+      return (s.enemyCampCoreHp[c.id] ?? 0) <= 0;
+    });
+  if (relaysDead || enemiesDead || coresDestroyed) {
     s.phase = "win";
-    s.lastMessage = relaysDead ? "Victory — enemy Relays eliminated." : "Victory — hostile force routed.";
+    if (relaysDead) s.lastMessage = "Victory — enemy Relays eliminated.";
+    else if (enemiesDead) s.lastMessage = "Victory — hostile force routed.";
+    else s.lastMessage = "Victory — camp core destroyed.";
   }
 }
 
@@ -735,6 +955,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   buildProgress(s);
   production(s);
   wakeCamps(s);
+  maybeEnemyReinforcements(s);
   movement(s);
   combat(s);
   cleanupDead(s);

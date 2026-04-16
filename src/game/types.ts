@@ -30,6 +30,10 @@ export interface EnemyCampDef {
   origin: Vec2;
   aggroRadius: number;
   wakeRadius: number;
+  /** Optional scenario objective: destroy this HP pool at camp origin to help win. */
+  coreMaxHp?: number;
+  /** Initial sleeping defenders spawned near this camp's origin (default 5). */
+  initialUnitCount?: number;
 }
 
 export interface MapData {
@@ -68,10 +72,18 @@ export interface StructureCatalogEntry {
   producedAntiClass?: UnitSizeClass;
   maxCharges: number;
   chargeCooldownSeconds: number;
+  /** If set with damagePerTick > 0, structure fires at enemies in this radius (world units). */
+  turretRange?: number;
+  /** Extra damage multiplier when this structure's units attack enemy structures (e.g. Siege Works). */
+  producedDamageVsStructuresMult?: number;
 }
 
 export type CommandEffect =
   | { type: "recycle_structure" }
+  | { type: "fortify_structure" }
+  | { type: "firestorm_aoe" }
+  | { type: "muster_production" }
+  | { type: "shatter_enemy" }
   | { type: "noop" };
 
 export interface CommandCatalogEntry {

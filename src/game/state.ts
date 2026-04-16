@@ -51,6 +51,10 @@ export interface StructureRuntime {
   rallyZ: number;
   /** True if placed via forward placement (not near Tap/Relay). */
   placementForward: boolean;
+  /** While `s.tick < this`, incoming damage to this structure is reduced (Fortify). 0 = off. */
+  fortifyExpiresAtTick: number;
+  /** While `s.tick < this`, production timer does not advance (Shatter-style). 0 = off. */
+  productionPausedUntilTick: number;
 }
 
 export interface UnitRuntime {
@@ -68,6 +72,16 @@ export interface UnitRuntime {
   dmgPerTick: number;
   visualSeed: number;
   antiClass?: UnitSizeClass;
+  /** If true, unit does not move to chase; still fights in range. */
+  hold: boolean;
+  /** Bonus vs relays / enemy structures (Siege Works). Default applied in combat when unset. */
+  damageVsStructuresMult?: number;
+}
+
+export interface MatchStats {
+  structuresPlaced: number;
+  unitsSpawned: number;
+  commandsCast: number;
 }
 
 export interface GameState {
@@ -93,6 +107,9 @@ export interface GameState {
   playerRelaysEverBuilt: number;
   loseGraceTicksRemaining: number;
   lastMessage: string;
+  /** Per camp id: remaining HP for optional scenario core (see `EnemyCampDef.coreMaxHp`). */
+  enemyCampCoreHp: Record<string, number>;
+  matchStats: MatchStats;
 }
 
 function dist2(a: Vec2, b: Vec2): number {
@@ -208,18 +225,23 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     loseGraceTicksRemaining: 0,
     lastMessage:
       "Pick Doctrine (or defaults), Start. Tap → Relay (Shift+click built Relay to cycle Signal) → place Structures / Commands.",
+    enemyCampCoreHp: {},
+    matchStats: { structuresPlaced: 0, unitsSpawned: 0, commandsCast: 0 },
   };
 
-  const camp = map.enemyCamps[0];
-  if (camp) {
-    const offsets: Vec2[] = [
-      { x: 4, z: 0 },
-      { x: -3, z: 3 },
-      { x: 0, z: -4 },
-      { x: 6, z: 4 },
-      { x: -5, z: -2 },
-    ];
-    for (let i = 0; i < offsets.length; i++) {
+  const offsets: Vec2[] = [
+    { x: 4, z: 0 },
+    { x: -3, z: 3 },
+    { x: 0, z: -4 },
+    { x: 6, z: 4 },
+    { x: -5, z: -2 },
+  ];
+  for (const camp of map.enemyCamps) {
+    if (typeof camp.coreMaxHp === "number" && camp.coreMaxHp > 0) {
+      state.enemyCampCoreHp[camp.id] = camp.coreMaxHp;
+    }
+    const n = Math.min(offsets.length, camp.initialUnitCount ?? 5);
+    for (let i = 0; i < n; i++) {
       const sz: UnitSizeClass = i % 2 === 0 ? "Line" : "Swarm";
       const st = unitStats(sz);
       state.units.push({
@@ -236,6 +258,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
         range: st.range,
         dmgPerTick: st.dmgPerTick,
         visualSeed: (Math.random() * 0xffffffff) >>> 0,
+        hold: false,
       });
     }
   }

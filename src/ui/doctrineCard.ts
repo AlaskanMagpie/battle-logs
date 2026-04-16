@@ -15,8 +15,20 @@ function signalReqLine(e: { requiredRelayTier: number; requiredSignalCounts?: Si
 }
 
 function commandEffectLine(e: CommandCatalogEntry): string {
-  if (e.effect.type === "recycle_structure") return "Click your structure → scrap + Salvage";
-  return "Stub — Flux becomes Salvage";
+  switch (e.effect.type) {
+    case "recycle_structure":
+      return "Click your structure → scrap + Salvage";
+    case "fortify_structure":
+      return "Friendly presence + click structure → 15s damage reduction";
+    case "firestorm_aoe":
+      return "Friendly presence + ground → AoE burn on hostiles";
+    case "muster_production":
+      return "Friendly presence + click structure → instant production pulse";
+    case "shatter_enemy":
+      return "Friendly presence + ground → heavy hit on nearest enemy Relay";
+    default:
+      return "Flux → Salvage (no extra effect)";
+  }
 }
 
 function escapeHtml(s: string): string {
@@ -245,5 +257,5 @@ export function doctrineCardBody(slotIndex: number, catalogId: string | null): s
       </div>
     </div>`;
   }
-  return tcgCardCompactHtml(catalogId, "hud", slotIndex);
+  return tcgCardCompactHtml(catalogId, "picker", slotIndex);
 }

@@ -19,7 +19,16 @@
       "id": "camp_alpha",
       "origin": { "x": 42, "z": 5 },
       "aggroRadius": 14,
-      "wakeRadius": 28
+      "wakeRadius": 28,
+      "coreMaxHp": 420,
+      "initialUnitCount": 5
+    },
+    {
+      "id": "camp_bravo",
+      "origin": { "x": 28, "z": -38 },
+      "aggroRadius": 12,
+      "wakeRadius": 22,
+      "initialUnitCount": 3
     }
   ],
   "decor": []
