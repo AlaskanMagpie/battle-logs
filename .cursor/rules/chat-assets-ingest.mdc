@@ -1,0 +1,18 @@
+---
+description: Copy chat or path-referenced game assets into public/ and sync unit manifest
+alwaysApply: true
+---
+
+# Game assets the user sends in chat (“use these”)
+
+When the user **attaches files**, **@‑mentions paths**, **pastes paths**, or says to **use / apply / wire up** game assets (meshes, textures, GLBs):
+
+1. **Put files in the repo** — Do not stop at “how to use them.” Copy into the correct tree with a shell command (`Copy-Item` on Windows, `cp` on macOS/Linux). Target for unit meshes: `public/assets/units/`. Prefer existing `unit_<uuid>.glb` names from `manifest.json` or from the user’s Meshy folder names; rename only when needed for the loader.
+
+2. **If paths are only inside the chat UI** — There is no binary in the workspace until it is saved. Ask the user to save attachments to **`incoming/`** (repo root) or drag into the file tree, then copy from that path into `public/assets/units/`.
+
+3. **Manifest** — After any add/remove/rename of `*.glb` under `public/assets/units/`, run **`npm run assets:sync-manifest`** so `manifest.json` lists every GLB on disk (the runtime loads from that list).
+
+4. **Git** — `public/assets/units/*.glb` is **Git LFS**. Stage those paths with `git add` as part of the same change.
+
+5. **Textures inside GLBs** — No extra step if textures are embedded in GLB; the existing `glbPool` path is enough once files and manifest are correct.

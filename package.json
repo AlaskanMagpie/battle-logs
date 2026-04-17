@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs"
   },
   "dependencies": {
     "three": "^0.175.0"

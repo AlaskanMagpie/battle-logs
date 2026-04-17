@@ -4,3 +4,7 @@ dist-ts
 public/map.local.json
 .env.local
 *.log
+
+# Stash chat/Download drops here; agent moves to public/assets/units/
+incoming/*
+!incoming/README.md

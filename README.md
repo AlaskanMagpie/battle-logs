@@ -32,7 +32,9 @@ Meshes live under `public/assets/units/` as `unit_<id>.glb` and are tracked with
 - **Default:** GLB art is **on** — each new unit async-loads from `manifest.json` (first paint can take a moment on slow disks).
 - **Cubes only:** add `.env.local` with `VITE_USE_UNIT_GLB=false` and restart the dev server.
 
-`public/assets/units/manifest.json` lists the filenames the loader uses.
+`public/assets/units/manifest.json` lists the filenames the loader uses. After adding or renaming GLBs, run **`npm run assets:sync-manifest`** to regenerate it from every `*.glb` in that folder.
+
+If assets start in chat/Downloads, save them under **`incoming/`** (see `incoming/README.md`) and ask Cursor to copy them into `public/assets/units/` — the project rule **chat-assets-ingest** tells the agent to place files and sync the manifest, not only describe usage.
 
 ## Copy GLBs from Meshy export folders (optional)
 

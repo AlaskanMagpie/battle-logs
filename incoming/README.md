@@ -1,0 +1,1 @@
+Drop assets here when you pull them out of chat or Downloads, then tell Cursor to move them into `public/assets/units/` and run `npm run assets:sync-manifest`. Everything in this folder except this file is gitignored so large drops do not get committed by mistake.
