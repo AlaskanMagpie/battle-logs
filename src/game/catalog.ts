@@ -1,7 +1,34 @@
+import {
+  FIRESTORM_DAMAGE_PER_UNIT,
+  FIRESTORM_RADIUS,
+  FORTIFY_DURATION_SEC,
+  FORTIFY_INCOMING_DAMAGE_MULT,
+  SHATTER_DAMAGE,
+  SHATTER_PRODUCTION_PAUSE_SEC,
+} from "./constants";
 import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
 
 const STRUCTURE_DATA: StructureCatalogEntry[] = [
+  {
+    id: "outpost",
+    name: "Outpost",
+    kind: "structure",
+    fluxCost: 60,
+    buildSeconds: 14,
+    requiredRelayTier: 1,
+    // No requiredSignalCounts — any built relay unlocks this.
+    signalTypes: [],
+    productionSeconds: 18,
+    producedSizeClass: "Line",
+    producedPop: 2,
+    localPopCap: 6,
+    maxHp: 240,
+    damagePerTick: 0,
+    maxCharges: 3,
+    chargeCooldownSeconds: 28,
+    producedFlavor: "Generic garrison (no signal requirement)",
+  },
   {
     id: "watchtower",
     name: "Watchtower",
@@ -82,7 +109,6 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     producedDamageVsStructuresMult: 1.5,
     maxCharges: 2,
     chargeCooldownSeconds: 45,
-    unitTrait: "anti_building",
     producedFlavor: "Heavy rams (ignore 50% building armor)",
   },
   {
@@ -281,7 +307,11 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     salvagePctOnCast: 100,
     maxCharges: 2,
     chargeCooldownSeconds: 40,
-    effect: { type: "buff_structure", damageReductionPct: 50, durationSeconds: 15 },
+    effect: {
+      type: "buff_structure",
+      damageReductionPct: Math.round((1 - FORTIFY_INCOMING_DAMAGE_MULT) * 100),
+      durationSeconds: FORTIFY_DURATION_SEC,
+    },
   },
   {
     id: "firestorm",
@@ -294,7 +324,11 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     salvagePctOnCast: 100,
     maxCharges: 2,
     chargeCooldownSeconds: 45,
-    effect: { type: "aoe_damage", radius: 7, damage: 120 },
+    effect: {
+      type: "aoe_damage",
+      radius: FIRESTORM_RADIUS,
+      damage: FIRESTORM_DAMAGE_PER_UNIT,
+    },
   },
   {
     id: "muster",
@@ -319,7 +353,11 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     salvagePctOnCast: 100,
     maxCharges: 1,
     chargeCooldownSeconds: 55,
-    effect: { type: "shatter_structure", damage: 300, silenceSeconds: 10 },
+    effect: {
+      type: "shatter_structure",
+      damage: SHATTER_DAMAGE,
+      silenceSeconds: SHATTER_PRODUCTION_PAUSE_SEC,
+    },
   },
 ];
 
@@ -337,27 +375,74 @@ export const COMMAND_BY_ID: Record<string, CommandCatalogEntry> = Object.fromEnt
   COMMANDS.map((c) => [c.id, c]),
 );
 
-/** Default 16-slot loadout for first boot / reset. */
+/** Default 16-slot loadout for first boot / reset.
+ *  Ordered so tier-1 cards front-load the hand (slot 0 is the always-playable Outpost);
+ *  tier-2/3 cards are collapsed in the HUD until the player reaches that relay count.
+ */
 export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
+  "outpost",
   "watchtower",
   "root_bunker",
   "menders_hut",
+  "muster",
   "recycle",
+  "fortify",
+  "firestorm",
   "siege_works",
-  "war_camp",
-  "salvage_yard",
-  "raid_nest",
   "bastion_keep",
-  "root_garden",
+  "salvage_yard",
+  "war_camp",
+  "shatter",
   "dragon_roost",
   "ironhold_citadel",
   "reclamation_spire",
-  "fortify",
-  "firestorm",
-  "shatter",
 ];
 
 export function getCatalogEntry(id: string | null | undefined): CatalogEntry | null {
   if (!id) return null;
   return CATALOG_BY_ID[id] ?? null;
+}
+
+/**
+ * Short "drop on X" hint for command cards — used by the drag tooltip and the
+ * compact card caption so players know spells need a target, not empty ground.
+ */
+export function commandTargetingHint(entry: CommandCatalogEntry): string {
+  switch (entry.effect.type) {
+    case "recycle_structure":
+      return "Drop on one of your structures to scrap it.";
+    case "buff_structure":
+      return "Drop on one of your structures to shield it.";
+    case "muster_structure":
+      return "Drop on one of your structures to rush production.";
+    case "shatter_structure":
+      return "Drop on an enemy Relay.";
+    case "aoe_damage":
+      return "Drop near enemy units (needs a friendly nearby).";
+    case "noop":
+      return "Drop anywhere to cast.";
+  }
+}
+
+/** One-word target label for a command (used as a compact card caption). */
+export function commandTargetingLabel(entry: CommandCatalogEntry): string {
+  switch (entry.effect.type) {
+    case "recycle_structure":
+    case "buff_structure":
+    case "muster_structure":
+      return "Your structure";
+    case "shatter_structure":
+      return "Enemy Relay";
+    case "aoe_damage":
+      return "Enemy area";
+    case "noop":
+      return "Anywhere";
+  }
+}
+
+/** Visual / effect radius for rendering a command drag ghost, when meaningful. */
+export function commandEffectRadius(entry: CommandCatalogEntry): number | null {
+  const fx = entry.effect;
+  if (fx.type === "aoe_damage") return fx.radius;
+  return null;
 }

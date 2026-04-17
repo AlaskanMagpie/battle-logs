@@ -5,6 +5,7 @@ import { auras } from "./systems/auras";
 import { combat } from "./systems/combat";
 import { cleanupDead } from "./systems/deaths";
 import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/economy";
+import { heroSystem } from "./systems/hero";
 import { applyPlayerIntents } from "./systems/intents";
 import { buildProgress, production } from "./systems/production";
 import { maybeEnemyReinforcements } from "./systems/waves";
@@ -24,6 +25,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   auras(s);
   wakeCamps(s);
   maybeEnemyReinforcements(s);
+  heroSystem(s);
   movement(s);
   combat(s);
   cleanupDead(s);

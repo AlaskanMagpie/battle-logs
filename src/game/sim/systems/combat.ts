@@ -2,6 +2,7 @@ import {
   ANTI_CLASS_DAMAGE_MULT,
   CAMP_CORE_ATTACK_RADIUS,
   CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
+  FORTIFY_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
 } from "../../constants";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
@@ -25,6 +26,7 @@ function applyUnitDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
 }
 
 export function combat(s: GameState): void {
+  s.lastSiegeHit = null;
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
@@ -66,7 +68,7 @@ export function combat(s: GameState): void {
     if (best) {
       let incoming = u.dmgPerTick * 0.35;
       if (!best.complete && best.placementForward) incoming *= FORWARD_BUILD_INCOMING_DAMAGE_MULT;
-      if (best.damageReductionUntilTick > s.tick) incoming *= 0.5;
+      if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
       best.hp -= incoming;
     }
 
@@ -83,20 +85,23 @@ export function combat(s: GameState): void {
     if (bestRelay) bestRelay.hp -= u.dmgPerTick * 0.45;
   }
 
-  // Player units vs enemy buildings (+50% if anti_building).
+  // Player units vs enemy buildings (+X% if the producing structure flagged producedDamageVsStructuresMult).
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
-    const buildingDmgMult = u.trait === "anti_building" ? 1.5 : 1;
+    const buildingDmgMult = u.damageVsStructuresMult ?? 1;
+    const isSiege = buildingDmgMult > 1;
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
       if (dist2(u, er) <= u.range * u.range) {
         er.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
+        if (isSiege) s.lastSiegeHit = { x: er.x, z: er.z, tick: s.tick };
       }
     }
     for (const st of s.structures) {
       if (st.team !== "enemy") continue;
       if (dist2(u, st) <= u.range * u.range) {
         st.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
+        if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
       }
     }
   }

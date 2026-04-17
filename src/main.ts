@@ -1,8 +1,17 @@
-import { getCatalogEntry } from "./game/catalog";
+import {
+  commandEffectRadius,
+  commandTargetingHint,
+  getCatalogEntry,
+} from "./game/catalog";
 import { TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
 import { loadMapMerged } from "./game/loadMap";
-import { canPlaceStructureHere, createInitialState, type GameState } from "./game/state";
+import {
+  canPlaceStructureHere,
+  createInitialState,
+  placementFailureReason,
+  type GameState,
+} from "./game/state";
 import { advanceTick } from "./game/sim/tick";
 import { GameRenderer } from "./render/scene";
 import { CARD_DETAIL_HOLD_MS, showDoctrineCardDetail } from "./ui/cardDetailPop";
@@ -39,6 +48,46 @@ function releasePointerSafe(el: Element, pointerId: number): void {
 
 /** GLB art on by default; set `VITE_USE_UNIT_GLB=false` to force cubes only. */
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
+
+const DRAG_REASON_ID = "drag-reason";
+
+function ensureDragReasonEl(): HTMLDivElement {
+  let el = document.getElementById(DRAG_REASON_ID) as HTMLDivElement | null;
+  if (!el) {
+    el = document.createElement("div");
+    el.id = DRAG_REASON_ID;
+    el.className = "drag-reason";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function hideDragReason(): void {
+  const el = document.getElementById(DRAG_REASON_ID);
+  if (el) el.remove();
+}
+
+function updateDragReason(
+  clientX: number,
+  clientY: number,
+  text: string,
+  ok: boolean,
+): void {
+  const el = ensureDragReasonEl();
+  el.textContent = text;
+  el.classList.toggle("drag-reason--ok", ok);
+  el.classList.toggle("drag-reason--bad", !ok);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const rect = el.getBoundingClientRect();
+  const w = rect.width || 240;
+  const h = rect.height || 32;
+  let x = clientX + 18;
+  let y = clientY + 22;
+  if (x + w > vw - 8) x = clientX - w - 14;
+  if (y + h > vh - 8) y = clientY - h - 14;
+  el.style.transform = `translate(${Math.max(8, x)}px, ${Math.max(8, y)}px)`;
+}
 
 function wireDoctrineDragToMap(
   canvas: HTMLCanvasElement,
@@ -144,19 +193,69 @@ function wireDoctrineDragToMap(
     if (!session.dragging || !session.ghost) return;
     moveDragGhost(session.ghost, ev.clientX, ev.clientY);
 
+    const entry = getCatalogEntry(session.catalogId);
     const rect = canvas.getBoundingClientRect();
-    if (!pointInRect(ev.clientX, ev.clientY, rect)) {
+    const overCanvas = pointInRect(ev.clientX, ev.clientY, rect);
+    const hit = overCanvas ? renderer.pickGround(ev.clientX, ev.clientY, rect) : null;
+
+    if (!entry) {
       renderer.setPlacementGhost(null, false);
+      renderer.setCommandGhost(null, null, false);
+      updateDragReason(ev.clientX, ev.clientY, "Unknown card.", false);
       return;
     }
-    const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
-    const entry = getCatalogEntry(session.catalogId);
-    if (hit && entry && isStructureEntry(entry)) {
-      const valid = canPlaceStructureHere(st, session.catalogId, hit, session.slotIndex) === null;
+
+    if (isStructureEntry(entry)) {
+      renderer.setCommandGhost(null, null, false);
+      if (!hit) {
+        renderer.setPlacementGhost(null, false);
+        const reason = placementFailureReason(st, session.catalogId, null, session.slotIndex);
+        updateDragReason(
+          ev.clientX,
+          ev.clientY,
+          reason ?? "Drag onto the map to place.",
+          reason === null,
+        );
+        return;
+      }
+      const reason = placementFailureReason(st, session.catalogId, hit, session.slotIndex);
+      const valid = reason === null;
       renderer.setPlacementGhost(hit, valid);
-    } else {
-      renderer.setPlacementGhost(null, false);
+      updateDragReason(
+        ev.clientX,
+        ev.clientY,
+        reason ?? "Ready — release to build.",
+        valid,
+      );
+      return;
     }
+
+    // Command / spell card.
+    renderer.setPlacementGhost(null, false);
+    const radius = commandEffectRadius(entry);
+    if (hit) {
+      renderer.setCommandGhost(hit, radius, true);
+    } else {
+      renderer.setCommandGhost(null, null, false);
+    }
+    const hint = commandTargetingHint(entry);
+    const warnings: string[] = [];
+    const cdTicks = st.doctrineCooldownTicks[session.slotIndex] ?? 0;
+    if (cdTicks > 0) {
+      warnings.push(`On cooldown ${Math.max(1, Math.ceil(cdTicks / TICK_HZ))}s`);
+    }
+    const charges = st.doctrineChargesRemaining[session.slotIndex] ?? 0;
+    if (charges <= 0) warnings.push("No charges");
+    if (st.flux < entry.fluxCost) {
+      warnings.push(`Need ${entry.fluxCost} Flux (have ${Math.floor(st.flux)})`);
+    }
+    const ok = warnings.length === 0;
+    updateDragReason(
+      ev.clientX,
+      ev.clientY,
+      ok ? hint : `${hint} — ${warnings.join(", ")}`,
+      ok,
+    );
   }
 
   function onWinUp(ev: PointerEvent): void {
@@ -177,6 +276,8 @@ function wireDoctrineDragToMap(
     destroyDragGhost(snap.ghost);
     renderer.setControlsEnabled(true);
     renderer.setPlacementGhost(null, false);
+    renderer.setCommandGhost(null, null, false);
+    hideDragReason();
 
     if (getState().phase !== "playing") return;
 
@@ -287,6 +388,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         renderer.setPlacementGhost(null, false);
       }
 
+      renderer.setRelayShiftArmed(relayShiftNextTap);
       renderer.sync(state, USE_GLB);
       renderer.render();
       updateHud(state);
@@ -338,12 +440,30 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       consumeRelayShiftChord,
     );
 
+    let rightHold: { pointerId: number; lastMs: number } | null = null;
+
+    canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       if (state.phase !== "playing") return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
+
+      // Right-click (button 2) or middle-click moves the hero.
+      if (ev.button === 2 || ev.button === 1) {
+        ev.preventDefault();
+        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z });
+        rightHold = { pointerId: ev.pointerId, lastMs: performance.now() };
+        try {
+          canvas.setPointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
       const shift = consumeRelayShiftChord() || ev.shiftKey;
       pendingIntents.push({
         type: "try_click_world",
@@ -353,7 +473,32 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       });
     });
 
+    canvas.addEventListener("pointerup", (ev) => {
+      if (rightHold && ev.pointerId === rightHold.pointerId) {
+        rightHold = null;
+        try {
+          if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+    canvas.addEventListener("pointercancel", (ev) => {
+      if (rightHold && ev.pointerId === rightHold.pointerId) rightHold = null;
+    });
+
     canvas.addEventListener("pointermove", (ev) => {
+      if (rightHold && ev.pointerId === rightHold.pointerId) {
+        const now = performance.now();
+        if (now - rightHold.lastMs >= 80) {
+          rightHold.lastMs = now;
+          const rectM = canvas.getBoundingClientRect();
+          const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
+          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z });
+        }
+        return;
+      }
+
       if (doctrineDragRef.active) return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
