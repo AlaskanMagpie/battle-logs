@@ -3,10 +3,13 @@ import { GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   builtPlayerRelayCount,
-  meetsSignalRequirements,
+  placementFailureReason,
+  relayTierSatisfied,
+  signalCountsSatisfied,
   totalPlayerPop,
   type GameState,
 } from "../game/state";
+import { isStructureEntry } from "../game/types";
 import type { SignalType } from "../game/types";
 import { doctrineCardBody } from "./doctrineCard";
 
@@ -58,6 +61,28 @@ function enemyCount(state: GameState): number {
   return state.units.filter((u) => u.team === "enemy" && u.hp > 0).length;
 }
 
+function computeObjective(state: GameState): string {
+  const claimedNodes = state.taps.filter((t) => t.active && t.ownerTeam === "player").length;
+  const builtRelays = builtPlayerRelayCount(state);
+  const playerStructs = state.structures.filter((s) => s.team === "player");
+  const playerUnits = state.units.filter((u) => u.team === "player" && u.hp > 0);
+
+  if (claimedNodes === 0) return "Claim a node — walk onto the nearest grey ring and stand still.";
+  if (builtRelays === 0) return "Build your first Relay (click a blue pillar slot).";
+  if (playerStructs.length === 0) return "Drag a tower card into your cyan territory to build it.";
+  if (playerUnits.length === 0) {
+    const producing = playerStructs.find((st) => st.complete);
+    if (producing) {
+      const def = getCatalogEntry(producing.catalogId);
+      const secs = Math.max(0, Math.ceil(producing.productionTicksRemaining / TICK_HZ));
+      const name = def && isStructureEntry(def) ? def.name : "Tower";
+      return `Waiting on first production — ${name} in ${secs}s.`;
+    }
+    return "Waiting for your tower to finish building…";
+  }
+  return "Push toward the red Relay. Right-click there and your units will follow.";
+}
+
 function campCoreSummary(state: GameState): string {
   const bits: string[] = [];
   for (const c of state.map.enemyCamps) {
@@ -80,6 +105,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       <div>Mode: <strong id="mode">idle</strong></div>
     </div>
     <div class="hud-readout" id="hud-readout"></div>
+    <div class="hud-hero-hp" id="hud-hero-hp">Hero: <span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
+    <div class="hud-objective" id="hud-objective" hidden><b>Objective</b><span id="hud-objective-text"></span></div>
+    <div class="hud-grace" id="hud-grace" hidden>Defeat in <strong id="hud-grace-secs">0</strong>s</div>
+    <div class="hud-select-tag" id="hud-select-tag" hidden></div>
     <div class="hud-phase" id="phase">playing</div>
     <div class="hud-msg" id="msg"></div>
     <div class="hud-actions">
@@ -182,7 +211,14 @@ export function updateHud(state: GameState): void {
   const msg = document.querySelector("#msg");
   if (flux) flux.textContent = String(Math.floor(state.flux));
   if (salvage) salvage.textContent = String(Math.floor(state.salvage));
-  if (pop) pop.textContent = String(totalPlayerPop(state));
+  const popVal = totalPlayerPop(state);
+  if (pop) {
+    pop.textContent = String(popVal);
+    const near = popVal >= GLOBAL_POP_CAP - 4;
+    const full = popVal >= GLOBAL_POP_CAP;
+    pop.classList.toggle("cap-warn", near && !full);
+    pop.classList.toggle("cap-full", full);
+  }
   if (relays) relays.textContent = String(builtPlayerRelayCount(state));
   if (mode) {
     mode.textContent = state.pendingRelaySignalSlot !== null
@@ -196,12 +232,68 @@ export function updateHud(state: GameState): void {
   if (phase) phase.textContent = `${state.phase} · tick ${state.tick}`;
   if (msg) msg.textContent = state.lastMessage;
 
+  const grace = document.querySelector<HTMLElement>("#hud-grace");
+  const graceSecs = document.querySelector<HTMLElement>("#hud-grace-secs");
+  if (grace && graceSecs) {
+    if (state.loseGraceTicksRemaining > 0) {
+      const secs = Math.max(1, Math.ceil(state.loseGraceTicksRemaining / TICK_HZ));
+      graceSecs.textContent = String(secs);
+      grace.hidden = false;
+    } else {
+      grace.hidden = true;
+    }
+  }
+
+  const selTag = document.querySelector<HTMLElement>("#hud-select-tag");
+  if (selTag) {
+    let label = "";
+    if (state.pendingRelaySignalSlot !== null) {
+      label = `Relay slot ${state.pendingRelaySignalSlot + 1}: choose Signal`;
+    } else if (state.pendingPlacementCatalogId) {
+      const e = getCatalogEntry(state.pendingPlacementCatalogId);
+      if (e) label = `Selected: ${e.name}`;
+    } else if (state.selectedStructureId !== null) {
+      const st = state.structures.find((x) => x.id === state.selectedStructureId);
+      if (st) {
+        const e = getCatalogEntry(st.catalogId);
+        label = `Selected: ${e?.name ?? "Structure"} · ${st.holdOrders ? "Hold" : "Rally"}`;
+      }
+    }
+    if (label) {
+      selTag.textContent = label;
+      selTag.hidden = false;
+    } else {
+      selTag.hidden = true;
+    }
+  }
+
   const readout = document.querySelector("#hud-readout");
   if (readout) {
     const coreLine = campCoreSummary(state);
     readout.innerHTML = `${relayHpSummary(state)} · Hostiles: <strong>${enemyCount(state)}</strong>${
       coreLine ? ` · ${coreLine}` : ""
     }`;
+  }
+
+  const objWrap = document.querySelector<HTMLElement>("#hud-objective");
+  const objText = document.querySelector<HTMLElement>("#hud-objective-text");
+  if (objWrap && objText) {
+    if (state.phase === "playing") {
+      objText.textContent = ` ${computeObjective(state)}`;
+      objWrap.hidden = false;
+    } else {
+      objWrap.hidden = true;
+    }
+  }
+
+  const heroHp = document.querySelector<HTMLElement>("#hud-hero-hp");
+  const heroHpFill = document.querySelector<HTMLElement>("#hud-hero-hp-fill");
+  const heroHpVal = document.querySelector<HTMLElement>("#hud-hero-hp-val");
+  if (heroHp && heroHpFill && heroHpVal) {
+    const frac = state.hero.maxHp > 0 ? state.hero.hp / state.hero.maxHp : 0;
+    const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
+    heroHpFill.style.width = `${pct}%`;
+    heroHpVal.textContent = `${pct}%`;
   }
 
   const ordersBtn = document.querySelector<HTMLButtonElement>("#btn-orders");
@@ -229,6 +321,8 @@ export function updateHud(state: GameState): void {
   if (end && endTitle && endStats) {
     if (state.phase === "playing") {
       end.hidden = true;
+      endTitle.textContent = "Match over";
+      endStats.innerHTML = "";
     } else {
       end.hidden = false;
       endTitle.textContent = state.phase === "win" ? "Victory" : "Defeat";
@@ -263,7 +357,7 @@ export function updateHud(state: GameState): void {
   }
 
   buttons.forEach((b, i) => {
-    b.classList.remove("slot-empty", "slot-ready", "slot-locked", "slot-sigwarn", "disabled", "slot--hand-collapsed", "slot--hand-pull");
+    b.classList.remove("slot-empty", "slot-ready", "slot-locked", "slot-sigwarn", "slot-await-infra", "disabled", "slot--hand-collapsed", "slot--hand-pull");
     const id = state.doctrineSlotCatalogIds[i] ?? null;
     const live = document.querySelector(`#slot-live-${i}`);
 
@@ -289,26 +383,32 @@ export function updateHud(state: GameState): void {
     const cd = state.doctrineCooldownTicks[i] ?? 0;
     const ch = state.doctrineChargesRemaining[i] ?? 0;
     const locked = cd > 0 || ch <= 0;
-    const sigOk = meetsSignalRequirements(state, e);
+    const tierOk = relayTierSatisfied(state, e);
+    const sigOk = tierOk && signalCountsSatisfied(state, e);
     if (locked) b.classList.add("slot-locked");
+    else if (!tierOk) b.classList.add("slot-await-infra");
     else if (!sigOk) b.classList.add("slot-sigwarn");
     else b.classList.add("slot-ready");
+
+    // Hide higher-tier cards until the player reaches that relay count, so the
+    // early-game hand compacts to tier-1 + whatever the current relay count
+    // unlocks. Tier-1 cards stay visible even at 0 relays so the player can
+    // see what they're about to unlock with their first Relay.
+    const relaysBuilt = builtPlayerRelayCount(state);
+    const collapseThreshold = Math.max(1, relaysBuilt);
+    if (e.requiredRelayTier > collapseThreshold) b.classList.add("slot--hand-collapsed");
 
     if (live) {
       const parts: string[] = [];
       parts.push(`Charges <b>${ch}</b>`);
       if (cd > 0) parts.push(`CD <b>${(cd / TICK_HZ).toFixed(1)}s</b>`);
-      if (!sigOk) parts.push(`<span class="live-warn">Signals locked</span>`);
+      if (!tierOk) parts.push(`<span class="live-info">Needs Relay ${e.requiredRelayTier}</span>`);
+      else if (!sigOk) parts.push(`<span class="live-warn">Adjust Relay signals</span>`);
       live.innerHTML = parts.join(" · ");
     }
 
-    b.title = locked
-      ? cd > 0
-        ? `Cooldown (${cd} ticks) — cannot play yet.`
-        : "No charges — cannot play yet."
-      : !sigOk
-        ? "Relay / signal requirements not met — card is readable but play will fail until infrastructure matches."
-        : "Ready — drag to the map to place / cast, or tap once to arm then tap the map.";
+    const reason = placementFailureReason(state, id, null, i);
+    b.title = reason ?? "Ready — drag onto the map to place / cast, or tap once to arm then tap the map.";
   });
 
   let seenFilled = false;

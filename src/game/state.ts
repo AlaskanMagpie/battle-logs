@@ -1,9 +1,17 @@
 import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import {
+  ENEMY_RELAY_MAX_HP,
   FORWARD_PLACE_RADIUS,
+  HERO_FOLLOW_RADIUS,
+  HERO_MAX_HP,
+  HERO_SPEED,
   INFRA_PLACE_RADIUS,
+  PLAYER_RELAY_MAX_HP,
   PLAYER_STARTING_FLUX,
+  TERRITORY_RADIUS,
+  TICK_HZ,
 } from "./constants";
+import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   CatalogEntry,
   MapData,
@@ -15,12 +23,47 @@ import type {
 } from "./types";
 import { isStructureEntry } from "./types";
 
+export type CastFxKind =
+  | "firestorm"
+  | "shatter"
+  | "fortify"
+  | "muster"
+  | "recycle"
+  | "claim"
+  | "lightning";
+
+export interface CastFxEvent {
+  kind: CastFxKind;
+  x: number;
+  z: number;
+  tick: number;
+}
+
 export interface TapRuntime {
   defId: string;
   x: number;
   z: number;
   active: boolean;
   yieldRemaining: number;
+  /** Ownership: "player" once the hero claims, unset otherwise. */
+  ownerTeam?: TeamId;
+}
+
+export interface HeroRuntime {
+  x: number;
+  z: number;
+  /** Move target in world; null when idle. */
+  targetX: number | null;
+  targetZ: number | null;
+  speedPerSec: number;
+  /** Follow-aura pickup radius. */
+  radius: number;
+  /** Index into state.taps currently being claimed, or null. */
+  claimChannelTarget: number | null;
+  claimChannelTicksRemaining: number;
+  hp: number;
+  maxHp: number;
+  facing: number;
 }
 
 export interface PlayerRelayRuntime {
@@ -136,6 +179,12 @@ export interface GameState {
   stats: MatchStats;
   /** Per camp id: remaining HP for optional scenario core (see `EnemyCampDef.coreMaxHp`). */
   enemyCampCoreHp: Record<string, number>;
+  /** Most recent spell cast event; renderer consumes and clears each sync. */
+  lastFx: CastFxEvent | null;
+  /** One-shot flag: at least one player unit dealt bonus damage to an enemy building this tick. Set by combat.ts, consumed by renderer. */
+  lastSiegeHit: { x: number; z: number; tick: number } | null;
+  /** Player-controlled hero. */
+  hero: HeroRuntime;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -160,25 +209,6 @@ function dist2(a: Vec2, b: Vec2): number {
   return dx * dx + dz * dz;
 }
 
-function unitStats(size: UnitSizeClass): {
-  maxHp: number;
-  speedPerSec: number;
-  range: number;
-  dmgPerTick: number;
-  pop: number;
-} {
-  switch (size) {
-    case "Swarm":
-      return { maxHp: 28, speedPerSec: 9, range: 7, dmgPerTick: 0.55, pop: 4 };
-    case "Line":
-      return { maxHp: 55, speedPerSec: 6, range: 2.2, dmgPerTick: 0.45, pop: 2 };
-    case "Heavy":
-      return { maxHp: 140, speedPerSec: 4, range: 2.8, dmgPerTick: 0.95, pop: 4 };
-    case "Titan":
-      return { maxHp: 420, speedPerSec: 3, range: 5, dmgPerTick: 1.8, pop: 8 };
-  }
-}
-
 export function playerRelaySignalCounts(s: GameState): Record<SignalType, number> {
   const c: Record<SignalType, number> = { Vanguard: 0, Bastion: 0, Reclaim: 0 };
   for (const pr of s.playerRelays) {
@@ -188,8 +218,11 @@ export function playerRelaySignalCounts(s: GameState): Record<SignalType, number
   return c;
 }
 
-export function meetsSignalRequirements(s: GameState, entry: CatalogEntry): boolean {
-  if (builtPlayerRelayCount(s) < entry.requiredRelayTier) return false;
+export function relayTierSatisfied(s: GameState, entry: CatalogEntry): boolean {
+  return builtPlayerRelayCount(s) >= entry.requiredRelayTier;
+}
+
+export function signalCountsSatisfied(s: GameState, entry: CatalogEntry): boolean {
   const req = entry.requiredSignalCounts;
   if (!req) return true;
   const have = playerRelaySignalCounts(s);
@@ -199,6 +232,10 @@ export function meetsSignalRequirements(s: GameState, entry: CatalogEntry): bool
     if ((have[k] ?? 0) < need) return false;
   }
   return true;
+}
+
+export function meetsSignalRequirements(s: GameState, entry: CatalogEntry): boolean {
+  return relayTierSatisfied(s, entry) && signalCountsSatisfied(s, entry);
 }
 
 function initDoctrineRuntime(slots: (string | null)[]): { charges: number[]; cd: number[] } {
@@ -223,6 +260,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: t.z,
     active: false,
     yieldRemaining: 0,
+    ownerTeam: undefined,
   }));
 
   const playerRelays: PlayerRelayRuntime[] = map.playerRelaySlots.map((r) => ({
@@ -232,7 +270,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     built: false,
     destroyed: false,
     hp: 0,
-    maxHp: 260,
+    maxHp: PLAYER_RELAY_MAX_HP,
     signalTypes: [] as SignalType[],
   }));
 
@@ -240,13 +278,28 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     defId: r.id,
     x: r.x,
     z: r.z,
-    hp: 520,
-    maxHp: 520,
+    hp: ENEMY_RELAY_MAX_HP,
+    maxHp: ENEMY_RELAY_MAX_HP,
     silencedUntilTick: 0,
   }));
 
   const hpMult = map.difficulty?.enemyHpMult ?? 1;
   const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
+
+  const heroSpawn = map.playerRelaySlots[0] ?? map.playerStart ?? { x: 0, z: 0 };
+  const hero: HeroRuntime = {
+    x: heroSpawn.x,
+    z: heroSpawn.z,
+    targetX: null,
+    targetZ: null,
+    speedPerSec: HERO_SPEED,
+    radius: HERO_FOLLOW_RADIUS,
+    claimChannelTarget: null,
+    claimChannelTicksRemaining: 0,
+    hp: HERO_MAX_HP,
+    maxHp: HERO_MAX_HP,
+    facing: 0,
+  };
 
   const state: GameState = {
     map,
@@ -284,6 +337,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       enemyUnitsSpawned: 0,
     },
     enemyCampCoreHp: {},
+    lastFx: null,
+    lastSiegeHit: null,
+    hero,
   };
 
   const defaultOffsets: Vec2[] = [
@@ -302,8 +358,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       offset: o,
     }));
     for (const r of roster) {
-      const base = unitStats(r.sizeClass);
-      const hp = Math.round(base.maxHp * hpMult);
+      const base = unitStatsForCatalog(r.sizeClass);
+      const hp = Math.max(1, Math.round(base.maxHp * hpMult));
       state.units.push({
         id: state.nextId.unit++,
         team: "enemy",
@@ -369,6 +425,32 @@ export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
+/** Territory = union of `TERRITORY_RADIUS` around built player relays and claimed (player-owned) taps. */
+export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
+  const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
+  for (const pr of s.playerRelays) {
+    if (!pr.built || pr.destroyed) continue;
+    if (dist2(pos, pr) <= r2) return true;
+  }
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "player") continue;
+    if (dist2(pos, t) <= r2) return true;
+  }
+  return false;
+}
+
+/** Current list of positions feeding the territory union (relays + claimed taps). */
+export function territorySources(s: GameState): Vec2[] {
+  const out: Vec2[] = [];
+  for (const pr of s.playerRelays) {
+    if (pr.built && !pr.destroyed) out.push({ x: pr.x, z: pr.z });
+  }
+  for (const t of s.taps) {
+    if (t.active && t.ownerTeam === "player") out.push({ x: t.x, z: t.z });
+  }
+  return out;
+}
+
 /**
  * War Camp aura: safe_deploy_radius extends "near infra" (safe placement) around
  * its own position so new structures don't suffer forward-placement penalties.
@@ -423,9 +505,67 @@ export function canPlaceStructureHere(
   if (slotErr) return slotErr;
   if (s.flux < entry.fluxCost) return "Not enough Flux.";
   if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy (aggro).";
-  const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
-  const fwd = nearFriendlyForward(s, pos);
-  if (!infra && !fwd) return "Must place near Tap/Relay, War Camp aura, or forward near a friendly unit/structure.";
+  if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
+    return "Must place inside your territory (cyan area). Claim more nodes to expand.";
+  }
+  return null;
+}
+
+/**
+ * Specific, player-facing explanation of why a tower cannot be placed right now
+ * at `pos`. Mirrors `canPlaceStructureHere` gate order but returns a targeted
+ * sentence per failing gate (tier count, signal gap, flux deficit, territory).
+ * Returns `null` when the placement is valid — callers should treat that as
+ * "Ready to build". Pass `pos=null` for gate checks that don't need a world
+ * position (hand-card locked state).
+ */
+export function placementFailureReason(
+  s: GameState,
+  catalogId: string,
+  pos: Vec2 | null,
+  slotIndex: number,
+): string | null {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry) return "Unknown card.";
+
+  const cdTicks = s.doctrineCooldownTicks[slotIndex] ?? 0;
+  if (cdTicks > 0) {
+    const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
+    return `Card on cooldown (${secs}s).`;
+  }
+  const charges = s.doctrineChargesRemaining[slotIndex] ?? 0;
+  if (charges <= 0) return "No charges remaining.";
+
+  const relays = builtPlayerRelayCount(s);
+  if (relays < entry.requiredRelayTier) {
+    return `Requires ${entry.requiredRelayTier} Relay${entry.requiredRelayTier === 1 ? "" : "s"} built (you have ${relays}).`;
+  }
+
+  const req = entry.requiredSignalCounts;
+  if (req) {
+    const have = playerRelaySignalCounts(s);
+    const gaps: string[] = [];
+    for (const k of Object.keys(req) as SignalType[]) {
+      const need = req[k] ?? 0;
+      const got = have[k] ?? 0;
+      if (got < need) gaps.push(`${need - got} ${k}`);
+    }
+    if (gaps.length > 0) return `Needs Relay signal: ${gaps.join(", ")}.`;
+  }
+
+  if (s.flux < entry.fluxCost) {
+    return `Need ${entry.fluxCost} Flux (have ${Math.floor(s.flux)}).`;
+  }
+
+  // Position-dependent gates apply to structures only. Commands resolve their
+  // targeting at cast time (handled by commandTargetingHint / intent).
+  if (isStructureEntry(entry) && pos) {
+    if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy — can't build here.";
+    if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
+      return "Outside your territory — claim more nodes to expand the cyan area.";
+    }
+  }
+
   return null;
 }
 

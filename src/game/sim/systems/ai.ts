@@ -1,4 +1,4 @@
-import { TICK_HZ } from "../../constants";
+import { HERO_FOLLOW_RADIUS, TICK_HZ } from "../../constants";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
 import type { Vec2 } from "../../types";
 import { dist2 } from "./helpers";
@@ -87,20 +87,65 @@ export function movement(s: GameState): void {
     }
   }
 
+  const hero = s.hero;
+  const heroR2 = HERO_FOLLOW_RADIUS * HERO_FOLLOW_RADIUS;
+
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     const st = s.structures.find((x) => x.id === u.structureId);
-    const rally: Vec2 = st ? { x: st.rallyX, z: st.rallyZ } : { x: u.x, z: u.z };
     const hold = st?.holdOrders ?? false;
     const detect = Math.max(10, u.range * 3);
     const foe = nearestEnemyUnit(s, u, detect * detect);
+
     if (foe && dist2(u, foe) > u.range * u.range) {
       moveToward(u, foe, u.speedPerSec * stepScale);
-    } else if (!foe && !hold) {
-      moveToward(u, rally, u.speedPerSec * stepScale);
+      clampToWorld(s, u);
+      continue;
     }
+    if (foe) {
+      clampToWorld(s, u);
+      continue;
+    }
+    if (hold) {
+      clampToWorld(s, u);
+      continue;
+    }
+
+    // Fallthrough: follow hero (in range) → structure rally (if explicitly set) → push lane.
+    const near = dist2(u, hero) <= heroR2;
+    let target: Vec2;
+    if (near) {
+      target = { x: hero.x, z: hero.z };
+    } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
+      target = { x: st.rallyX, z: st.rallyZ };
+    } else {
+      target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
+    }
+    moveToward(u, target, u.speedPerSec * stepScale);
     clampToWorld(s, u);
   }
+}
+
+function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bestD = Infinity;
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    const d = dist2(from, er);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: er.x, z: er.z };
+    }
+  }
+  if (best) return best;
+  for (const camp of s.map.enemyCamps) {
+    const d = dist2(from, camp.origin);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: camp.origin.x, z: camp.origin.z };
+    }
+  }
+  return best;
 }
 
 export function wakeCamps(s: GameState): void {

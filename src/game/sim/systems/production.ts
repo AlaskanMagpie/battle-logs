@@ -36,6 +36,7 @@ export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
     trait: def.unitTrait,
     aoeRadius: def.unitAoeRadius,
     flying: def.unitFlying,
+    damageVsStructuresMult: def.producedDamageVsStructuresMult ?? 1,
     signal: dominantSignal(def),
   };
   s.units.push(u);
@@ -70,15 +71,22 @@ export function production(s: GameState): void {
     const global = totalPlayerPop(s);
     const defPop = unitStatsForCatalog(def.producedSizeClass).pop;
     if (local + defPop > localCap) {
+      if (st.productionTicksRemaining <= 0) {
+        s.lastMessage = `${def.name}: local pop cap reached (waiting…).`;
+      }
       st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
       continue;
     }
     if (global + defPop > GLOBAL_POP_CAP) {
+      if (st.productionTicksRemaining <= 0) {
+        s.lastMessage = `Global pop cap reached (${GLOBAL_POP_CAP}). Free a slot to resume production.`;
+      }
       st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
       continue;
     }
 
     spawnPlayerUnit(s, st);
+    s.lastMessage = `${def.name} produced a ${def.producedSizeClass}.`;
     st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
   }
 }

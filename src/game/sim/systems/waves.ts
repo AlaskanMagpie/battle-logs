@@ -18,7 +18,7 @@ export function maybeEnemyReinforcements(s: GameState): void {
   const hpMult = s.map.difficulty?.enemyHpMult ?? 1;
   const dmgMult = s.map.difficulty?.enemyDmgMult ?? 1;
   const st = unitStatsForCatalog("Swarm");
-  const hp = Math.round(st.maxHp * hpMult);
+  const hp = Math.max(1, Math.round(st.maxHp * hpMult));
   s.units.push({
     id: s.nextId.unit++,
     team: "enemy",

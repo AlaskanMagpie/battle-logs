@@ -14,6 +14,9 @@ export const FORWARD_PLACE_RADIUS = 8;
 export const RELAY_COSTS_FLUX = [0, 120, 200, 250] as const;
 export const RELAY_REBUILD_COST = 80;
 
+export const PLAYER_RELAY_MAX_HP = 260;
+export const ENEMY_RELAY_MAX_HP = 520;
+
 export const GLOBAL_POP_CAP = 80;
 
 /** Enough for Tap (80) + first Relay (0) + one Tier-1 structure in one beat (playtest pacing). */
@@ -61,3 +64,14 @@ export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.45;
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
 export const ENEMY_WAVE_EVERY_TICKS = 18 * TICK_HZ;
 export const ENEMY_WAVE_GLOBAL_CAP = 22;
+
+/** Player-controlled hero. */
+export const HERO_SPEED = 11;
+export const HERO_FOLLOW_RADIUS = 14;
+export const HERO_CLAIM_RADIUS = 4;
+export const HERO_CLAIM_CHANNEL_SEC = 2;
+export const HERO_CLAIM_FLUX_FEE = 20;
+export const HERO_MAX_HP = 500;
+
+/** Territory: union of radii around built player relays + claimed player taps. */
+export const TERRITORY_RADIUS = 16;

@@ -6,4 +6,7 @@ export type PlayerIntent =
   | { type: "try_click_world"; pos: Vec2; shiftKey?: boolean; altKey?: boolean }
   | { type: "confirm_relay_signal"; signal: SignalType }
   | { type: "cancel_relay_signal" }
-  | { type: "toggle_structure_orders"; structureId: number };
+  | { type: "toggle_structure_orders"; structureId: number }
+  | { type: "hero_move"; x: number; z: number }
+  | { type: "hero_claim" }
+  | { type: "hero_cancel_claim" };

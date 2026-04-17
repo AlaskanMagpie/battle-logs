@@ -71,7 +71,7 @@ export interface StructureAura {
   value: number;
 }
 
-export type UnitTrait = "lifesteal" | "anti_building";
+export type UnitTrait = "lifesteal";
 
 export interface StructureCatalogEntry {
   id: string;

@@ -1,4 +1,4 @@
-import { getCatalogEntry } from "../game/catalog";
+import { commandTargetingLabel, getCatalogEntry } from "../game/catalog";
 import type { CatalogEntry, CommandCatalogEntry, SignalCountRequirement, SignalType, StructureCatalogEntry } from "../game/types";
 import { isCommandEntry, isStructureEntry } from "../game/types";
 
@@ -70,12 +70,28 @@ function escapeHtml(s: string): string {
 
 /**
  * Hue derived from the card's dominant Signal (Vanguard / Bastion / Reclaim) so
- * frame + art palette match the 3D silhouette. Falls back to a stable per-id
- * hue for odd cases (empty signals, unknown).
+ * frame + art palette match the 3D silhouette. Command cards get a shifted
+ * warm magenta/purple hue so they stand out from structures even when they
+ * share a signal tag. Falls back to a stable per-id hue for odd cases.
  */
 export function catalogCardHue(catalogId: string): number {
   const e = getCatalogEntry(catalogId);
   if (e) {
+    if (isCommandEntry(e)) {
+      // Warm magenta/violet range based on signal so different spells still
+      // read as distinct from each other without being confused with towers.
+      const dom = dominantSignalFromEntry(e);
+      switch (dom) {
+        case "Vanguard":
+          return 340;
+        case "Bastion":
+          return 290;
+        case "Reclaim":
+          return 310;
+        default:
+          return 320;
+      }
+    }
     const dom = dominantSignalFromEntry(e);
     if (dom) return signalHue(dom);
   }
@@ -124,7 +140,13 @@ function auraLabel(e: StructureCatalogEntry): string | null {
 function traitLabel(e: StructureCatalogEntry): string | null {
   const bits: string[] = [];
   if (e.unitTrait === "lifesteal") bits.push("Unit: lifesteal");
-  else if (e.unitTrait === "anti_building") bits.push("Unit: +50% vs buildings");
+  if (
+    typeof e.producedDamageVsStructuresMult === "number" &&
+    e.producedDamageVsStructuresMult > 1
+  ) {
+    const pct = Math.round((e.producedDamageVsStructuresMult - 1) * 100);
+    bits.push(`Unit: +${pct}% vs enemy structures`);
+  }
   if (e.unitAoeRadius) bits.push(`Unit: AoE r${e.unitAoeRadius}`);
   if (e.unitFlying) bits.push("Unit: flying");
   if (e.salvageRefundFrac && e.salvageRefundFrac > 0.8) {
@@ -251,7 +273,8 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
   }
   const hue = catalogCardHue(catalogId);
   const cmd = isCommandEntry(e);
-  const classLine = cmd ? "Command" : e.producedSizeClass;
+  const classLine = cmd ? "Spell" : e.producedSizeClass;
+  const targetCaption = cmd ? `Drop on: ${commandTargetingLabel(e as CommandCatalogEntry)}` : "";
   const pipTl = `R${e.requiredRelayTier}`;
   const pipTr = String(e.fluxCost);
   const pipBl = `⚡${e.maxCharges}`;
@@ -262,10 +285,12 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
     deckSlotIndex != null
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
+  const spellBadge = cmd ? `<div class="tcg-badge tcg-badge--spell" aria-label="Spell card">SPELL</div>` : "";
 
   return `<div class="tcg tcg--compact doctrine-card-compact ${cmd ? "tcg--command" : "tcg--structure"}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="tcg-frame">
     ${deckNo}
+    ${spellBadge}
     <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
     <div class="tcg-pip tcg-pip-tr" title="Flux cost">${escapeHtml(pipTr)}</div>
     <div class="tcg-pip tcg-pip-bl" title="Charges per match">${escapeHtml(pipBl)}</div>
@@ -275,6 +300,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
       <span class="tcg-name">${escapeHtml(e.name)}</span>
     </div>
     <div class="tcg-class-line">${escapeHtml(classLine)}</div>
+    ${targetCaption ? `<div class="tcg-target-line" title="Spell target">${escapeHtml(targetCaption)}</div>` : ""}
   </div>
 </div>`;
 }
@@ -307,9 +333,12 @@ export function tcgCardFullHtml(catalogId: string, variant: TcgCardVariant, deck
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
 
+  const spellBadge = cmd ? `<div class="tcg-badge tcg-badge--spell" aria-label="Spell card">SPELL</div>` : "";
+
   return `<div class="tcg tcg--full ${cmd ? "tcg--command" : "tcg--structure"} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="tcg-frame">
     ${deckNo}
+    ${spellBadge}
     ${sigEdge}
     <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
     <div class="tcg-pip tcg-pip-tr" title="Flux cost">${escapeHtml(pipTr)}</div>

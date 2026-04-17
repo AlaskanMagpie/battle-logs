@@ -1,10 +1,21 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { UnitSizeClass } from "../game/types";
 
 let manifest: string[] | null = null;
 const loader = new GLTFLoader();
 /** Cached *template* roots (never added to scene). */
 const cache = new Map<string, THREE.Object3D>();
+
+/** Stable class → manifest index mapping so each unit class always looks the same.
+ *  Swarm=0, Line=1, Heavy=2, Titan=3, hero=4. Falls back modulo manifest length. */
+const CLASS_INDEX: Record<UnitSizeClass | "hero", number> = {
+  Swarm: 0,
+  Line: 1,
+  Heavy: 2,
+  Titan: 3,
+  hero: 4,
+};
 
 export function hashStringToSeed(s: string): number {
   let h = 2166136261 >>> 0;
@@ -31,6 +42,12 @@ async function loadManifest(): Promise<string[]> {
 function pickFile(seed: number, files: string[]): string | null {
   if (!files.length) return null;
   return files[seed % files.length] ?? null;
+}
+
+function pickFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
+  if (!files.length) return null;
+  const idx = CLASS_INDEX[kind] ?? 0;
+  return files[idx % files.length] ?? files[0] ?? null;
 }
 
 function setShadowRecursive(root: THREE.Object3D, cast: boolean, receive: boolean): void {
@@ -62,18 +79,17 @@ export function setGlbOpacity(group: THREE.Group, opacity: number): void {
   if (glb) setOpacityRecursive(glb, opacity);
 }
 
-/**
- * Loads a Meshy GLB from `/assets/units/` (manifest), scales to `targetMaxExtent`,
- * grounds + centers on XZ, hides the placeholder cube, and parents the model under the same group.
- */
-export async function attachGlbFromManifest(
-  seed: number,
+type AttachGlbOpts = {
+  /** If set, hide this object (from `parent.userData[key]`) after a successful load. */
+  hideSilhouetteUserDataKey?: string;
+};
+
+async function attachGlbByFile(
+  file: string,
   placeholder: THREE.Mesh,
   targetMaxExtent: number,
+  opts?: AttachGlbOpts,
 ): Promise<void> {
-  const files = await loadManifest();
-  const file = pickFile(seed, files);
-  if (!file) return;
   const url = `/assets/units/${file}`;
   const parent = placeholder.parent as THREE.Group | null;
   if (!parent) return;
@@ -101,9 +117,20 @@ export async function attachGlbFromManifest(
     inst.position.z = -(b2.min.z + b2.max.z) / 2;
     inst.position.y = -b2.min.y;
 
+    inst.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) m.userData["skipBuildOpacity"] = true;
+    });
+
     placeholder.visible = false;
     parent.add(inst);
     parent.userData["glbRoot"] = inst;
+
+    const hideKey = opts?.hideSilhouetteUserDataKey;
+    if (hideKey) {
+      const silo = parent.userData[hideKey] as THREE.Object3D | undefined;
+      if (silo) silo.visible = false;
+    }
   } catch {
     placeholder.visible = true;
   } finally {
@@ -111,7 +138,89 @@ export async function attachGlbFromManifest(
   }
 }
 
-/** Default unit scale target for GLB swap (world units). */
+/** Legacy seed-based API (kept for compatibility). */
+export async function attachGlbFromManifest(
+  seed: number,
+  placeholder: THREE.Mesh,
+  targetMaxExtent: number,
+): Promise<void> {
+  const files = await loadManifest();
+  const file = pickFile(seed, files);
+  if (!file) return;
+  await attachGlbByFile(file, placeholder, targetMaxExtent);
+}
+
+/** Stable, class-to-file GLB swap. */
+export async function attachGlbForClass(
+  kind: UnitSizeClass | "hero",
+  placeholder: THREE.Mesh,
+  targetMaxExtent: number,
+): Promise<void> {
+  const files = await loadManifest();
+  const file = pickFileForClass(kind, files);
+  if (!file) return;
+  await attachGlbByFile(file, placeholder, targetMaxExtent);
+}
+
+/** Default per-class target extent (world units). Kept in scale with procedural silhouettes. */
+export async function requestGlbForUnit(
+  kind: UnitSizeClass,
+  placeholder: THREE.Mesh,
+): Promise<void> {
+  const extent = kind === "Swarm" ? 1.4 : kind === "Line" ? 1.9 : kind === "Heavy" ? 2.6 : 3.4;
+  await attachGlbForClass(kind, placeholder, extent);
+}
+
+export async function requestGlbForHero(placeholder: THREE.Mesh): Promise<void> {
+  await attachGlbForClass("hero", placeholder, 3.0);
+}
+
+/** Line unit default max extent in `requestGlbForUnit` — towers scale relative to this. */
+const UNIT_EXTENT_LINE = 1.9;
+
+/** Player towers: GLB is normalized so max axis ≈ this (≥ 4× Line unit silhouette). */
+export const TOWER_GLB_TARGET_EXTENT = UNIT_EXTENT_LINE * 4;
+
+/**
+ * First 10 structure catalog ids map 1:1 to `manifest.json` `files[0..9]` once the
+ * log-tower GLBs are present under `public/assets/units/`. Any other structure id
+ * picks a file by stable hash modulo length.
+ */
+const TOWER_GLB_MANIFEST_ORDER = [
+  "outpost",
+  "watchtower",
+  "root_bunker",
+  "menders_hut",
+  "siege_works",
+  "bastion_keep",
+  "salvage_yard",
+  "war_camp",
+  "dragon_roost",
+  "ironhold_citadel",
+] as const;
+
+function towerManifestIndex(catalogId: string): number {
+  const i = (TOWER_GLB_MANIFEST_ORDER as readonly string[]).indexOf(catalogId);
+  if (i >= 0) return i;
+  return hashStringToSeed(catalogId) % TOWER_GLB_MANIFEST_ORDER.length;
+}
+
+function pickTowerFile(catalogId: string, files: string[]): string | null {
+  if (!files.length) return null;
+  return files[towerManifestIndex(catalogId) % files.length] ?? null;
+}
+
+/** Load tower art from the same unit manifest; hides procedural silhouette on success. */
+export async function requestGlbForTower(catalogId: string, placeholder: THREE.Mesh): Promise<void> {
+  const files = await loadManifest();
+  const file = pickTowerFile(catalogId, files);
+  if (!file) return;
+  await attachGlbByFile(file, placeholder, TOWER_GLB_TARGET_EXTENT, {
+    hideSilhouetteUserDataKey: "structureSilhouette",
+  });
+}
+
+/** Back-compat: route seeded calls to the class API (callers should prefer requestGlbForUnit). */
 export async function requestGlbForSeed(seed: number, placeholder: THREE.Mesh): Promise<void> {
   await attachGlbFromManifest(seed, placeholder, 2.35);
 }

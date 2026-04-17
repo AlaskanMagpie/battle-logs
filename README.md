@@ -13,10 +13,14 @@ Open the dev URL (e.g. `http://localhost:2222/` if using the project Vite port).
 
 ## Controls (Phase 1)
 
-1. **Activate Tap** — click a grey ring (costs **80 Flux**). Green ring = active; grey ring when yield depleted.
-2. **Build Relay** — click a short grey pillar near your start (**slot 1 is free**, then costs match the PRD table; **80 Flux** rebuild after destruction).
-3. **Doctrine** — click slots **1–3** (Watchtower / Root Bunker / Mender’s Hut), then click the ground **near an active Tap or built Relay** to place.
-4. **Rally** — click one of your structures, then click the ground to set its rally point (new units path toward it while fighting).
+You play the **blue hero** directly.
+
+1. **Move** — **right-click** ground to move. **Hold right-click** to follow the cursor (MOBA-style).
+2. **Claim a Node** — walk onto a grey ring and **stand still**. After a short channel (costs **20 Flux**) it becomes a green, player-owned node that adds **+1 Flux/sec** and expands your cyan **territory**.
+3. **Build a Relay** — left-click a blue pillar slot (**slot 1 is free**, then scaling costs; **80 Flux** rebuild after destruction) and pick a **Signal** (Vanguard / Bastion / Reclaim).
+4. **Build Towers** — **drag a Doctrine card** from the hand onto the ground *inside your cyan territory*. Towers auto-produce units.
+5. **Unit AI** — units push the nearest enemy Relay by default, but **follow the hero** when inside `HERO_FOLLOW_RADIUS`. **Alt+click** a tower to toggle **Hold** on its units.
+6. **Rally** — left-click one of your towers, then left-click ground to set its rally.
 
 **Win:** destroy the **enemy Relay** (red pillar) or wipe the **enemy camp**.  
 **Lose:** lose all your Relays for **10s** grace (see HUD tick), then defeat.
@@ -29,10 +33,10 @@ Copy `public/map.json` → `public/map.local.json` (same shape) and edit positio
 
 Your starter GLBs are **very large** (~50–140MB each). They live under `public/assets/units/` as `unit_<id>.glb` (gitignored by `*.glb`).
 
-- **Default:** units render as **scaled cubes** (fast, stable).
-- **Optional GLB swap:** create `.env.local` with `VITE_USE_UNIT_GLB=true`, restart dev server. Each new unit will **async-load** a random manifest entry (first load can take a while).
+- **Default:** units render with your Meshy GLBs (stable per-class mapping — Swarm/Line/Heavy/Titan/hero always resolve to the same file).
+- **To force procedural cubes:** set `VITE_USE_UNIT_GLB=false` in `.env.local` and restart.
 
-`public/assets/units/manifest.json` lists the filenames the loader tries.
+`public/assets/units/manifest.json` lists the filenames. The first five entries are used for, in order: `Swarm`, `Line`, `Heavy`, `Titan`, `hero`.
 
 ## Copy GLBs into the repo (after clone)
 
