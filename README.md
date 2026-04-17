@@ -27,16 +27,16 @@ Copy `public/map.json` → `public/map.local.json` (same shape) and edit positio
 
 ## Unit GLBs (Meshy exports)
 
-Your starter GLBs are **very large** (~50–140MB each). They live under `public/assets/units/` as `unit_<id>.glb` (gitignored by `*.glb`).
+Meshes live under `public/assets/units/` as `unit_<id>.glb` and are tracked with **Git LFS**. After a fresh clone, run **`git lfs pull`** if models are missing (some GUIs fetch LFS automatically).
 
-- **Default:** units render as **scaled cubes** (fast, stable).
-- **Optional GLB swap:** create `.env.local` with `VITE_USE_UNIT_GLB=true`, restart dev server. Each new unit will **async-load** a random manifest entry (first load can take a while).
+- **Default:** GLB art is **on** — each new unit async-loads from `manifest.json` (first paint can take a moment on slow disks).
+- **Cubes only:** add `.env.local` with `VITE_USE_UNIT_GLB=false` and restart the dev server.
 
-`public/assets/units/manifest.json` lists the filenames the loader tries.
+`public/assets/units/manifest.json` lists the filenames the loader uses.
 
-## Copy GLBs into the repo (after clone)
+## Copy GLBs from Meshy export folders (optional)
 
-From PowerShell (adjust source path):
+Use this when you have Meshy output on disk and want to refresh `public/assets/units/` (filenames must still match `manifest.json`, or update the manifest). From PowerShell (adjust source path):
 
 ```powershell
 $base = "C:\path\to\Meshy_AI_assets_...\..."
