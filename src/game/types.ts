@@ -43,6 +43,26 @@ export interface MapDifficulty {
   enemyDmgMult: number;
 }
 
+export type MapDecorDef =
+  | {
+    kind: "box";
+    x: number;
+    z: number;
+    w: number;
+    h: number;
+    d: number;
+    rotYDeg?: number;
+    color?: number;
+  }
+  | {
+    kind: "cylinder";
+    x: number;
+    z: number;
+    radius: number;
+    h: number;
+    color?: number;
+  };
+
 export interface MapData {
   version: number;
   world: { halfExtents: number; groundY: number };
@@ -52,7 +72,7 @@ export interface MapData {
   playerStart: Vec2;
   enemyCamps: EnemyCampDef[];
   difficulty?: MapDifficulty;
-  decor?: unknown[];
+  decor?: MapDecorDef[];
 }
 
 /** Minimum built relays of each signal type (count relays whose `signalTypes` includes that type). */

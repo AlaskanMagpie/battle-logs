@@ -6,8 +6,10 @@ import {
 import { TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
 import { loadMapMerged } from "./game/loadMap";
+import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
 import {
   canPlaceStructureHere,
+  canUseDoctrineSlot,
   createInitialState,
   placementFailureReason,
   type GameState,
@@ -31,6 +33,15 @@ import { isStructureEntry } from "./game/types";
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
 const pickerRoot = document.querySelector<HTMLElement>("#doctrine-picker")!;
+
+function bindReplayDebugGlobals(getReplay: () => ReplayCapture): void {
+  const w = window as Window & {
+    __signalWarsReplay?: ReplayCapture;
+    __signalWarsReplayJson?: () => string;
+  };
+  w.__signalWarsReplay = getReplay();
+  w.__signalWarsReplayJson = () => JSON.stringify(getReplay());
+}
 
 function viewportCssSize(): { w: number; h: number } {
   const vv = window.visualViewport;
@@ -338,6 +349,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
   void (async () => {
     const map = await loadMapMerged();
     let state: GameState = createInitialState(map, initialDoctrine);
+    let replay = createReplayCapture(state, map);
 
     const renderer = new GameRenderer(canvas);
     const resize = (): void => {
@@ -380,7 +392,9 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       while (acc >= 1 / TICK_HZ) {
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
+        const tickBefore = state.tick;
         advanceTick(state, chunk);
+        captureReplayTick(replay, tickBefore, chunk, state);
         acc -= 1 / TICK_HZ;
       }
 
@@ -400,6 +414,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       cancelAnimationFrame(rafId);
       pendingIntents.length = 0;
       state = createInitialState(map, initialDoctrine);
+      replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
       acc = 0;
       last = performance.now();
@@ -506,21 +521,35 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       const slot = state.selectedDoctrineIndex;
       if (!pending || slot === null || !hit) {
         renderer.setPlacementGhost(null, false);
+        renderer.setCommandGhost(null, null, false);
         return;
       }
       const entry = getCatalogEntry(pending);
-      if (!entry || !isStructureEntry(entry)) {
+      if (!entry) {
         renderer.setPlacementGhost(null, false);
+        renderer.setCommandGhost(null, null, false);
         return;
       }
+      if (!isStructureEntry(entry)) {
+        renderer.setPlacementGhost(null, false);
+        const slotErr = canUseDoctrineSlot(state, slot);
+        const valid = !slotErr && state.flux >= entry.fluxCost;
+        renderer.setCommandGhost(hit, commandEffectRadius(entry), valid);
+        return;
+      }
+      renderer.setCommandGhost(null, null, false);
       const valid = canPlaceStructureHere(state, pending, hit, slot) === null;
       renderer.setPlacementGhost(hit, valid);
     });
 
     canvas.addEventListener("pointerleave", () => {
-      if (!doctrineDragRef.active) renderer.setPlacementGhost(null, false);
+      if (!doctrineDragRef.active) {
+        renderer.setPlacementGhost(null, false);
+        renderer.setCommandGhost(null, null, false);
+      }
     });
 
+    bindReplayDebugGlobals(() => replay);
     rafId = requestAnimationFrame(tick);
   })().catch((e) => {
     // eslint-disable-next-line no-console

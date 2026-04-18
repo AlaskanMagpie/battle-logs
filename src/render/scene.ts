@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { getCatalogEntry } from "../game/catalog";
 import { HERO_CLAIM_CHANNEL_SEC, TAP_YIELD_MAX, TERRITORY_RADIUS, TICK_HZ } from "../game/constants";
+import { unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
   signalColorHex,
@@ -315,6 +316,7 @@ export class GameRenderer {
   private readonly root = new THREE.Group();
   private readonly markers = new THREE.Group();
   private readonly entities = new THREE.Group();
+  private readonly decor = new THREE.Group();
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -340,8 +342,13 @@ export class GameRenderer {
   private coreOrbs = new Map<string, THREE.Mesh>();
   /** Selected structure's blue halo + rally line + flag. */
   private selectHalo: THREE.Mesh | null = null;
+  private attackRangeRing: THREE.Mesh | null = null;
+  private auraRangeRing: THREE.Mesh | null = null;
   private rallyLine: THREE.Line | null = null;
   private rallyFlag: THREE.Mesh | null = null;
+  private campAggroRings = new Map<string, THREE.Mesh>();
+  private campWakeRings = new Map<string, THREE.Mesh>();
+  private decorBuilt = false;
 
   private ghost: THREE.Mesh | null = null;
   private cmdGhost: THREE.Mesh | null = null;
@@ -394,7 +401,7 @@ export class GameRenderer {
     this.scene.add(this.grid);
 
     this.territoryGroup.name = "territory";
-    this.root.add(this.markers, this.entities, this.territoryGroup);
+    this.root.add(this.decor, this.markers, this.entities, this.territoryGroup);
     this.scene.add(this.root);
 
     this.fx = createFxHost(this.scene);
@@ -446,6 +453,7 @@ export class GameRenderer {
   sync(state: GameState, useGlb: boolean): void {
     this.currentState = state;
     this.useGlb = useGlb;
+    this.syncMapDecor(state);
     this.syncTerritory(state);
     this.syncMarkers(state);
     this.syncStructures(state);
@@ -659,6 +667,7 @@ export class GameRenderer {
 
   private syncMarkers(state: GameState): void {
     this.syncTaps(state);
+    this.syncCampZones(state);
 
     const relayPairs: {
       id: string;
@@ -784,6 +793,63 @@ export class GameRenderer {
     }
   }
 
+  private syncCampZones(state: GameState): void {
+    const alive = new Set(state.map.enemyCamps.map((c) => c.id));
+    for (const [id, ring] of this.campAggroRings) {
+      if (!alive.has(id)) {
+        this.markers.remove(ring);
+        this.disposeObject(ring);
+        this.campAggroRings.delete(id);
+      }
+    }
+    for (const [id, ring] of this.campWakeRings) {
+      if (!alive.has(id)) {
+        this.markers.remove(ring);
+        this.disposeObject(ring);
+        this.campWakeRings.delete(id);
+      }
+    }
+    for (const camp of state.map.enemyCamps) {
+      let aggro = this.campAggroRings.get(camp.id);
+      if (!aggro) {
+        aggro = new THREE.Mesh(
+          new THREE.RingGeometry(Math.max(0.1, camp.aggroRadius - 0.3), camp.aggroRadius, 64),
+          new THREE.MeshBasicMaterial({
+            color: 0xff6a6a,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+          }),
+        );
+        aggro.rotation.x = -Math.PI / 2;
+        this.markers.add(aggro);
+        this.campAggroRings.set(camp.id, aggro);
+      }
+      aggro.position.set(camp.origin.x, 0.045, camp.origin.z);
+      aggro.visible = true;
+
+      let wake = this.campWakeRings.get(camp.id);
+      if (!wake) {
+        wake = new THREE.Mesh(
+          new THREE.RingGeometry(Math.max(0.1, camp.wakeRadius - 0.2), camp.wakeRadius, 80),
+          new THREE.MeshBasicMaterial({
+            color: 0xffb3a3,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.1,
+            depthWrite: false,
+          }),
+        );
+        wake.rotation.x = -Math.PI / 2;
+        this.markers.add(wake);
+        this.campWakeRings.set(camp.id, wake);
+      }
+      wake.position.set(camp.origin.x, 0.04, camp.origin.z);
+      wake.visible = true;
+    }
+  }
+
   private disposeObject(obj: THREE.Object3D): void {
     obj.traverse((c) => {
       if (c instanceof THREE.Mesh) {
@@ -896,6 +962,63 @@ export class GameRenderer {
       }
       this.selectHalo.position.set(st.x, 0.04, st.z);
       this.selectHalo.visible = true;
+      const entry = getCatalogEntry(st.catalogId);
+      const structEntry = entry && isStructureEntry(entry) ? entry : null;
+      if (structEntry) {
+        const attackRange = unitStatsForCatalog(structEntry.producedSizeClass).range;
+        if (!this.attackRangeRing) {
+          this.attackRangeRing = new THREE.Mesh(
+            new THREE.RingGeometry(Math.max(0.2, attackRange - 0.15), attackRange, 56),
+            new THREE.MeshBasicMaterial({
+              color: 0x7ec8ff,
+              side: THREE.DoubleSide,
+              transparent: true,
+              opacity: 0.28,
+              depthWrite: false,
+            }),
+          );
+          this.attackRangeRing.rotation.x = -Math.PI / 2;
+          this.markers.add(this.attackRangeRing);
+        }
+        this.attackRangeRing.geometry.dispose();
+        this.attackRangeRing.geometry = new THREE.RingGeometry(
+          Math.max(0.2, attackRange - 0.15),
+          attackRange,
+          56,
+        );
+        this.attackRangeRing.position.set(st.x, 0.05, st.z);
+        this.attackRangeRing.visible = true;
+
+        if (structEntry.aura && structEntry.aura.radius > 0) {
+          if (!this.auraRangeRing) {
+            this.auraRangeRing = new THREE.Mesh(
+              new THREE.RingGeometry(1.5, 1.8, 56),
+              new THREE.MeshBasicMaterial({
+                color: 0x6affc7,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.24,
+                depthWrite: false,
+              }),
+            );
+            this.auraRangeRing.rotation.x = -Math.PI / 2;
+            this.markers.add(this.auraRangeRing);
+          }
+          this.auraRangeRing.geometry.dispose();
+          this.auraRangeRing.geometry = new THREE.RingGeometry(
+            Math.max(0.2, structEntry.aura.radius - 0.2),
+            structEntry.aura.radius,
+            64,
+          );
+          this.auraRangeRing.position.set(st.x, 0.055, st.z);
+          this.auraRangeRing.visible = true;
+        } else if (this.auraRangeRing) {
+          this.auraRangeRing.visible = false;
+        }
+      } else {
+        if (this.attackRangeRing) this.attackRangeRing.visible = false;
+        if (this.auraRangeRing) this.auraRangeRing.visible = false;
+      }
 
       if (!st.holdOrders && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
         if (!this.rallyLine) {
@@ -940,8 +1063,44 @@ export class GameRenderer {
       }
     } else {
       if (this.selectHalo) this.selectHalo.visible = false;
+      if (this.attackRangeRing) this.attackRangeRing.visible = false;
+      if (this.auraRangeRing) this.auraRangeRing.visible = false;
       if (this.rallyLine) this.rallyLine.visible = false;
       if (this.rallyFlag) this.rallyFlag.visible = false;
+    }
+  }
+
+  private syncMapDecor(state: GameState): void {
+    if (this.decorBuilt) return;
+    this.decorBuilt = true;
+    for (const d of state.map.decor ?? []) {
+      let mesh: THREE.Mesh | null = null;
+      if (d.kind === "box") {
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(d.w, d.h, d.d),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x3a4657,
+            roughness: 0.9,
+            metalness: 0.04,
+          }),
+        );
+        mesh.position.set(d.x, d.h / 2, d.z);
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+      } else if (d.kind === "cylinder") {
+        mesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(d.radius, d.radius, d.h, 18),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x4a4d5f,
+            roughness: 0.85,
+            metalness: 0.05,
+          }),
+        );
+        mesh.position.set(d.x, d.h / 2, d.z);
+      }
+      if (!mesh) continue;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.decor.add(mesh);
     }
   }
 
