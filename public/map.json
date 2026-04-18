@@ -68,5 +68,10 @@
     }
   ],
   "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
-  "decor": []
+  "decor": [
+    { "kind": "box", "x": 8, "z": 6, "w": 6, "h": 3, "d": 4, "rotYDeg": 18, "color": 3555407 },
+    { "kind": "box", "x": 18, "z": -8, "w": 4, "h": 2.6, "d": 7, "rotYDeg": -24, "color": 3294550 },
+    { "kind": "cylinder", "x": 40, "z": 12, "radius": 2.2, "h": 3.5, "color": 4342851 },
+    { "kind": "cylinder", "x": 50, "z": -2, "radius": 2.8, "h": 4.2, "color": 3750979 }
+  ]
 }
