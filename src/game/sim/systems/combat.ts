@@ -27,6 +27,7 @@ function applyUnitDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
 
 export function combat(s: GameState): void {
   s.lastSiegeHit = null;
+  if (s.phase === "setup") return;
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
@@ -52,7 +53,7 @@ export function combat(s: GameState): void {
     }
   }
 
-  // Enemy → player structures / relays.
+  // Enemy → player structures (Keep is just another player structure).
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     let best: StructureRuntime | null = null;
@@ -71,18 +72,26 @@ export function combat(s: GameState): void {
       if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
       best.hp -= incoming;
     }
+  }
 
-    let bestRelay: (typeof s.playerRelays)[0] | null = null;
-    let bestRd = 2.2 * 2.2;
-    for (const pr of s.playerRelays) {
-      if (!pr.built || pr.destroyed) continue;
-      const d = dist2(u, pr);
-      if (d <= bestRd) {
-        bestRd = d;
-        bestRelay = pr;
-      }
+  // Enemy units ↦ Wizard hero (melee-range chip damage).
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (s.hero.hp <= 0) break;
+    const dx = u.x - s.hero.x;
+    const dz = u.z - s.hero.z;
+    if (dx * dx + dz * dz <= 2.2 * 2.2) {
+      s.hero.hp = Math.max(0, s.hero.hp - u.dmgPerTick * 0.4);
     }
-    if (bestRelay) bestRelay.hp -= u.dmgPerTick * 0.45;
+  }
+
+  // Player units ↦ rival Wizard (same range check as unit-vs-unit).
+  for (const u of s.units) {
+    if (u.team !== "player" || u.hp <= 0) continue;
+    if (s.enemyHero.hp <= 0) break;
+    if (dist2(u, s.enemyHero) <= u.range * u.range) {
+      s.enemyHero.hp = Math.max(0, s.enemyHero.hp - u.dmgPerTick);
+    }
   }
 
   // Player units vs enemy buildings (+X% if the producing structure flagged producedDamageVsStructuresMult).

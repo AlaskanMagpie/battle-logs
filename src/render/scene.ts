@@ -1,10 +1,16 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { getCatalogEntry } from "../game/catalog";
-import { HERO_CLAIM_CHANNEL_SEC, TAP_YIELD_MAX, TERRITORY_RADIUS, TICK_HZ } from "../game/constants";
+import {
+  HERO_CLAIM_CHANNEL_SEC,
+  TAP_YIELD_MAX,
+  TERRITORY_RADIUS,
+  TICK_HZ,
+} from "../game/constants";
 import { unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
+  findKeep,
   signalColorHex,
   territorySources,
   type GameState,
@@ -53,6 +59,76 @@ function hsl(hex: number, dl: number): THREE.Color {
 
 function matFor(color: number, roughness = 0.82, metalness = 0.08): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+/** Builds a reusable CanvasTexture-backed Sprite for floating world-space labels.
+ *  Canvas is 256x72 at 2x DPR so text stays crisp when scaled to ~6 world units wide. */
+interface LabelSprite {
+  sprite: THREE.Sprite;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+  lastText: string;
+  lastAccent: string;
+}
+
+function makeLabelSprite(initialText: string, accent = "#6ae1ff"): LabelSprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 144;
+  const ctx = canvas.getContext("2d")!;
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.renderOrder = 999;
+  // 8 world units wide, ~2.25 tall keeps legibility without dwarfing pillars.
+  sprite.scale.set(8, 2.25, 1);
+  const ls: LabelSprite = { sprite, canvas, ctx, texture, lastText: "", lastAccent: "" };
+  drawLabel(ls, initialText, accent);
+  return ls;
+}
+
+function drawLabel(label: LabelSprite, text: string, accent: string): void {
+  if (label.lastText === text && label.lastAccent === accent) return;
+  label.lastText = text;
+  label.lastAccent = accent;
+  const { ctx, canvas } = label;
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const r = 28;
+  ctx.beginPath();
+  ctx.moveTo(r, 8);
+  ctx.lineTo(W - r, 8);
+  ctx.quadraticCurveTo(W - 8, 8, W - 8, r + 8);
+  ctx.lineTo(W - 8, H - r - 8);
+  ctx.quadraticCurveTo(W - 8, H - 8, W - r, H - 8);
+  ctx.lineTo(r, H - 8);
+  ctx.quadraticCurveTo(8, H - 8, 8, H - r - 8);
+  ctx.lineTo(8, r + 8);
+  ctx.quadraticCurveTo(8, 8, r, 8);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(6, 10, 18, 0.82)";
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = accent;
+  ctx.stroke();
+  ctx.font = "bold 54px system-ui, -apple-system, Segoe UI, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#f4fbff";
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 6;
+  ctx.fillText(text, W / 2, H / 2 + 2);
+  ctx.shadowBlur = 0;
+  label.texture.needsUpdate = true;
 }
 
 function addVanguardSilhouette(
@@ -312,7 +388,7 @@ export class GameRenderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   private readonly ground: THREE.Mesh;
-  private readonly grid: THREE.GridHelper;
+  private grid: THREE.GridHelper;
   private readonly root = new THREE.Group();
   private readonly markers = new THREE.Group();
   private readonly entities = new THREE.Group();
@@ -325,17 +401,24 @@ export class GameRenderer {
   private tapMeshes = new Map<string, THREE.Mesh>();
   private tapYieldArcs = new Map<string, THREE.Mesh>();
   private tapClaimArcs = new Map<string, THREE.Mesh>();
+  /** Floating "Stand to claim" / "Depleted" label sprites keyed by tap defId. */
+  private tapLabels = new Map<string, LabelSprite>();
+  /** "Next node" highlight ring on the nearest unclaimed tap to the hero. */
+  private nearestTapRing: THREE.Mesh | null = null;
   private territoryGroup = new THREE.Group();
   private territoryMeshes: THREE.Mesh[] = [];
   private territoryKey = "";
   private heroGroup: THREE.Group | null = null;
   private heroHpBarBg: THREE.Mesh | null = null;
   private heroHpBarFg: THREE.Mesh | null = null;
+  private enemyHeroGroup: THREE.Group | null = null;
+  private enemyHeroHpBarBg: THREE.Mesh | null = null;
+  private enemyHeroHpBarFg: THREE.Mesh | null = null;
+  /** Per enemy-relay (Dark Fortress) id → marker cylinder. */
   private relayMeshes = new Map<string, THREE.Mesh>();
-  /** Per player-relay slot: cyan pulsing ring shown while relay-shift is armed. */
-  private relayShiftRings = new Map<string, THREE.Mesh>();
-  /** Per destroyed player-relay slot: red pulsing lose-grace ring. */
-  private graceRings = new Map<string, THREE.Mesh>();
+  /** Wizard-Keep marker (violet ring + HP arc on the ground). */
+  private keepRing: THREE.Mesh | null = null;
+  private keepHpArc: THREE.Mesh | null = null;
   /** Per structure: hold-orders floating red cube. */
   private holdCubes = new Map<number, THREE.Mesh>();
   /** Per enemy camp id: HP orb. */
@@ -358,8 +441,13 @@ export class GameRenderer {
   private readonly fx: FxHost;
   private lastFxTick = -1;
   private lastSiegeTick = -1;
-  private relayShiftArmed = false;
   private currentState: GameState | null = null;
+  private worldPlaneHalf = 0;
+  private readonly unitPrevHp = new Map<number, number>();
+  private readonly structurePrevHp = new Map<number, number>();
+  private readonly relayPrevHp = new Map<string, number>();
+  /** Seconds of forward lunge after a wizard strike FX. */
+  private heroLungeTimer = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -381,12 +469,12 @@ export class GameRenderer {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.00025;
     const sc = sun.shadow.camera as THREE.OrthographicCamera;
-    sc.left = -140;
-    sc.right = 140;
-    sc.top = 140;
-    sc.bottom = -140;
+    sc.left = -220;
+    sc.right = 220;
+    sc.top = 220;
+    sc.bottom = -220;
     sc.near = 10;
-    sc.far = 320;
+    sc.far = 520;
     sc.updateProjectionMatrix();
     this.scene.add(sun);
 
@@ -418,15 +506,14 @@ export class GameRenderer {
     this.controls.zoomSpeed = 0.82;
     this.controls.rotateSpeed = 0.42;
     this.controls.panSpeed = 0.58;
-    this.controls.enableRotate = false;
-
-    const win = canvas.ownerDocument.defaultView ?? window;
-    win.addEventListener("keydown", (ev: KeyboardEvent) => {
-      if (ev.altKey) this.controls.enableRotate = true;
-    });
-    win.addEventListener("keyup", (ev: KeyboardEvent) => {
-      if (!ev.altKey) this.controls.enableRotate = false;
-    });
+    this.controls.enableRotate = true;
+    this.controls.enablePan = false;
+    // Middle = orbit; left/right disabled so LMB/RMB go to the game (RMB move on canvas).
+    (this.controls as unknown as { mouseButtons: { LEFT: number; MIDDLE: number; RIGHT: number } }).mouseButtons = {
+      LEFT: -1,
+      MIDDLE: 0,
+      RIGHT: -1,
+    };
   }
 
   setSize(w: number, h: number): void {
@@ -453,12 +540,15 @@ export class GameRenderer {
   sync(state: GameState, useGlb: boolean): void {
     this.currentState = state;
     this.useGlb = useGlb;
+    this.syncWorldPlane(state);
     this.syncMapDecor(state);
     this.syncTerritory(state);
     this.syncMarkers(state);
+    this.syncKeepMarker(state);
     this.syncStructures(state);
     this.syncUnits(state);
     this.syncHero(state);
+    this.syncEnemyHero(state);
     this.syncHoldCubes(state);
     this.syncSelectionAndRally(state);
     this.syncCoreOrbs(state);
@@ -467,14 +557,11 @@ export class GameRenderer {
 
   private useGlb = false;
 
-  setRelayShiftArmed(armed: boolean): void {
-    this.relayShiftArmed = armed;
-  }
-
   private consumeCastEvents(state: GameState): void {
     const fxEvt = state.lastFx;
     if (fxEvt && fxEvt.tick !== this.lastFxTick) {
       spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z });
+      if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
       this.lastFxTick = fxEvt.tick;
     }
     const siege = state.lastSiegeHit;
@@ -567,6 +654,24 @@ export class GameRenderer {
 
   private syncTaps(state: GameState): void {
     const hero = state.hero;
+
+    // Find the nearest neutral tap to the hero — we highlight it with an
+    // extra pulsing ring so the player always has an obvious "go here next".
+    let nearestId: string | null = null;
+    {
+      let bestD = Infinity;
+      for (const t of state.taps) {
+        if (t.active) continue;
+        const dx = t.x - hero.x;
+        const dz = t.z - hero.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD) {
+          bestD = d2;
+          nearestId = t.defId;
+        }
+      }
+    }
+
     for (let idx = 0; idx < state.taps.length; idx++) {
       const t = state.taps[idx]!;
       let m = this.tapMeshes.get(t.defId);
@@ -587,21 +692,25 @@ export class GameRenderer {
       m.position.set(t.x, 0.05, t.z);
       const mat = m.material as THREE.MeshBasicMaterial;
       if (t.active && t.ownerTeam === "player") mat.color.set(0x5fc48a);
+      else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xd06060);
       else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x888888);
       else if (t.active) mat.color.set(0x3ecf8e);
       else mat.color.set(0x8a96a6);
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
       let claimArc = this.tapClaimArcs.get(t.defId);
-      const channeling = hero.claimChannelTarget === idx;
+      const channeling = hero.claimChannelTarget === idx || state.enemyHero.claimChannelTarget === idx;
       if (channeling) {
         const total = Math.max(1, Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ));
-        const frac = Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
+        const isEnemyChannel = state.enemyHero.claimChannelTarget === idx;
+        const frac = isEnemyChannel
+          ? Math.max(0, Math.min(1, 1 - state.enemyHero.claimChannelTicksRemaining / total))
+          : Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
         if (!claimArc) {
           claimArc = new THREE.Mesh(
             new THREE.RingGeometry(3.4, 3.9, 48, 1, 0, 0.0001),
             new THREE.MeshBasicMaterial({
-              color: 0x6ae1ff,
+              color: state.enemyHero.claimChannelTarget === idx ? 0xff8a8a : 0x6ae1ff,
               side: THREE.DoubleSide,
               transparent: true,
               opacity: 0.95,
@@ -624,8 +733,31 @@ export class GameRenderer {
           Math.max(0.0001, frac * Math.PI * 2),
         );
         claimArc.visible = true;
+        (claimArc.material as THREE.MeshBasicMaterial).color.set(isEnemyChannel ? 0xff8a8a : 0x6ae1ff);
       } else if (claimArc) {
         claimArc.visible = false;
+      }
+
+      // Floating label: "Stand to claim — 20 Mana" on unclaimed taps, "Depleted"
+      // on dried-up ones. Hidden once the player owns the tap.
+      let label = this.tapLabels.get(t.defId);
+      const claimedByPlayer = t.active && t.ownerTeam === "player";
+      const claimedByEnemy = t.active && t.ownerTeam === "enemy";
+      const depleted = t.active && t.yieldRemaining <= 0;
+      if (!claimedByPlayer && !claimedByEnemy) {
+        if (!label) {
+          label = makeLabelSprite("Stand to claim", "#6ae1ff");
+          this.markers.add(label.sprite);
+          this.tapLabels.set(t.defId, label);
+        }
+        const text = depleted ? "Depleted" : "Stand to claim";
+        const accent = depleted ? "#8a96a6" : "#6ae1ff";
+        drawLabel(label, text, accent);
+        label.sprite.position.set(t.x, 4.2, t.z);
+        label.sprite.visible = true;
+        (label.sprite.material as THREE.SpriteMaterial).opacity = depleted ? 0.55 : 1;
+      } else if (label) {
+        label.sprite.visible = false;
       }
 
       let arc = this.tapYieldArcs.get(t.defId);
@@ -658,10 +790,41 @@ export class GameRenderer {
           Math.PI / 2 - frac * Math.PI,
           Math.max(0.0001, frac * Math.PI * 2),
         );
+        (arc.material as THREE.MeshBasicMaterial).color.set(
+          t.ownerTeam === "enemy" ? 0xff7070 : 0x7cf0b4,
+        );
         arc.visible = true;
       } else if (arc) {
         arc.visible = false;
       }
+    }
+
+    // Pulsing "next target" ring sitting just outside the tap ring.
+    if (nearestId !== null) {
+      const t = state.taps.find((x) => x.defId === nearestId)!;
+      if (!this.nearestTapRing) {
+        this.nearestTapRing = new THREE.Mesh(
+          new THREE.RingGeometry(3.5, 4.1, 48),
+          new THREE.MeshBasicMaterial({
+            color: 0x6ae1ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.85,
+            depthWrite: false,
+          }),
+        );
+        this.nearestTapRing.rotation.x = -Math.PI / 2;
+        this.markers.add(this.nearestTapRing);
+      }
+      const elapsed = this.clock.getElapsedTime();
+      const pulse = 0.5 + 0.5 * Math.sin(elapsed * 3.2);
+      this.nearestTapRing.position.set(t.x, 0.06, t.z);
+      const s = 1 + pulse * 0.18;
+      this.nearestTapRing.scale.set(s, s, s);
+      (this.nearestTapRing.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.4 * pulse;
+      this.nearestTapRing.visible = true;
+    } else if (this.nearestTapRing) {
+      this.nearestTapRing.visible = false;
     }
   }
 
@@ -669,39 +832,20 @@ export class GameRenderer {
     this.syncTaps(state);
     this.syncCampZones(state);
 
-    const relayPairs: {
-      id: string;
-      x: number;
-      z: number;
-      built: boolean;
-      destroyed: boolean;
-      team: "player" | "enemy";
-      signal?: SignalType;
-    }[] = [
-      ...state.playerRelays.map((r) => ({
-        id: `p:${r.defId}`,
-        x: r.x,
-        z: r.z,
-        built: r.built && !r.destroyed,
-        destroyed: r.destroyed,
-        team: "player" as const,
-        signal: r.signalTypes[0],
-      })),
-      ...state.enemyRelays.map((r) => ({
-        id: `e:${r.defId}`,
-        x: r.x,
-        z: r.z,
-        built: r.hp > 0,
-        destroyed: r.hp <= 0,
-        team: "enemy" as const,
-      })),
-    ];
-
-    const elapsed = this.clock.getElapsedTime();
-    const pulse = 0.5 + 0.5 * Math.sin(elapsed * 4.2);
-
-    for (const r of relayPairs) {
-      let m = this.relayMeshes.get(r.id);
+    // Only enemy relays (Dark Fortresses) render as markers now — the player's
+    // Keep is just a structure and renders through syncStructures().
+    const aliveRelayIds = new Set(state.enemyRelays.map((er) => `e:${er.defId}`));
+    for (const [id, m] of this.relayMeshes) {
+      if (!aliveRelayIds.has(id)) {
+        this.markers.remove(m);
+        this.disposeObject(m);
+        this.relayMeshes.delete(id);
+        this.relayPrevHp.delete(id);
+      }
+    }
+    for (const er of state.enemyRelays) {
+      const id = `e:${er.defId}`;
+      let m = this.relayMeshes.get(id);
       if (!m) {
         const geo = new THREE.CylinderGeometry(1.2, 1.4, 2.4, 16);
         const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
@@ -709,87 +853,30 @@ export class GameRenderer {
         m.position.y = 1.2;
         m.castShadow = true;
         m.receiveShadow = true;
+        m.userData["bodyMesh"] = m;
         this.markers.add(m);
-        this.relayMeshes.set(r.id, m);
+        this.relayMeshes.set(id, m);
       }
-      m.position.set(r.x, 1.2, r.z);
+      m.position.set(er.x, 1.2, er.z);
       const mat = m.material as THREE.MeshStandardMaterial;
-      if (r.team === "player") {
-        if (r.built) mat.color.setHex(signalColorHex(r.signal));
-        else if (r.destroyed) mat.color.set(0x553333);
-        else mat.color.set(0x555d6b);
+      const built = er.hp > 0;
+      if (built) {
+        const silenced = er.silencedUntilTick > state.tick;
+        const base = new THREE.Color(0xff5c5c);
+        if (silenced) base.multiplyScalar(0.45);
+        mat.color.copy(base);
       } else {
-        if (r.built) {
-          const er = state.enemyRelays.find((x) => `e:${x.defId}` === r.id);
-          const silenced = er && er.silencedUntilTick > state.tick;
-          const base = new THREE.Color(0xff5c5c);
-          if (silenced) base.multiplyScalar(0.45);
-          mat.color.copy(base);
-        } else {
-          mat.color.set(0x444444);
-        }
+        mat.color.set(0x444444);
       }
-      const s = r.built ? 1 : 0.55;
+      const s = built ? 1 : 0.55;
       m.scale.set(s, s, s);
-
-      // B12: pulsing cyan ring on built player relays while shift is armed.
-      if (r.team === "player" && r.built) {
-        let ring = this.relayShiftRings.get(r.id);
-        if (this.relayShiftArmed) {
-          if (!ring) {
-            ring = new THREE.Mesh(
-              new THREE.RingGeometry(1.7, 2.1, 32),
-              new THREE.MeshBasicMaterial({
-                color: 0x6ae1ff,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.85,
-                depthWrite: false,
-              }),
-            );
-            ring.rotation.x = -Math.PI / 2;
-            this.markers.add(ring);
-            this.relayShiftRings.set(r.id, ring);
-          }
-          ring.position.set(r.x, 0.08, r.z);
-          const s2 = 1 + pulse * 0.22;
-          ring.scale.set(s2, s2, s2);
-          (ring.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.35 * pulse;
-          ring.visible = true;
-        } else if (ring) {
-          ring.visible = false;
-        }
+      const pair = this.ensureHpBarPair(m, "relay", 1.95, 0xff7a6a);
+      this.setHpBarFrac(pair, er.maxHp > 0 ? Math.max(0, er.hp / er.maxHp) : 0);
+      const prevHp = this.relayPrevHp.get(id);
+      if (prevHp !== undefined && er.hp < prevHp - 0.5) {
+        (m.userData as Record<string, unknown>)["hitPulse"] = 0.22;
       }
-
-      // B1: lose-grace pulsing red ring on destroyed player slots.
-      if (r.team === "player" && r.destroyed) {
-        let ring = this.graceRings.get(r.id);
-        const showing = state.loseGraceTicksRemaining > 0;
-        if (showing) {
-          if (!ring) {
-            ring = new THREE.Mesh(
-              new THREE.RingGeometry(2.4, 3.0, 40),
-              new THREE.MeshBasicMaterial({
-                color: 0xff3b3b,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.9,
-                depthWrite: false,
-              }),
-            );
-            ring.rotation.x = -Math.PI / 2;
-            this.markers.add(ring);
-            this.graceRings.set(r.id, ring);
-          }
-          ring.position.set(r.x, 0.09, r.z);
-          const s3 = 1 + pulse * 0.3;
-          ring.scale.set(s3, s3, s3);
-          (ring.material as THREE.MeshBasicMaterial).opacity = 0.65 + 0.35 * pulse;
-          ring.visible = true;
-        } else if (ring) {
-          ring.visible = false;
-        }
-      }
+      this.relayPrevHp.set(id, er.hp);
     }
   }
 
@@ -860,6 +947,67 @@ export class GameRenderer {
     });
   }
 
+  private syncKeepMarker(state: GameState): void {
+    const keep = findKeep(state);
+    if (!keep) {
+      if (this.keepRing) this.keepRing.visible = false;
+      if (this.keepHpArc) this.keepHpArc.visible = false;
+      return;
+    }
+    if (!this.keepRing) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(3.6, 4.4, 56),
+        new THREE.MeshBasicMaterial({
+          color: 0xb58bff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.6,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      this.markers.add(ring);
+      this.keepRing = ring;
+    }
+    const frac = Math.max(0, Math.min(1, keep.maxHp > 0 ? keep.hp / keep.maxHp : 0));
+    if (!this.keepHpArc) {
+      const arc = new THREE.Mesh(
+        new THREE.RingGeometry(4.5, 4.9, 64, 1, 0, Math.PI * 2),
+        new THREE.MeshBasicMaterial({
+          color: 0xd9b7ff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+        }),
+      );
+      arc.rotation.x = -Math.PI / 2;
+      this.markers.add(arc);
+      this.keepHpArc = arc;
+    }
+    const pulse = 0.5 + 0.5 * Math.sin(this.clock.getElapsedTime() * 1.6);
+    this.keepRing.position.set(keep.x, 0.06, keep.z);
+    (this.keepRing.material as THREE.MeshBasicMaterial).opacity = 0.38 + 0.35 * pulse;
+    this.keepRing.visible = true;
+
+    this.keepHpArc.position.set(keep.x, 0.065, keep.z);
+    this.keepHpArc.geometry.dispose();
+    this.keepHpArc.geometry = new THREE.RingGeometry(
+      4.5,
+      4.9,
+      64,
+      1,
+      Math.PI / 2 - frac * Math.PI,
+      Math.max(0.0001, frac * Math.PI * 2),
+    );
+    const arcMat = this.keepHpArc.material as THREE.MeshBasicMaterial;
+    if (frac < 0.35) arcMat.color.set(0xff7474);
+    else if (frac < 0.7) arcMat.color.set(0xffd08a);
+    else arcMat.color.set(0xd9b7ff);
+    this.keepHpArc.visible = true;
+  }
+
   private syncStructures(state: GameState): void {
     const alive = new Set(state.structures.map((s) => s.id));
     for (const [id, obj] of this.structureMeshes) {
@@ -900,6 +1048,16 @@ export class GameRenderer {
           mat.opacity = st.complete ? (mat.userData["baseOpacity"] as number | undefined) ?? 1 : 0.55;
         }
       });
+
+      const dims = structEntry ? structureDims(structEntry) : { w: 3, h: 5, d: 3 };
+      const fg = st.team === "player" ? 0x7ec8ff : 0xff8a7a;
+      const pair = this.ensureHpBarPair(g, "st", dims.h * buildT + 0.9, fg);
+      this.setHpBarFrac(pair, st.maxHp > 0 ? st.hp / st.maxHp : 0);
+      const prevHp = this.structurePrevHp.get(st.id);
+      if (prevHp !== undefined && st.hp < prevHp - 0.25) {
+        (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
+      }
+      this.structurePrevHp.set(st.id, st.hp);
     }
   }
 
@@ -1070,6 +1228,68 @@ export class GameRenderer {
     }
   }
 
+  private syncWorldPlane(state: GameState): void {
+    const half = state.map.world.halfExtents + 28;
+    if (this.worldPlaneHalf === half) return;
+    this.worldPlaneHalf = half;
+    const size = half * 2;
+    this.ground.geometry.dispose();
+    this.ground.geometry = new THREE.PlaneGeometry(size, size);
+    this.scene.remove(this.grid);
+    this.grid.dispose();
+    const divs = Math.max(24, Math.round(size / 6));
+    this.grid = new THREE.GridHelper(size * 0.96, divs, 0x2a3545, 0x1f2937);
+    this.grid.position.y = 0.02;
+    this.scene.add(this.grid);
+  }
+
+  private ensureHpBarPair(
+    parent: THREE.Object3D,
+    key: string,
+    yLocal: number,
+    fgColor: number,
+  ): { bg: THREE.Mesh; fg: THREE.Mesh } {
+    const ud = parent.userData as Record<string, unknown>;
+    let bg = ud[`${key}_hpBg`] as THREE.Mesh | undefined;
+    let fg = ud[`${key}_hpFg`] as THREE.Mesh | undefined;
+    if (!bg) {
+      bg = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.35, 0.12),
+        new THREE.MeshBasicMaterial({
+          color: 0x1a1f28,
+          transparent: true,
+          opacity: 0.88,
+          depthWrite: false,
+        }),
+      );
+      bg.position.y = yLocal;
+      parent.add(bg);
+      ud[`${key}_hpBg`] = bg;
+    }
+    if (!fg) {
+      fg = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.32, 0.09),
+        new THREE.MeshBasicMaterial({
+          color: fgColor,
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false,
+        }),
+      );
+      fg.position.y = yLocal;
+      fg.position.z = 0.003;
+      parent.add(fg);
+      ud[`${key}_hpFg`] = fg;
+    }
+    return { bg: bg!, fg: fg! };
+  }
+
+  private setHpBarFrac(pair: { bg: THREE.Mesh; fg: THREE.Mesh }, frac01: number): void {
+    const frac = Math.max(0, Math.min(1, frac01));
+    pair.fg.scale.x = Math.max(0.02, frac);
+    pair.fg.position.x = -0.66 * (1 - frac);
+  }
+
   private syncMapDecor(state: GameState): void {
     if (this.decorBuilt) return;
     this.decorBuilt = true;
@@ -1226,6 +1446,53 @@ export class GameRenderer {
     return g;
   }
 
+  private buildRivalHeroMesh(): THREE.Group {
+    const g = new THREE.Group();
+    const plinth = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.2, 1.3, 0.22, 28),
+      new THREE.MeshStandardMaterial({
+        color: 0x6a2a2a,
+        roughness: 0.85,
+        transparent: true,
+        opacity: 0.95,
+      }),
+    );
+    plinth.position.y = 0.11;
+    plinth.receiveShadow = true;
+    g.add(plinth);
+
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.75, 1.7, 14),
+      new THREE.MeshStandardMaterial({
+        color: 0xc44a4a,
+        roughness: 0.55,
+        metalness: 0.2,
+        emissive: 0x300808,
+      }),
+    );
+    body.position.y = 0.95;
+    body.castShadow = true;
+    body.userData["isPlaceholder"] = true;
+    g.add(body);
+    (g.userData as Record<string, unknown>)["bodyMesh"] = body;
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.9, 1.15, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xff6a6a,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.04;
+    g.add(ring);
+
+    return g;
+  }
+
   private syncHero(state: GameState): void {
     const h = state.hero;
     if (!this.heroGroup) {
@@ -1239,6 +1506,12 @@ export class GameRenderer {
     }
     this.heroGroup.position.set(h.x, 0, h.z);
     this.heroGroup.rotation.y = h.facing;
+    if (this.heroLungeTimer > 0) {
+      const p = this.heroLungeTimer / 0.2;
+      const amt = 0.38 * Math.sin(p * Math.PI);
+      this.heroGroup.position.x += Math.sin(h.facing) * amt;
+      this.heroGroup.position.z += Math.cos(h.facing) * amt;
+    }
 
     // HP bar (two thin planes floating above).
     if (!this.heroHpBarBg) {
@@ -1263,10 +1536,46 @@ export class GameRenderer {
     const frac = Math.max(0, Math.min(1, h.maxHp > 0 ? h.hp / h.maxHp : 0));
     this.heroHpBarFg.scale.x = Math.max(0.0001, frac);
     this.heroHpBarFg.position.x = -0.88 * (1 - frac);
-    // Billboard to camera.
-    const cam = this.camera;
-    this.heroHpBarBg.lookAt(cam.position);
-    this.heroHpBarFg.lookAt(cam.position);
+  }
+
+  private syncEnemyHero(state: GameState): void {
+    const h = state.enemyHero;
+    if (!this.enemyHeroGroup) {
+      const g = this.buildRivalHeroMesh();
+      this.entities.add(g);
+      this.enemyHeroGroup = g;
+      if (this.useGlb) {
+        const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
+        if (placeholder) void requestGlbForHero(placeholder);
+      }
+    }
+    this.enemyHeroGroup.visible = h.hp > 0;
+    if (h.hp <= 0) return;
+    this.enemyHeroGroup.position.set(h.x, 0, h.z);
+    this.enemyHeroGroup.rotation.y = h.facing;
+
+    if (!this.enemyHeroHpBarBg) {
+      const bg = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.8, 0.16),
+        new THREE.MeshBasicMaterial({ color: 0x202632, transparent: true, opacity: 0.85, depthWrite: false }),
+      );
+      bg.position.y = 2.85;
+      this.enemyHeroGroup.add(bg);
+      this.enemyHeroHpBarBg = bg;
+    }
+    if (!this.enemyHeroHpBarFg) {
+      const fg = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.76, 0.12),
+        new THREE.MeshBasicMaterial({ color: 0xff7a7a, transparent: true, opacity: 0.95, depthWrite: false }),
+      );
+      fg.position.y = 2.85;
+      fg.position.z = 0.002;
+      this.enemyHeroGroup.add(fg);
+      this.enemyHeroHpBarFg = fg;
+    }
+    const frac = Math.max(0, Math.min(1, h.maxHp > 0 ? h.hp / h.maxHp : 0));
+    this.enemyHeroHpBarFg.scale.x = Math.max(0.0001, frac);
+    this.enemyHeroHpBarFg.position.x = -0.88 * (1 - frac);
   }
 
   private syncUnits(state: GameState): void {
@@ -1294,17 +1603,76 @@ export class GameRenderer {
         }
       }
       obj.position.set(u.x, 0, u.z);
+      const g = obj as THREE.Group;
+      const h = unitScale(u.sizeClass) * 1.35;
+      const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
+      const pair = this.ensureHpBarPair(g, "u", h, fg);
+      this.setHpBarFrac(pair, u.maxHp > 0 ? u.hp / u.maxHp : 0);
+      const prevHp = this.unitPrevHp.get(u.id);
+      if (prevHp !== undefined && u.hp < prevHp - 0.25) {
+        (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
+      }
+      this.unitPrevHp.set(u.id, u.hp);
     }
+  }
+
+  private orientHpBars(): void {
+    const cam = this.camera.position;
+    const orient = (root: THREE.Object3D): void => {
+      const ud = root.userData as Record<string, unknown>;
+      for (const key of ["u", "st", "relay"] as const) {
+        const bg = ud[`${key}_hpBg`] as THREE.Mesh | undefined;
+        const fg = ud[`${key}_hpFg`] as THREE.Mesh | undefined;
+        if (bg) bg.lookAt(cam);
+        if (fg) fg.lookAt(cam);
+      }
+    };
+    for (const g of this.unitMeshes.values()) orient(g);
+    for (const g of this.structureMeshes.values()) orient(g);
+    for (const m of this.relayMeshes.values()) orient(m);
+    if (this.heroGroup && this.heroHpBarBg && this.heroHpBarFg) {
+      this.heroHpBarBg.lookAt(cam);
+      this.heroHpBarFg.lookAt(cam);
+    }
+    if (this.enemyHeroGroup && this.enemyHeroHpBarBg && this.enemyHeroHpBarFg) {
+      this.enemyHeroHpBarBg.lookAt(cam);
+      this.enemyHeroHpBarFg.lookAt(cam);
+    }
+  }
+
+  private tickHitPulses(dt: number): void {
+    const pulse = (root: THREE.Object3D): void => {
+      const ud = root.userData as Record<string, unknown>;
+      const t = ud["hitPulse"] as number | undefined;
+      if (t === undefined || t <= 0) return;
+      const next = t - dt;
+      const body = ud["bodyMesh"] as THREE.Mesh | undefined;
+      if (next <= 0) {
+        ud["hitPulse"] = undefined;
+        if (body) body.scale.setScalar(1);
+        return;
+      }
+      ud["hitPulse"] = next;
+      const k = 1 + 0.12 * Math.sin((next / 0.22) * Math.PI);
+      if (body) body.scale.setScalar(k);
+    };
+    for (const g of this.unitMeshes.values()) pulse(g);
+    for (const g of this.structureMeshes.values()) pulse(g);
+    for (const m of this.relayMeshes.values()) pulse(m);
+    if (this.enemyHeroGroup) pulse(this.enemyHeroGroup);
   }
 
   render(): void {
     const dt = Math.min(0.1, this.clock.getDelta());
     this.controls.update();
+    this.tickHitPulses(dt);
+    this.orientHpBars();
     stepFx(this.fx, dt);
     // Re-run selection/rally pose updates on the flag so it keeps rotating between sim ticks.
     if (this.currentState && this.rallyFlag?.visible) {
       this.rallyFlag.rotation.y = this.clock.getElapsedTime() * 1.4;
     }
     this.renderer.render(this.scene, this.camera);
+    this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

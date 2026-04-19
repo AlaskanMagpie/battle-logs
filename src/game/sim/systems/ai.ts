@@ -48,6 +48,14 @@ export function nearestEnemyAttackTarget(s: GameState, from: Vec2): Vec2 | null 
       best = u;
     }
   }
+  const wiz = s.hero;
+  if (wiz.hp > 0) {
+    const d = dist2(from, wiz);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: wiz.x, z: wiz.z };
+    }
+  }
   return best;
 }
 
@@ -89,6 +97,9 @@ export function movement(s: GameState): void {
 
   const hero = s.hero;
   const heroR2 = HERO_FOLLOW_RADIUS * HERO_FOLLOW_RADIUS;
+  const defense = s.armyStance === "defense";
+  const DEFENSE_ENGAGE_RADIUS = HERO_FOLLOW_RADIUS * 1.25;
+  const defR2 = DEFENSE_ENGAGE_RADIUS * DEFENSE_ENGAGE_RADIUS;
 
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
@@ -97,29 +108,39 @@ export function movement(s: GameState): void {
     const detect = Math.max(10, u.range * 3);
     const foe = nearestEnemyUnit(s, u, detect * detect);
 
-    if (foe && dist2(u, foe) > u.range * u.range) {
+    // In Defense: units only engage foes that are near the wizard; otherwise
+    // they ignore aggression and gather on the hero.
+    const canEngage = foe && (!defense || dist2(foe, hero) <= defR2);
+
+    if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
       moveToward(u, foe, u.speedPerSec * stepScale);
       clampToWorld(s, u);
       continue;
     }
-    if (foe) {
+    if (canEngage) {
       clampToWorld(s, u);
       continue;
     }
-    if (hold) {
+    if (hold && !defense) {
       clampToWorld(s, u);
       continue;
     }
 
-    // Fallthrough: follow hero (in range) → structure rally (if explicitly set) → push lane.
-    const near = dist2(u, hero) <= heroR2;
     let target: Vec2;
-    if (near) {
+    if (defense) {
+      // Every friendly gathers on the wizard. Small radius offset keeps them from stacking.
       target = { x: hero.x, z: hero.z };
-    } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
-      target = { x: st.rallyX, z: st.rallyZ };
     } else {
-      target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
+      const near = dist2(u, hero) <= heroR2;
+      if (near) {
+        target = { x: hero.x, z: hero.z };
+      } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
+        target = { x: st.rallyX, z: st.rallyZ };
+      } else if (s.phase === "setup") {
+        target = st ? { x: st.x, z: st.z } : { x: u.x, z: u.z };
+      } else {
+        target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
+      }
     }
     moveToward(u, target, u.speedPerSec * stepScale);
     clampToWorld(s, u);
@@ -149,6 +170,7 @@ function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {
 }
 
 export function wakeCamps(s: GameState): void {
+  if (s.phase === "setup") return;
   for (const camp of s.map.enemyCamps) {
     if (s.enemyCampAwake[camp.id]) continue;
     const r = camp.wakeRadius;

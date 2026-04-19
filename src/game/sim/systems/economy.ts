@@ -12,7 +12,9 @@ export function economy(s: GameState): void {
     if (!t.active) continue;
     if (t.yieldRemaining <= 0) continue;
     const take = Math.min(t.yieldRemaining, perTap);
-    s.flux += take;
+    const owner = t.ownerTeam ?? "player";
+    if (owner === "enemy") s.enemyFlux += take;
+    else s.flux += take;
     t.yieldRemaining -= take;
   }
 }

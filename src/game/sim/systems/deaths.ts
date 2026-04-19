@@ -52,15 +52,6 @@ export function cleanupDead(s: GameState): void {
   }
   s.structures = s.structures.filter((st) => st.hp > 0);
 
-  for (const pr of s.playerRelays) {
-    if (!pr.built) continue;
-    if (pr.hp <= 0 && !pr.destroyed) {
-      pr.destroyed = true;
-      pr.built = false;
-      pr.hp = 0;
-      s.lastMessage = "Player Relay destroyed.";
-    }
-  }
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) er.hp = 0;
   }

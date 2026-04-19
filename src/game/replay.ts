@@ -62,6 +62,7 @@ export function stateChecksum(s: GameState): number {
   h = mix(h, s.phase === "playing" ? 1 : s.phase === "win" ? 2 : 3);
   h = mix(h, quant(s.flux));
   h = mix(h, quant(s.salvage));
+  h = mix(h, quant(s.enemyFlux));
   h = mix(h, s.rngState | 0);
   h = mix(h, s.units.length);
   h = mix(h, s.structures.length);
@@ -84,11 +85,17 @@ export function stateChecksum(s: GameState): number {
     h = mix(h, st.buildTicksRemaining);
     h = mix(h, st.productionTicksRemaining);
   }
-  for (const pr of s.playerRelays) {
-    h = mix(h, pr.built ? 1 : 0);
-    h = mix(h, pr.destroyed ? 1 : 0);
-    h = mix(h, quant(pr.hp));
-  }
+  h = mix(h, quant(s.hero.hp));
+  h = mix(h, quant(s.hero.x));
+  h = mix(h, quant(s.hero.z));
+  h = mix(h, s.hero.attackCooldownTicksRemaining | 0);
+  h = mix(h, quant(s.hero.wasdStrafe));
+  h = mix(h, quant(s.hero.wasdForward));
+  h = mix(h, quant(s.enemyHero.hp));
+  h = mix(h, quant(s.enemyHero.x));
+  h = mix(h, quant(s.enemyHero.z));
+  h = mix(h, s.enemyHero.attackCooldownTicksRemaining | 0);
+  h = mix(h, s.armyStance === "defense" ? 1 : 0);
   for (const er of s.enemyRelays) {
     h = mix(h, quant(er.hp));
     h = mix(h, er.silencedUntilTick);

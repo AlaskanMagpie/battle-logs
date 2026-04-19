@@ -7,6 +7,7 @@ import { unitStatsForCatalog } from "./helpers";
  * from a random awake camp (up to a global cap). Deterministic via seeded RNG.
  */
 export function maybeEnemyReinforcements(s: GameState): void {
+  if (s.phase === "setup") return;
   const awakeCamps = s.map.enemyCamps.filter((c) => s.enemyCampAwake[c.id]);
   if (awakeCamps.length === 0) return;
   if (s.tick === 0 || s.tick % ENEMY_WAVE_EVERY_TICKS !== 0) return;

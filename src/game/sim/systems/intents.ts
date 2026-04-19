@@ -1,18 +1,21 @@
 import { getCatalogEntry } from "../../catalog";
 import {
   COMMAND_FRIENDLY_PRESENCE_RADIUS,
+  DOCTRINE_COMMANDS_ENABLED,
   FORWARD_BUILD_TIME_MULT,
-  RELAY_COSTS_FLUX,
-  RELAY_REBUILD_COST,
+  HERO_ATTACK_COOLDOWN_TICKS,
+  HERO_ATTACK_DAMAGE,
+  HERO_ATTACK_RANGE,
   SHATTER_TARGET_RADIUS,
-  TAP_ACTIVATE_COST,
-  TAP_YIELD_MAX,
   TICK_HZ,
 } from "../../constants";
+import { logGame } from "../../gameLog";
 import type { PlayerIntent } from "../../intents";
 import {
   canPlaceStructureHere,
   canUseDoctrineSlot,
+  findKeep,
+  isKeep,
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
@@ -20,46 +23,13 @@ import {
   type GameState,
   type StructureRuntime,
 } from "../../state";
-import type { SignalType, Vec2 } from "../../types";
+import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { dist2 } from "./helpers";
 
-const SIGNAL_CYCLE: SignalType[] = ["Vanguard", "Bastion", "Reclaim"];
 const ALT_HOLD_PICK_RADIUS = 6;
 
-const PICK_TAP = 4;
-const PICK_RELAY = 5;
 const PICK_STRUCTURE = 5;
-
-function pickNearestTap(s: GameState, pos: Vec2): number | null {
-  let best: number | null = null;
-  let bestD = Infinity;
-  const maxD2 = PICK_TAP * PICK_TAP;
-  for (let i = 0; i < s.taps.length; i++) {
-    const t = s.taps[i]!;
-    const d = dist2(pos, t);
-    if (d <= maxD2 && d < bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
-}
-
-function pickNearestPlayerRelay(s: GameState, pos: Vec2): number | null {
-  let best: number | null = null;
-  let bestD = Infinity;
-  const maxD2 = PICK_RELAY * PICK_RELAY;
-  for (let i = 0; i < s.playerRelays.length; i++) {
-    const r = s.playerRelays[i]!;
-    const d = dist2(pos, r);
-    if (d <= maxD2 && d < bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
-}
 
 function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
   let best: number | null = null;
@@ -90,69 +60,6 @@ function pickEnemyRelay(s: GameState, pos: Vec2): number | null {
     }
   }
   return best;
-}
-
-function relayBuildCostForSlot(s: GameState, slotIndex: number): number {
-  const slot = s.playerRelays[slotIndex];
-  if (!slot) return Infinity;
-  if (slot.destroyed) return RELAY_REBUILD_COST;
-  if (slotIndex === 0) return 0;
-  return RELAY_COSTS_FLUX[Math.min(slotIndex, RELAY_COSTS_FLUX.length - 1)] ?? 0;
-}
-
-function canBuildRelaySlot(s: GameState, slotIndex: number): string | null {
-  const slot = s.playerRelays[slotIndex];
-  if (!slot) return "No such Relay slot.";
-  if (slot.built && !slot.destroyed) return "Relay already active.";
-  const cost = relayBuildCostForSlot(s, slotIndex);
-  if (s.flux < cost) return "Not enough Flux for Relay.";
-  return null;
-}
-
-function tryBuildRelayWithSignal(s: GameState, slotIndex: number, signal: SignalType): void {
-  const err = canBuildRelaySlot(s, slotIndex);
-  if (err) {
-    s.lastMessage = err;
-    return;
-  }
-  const cost = relayBuildCostForSlot(s, slotIndex);
-  const slot = s.playerRelays[slotIndex]!;
-  s.flux -= cost;
-  slot.built = true;
-  slot.destroyed = false;
-  slot.hp = slot.maxHp;
-  slot.signalTypes = [signal];
-  s.playerRelaysEverBuilt += 1;
-  s.pendingRelaySignalSlot = null;
-  s.lastMessage = `Relay ${slotIndex + 1} online (−${cost} Flux), signal ${signal}.`;
-}
-
-function cycleRelaySignal(s: GameState, relayIndex: number): void {
-  const slot = s.playerRelays[relayIndex];
-  if (!slot || !slot.built || slot.destroyed) return;
-  const cur = slot.signalTypes[0];
-  const idx = cur ? SIGNAL_CYCLE.indexOf(cur) : -1;
-  const next = SIGNAL_CYCLE[(idx + 1) % SIGNAL_CYCLE.length]!;
-  slot.signalTypes = [next];
-  s.lastMessage = `Relay ${relayIndex + 1} signal → ${next}.`;
-}
-
-function tryActivateTap(s: GameState, tapIndex: number): void {
-  const tap = s.taps[tapIndex];
-  if (!tap) return;
-  if (tap.active) {
-    s.lastMessage = "Tap already active.";
-    return;
-  }
-  if (s.flux < TAP_ACTIVATE_COST) {
-    s.lastMessage = `Need ${TAP_ACTIVATE_COST} Flux to activate Tap.`;
-    return;
-  }
-  s.flux -= TAP_ACTIVATE_COST;
-  tap.active = true;
-  tap.ownerTeam = "player";
-  tap.yieldRemaining = TAP_YIELD_MAX;
-  s.lastMessage = "Tap activated (+1 Flux/sec, finite yield).";
 }
 
 function tryPlaceStructure(
@@ -208,7 +115,7 @@ function tryPlaceStructure(
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
-  s.lastMessage = `${def.name} placed${placementForward ? " (forward — slower build, fragile)" : ""} (building…).`;
+  s.lastMessage = `${def.name} summoned${placementForward ? " (forward — slower build, fragile)" : ""} — lightning crackles.`;
 }
 
 function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number): void {
@@ -246,15 +153,92 @@ function emitFx(s: GameState, kind: CastFxKind, pos: Vec2): void {
 }
 
 /**
- * Summon FX hook for building placements. Always drops a lightning strike; add
- * structure-specific flourishes here later (e.g. signal-tinted auras, ground burn
- * for Vanguard, cyan shield pulse for Bastion) by branching on `entry` / `pos`.
+ * Summon FX hook for building placements. Always drops a lightning strike at
+ * the summoned tower — this is the signature wizard flourish. The main hook
+ * keeps the door open for signal-specific flourishes (Vanguard ground burn,
+ * Bastion shield pulse, Reclaim restore glow) by branching on catalogId.
  */
 function emitSummonFx(s: GameState, _catalogId: string, pos: Vec2): void {
   emitFx(s, "lightning", pos);
 }
 
+function tryHeroAttack(s: GameState, _click: Vec2): void {
+  if (s.phase !== "setup" && s.phase !== "playing") return;
+  const h = s.hero;
+  if (h.attackCooldownTicksRemaining > 0) {
+    s.lastMessage = "Attack on cooldown.";
+    return;
+  }
+  const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
+  let bestU: (typeof s.units)[0] | null = null;
+  let bestUd = r2;
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    const d = dist2(h, u);
+    if (d <= bestUd) {
+      bestUd = d;
+      bestU = u;
+    }
+  }
+  if (bestU) {
+    bestU.hp -= HERO_ATTACK_DAMAGE;
+    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: bestU.x, z: bestU.z });
+    logGame("attack", `Wizard strike → unit #${bestU.id} (−${HERO_ATTACK_DAMAGE} HP)`, s.tick);
+    s.lastMessage = "Arcane strike!";
+    return;
+  }
+  const eh = s.enemyHero;
+  if (eh.hp > 0 && dist2(h, eh) <= r2) {
+    eh.hp -= HERO_ATTACK_DAMAGE;
+    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: eh.x, z: eh.z });
+    logGame("attack", `Wizard strike → rival Wizard (−${HERO_ATTACK_DAMAGE} HP)`, s.tick);
+    s.lastMessage = "Strike the rival Wizard!";
+    return;
+  }
+  let bestEr: (typeof s.enemyRelays)[0] | null = null;
+  let bestErd = r2;
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    const d = dist2(h, er);
+    if (d <= bestErd) {
+      bestErd = d;
+      bestEr = er;
+    }
+  }
+  if (bestEr) {
+    bestEr.hp -= HERO_ATTACK_DAMAGE * 0.65;
+    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: bestEr.x, z: bestEr.z });
+    logGame("attack", `Wizard strike → Dark Fortress (−${Math.round(HERO_ATTACK_DAMAGE * 0.65)} HP)`, s.tick);
+    s.lastMessage = "Strike the fortress!";
+    return;
+  }
+  let bestSt: StructureRuntime | null = null;
+  let bestStd = r2;
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || st.hp <= 0) continue;
+    const d = dist2(h, st);
+    if (d <= bestStd) {
+      bestStd = d;
+      bestSt = st;
+    }
+  }
+  if (bestSt) {
+    bestSt.hp -= HERO_ATTACK_DAMAGE * 0.45;
+    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: bestSt.x, z: bestSt.z });
+    logGame("attack", `Wizard strike → enemy structure #${bestSt.id}`, s.tick);
+    s.lastMessage = "Strike the enemy tower!";
+    return;
+  }
+  s.lastMessage = "No target in melee range.";
+  logGame("attack", "Wizard swing — no target in range", s.tick);
+}
+
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
+  if (!DOCTRINE_COMMANDS_ENABLED) return;
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
   const cmd = getCatalogEntry(id);
   if (!cmd || !isCommandEntry(cmd)) return;
@@ -264,7 +248,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     return;
   }
   if (s.flux < cmd.fluxCost) {
-    s.lastMessage = "Not enough Flux for command.";
+    s.lastMessage = "Not enough Mana for this spell.";
     return;
   }
 
@@ -278,6 +262,10 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       const st = s.structures.find((x) => x.id === stId);
       if (!st || st.team !== "player") return;
+      if (isKeep(st)) {
+        s.lastMessage = "The Keep cannot be recycled.";
+        return;
+      }
       const target: Vec2 = { x: st.x, z: st.z };
       payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       const bdef = getCatalogEntry(st.catalogId);
@@ -289,6 +277,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       s.units = s.units.filter((u) => u.structureId !== st.id);
       s.structures = s.structures.filter((x) => x.id !== st.id);
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", target);
       emitFx(s, "recycle", target);
       s.lastMessage = "Recycle — structure scrapped, Salvage refunded.";
       return;
@@ -309,6 +298,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (dist2(er, pos) <= r2) er.hp -= fx.damage * 0.5;
       }
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", pos);
       emitFx(s, "firestorm", pos);
       s.lastMessage = `${cmd.name} detonated.`;
       return;
@@ -324,6 +314,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       st.damageReductionUntilTick = s.tick + Math.round(fx.durationSeconds * TICK_HZ);
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", { x: st.x, z: st.z });
       emitFx(s, "fortify", { x: st.x, z: st.z });
       s.lastMessage = `${cmd.name}: ${fx.damageReductionPct}% damage reduction for ${fx.durationSeconds}s.`;
       return;
@@ -342,6 +333,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       st.productionTicksRemaining = 1;
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", { x: st.x, z: st.z });
       emitFx(s, "muster", { x: st.x, z: st.z });
       s.lastMessage = `${cmd.name}: next unit produced immediately.`;
       return;
@@ -349,7 +341,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     case "shatter_structure": {
       const erIdx = pickEnemyRelay(s, pos);
       if (erIdx === null) {
-        s.lastMessage = `${cmd.name}: click an enemy Relay.`;
+        s.lastMessage = `${cmd.name}: click an enemy Dark Fortress.`;
         return;
       }
       payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
@@ -365,13 +357,15 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         }
       }
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", { x: er.x, z: er.z });
       emitFx(s, "shatter", { x: er.x, z: er.z });
-      s.lastMessage = `${cmd.name}: Relay takes ${fx.damage} damage + ${fx.silenceSeconds}s silence.`;
+      s.lastMessage = `${cmd.name}: Fortress takes ${fx.damage} damage + ${fx.silenceSeconds}s silence.`;
       return;
     }
     case "noop": {
       payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      emitFx(s, "lightning", pos);
       s.lastMessage = `${cmd.name} spent.`;
       return;
     }
@@ -399,7 +393,7 @@ function nearestPlayerStructureWithin(
 function handleWorldClick(
   s: GameState,
   pos: Vec2,
-  shiftKey: boolean,
+  _shiftKey: boolean,
   altKey: boolean,
 ): void {
   if (altKey) {
@@ -413,35 +407,6 @@ function handleWorldClick(
       s.lastMessage = "Alt+click a friendly structure to toggle Hold.";
     }
     return;
-  }
-
-  const tapI = pickNearestTap(s, pos);
-  if (tapI !== null && !s.taps[tapI]!.active) {
-    tryActivateTap(s, tapI);
-    return;
-  }
-
-  const relayI = pickNearestPlayerRelay(s, pos);
-  if (relayI !== null) {
-    const slot = s.playerRelays[relayI]!;
-    if (slot.built && !slot.destroyed) {
-      if (shiftKey) {
-        cycleRelaySignal(s, relayI);
-        return;
-      }
-    } else {
-      const err = canBuildRelaySlot(s, relayI);
-      if (err) {
-        s.lastMessage = err;
-        return;
-      }
-      s.pendingRelaySignalSlot = relayI;
-      s.pendingPlacementCatalogId = null;
-      s.selectedDoctrineIndex = null;
-      s.selectedStructureId = null;
-      s.lastMessage = `Relay ${relayI + 1} — choose Signal: Vanguard / Bastion / Reclaim.`;
-      return;
-    }
   }
 
   const stId = pickPlayerStructure(s, pos);
@@ -469,13 +434,16 @@ function handleWorldClick(
   if (pending && slotIdx !== null) {
     const entry = getCatalogEntry(pending);
     if (entry && isCommandEntry(entry)) {
-      tryCastCommand(s, pos, slotIdx);
+      if (DOCTRINE_COMMANDS_ENABLED) tryCastCommand(s, pos, slotIdx);
       return;
     }
     if (entry && isStructureEntry(entry)) {
       tryPlaceStructure(s, pending, pos, slotIdx);
+      return;
     }
   }
+
+  tryHeroAttack(s, pos);
 }
 
 export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void {
@@ -487,35 +455,42 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         continue;
       }
       const e = getCatalogEntry(id);
+      if (!DOCTRINE_COMMANDS_ENABLED && e && isCommandEntry(e)) {
+        s.lastMessage = "Command spells are disabled.";
+        continue;
+      }
       s.selectedDoctrineIndex = it.index;
       s.pendingPlacementCatalogId = id;
       s.selectedStructureId = null;
-      s.pendingRelaySignalSlot = null;
       s.lastMessage = e
-        ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast." : "click map to place."}`
+        ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast." : "click map to summon."}`
         : `Selected ${id}`;
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
-      s.pendingRelaySignalSlot = null;
       s.lastMessage = "Cleared placement selection.";
     } else if (it.type === "try_click_world") {
       handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true);
-    } else if (it.type === "confirm_relay_signal") {
-      const idx = s.pendingRelaySignalSlot;
-      if (idx === null) continue;
-      tryBuildRelayWithSignal(s, idx, it.signal);
-    } else if (it.type === "cancel_relay_signal") {
-      if (s.pendingRelaySignalSlot !== null) {
-        s.pendingRelaySignalSlot = null;
-        s.lastMessage = "Relay build cancelled.";
-      }
     } else if (it.type === "toggle_structure_orders") {
       const st = s.structures.find((x) => x.id === it.structureId);
       if (st && st.team === "player") {
         st.holdOrders = !st.holdOrders;
         s.lastMessage = st.holdOrders ? "Orders: Hold." : "Orders: Rally.";
       }
+    } else if (it.type === "set_army_stance") {
+      if (s.armyStance !== it.stance) {
+        s.armyStance = it.stance;
+        s.lastMessage =
+          it.stance === "defense"
+            ? "Stance: Defense — army rallying on the Wizard."
+            : "Stance: Offense — army seeks out foes.";
+      }
+    } else if (it.type === "toggle_army_stance") {
+      s.armyStance = s.armyStance === "offense" ? "defense" : "offense";
+      s.lastMessage =
+        s.armyStance === "defense"
+          ? "Stance: Defense — army rallying on the Wizard."
+          : "Stance: Offense — army seeks out foes.";
     } else if (it.type === "hero_move") {
       const half = s.map.world.halfExtents;
       s.hero.targetX = Math.max(-half, Math.min(half, it.x));
@@ -524,6 +499,12 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         s.hero.claimChannelTarget = null;
         s.hero.claimChannelTicksRemaining = 0;
       }
+      logGame("move", `Move order → (${it.x.toFixed(1)}, ${it.z.toFixed(1)})`, s.tick);
+    } else if (it.type === "hero_wasd") {
+      const sx = Math.max(-1, Math.min(1, it.strafe));
+      const sz = Math.max(-1, Math.min(1, it.forward));
+      s.hero.wasdStrafe = sx;
+      s.hero.wasdForward = sz;
     } else if (it.type === "hero_cancel_claim") {
       if (s.hero.claimChannelTarget !== null) {
         s.hero.claimChannelTarget = null;
@@ -531,9 +512,17 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         s.lastMessage = "Claim cancelled.";
       }
     } else if (it.type === "hero_claim") {
-      // Nudge: stop current move so the hero system can pick up a nearby tap this tick.
       s.hero.targetX = null;
       s.hero.targetZ = null;
+    } else if (it.type === "start_battle") {
+      if (s.phase !== "setup") continue;
+      const keep = findKeep(s);
+      if (!keep) {
+        s.lastMessage = "Your Keep is missing — cannot start battle.";
+        continue;
+      }
+      s.phase = "playing";
+      s.lastMessage = "Battle started — enemy camps are waking.";
     }
   }
 }

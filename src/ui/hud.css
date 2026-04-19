@@ -2,8 +2,8 @@
   box-sizing: border-box;
 }
 :root {
-  /* In-match doctrine: one overlapping hand row. */
-  --doctrine-tray-h: clamp(140px, 32dvh, 240px);
+  /* In-match doctrine: two-row deck (2×8 grid). */
+  --doctrine-tray-h: clamp(200px, 44dvh, 320px);
   /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
   --tcg-aspect-w: 5;
   --tcg-aspect-h: 7;
@@ -12,7 +12,7 @@
 
 @media (pointer: coarse) {
   :root {
-    --doctrine-tray-h: clamp(152px, 36dvh, 260px);
+    --doctrine-tray-h: clamp(188px, 42dvh, 300px);
   }
 }
 
@@ -75,6 +75,39 @@ body {
   line-height: 1.35;
   opacity: 0.88;
   text-shadow: 0 1px 2px #000a;
+}
+
+.hud-gamelog {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: calc(var(--doctrine-tray-h) + 12px + env(safe-area-inset-bottom, 0px));
+  max-width: min(360px, 42vw);
+  z-index: 12;
+  font-size: 11px;
+  color: #c8d4e8;
+  background: rgba(10, 14, 22, 0.72);
+  border: 1px solid rgba(110, 160, 220, 0.25);
+  border-radius: 8px;
+  padding: 4px 8px 6px;
+  backdrop-filter: blur(6px);
+}
+.hud-gamelog summary {
+  cursor: pointer;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  list-style-position: outside;
+  padding: 2px 0;
+}
+.hud-gamelog-body {
+  margin: 4px 0 0;
+  max-height: 11em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #9eb4d0;
+  opacity: 0.95;
 }
 
 .hud-grace {
@@ -228,8 +261,9 @@ body {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
 }
 .doctrine-track {
   height: 100%;
@@ -263,6 +297,25 @@ body {
   --hand-card-h: clamp(104px, 18dvh, 156px);
   --hand-reveal: clamp(8px, 1.5vw, 20px);
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
+}
+
+/* In-match 2×8 grid: row 0 = slots 0–7, row 1 = 8–15 (matches pre-match picker). */
+.doctrine-track--hand.doctrine-track--deck2x8 {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: clamp(2px, 0.45vw, 5px);
+  align-content: stretch;
+  justify-items: stretch;
+  justify-content: center;
+  align-items: stretch;
+  padding: 6px max(8px, env(safe-area-inset-left, 0px)) 4px max(8px, env(safe-area-inset-right, 0px));
+  overflow-x: auto;
+  overflow-y: visible;
+  width: 100%;
+  min-width: min(100%, 520px);
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
 }
 
 .doctrine-track--hand .slot {
@@ -321,6 +374,28 @@ body {
   max-height: none;
 }
 
+.doctrine-track--hand.doctrine-track--deck2x8 .slot {
+  flex: initial;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  container-type: size;
+  container-name: doctrine-cell;
+}
+
+.doctrine-track--hand.doctrine-track--deck2x8 .slot .doctrine-card-compact {
+  width: min(100cqi, calc(100cqb * var(--tcg-aspect-w) / var(--tcg-aspect-h)));
+  height: auto;
+  max-width: 100%;
+  max-height: 100cqb;
+  margin-inline: auto;
+}
+
+.doctrine-track--hand.doctrine-track--deck2x8 .slot.slot-empty {
+  justify-content: center;
+}
+
 .doctrine-track--hand .slot .doctrine-card-compact .tcg-frame {
   flex: 1 1 auto;
   min-height: 0;
@@ -341,6 +416,25 @@ body {
 
 .doctrine-track--hand .tcg-deck-no {
   display: none;
+}
+
+/* "xN" copy-count badge on cards whose catalog id appears in more than one slot. */
+.slot-dup-count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 4;
+  min-width: 16px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: rgba(8, 12, 20, 0.85);
+  border: 1px solid #4fa36a;
+  color: #d6f6e0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  pointer-events: none;
 }
 .doctrine-pan-row {
   flex-shrink: 0;
@@ -922,6 +1016,41 @@ button.hud-btn {
 button.hud-btn:hover {
   border-color: #4b5b73;
 }
+button.hud-btn--start {
+  border-color: #4fa36a;
+  background: linear-gradient(180deg, #1c3326, #14231a);
+  color: #dcf7e4;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 12px 18px;
+  font-size: 13px;
+}
+button.hud-btn--start:hover:not(:disabled) {
+  border-color: #6ee09c;
+}
+button.hud-btn--start:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+button.hud-btn--start-ready {
+  border-color: #6ee09c;
+  box-shadow: 0 0 0 1px rgba(110, 224, 156, 0.45), 0 0 18px rgba(110, 224, 156, 0.35);
+  animation: hud-start-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hud-start-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(110, 224, 156, 0.45), 0 0 14px rgba(110, 224, 156, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(110, 224, 156, 0.7), 0 0 22px rgba(110, 224, 156, 0.55);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button.hud-btn--start-ready {
+    animation: none;
+  }
+}
+
 button.hud-btn--armed {
   position: relative;
   border-color: #6aa6ff;
@@ -988,12 +1117,16 @@ button.hud-btn--armed::after {
 .picker-shell.picker-shell--solo {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  max-width: min(960px, 100%);
+  max-width: min(1320px, 100%);
+}
+
+.picker-deck-solo-head {
+  flex-shrink: 0;
 }
 
 .picker-deck-solo-stack {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 50%;
+  min-height: 50vh;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -1003,7 +1136,9 @@ button.hud-btn--armed::after {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 
 .picker-deck-track.picker-deck-grid-4x4 {
@@ -1039,6 +1174,67 @@ button.hud-btn--armed::after {
   max-width: 100%;
   max-height: 100cqb;
   flex: 0 0 auto !important;
+}
+
+/* Pre-match doctrine deck: two rows × eight columns (slots 0–7 top, 8–15 bottom). */
+.picker-deck-track.picker-deck-grid-2x8 {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: clamp(4px, 0.9vw, 8px);
+  height: 100%;
+  min-height: 0;
+  width: 100%;
+  min-width: 0;
+  align-content: stretch;
+  justify-items: stretch;
+  box-sizing: border-box;
+  padding: 2px 0 4px;
+}
+
+.picker-deck-track.picker-deck-grid-2x8 > .pick-slot {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  container-type: size;
+  container-name: doctrine-cell;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.picker-deck-track.picker-deck-grid-2x8 .pick-slot-filled {
+  justify-content: center;
+}
+
+.picker-deck-track.picker-deck-grid-2x8 .pick-slot-empty {
+  aspect-ratio: 1 / 1;
+  width: min(100cqi, 100cqb) !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100cqb;
+  flex: 0 0 auto !important;
+}
+
+.picker-deck-track.picker-deck-grid-2x8 > .pick-slot .doctrine-card-compact {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  aspect-ratio: var(--tcg-card-aspect);
+  width: min(100cqi, calc(100cqb * var(--tcg-aspect-w) / var(--tcg-aspect-h)));
+  height: auto;
+  max-width: 100%;
+  max-height: 100cqb;
+  margin-inline: auto;
+}
+
+.picker-deck-track.picker-deck-grid-2x8 > .pick-slot .doctrine-card-compact .tcg-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
 }
 
 .pick-slot-active {

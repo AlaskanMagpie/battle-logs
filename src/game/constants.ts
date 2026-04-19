@@ -1,31 +1,55 @@
 /** Simulation ticks per second (PRD). */
 export const TICK_HZ = 10;
 
-export const TAP_ACTIVATE_COST = 80;
+/** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
+export const DOCTRINE_COMMANDS_ENABLED = false;
+
+/** Enemy wizard initial Mana pool (setup / playing). */
+export const ENEMY_SETUP_STARTING_FLUX = 500;
+
+/** Enemy AI tries to place a tower every N ticks (deterministic cadence). */
+export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 45;
+
+/** Structure ids the enemy wizard may auto-build (cheapest viable first). */
+export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = ["outpost", "watchtower", "root_bunker"];
+
+/** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
+export const ENEMY_TAP_WEDGE_MARGIN_X = 28;
+
+/** Rival wizard melee — tuned slightly below player strike. */
+export const ENEMY_HERO_STRIKE_DAMAGE = 32;
+export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 11;
+
 export const TAP_FLUX_PER_SEC = 1;
 export const TAP_YIELD_MAX = 250;
 
-/** Build / place proximity to Tap or Relay (world units). */
-export const INFRA_PLACE_RADIUS = 10;
+/** Build / place proximity to Tap or Keep (world units). */
+export const INFRA_PLACE_RADIUS = 16;
 
 /** Forward placement: near friendly unit/structure but not near infra (world units). */
 export const FORWARD_PLACE_RADIUS = 8;
 
-export const RELAY_COSTS_FLUX = [0, 120, 200, 250] as const;
-export const RELAY_REBUILD_COST = 80;
-
-export const PLAYER_RELAY_MAX_HP = 260;
 export const ENEMY_RELAY_MAX_HP = 520;
+
+/** Wizard Keep — permanent base structure spawned at playerStart. Acts as the
+ *  player's HP anchor (lose if it dies) and slowly produces a free T1 melee
+ *  swarm so the wizard always has chaff on the field. */
+export const KEEP_MAX_HP = 900;
+export const KEEP_SWARM_PERIOD_SEC = 6;
+export const KEEP_ID = "wizard_keep";
 
 export const GLOBAL_POP_CAP = 80;
 
 /** Enough for Tap (80) + first Relay (0) + one Tier-1 structure in one beat (playtest pacing). */
 export const PLAYER_STARTING_FLUX = 280;
 
-export const STRUCTURE_AGGRO_BLOCK_RADIUS = 12;
+/** Bonus flux granted at the start of the Setup phase so the player can
+ *  comfortably claim several nodes, build a relay, and queue towers before
+ *  pressing Start Battle. Replaces `PLAYER_STARTING_FLUX` as the initial
+ *  flux pool while `phase === "setup"`. */
+export const SETUP_STARTING_FLUX = 500;
 
-/** Grace after losing all player relays (ticks). */
-export const RELAY_LOSS_GRACE_TICKS = 10 * TICK_HZ;
+export const STRUCTURE_AGGRO_BLOCK_RADIUS = 12;
 
 /** Salvage → Flux: pool/40 per second, capped at 15 Flux/sec (implemented per tick). */
 export const SALVAGE_FLUX_PER_POOL_PER_SEC = 1 / 40;
@@ -72,6 +96,16 @@ export const HERO_CLAIM_RADIUS = 4;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
 export const HERO_MAX_HP = 500;
+/** WASD strafe/forward uses same speed scale as click-move. */
+export const HERO_WASD_SPEED = 11;
+/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (10 Hz). */
+export const HERO_ATTACK_RANGE = 5.5;
+export const HERO_ATTACK_DAMAGE = 42;
+export const HERO_ATTACK_COOLDOWN_TICKS = 8;
 
-/** Territory: union of radii around built player relays + claimed player taps. */
-export const TERRITORY_RADIUS = 16;
+/** Procedural Mana nodes per match (each side). */
+export const TAP_NODES_PER_SIDE = 10;
+export const TAP_GENERATION_MIN_SEP = 20;
+
+/** Territory: union of radii around the Keep + claimed player taps. */
+export const TERRITORY_RADIUS = 48;

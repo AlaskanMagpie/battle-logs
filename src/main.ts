@@ -14,6 +14,7 @@ import {
   placementFailureReason,
   type GameState,
 } from "./game/state";
+import { clearGameLog, logGame } from "./game/gameLog";
 import { advanceTick } from "./game/sim/tick";
 import { GameRenderer } from "./render/scene";
 import { CARD_DETAIL_HOLD_MS, showDoctrineCardDetail } from "./ui/cardDetailPop";
@@ -108,7 +109,6 @@ function wireDoctrineDragToMap(
   pendingIntents: PlayerIntent[],
   onShortClickSelect: (index: number) => void,
   dragRef: { active: boolean },
-  consumeRelayShiftChord: () => boolean,
 ): void {
   const doctrine = hudRoot.querySelector("#doctrine-track") as HTMLElement | null;
   if (!doctrine) return;
@@ -258,7 +258,7 @@ function wireDoctrineDragToMap(
     const charges = st.doctrineChargesRemaining[session.slotIndex] ?? 0;
     if (charges <= 0) warnings.push("No charges");
     if (st.flux < entry.fluxCost) {
-      warnings.push(`Need ${entry.fluxCost} Flux (have ${Math.floor(st.flux)})`);
+      warnings.push(`Need ${entry.fluxCost} Mana (have ${Math.floor(st.flux)})`);
     }
     const ok = warnings.length === 0;
     updateDragReason(
@@ -290,25 +290,26 @@ function wireDoctrineDragToMap(
     renderer.setCommandGhost(null, null, false);
     hideDragReason();
 
-    if (getState().phase !== "playing") return;
+    const dropPhase = getState().phase;
+    if (dropPhase !== "playing" && dropPhase !== "setup") return;
 
     const rect = canvas.getBoundingClientRect();
     if (!pointInRect(ev.clientX, ev.clientY, rect)) return;
     const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
     if (!hit) return;
 
-    const shift = consumeRelayShiftChord() || ev.shiftKey;
     pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
     pendingIntents.push({
       type: "try_click_world",
       pos: { x: hit.x, z: hit.z },
-      shiftKey: shift,
+      shiftKey: ev.shiftKey,
       altKey: ev.altKey,
     });
   }
 
   doctrine.addEventListener("pointerdown", (ev: PointerEvent) => {
-    if (getState().phase !== "playing") return;
+    const pdPhase = getState().phase;
+    if (pdPhase !== "playing" && pdPhase !== "setup") return;
     const slot = (ev.target as HTMLElement).closest("[data-slot-index]") as HTMLElement | null;
     if (!slot || !doctrine.contains(slot)) return;
     if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
@@ -364,20 +365,23 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     const pendingIntents: PlayerIntent[] = [];
     const doctrineDragRef = { active: false };
 
-    let relayShiftNextTap = false;
-    const relayShiftBtn = (): HTMLButtonElement | null => hudRoot.querySelector("#btn-relay-shift");
-    const syncRelayShiftUi = (): void => {
-      const b = relayShiftBtn();
-      if (!b) return;
-      b.classList.toggle("hud-btn--armed", relayShiftNextTap);
-      b.setAttribute("aria-pressed", relayShiftNextTap ? "true" : "false");
+    const keysHeld = { w: false, a: false, s: false, d: false };
+    const onKeyDown = (ev: KeyboardEvent): void => {
+      const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
+      if (tag === "input" || tag === "textarea") return;
+      if (ev.code === "KeyW") keysHeld.w = true;
+      if (ev.code === "KeyS") keysHeld.s = true;
+      if (ev.code === "KeyA") keysHeld.a = true;
+      if (ev.code === "KeyD") keysHeld.d = true;
     };
-    const consumeRelayShiftChord = (): boolean => {
-      if (!relayShiftNextTap) return false;
-      relayShiftNextTap = false;
-      syncRelayShiftUi();
-      return true;
+    const onKeyUp = (ev: KeyboardEvent): void => {
+      if (ev.code === "KeyW") keysHeld.w = false;
+      if (ev.code === "KeyS") keysHeld.s = false;
+      if (ev.code === "KeyA") keysHeld.a = false;
+      if (ev.code === "KeyD") keysHeld.d = false;
     };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
 
     let acc = 0;
     let last = performance.now();
@@ -392,6 +396,17 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       while (acc >= 1 / TICK_HZ) {
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
+        if (state.phase === "playing" || state.phase === "setup") {
+          let strafe = 0;
+          let forward = 0;
+          if (keysHeld.a) strafe -= 1;
+          if (keysHeld.d) strafe += 1;
+          if (keysHeld.w) forward += 1;
+          if (keysHeld.s) forward -= 1;
+          if (strafe !== 0 || forward !== 0) {
+            chunk.push({ type: "hero_wasd", strafe, forward });
+          }
+        }
         const tickBefore = state.tick;
         advanceTick(state, chunk);
         captureReplayTick(replay, tickBefore, chunk, state);
@@ -402,7 +417,6 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         renderer.setPlacementGhost(null, false);
       }
 
-      renderer.setRelayShiftArmed(relayShiftNextTap);
       renderer.sync(state, USE_GLB);
       renderer.render();
       updateHud(state);
@@ -413,6 +427,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     const rematch = (): void => {
       cancelAnimationFrame(rafId);
       pendingIntents.length = 0;
+      clearGameLog();
       state = createInitialState(map, initialDoctrine);
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
@@ -433,9 +448,15 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
     showRulesToast();
 
-    relayShiftBtn()?.addEventListener("click", () => {
-      relayShiftNextTap = !relayShiftNextTap;
-      syncRelayShiftUi();
+    // Global hotkey: G toggles army stance between Offense and Defense.
+    window.addEventListener("keydown", (ev: KeyboardEvent) => {
+      if (ev.repeat) return;
+      const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
+      if (tag === "input" || tag === "textarea") return;
+      if (ev.key === "g" || ev.key === "G") {
+        ev.preventDefault();
+        pendingIntents.push({ type: "toggle_army_stance" });
+      }
     });
 
     wireDoctrineDragToMap(
@@ -452,7 +473,6 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
       },
       doctrineDragRef,
-      consumeRelayShiftChord,
     );
 
     let rightHold: { pointerId: number; lastMs: number } | null = null;
@@ -461,15 +481,16 @@ function runMatch(initialDoctrine: (string | null)[]): void {
 
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
-      if (state.phase !== "playing") return;
+      if (state.phase !== "playing" && state.phase !== "setup") return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
 
-      // Right-click (button 2) or middle-click moves the hero.
-      if (ev.button === 2 || ev.button === 1) {
+      // Right-click only moves the hero (middle mouse is camera orbit).
+      if (ev.button === 2) {
         ev.preventDefault();
         pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z });
+        logGame("move", `RMB move → (${hit.x.toFixed(1)}, ${hit.z.toFixed(1)})`, state.tick);
         rightHold = { pointerId: ev.pointerId, lastMs: performance.now() };
         try {
           canvas.setPointerCapture(ev.pointerId);
@@ -479,11 +500,10 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         return;
       }
 
-      const shift = consumeRelayShiftChord() || ev.shiftKey;
       pendingIntents.push({
         type: "try_click_world",
         pos: { x: hit.x, z: hit.z },
-        shiftKey: shift,
+        shiftKey: ev.shiftKey,
         altKey: ev.altKey,
       });
     });

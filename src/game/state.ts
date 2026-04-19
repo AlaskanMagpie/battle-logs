@@ -1,27 +1,35 @@
 import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import {
+  DOCTRINE_COMMANDS_ENABLED,
   ENEMY_RELAY_MAX_HP,
+  ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
   HERO_FOLLOW_RADIUS,
   HERO_MAX_HP,
   HERO_SPEED,
   INFRA_PLACE_RADIUS,
-  PLAYER_RELAY_MAX_HP,
-  PLAYER_STARTING_FLUX,
+  KEEP_ID,
+  KEEP_MAX_HP,
+  KEEP_SWARM_PERIOD_SEC,
+  SETUP_STARTING_FLUX,
+  TAP_GENERATION_MIN_SEP,
+  TAP_NODES_PER_SIDE,
   TERRITORY_RADIUS,
   TICK_HZ,
 } from "./constants";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   CatalogEntry,
+  GamePhase,
   MapData,
   SignalType,
   TeamId,
+  TapSlotDef,
   UnitSizeClass,
   UnitTrait,
   Vec2,
 } from "./types";
-import { isStructureEntry } from "./types";
+import { isCommandEntry, isStructureEntry } from "./types";
 
 export type CastFxKind =
   | "firestorm"
@@ -30,7 +38,8 @@ export type CastFxKind =
   | "muster"
   | "recycle"
   | "claim"
-  | "lightning";
+  | "lightning"
+  | "hero_strike";
 
 export interface CastFxEvent {
   kind: CastFxKind;
@@ -38,6 +47,8 @@ export interface CastFxEvent {
   z: number;
   tick: number;
 }
+
+export type ArmyStance = "offense" | "defense";
 
 export interface TapRuntime {
   defId: string;
@@ -64,17 +75,11 @@ export interface HeroRuntime {
   hp: number;
   maxHp: number;
   facing: number;
-}
-
-export interface PlayerRelayRuntime {
-  defId: string;
-  x: number;
-  z: number;
-  built: boolean;
-  destroyed: boolean;
-  hp: number;
-  maxHp: number;
-  signalTypes: SignalType[];
+  /** -1 / 0 / 1 strafe (world X) from WASD; cleared after each sim tick. */
+  wasdStrafe: number;
+  /** -1 / 0 / 1 forward (world -Z as "up" in key W) from WASD; cleared after each sim tick. */
+  wasdForward: number;
+  attackCooldownTicksRemaining: number;
 }
 
 export interface EnemyRelayRuntime {
@@ -102,11 +107,11 @@ export interface StructureRuntime {
   doctrineSlotIndex: number;
   rallyX: number;
   rallyZ: number;
-  /** True if placed via forward placement (not near Tap/Relay). */
+  /** True if placed via forward placement (not near Tap/Keep). */
   placementForward: boolean;
   /** Fortify damage reduction end tick (0 if inactive). */
   damageReductionUntilTick: number;
-  /** Production silence end tick (Shatter / signal loss uses requirement check separately). */
+  /** Production silence end tick (Shatter). */
   productionSilenceUntilTick: number;
   /** Hold orders — produced units don't advance to rally, only engage foes in range. */
   holdOrders: boolean;
@@ -151,11 +156,10 @@ export interface MatchStats {
 export interface GameState {
   map: MapData;
   tick: number;
-  phase: "playing" | "win" | "lose";
+  phase: GamePhase;
   flux: number;
   salvage: number;
   taps: TapRuntime[];
-  playerRelays: PlayerRelayRuntime[];
   enemyRelays: EnemyRelayRuntime[];
   structures: StructureRuntime[];
   units: UnitRuntime[];
@@ -167,11 +171,9 @@ export interface GameState {
   selectedDoctrineIndex: number | null;
   selectedStructureId: number | null;
   pendingPlacementCatalogId: string | null;
-  /** Slot index awaiting a signal-type choice before build proceeds. */
-  pendingRelaySignalSlot: number | null;
+  /** Global stance for friendly units. Offense → seek/engage; Defense → rally to wizard. */
+  armyStance: ArmyStance;
   enemyCampAwake: Record<string, boolean>;
-  playerRelaysEverBuilt: number;
-  loseGraceTicksRemaining: number;
   lastMessage: string;
   /** Seeded RNG state (xorshift32). */
   rngState: number;
@@ -183,8 +185,12 @@ export interface GameState {
   lastFx: CastFxEvent | null;
   /** One-shot flag: at least one player unit dealt bonus damage to an enemy building this tick. Set by combat.ts, consumed by renderer. */
   lastSiegeHit: { x: number; z: number; tick: number } | null;
-  /** Player-controlled hero. */
+  /** Player-controlled hero wizard. */
   hero: HeroRuntime;
+  /** AI opponent wizard — claims taps for `enemy`, spends `enemyFlux`, builds enemy towers. */
+  enemyHero: HeroRuntime;
+  /** Enemy team's Mana (from enemy-owned taps). */
+  enemyFlux: number;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -209,33 +215,74 @@ function dist2(a: Vec2, b: Vec2): number {
   return dx * dx + dz * dz;
 }
 
-export function playerRelaySignalCounts(s: GameState): Record<SignalType, number> {
-  const c: Record<SignalType, number> = { Vanguard: 0, Bastion: 0, Reclaim: 0 };
-  for (const pr of s.playerRelays) {
-    if (!pr.built || pr.destroyed) continue;
-    for (const sig of pr.signalTypes) c[sig]++;
+/** Claimed Taps drive the wizard's tier progression (replaces Relay tier). */
+export function claimedTapCount(s: GameState): number {
+  let n = 0;
+  for (const t of s.taps) {
+    if (t.active && t.ownerTeam === "player") n++;
   }
-  return c;
+  return n;
 }
 
-export function relayTierSatisfied(s: GameState, entry: CatalogEntry): boolean {
-  return builtPlayerRelayCount(s) >= entry.requiredRelayTier;
+export function claimedEnemyTapCount(s: GameState): number {
+  let n = 0;
+  for (const t of s.taps) {
+    if (t.active && t.ownerTeam === "enemy") n++;
+  }
+  return n;
 }
 
-export function signalCountsSatisfied(s: GameState, entry: CatalogEntry): boolean {
-  const req = entry.requiredSignalCounts;
-  if (!req) return true;
-  const have = playerRelaySignalCounts(s);
-  for (const k of Object.keys(req) as SignalType[]) {
-    const need = req[k] ?? 0;
-    if (need <= 0) continue;
-    if ((have[k] ?? 0) < need) return false;
-  }
+/** Tier = 1 (0 taps) → 2 (≥2) → 3 (≥4). Mirrors the old Relay ladder. */
+export function wizardTier(s: GameState): number {
+  const n = claimedTapCount(s);
+  if (n >= 4) return 3;
+  if (n >= 2) return 2;
+  return 1;
+}
+
+/** Enemy wizard tier from enemy-owned Mana nodes (mirrors `wizardTier`). */
+export function enemyWizardTier(s: GameState): number {
+  const n = claimedEnemyTapCount(s);
+  if (n >= 4) return 3;
+  if (n >= 2) return 2;
+  return 1;
+}
+
+export function tierRequirementSatisfied(s: GameState, entry: CatalogEntry): boolean {
+  return wizardTier(s) >= Math.max(1, entry.requiredRelayTier || 1);
+}
+
+export function enemyTierRequirementSatisfied(s: GameState, entry: CatalogEntry): boolean {
+  return enemyWizardTier(s) >= Math.max(1, entry.requiredRelayTier || 1);
+}
+
+/** Signals are no longer required in the wizard build — keep the hook for
+ *  back-compat with catalog entries that still carry `requiredSignalCounts`. */
+export function signalCountsSatisfied(_s: GameState, _entry: CatalogEntry): boolean {
   return true;
 }
 
 export function meetsSignalRequirements(s: GameState, entry: CatalogEntry): boolean {
-  return relayTierSatisfied(s, entry) && signalCountsSatisfied(s, entry);
+  return tierRequirementSatisfied(s, entry);
+}
+
+export function meetsEnemyStructureRequirements(s: GameState, entry: CatalogEntry): boolean {
+  return enemyTierRequirementSatisfied(s, entry);
+}
+
+/** The Wizard Keep structure (completed or still alive). Null if already destroyed. */
+export function findKeep(s: GameState): StructureRuntime | null {
+  for (const st of s.structures) {
+    if (st.team !== "player") continue;
+    if (st.catalogId !== KEEP_ID) continue;
+    if (st.hp <= 0) continue;
+    return st;
+  }
+  return null;
+}
+
+export function isKeep(st: StructureRuntime): boolean {
+  return st.team === "player" && st.catalogId === KEEP_ID;
 }
 
 function initDoctrineRuntime(slots: (string | null)[]): { charges: number[]; cd: number[] } {
@@ -250,29 +297,134 @@ function initDoctrineRuntime(slots: (string | null)[]): { charges: number[]; cd:
   return { charges, cd };
 }
 
+/**
+ * One-time match init: optionally strip command cards, then sort remaining structure
+ * ids by ascending flux cost (stable tie-break by id). Packs to 16 slots, nulls last.
+ */
+export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
+  if (DOCTRINE_COMMANDS_ENABLED) {
+    const copy = [...slots];
+    while (copy.length < 16) copy.push(null);
+    return copy.slice(0, 16);
+  }
+  const structs: { id: string; cost: number }[] = [];
+  for (const id of slots) {
+    if (!id) continue;
+    const e = getCatalogEntry(id);
+    if (!e) continue;
+    if (isCommandEntry(e)) continue;
+    if (isStructureEntry(e)) structs.push({ id, cost: e.fluxCost });
+  }
+  structs.sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id));
+  const out: (string | null)[] = structs.map((s) => s.id);
+  while (out.length < 16) out.push(null);
+  return out.slice(0, 16);
+}
+
+/** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
+ *  no flux cost. This is the permanent base that anchors the wizard. */
+/** Random Mana node layout: TAP_NODES_PER_SIDE on x<0, same on x>0; ignores map.json tapSlots. */
+export function generateProceduralTaps(map: MapData, rngScratch: { v: number }): TapRuntime[] {
+  function rnd(): number {
+    let x = rngScratch.v | 0;
+    x ^= x << 13;
+    x ^= x >>> 17;
+    x ^= x << 5;
+    rngScratch.v = x >>> 0;
+    return (rngScratch.v & 0xffffffff) / 0x100000000;
+  }
+  const half = map.world.halfExtents;
+  const margin = 32;
+  const minSep2 = TAP_GENERATION_MIN_SEP * TAP_GENERATION_MIN_SEP;
+  const sx = map.playerStart?.x ?? 0;
+  const sz = map.playerStart?.z ?? 0;
+  const placed: { x: number; z: number }[] = [];
+
+  function okPos(x: number, z: number, playerSide: boolean): boolean {
+    if (Math.abs(x) > half - 12 || Math.abs(z) > half - 12) return false;
+    if (playerSide) {
+      if (x > -margin) return false;
+    } else if (x < margin) {
+      return false;
+    }
+    const kd2 = 26 * 26;
+    if ((x - sx) * (x - sx) + (z - sz) * (z - sz) < kd2) return false;
+    for (const p of placed) {
+      const dx = p.x - x;
+      const dz = p.z - z;
+      if (dx * dx + dz * dz < minSep2) return false;
+    }
+    return true;
+  }
+
+  const taps: TapRuntime[] = [];
+  let id = 0;
+  for (const playerSide of [true, false]) {
+    let n = 0;
+    let attempts = 0;
+    while (n < TAP_NODES_PER_SIDE && attempts < 1200) {
+      attempts++;
+      const x = playerSide
+        ? -margin - rnd() * Math.max(8, half - margin * 2)
+        : margin + rnd() * Math.max(8, half - margin * 2);
+      const z = (rnd() * 2 - 1) * (half - 24);
+      if (!okPos(x, z, playerSide)) continue;
+      placed.push({ x, z });
+      taps.push({
+        defId: `tap_gen_${id++}`,
+        x,
+        z,
+        active: false,
+        yieldRemaining: 0,
+        ownerTeam: undefined,
+      });
+      n++;
+    }
+  }
+  return taps;
+}
+
+/** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
+export function mapWithRuntimeTapSlots(map: MapData, taps: TapRuntime[]): MapData {
+  const tapSlots: TapSlotDef[] = taps.map((t) => ({ id: t.defId, x: t.x, z: t.z }));
+  return { ...map, tapSlots };
+}
+
+function spawnKeep(state: GameState): void {
+  const entry = getCatalogEntry(KEEP_ID);
+  if (!entry || !isStructureEntry(entry)) return;
+  const p = state.map.playerStart ?? { x: 0, z: 0 };
+  const periodTicks = Math.max(1, Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
+  state.structures.push({
+    id: state.nextId.structure++,
+    team: "player",
+    catalogId: KEEP_ID,
+    x: p.x,
+    z: p.z,
+    hp: KEEP_MAX_HP,
+    maxHp: KEEP_MAX_HP,
+    buildTicksRemaining: 0,
+    buildTotalTicks: 0,
+    complete: true,
+    productionTicksRemaining: periodTicks,
+    doctrineSlotIndex: -1,
+    rallyX: p.x,
+    rallyZ: p.z,
+    placementForward: false,
+    damageReductionUntilTick: 0,
+    productionSilenceUntilTick: 0,
+    holdOrders: false,
+  });
+}
+
 export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
-  const slots = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const rawSlots = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const slots = normalizeDoctrineSlotsForMatch(rawSlots);
   const rt = initDoctrineRuntime(slots);
 
-  const taps: TapRuntime[] = map.tapSlots.map((t) => ({
-    defId: t.id,
-    x: t.x,
-    z: t.z,
-    active: false,
-    yieldRemaining: 0,
-    ownerTeam: undefined,
-  }));
-
-  const playerRelays: PlayerRelayRuntime[] = map.playerRelaySlots.map((r) => ({
-    defId: r.id,
-    x: r.x,
-    z: r.z,
-    built: false,
-    destroyed: false,
-    hp: 0,
-    maxHp: PLAYER_RELAY_MAX_HP,
-    signalTypes: [] as SignalType[],
-  }));
+  const rngScratch = { v: 0xc0ffee01 >>> 0 };
+  const taps = generateProceduralTaps(map, rngScratch);
+  const mapResolved = mapWithRuntimeTapSlots(map, taps);
 
   const enemyRelays: EnemyRelayRuntime[] = map.enemyRelaySlots.map((r) => ({
     defId: r.id,
@@ -286,7 +438,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const hpMult = map.difficulty?.enemyHpMult ?? 1;
   const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
 
-  const heroSpawn = map.playerRelaySlots[0] ?? map.playerStart ?? { x: 0, z: 0 };
+  const heroSpawn = mapResolved.playerStart ?? { x: 0, z: 0 };
   const hero: HeroRuntime = {
     x: heroSpawn.x,
     z: heroSpawn.z,
@@ -299,16 +451,39 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     hp: HERO_MAX_HP,
     maxHp: HERO_MAX_HP,
     facing: 0,
+    wasdStrafe: 0,
+    wasdForward: 0,
+    attackCooldownTicksRemaining: 0,
+  };
+
+  const enemySpawn =
+    mapResolved.enemyStart ??
+    ({ x: -heroSpawn.x, z: heroSpawn.z } as Vec2);
+  const enemyHero: HeroRuntime = {
+    x: enemySpawn.x,
+    z: enemySpawn.z,
+    targetX: null,
+    targetZ: null,
+    speedPerSec: HERO_SPEED * 0.92,
+    radius: HERO_FOLLOW_RADIUS,
+    claimChannelTarget: null,
+    claimChannelTicksRemaining: 0,
+    hp: HERO_MAX_HP,
+    maxHp: HERO_MAX_HP,
+    facing: Math.PI,
+    wasdStrafe: 0,
+    wasdForward: 0,
+    attackCooldownTicksRemaining: 0,
   };
 
   const state: GameState = {
-    map,
+    map: mapResolved,
     tick: 0,
-    phase: "playing",
-    flux: PLAYER_STARTING_FLUX,
+    phase: "setup",
+    flux: SETUP_STARTING_FLUX,
     salvage: 0,
+    enemyFlux: ENEMY_SETUP_STARTING_FLUX,
     taps,
-    playerRelays,
     enemyRelays,
     structures: [],
     units: [],
@@ -319,13 +494,11 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     selectedDoctrineIndex: null,
     selectedStructureId: null,
     pendingPlacementCatalogId: null,
-    pendingRelaySignalSlot: null,
-    enemyCampAwake: Object.fromEntries(map.enemyCamps.map((c) => [c.id, false])),
-    playerRelaysEverBuilt: 0,
-    loseGraceTicksRemaining: 0,
+    armyStance: "offense",
+    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, false])),
     lastMessage:
-      "Pick Doctrine (or defaults), Start. Tap → build Relay (choose Signal) → place Structures / Commands.",
-    rngState: 0xc0ffee01 >>> 0,
+      "Setup: claim Mana nodes, summon towers with lightning — then press Start Battle.",
+    rngState: rngScratch.v >>> 0,
     stats: {
       structuresBuilt: 0,
       structuresLost: 0,
@@ -340,7 +513,10 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     lastFx: null,
     lastSiegeHit: null,
     hero,
+    enemyHero,
   };
+
+  spawnKeep(state);
 
   const defaultOffsets: Vec2[] = [
     { x: 4, z: 0 },
@@ -349,7 +525,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     { x: 6, z: 4 },
     { x: -5, z: -2 },
   ];
-  for (const camp of map.enemyCamps) {
+  for (const camp of mapResolved.enemyCamps) {
     if (typeof camp.coreMaxHp === "number" && camp.coreMaxHp > 0) {
       state.enemyCampCoreHp[camp.id] = camp.coreMaxHp;
     }
@@ -383,17 +559,23 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   return state;
 }
 
-export function builtPlayerRelayCount(s: GameState): number {
-  return s.playerRelays.filter((r) => r.built && !r.destroyed).length;
-}
-
 export function totalPlayerPop(s: GameState): number {
   return s.units.filter((u) => u.team === "player").reduce((a, u) => a + u.pop, 0);
+}
+
+export function totalEnemyPop(s: GameState): number {
+  return s.units.filter((u) => u.team === "enemy").reduce((a, u) => a + u.pop, 0);
 }
 
 export function localPopForStructure(s: GameState, structureId: number): number {
   return s.units
     .filter((u) => u.team === "player" && u.structureId === structureId)
+    .reduce((a, u) => a + u.pop, 0);
+}
+
+export function localPopForEnemyStructure(s: GameState, structureId: number): number {
+  return s.units
+    .filter((u) => u.team === "enemy" && u.structureId === structureId)
     .reduce((a, u) => a + u.pop, 0);
 }
 
@@ -412,26 +594,41 @@ export function nearestEnemyAggroBlocked(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
+/** "Near friendly infra" now means near a claimed Tap or the live Keep. */
 export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
-    if (!t.active) continue;
+    if (!t.active || t.ownerTeam !== "player") continue;
     if (dist2(pos, t) <= r2) return true;
   }
-  for (const pr of s.playerRelays) {
-    if (!pr.built || pr.destroyed) continue;
-    if (dist2(pos, pr) <= r2) return true;
+  const keep = findKeep(s);
+  if (keep && dist2(pos, keep) <= r2) return true;
+  return false;
+}
+
+/** Near enemy relay, enemy-claimed tap, or completed enemy tower (for AI placement). */
+export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
+  const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if (dist2(pos, t) <= r2) return true;
+  }
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    if (dist2(pos, er) <= r2) return true;
+  }
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || !st.complete) continue;
+    if (dist2(pos, st) <= r2) return true;
   }
   return false;
 }
 
-/** Territory = union of `TERRITORY_RADIUS` around built player relays and claimed (player-owned) taps. */
+/** Territory = union of `TERRITORY_RADIUS` around the Keep and claimed taps. */
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
-  for (const pr of s.playerRelays) {
-    if (!pr.built || pr.destroyed) continue;
-    if (dist2(pos, pr) <= r2) return true;
-  }
+  const keep = findKeep(s);
+  if (keep && dist2(pos, keep) <= r2) return true;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player") continue;
     if (dist2(pos, t) <= r2) return true;
@@ -439,12 +636,43 @@ export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
-/** Current list of positions feeding the territory union (relays + claimed taps). */
+/** Union of territory disks around enemy relays, enemy-claimed taps, and completed enemy structures. */
+export function inEnemyTerritory(s: GameState, pos: Vec2): boolean {
+  const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    if (dist2(pos, er) <= r2) return true;
+  }
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if (dist2(pos, t) <= r2) return true;
+  }
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || !st.complete) continue;
+    if (dist2(pos, st) <= r2) return true;
+  }
+  return false;
+}
+
+export function enemyTerritorySources(s: GameState): Vec2[] {
+  const out: Vec2[] = [];
+  for (const er of s.enemyRelays) {
+    if (er.hp > 0) out.push({ x: er.x, z: er.z });
+  }
+  for (const t of s.taps) {
+    if (t.active && t.ownerTeam === "enemy") out.push({ x: t.x, z: t.z });
+  }
+  for (const st of s.structures) {
+    if (st.team === "enemy" && st.complete) out.push({ x: st.x, z: st.z });
+  }
+  return out;
+}
+
+/** Current list of positions feeding the territory union (Keep + claimed taps). */
 export function territorySources(s: GameState): Vec2[] {
   const out: Vec2[] = [];
-  for (const pr of s.playerRelays) {
-    if (pr.built && !pr.destroyed) out.push({ x: pr.x, z: pr.z });
-  }
+  const keep = findKeep(s);
+  if (keep) out.push({ x: keep.x, z: keep.z });
   for (const t of s.taps) {
     if (t.active && t.ownerTeam === "player") out.push({ x: t.x, z: t.z });
   }
@@ -489,7 +717,7 @@ export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | nu
   if (!e) return "Unknown entry.";
   if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) return "Doctrine slot on cooldown.";
   if ((s.doctrineChargesRemaining[slotIndex] ?? 0) <= 0) return "No charges remaining for this slot.";
-  if (!meetsSignalRequirements(s, e)) return "Relay / Signal requirements not met.";
+  if (!meetsSignalRequirements(s, e)) return "Tier requirements not met.";
   return null;
 }
 
@@ -503,7 +731,7 @@ export function canPlaceStructureHere(
   if (!entry || !isStructureEntry(entry)) return "Not a structure card.";
   const slotErr = canUseDoctrineSlot(s, slotIndex);
   if (slotErr) return slotErr;
-  if (s.flux < entry.fluxCost) return "Not enough Flux.";
+  if (s.flux < entry.fluxCost) return "Not enough Mana.";
   if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy (aggro).";
   if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
     return "Must place inside your territory (cyan area). Claim more nodes to expand.";
@@ -511,13 +739,30 @@ export function canPlaceStructureHere(
   return null;
 }
 
+const ENEMY_KEEP_EXCLUSION_RADIUS = 24;
+
+/** Validates a position for an AI-placed enemy structure (no doctrine slot). */
+export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: Vec2): string | null {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || !isStructureEntry(entry)) return "Not a structure.";
+  if (!meetsEnemyStructureRequirements(s, entry)) return "Enemy tier too low.";
+  if (s.enemyFlux < entry.fluxCost) return "Enemy lacks Mana.";
+  if (!inEnemyTerritory(s, pos)) return "Outside enemy territory.";
+  const keep = findKeep(s);
+  if (keep) {
+    const dx = pos.x - keep.x;
+    const dz = pos.z - keep.z;
+    if (dx * dx + dz * dz < ENEMY_KEEP_EXCLUSION_RADIUS * ENEMY_KEEP_EXCLUSION_RADIUS) {
+      return "Too close to Wizard Keep.";
+    }
+  }
+  return null;
+}
+
 /**
  * Specific, player-facing explanation of why a tower cannot be placed right now
  * at `pos`. Mirrors `canPlaceStructureHere` gate order but returns a targeted
- * sentence per failing gate (tier count, signal gap, flux deficit, territory).
- * Returns `null` when the placement is valid — callers should treat that as
- * "Ready to build". Pass `pos=null` for gate checks that don't need a world
- * position (hand-card locked state).
+ * sentence per failing gate (tier count, flux deficit, territory).
  */
 export function placementFailureReason(
   s: GameState,
@@ -536,33 +781,22 @@ export function placementFailureReason(
   const charges = s.doctrineChargesRemaining[slotIndex] ?? 0;
   if (charges <= 0) return "No charges remaining.";
 
-  const relays = builtPlayerRelayCount(s);
-  if (relays < entry.requiredRelayTier) {
-    return `Requires ${entry.requiredRelayTier} Relay${entry.requiredRelayTier === 1 ? "" : "s"} built (you have ${relays}).`;
-  }
-
-  const req = entry.requiredSignalCounts;
-  if (req) {
-    const have = playerRelaySignalCounts(s);
-    const gaps: string[] = [];
-    for (const k of Object.keys(req) as SignalType[]) {
-      const need = req[k] ?? 0;
-      const got = have[k] ?? 0;
-      if (got < need) gaps.push(`${need - got} ${k}`);
-    }
-    if (gaps.length > 0) return `Needs Relay signal: ${gaps.join(", ")}.`;
+  const tier = wizardTier(s);
+  const need = Math.max(1, entry.requiredRelayTier || 1);
+  if (tier < need) {
+    const taps = claimedTapCount(s);
+    const nextNeed = need === 2 ? 2 : 4;
+    return `Requires Tier ${need} (claim ${nextNeed} Mana nodes — you have ${taps}).`;
   }
 
   if (s.flux < entry.fluxCost) {
-    return `Need ${entry.fluxCost} Flux (have ${Math.floor(s.flux)}).`;
+    return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
   }
 
-  // Position-dependent gates apply to structures only. Commands resolve their
-  // targeting at cast time (handled by commandTargetingHint / intent).
   if (isStructureEntry(entry) && pos) {
-    if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy — can't build here.";
+    if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy — can't summon here.";
     if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-      return "Outside your territory — claim more nodes to expand the cyan area.";
+      return "Outside your territory — claim more Mana nodes to expand the cyan area.";
     }
   }
 

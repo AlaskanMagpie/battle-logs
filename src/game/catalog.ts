@@ -3,6 +3,9 @@ import {
   FIRESTORM_RADIUS,
   FORTIFY_DURATION_SEC,
   FORTIFY_INCOMING_DAMAGE_MULT,
+  KEEP_ID,
+  KEEP_MAX_HP,
+  KEEP_SWARM_PERIOD_SEC,
   SHATTER_DAMAGE,
   SHATTER_PRODUCTION_PAUSE_SEC,
 } from "./constants";
@@ -10,6 +13,24 @@ import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from ".
 import { isCommandEntry, isStructureEntry } from "./types";
 
 const STRUCTURE_DATA: StructureCatalogEntry[] = [
+  {
+    id: KEEP_ID,
+    name: "Wizard Keep",
+    kind: "structure",
+    fluxCost: 0,
+    buildSeconds: 0,
+    requiredRelayTier: 1,
+    signalTypes: [],
+    productionSeconds: KEEP_SWARM_PERIOD_SEC,
+    producedSizeClass: "Swarm",
+    producedPop: 3,
+    localPopCap: 12,
+    maxHp: KEEP_MAX_HP,
+    damagePerTick: 0,
+    maxCharges: 0,
+    chargeCooldownSeconds: 0,
+    producedFlavor: "Permanent wizard base — slowly vents a T1 melee swarm.",
+  },
   {
     id: "outpost",
     name: "Outpost",

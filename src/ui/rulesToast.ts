@@ -2,11 +2,11 @@ const ROOT_ID = "signal-wars-onboarding";
 const STORAGE_KEY = "sw:onboarding:v2:dismissed";
 
 const STAGES: string[] = [
-  "You're the blue hero. <b>Right-click</b> to move. <b>Hold right-click</b> to follow the cursor.",
-  "Walk onto a grey <b>node</b> to claim it. Claiming gives <b>Flux/sec</b> and expands your <b>territory</b> (cyan area).",
-  "Inside your territory, <b>drag a tower card</b> from the hand onto the ground to build. Towers auto-produce units.",
-  "Units push toward the red relay by default. Stay close and they'll <b>follow you</b>. <b>Alt+click</b> a tower to toggle Hold.",
-  "Destroy the <b>red relay</b> or wipe the enemy camp to win. Good luck, commander.",
+  "You are a <b>Wizard</b>. <b>WASD</b> strafes; <b>right-click</b> sets a move goal; <b>hold right-click</b> to follow the cursor. <b>Middle mouse</b> orbits the camera.",
+  "Walk onto a grey <b>Mana node</b> and stand still to claim it (no click-to-claim). Each claim grants <b>Mana/sec</b>, raises your <b>Tier</b> (2 nodes = T2, 4 = T3), and expands your cyan <b>territory</b>.",
+  "<b>Left-click</b> on the ground to swing at nearby enemies when not placing a tower. Inside territory, <b>drag a tower card</b> onto the ground — it arrives with a flash of <b>lightning</b>. Your <b>Keep</b> slowly vents a free swarm.",
+  "<b>G</b> toggles Offense / Defense. Offense: your army seeks foes. Defense: they all rally on you.",
+  "Defeat = your <b>Keep</b> or <b>Wizard</b> dies. Victory = shatter the red <b>Dark Fortresses</b> or rout the camps. Good luck.",
 ];
 
 /** Show a staged, dismissible overlay that can be skipped forever (per browser). */

@@ -1,77 +1,78 @@
 {
   "version": 2,
-  "world": { "halfExtents": 90, "groundY": 0 },
+  "world": { "halfExtents": 160, "groundY": 0 },
   "tapSlots": [
-    { "id": "tap_a", "x": -32, "z": 20 },
-    { "id": "tap_b", "x": -42, "z": -6 },
-    { "id": "tap_c", "x": -22, "z": -28 },
-    { "id": "tap_d", "x": -8, "z": 34 },
-    { "id": "tap_e", "x": 6, "z": -18 }
+    { "id": "tap_a", "x": -52, "z": 38 },
+    { "id": "tap_b", "x": -68, "z": -12 },
+    { "id": "tap_c", "x": -38, "z": -48 },
+    { "id": "tap_d", "x": -14, "z": 58 },
+    { "id": "tap_e", "x": 10, "z": -28 }
   ],
   "playerRelaySlots": [
-    { "id": "p_relay_1", "x": -28, "z": 32 },
-    { "id": "p_relay_2", "x": -10, "z": 38 },
-    { "id": "p_relay_3", "x": -40, "z": 8 },
-    { "id": "p_relay_4", "x": -14, "z": 4 }
+    { "id": "p_relay_1", "x": -48, "z": 58 },
+    { "id": "p_relay_2", "x": -18, "z": 62 },
+    { "id": "p_relay_3", "x": -72, "z": 18 },
+    { "id": "p_relay_4", "x": -28, "z": 8 }
   ],
   "enemyRelaySlots": [
-    { "id": "e_relay_1", "x": 56, "z": -10 },
-    { "id": "e_relay_2", "x": 62, "z": 28 }
+    { "id": "e_relay_1", "x": 108, "z": -22 },
+    { "id": "e_relay_2", "x": 118, "z": 42 }
   ],
-  "playerStart": { "x": -22, "z": 22 },
+  "playerStart": { "x": -38, "z": 36 },
+  "enemyStart": { "x": 96, "z": -22 },
   "enemyCamps": [
     {
       "id": "camp_alpha",
-      "origin": { "x": 28, "z": 18 },
-      "aggroRadius": 14,
-      "wakeRadius": 28,
+      "origin": { "x": 52, "z": 36 },
+      "aggroRadius": 18,
+      "wakeRadius": 36,
       "coreMaxHp": 420,
       "roster": [
-        { "sizeClass": "Swarm", "offset": { "x": 3, "z": 0 } },
-        { "sizeClass": "Swarm", "offset": { "x": -2, "z": 2 } },
-        { "sizeClass": "Line", "offset": { "x": 0, "z": -3 } }
+        { "sizeClass": "Swarm", "offset": { "x": 4, "z": 0 } },
+        { "sizeClass": "Swarm", "offset": { "x": -3, "z": 3 } },
+        { "sizeClass": "Line", "offset": { "x": 0, "z": -4 } }
       ]
     },
     {
       "id": "camp_beta",
-      "origin": { "x": 34, "z": -16 },
-      "aggroRadius": 14,
-      "wakeRadius": 28,
+      "origin": { "x": 62, "z": -28 },
+      "aggroRadius": 18,
+      "wakeRadius": 36,
       "roster": [
-        { "sizeClass": "Line", "offset": { "x": 2, "z": 0 } },
-        { "sizeClass": "Line", "offset": { "x": -2, "z": 1 } },
-        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -3 } }
+        { "sizeClass": "Line", "offset": { "x": 3, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -3, "z": 2 } },
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -4 } }
       ]
     },
     {
       "id": "camp_gamma",
-      "origin": { "x": 52, "z": 6 },
-      "aggroRadius": 14,
-      "wakeRadius": 28,
+      "origin": { "x": 96, "z": 12 },
+      "aggroRadius": 18,
+      "wakeRadius": 36,
       "roster": [
-        { "sizeClass": "Heavy", "offset": { "x": 2, "z": 0 } },
-        { "sizeClass": "Line", "offset": { "x": -3, "z": 2 } },
-        { "sizeClass": "Swarm", "offset": { "x": 4, "z": -3 } },
-        { "sizeClass": "Swarm", "offset": { "x": 0, "z": 4 } }
+        { "sizeClass": "Heavy", "offset": { "x": 3, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -4, "z": 3 } },
+        { "sizeClass": "Swarm", "offset": { "x": 5, "z": -4 } },
+        { "sizeClass": "Swarm", "offset": { "x": 0, "z": 5 } }
       ]
     },
     {
       "id": "camp_delta",
-      "origin": { "x": 64, "z": 18 },
-      "aggroRadius": 14,
-      "wakeRadius": 28,
+      "origin": { "x": 118, "z": 36 },
+      "aggroRadius": 18,
+      "wakeRadius": 36,
       "roster": [
         { "sizeClass": "Heavy", "offset": { "x": 0, "z": 0 } },
-        { "sizeClass": "Heavy", "offset": { "x": -3, "z": 2 } },
-        { "sizeClass": "Titan", "offset": { "x": 3, "z": -3 } }
+        { "sizeClass": "Heavy", "offset": { "x": -4, "z": 3 } },
+        { "sizeClass": "Titan", "offset": { "x": 4, "z": -4 } }
       ]
     }
   ],
   "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
   "decor": [
-    { "kind": "box", "x": 8, "z": 6, "w": 6, "h": 3, "d": 4, "rotYDeg": 18, "color": 3555407 },
-    { "kind": "box", "x": 18, "z": -8, "w": 4, "h": 2.6, "d": 7, "rotYDeg": -24, "color": 3294550 },
-    { "kind": "cylinder", "x": 40, "z": 12, "radius": 2.2, "h": 3.5, "color": 4342851 },
-    { "kind": "cylinder", "x": 50, "z": -2, "radius": 2.8, "h": 4.2, "color": 3750979 }
+    { "kind": "box", "x": 14, "z": 10, "w": 8, "h": 3.2, "d": 5, "rotYDeg": 18, "color": 3555407 },
+    { "kind": "box", "x": 32, "z": -14, "w": 5, "h": 2.8, "d": 9, "rotYDeg": -24, "color": 3294550 },
+    { "kind": "cylinder", "x": 78, "z": 18, "radius": 2.8, "h": 4, "color": 4342851 },
+    { "kind": "cylinder", "x": 92, "z": -6, "radius": 3.2, "h": 4.8, "color": 3750979 }
   ]
 }

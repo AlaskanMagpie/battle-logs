@@ -54,9 +54,9 @@ function commandEffectLine(e: CommandCatalogEntry): string {
     case "muster_structure":
       return "Target structure: produce next unit instantly";
     case "shatter_structure":
-      return `Enemy Relay: ${fx.damage} dmg + ${fx.silenceSeconds}s silence`;
+      return `Enemy Dark Fortress: ${fx.damage} dmg + ${fx.silenceSeconds}s silence`;
     case "noop":
-      return "Stub — Flux becomes Salvage";
+      return "Stub — Mana becomes Salvage";
   }
 }
 
@@ -162,7 +162,7 @@ function rulesRowsStructureFull(e: StructureCatalogEntry): string {
   const aura = auraLabel(e);
   const trait = traitLabel(e);
   const rows = [
-    `<p class="tcg-rule"><span class="tcg-rule-label">Flux</span> ${e.fluxCost} to place</p>`,
+    `<p class="tcg-rule"><span class="tcg-rule-label">Mana</span> ${e.fluxCost} to summon</p>`,
     `<p class="tcg-rule"><span class="tcg-rule-label">Build</span> ${e.buildSeconds}s · <span class="tcg-rule-label">Prod</span> ${e.productionSeconds}s</p>`,
     `<p class="tcg-rule"><span class="tcg-rule-label">HP</span> ${e.maxHp}</p>`,
     `<p class="tcg-rule">${escapeHtml(sig)}</p>`,
@@ -181,7 +181,7 @@ function rulesRowsCommandFull(e: CommandCatalogEntry): string {
   const ch = `⚡${e.maxCharges} · CD ${e.chargeCooldownSeconds}s`;
   const eff = e.effect.type;
   return [
-    `<p class="tcg-rule"><span class="tcg-rule-label">Cost</span> ${e.fluxCost} Flux → ${e.salvagePctOnCast}% Salvage</p>`,
+    `<p class="tcg-rule"><span class="tcg-rule-label">Cost</span> ${e.fluxCost} Mana → ${e.salvagePctOnCast}% Salvage</p>`,
     `<p class="tcg-rule">${escapeHtml(sig)}</p>`,
     `<p class="tcg-rule"><span class="tcg-rule-label">Signals</span> ${escapeHtml(signalTypesLine(e))}</p>`,
     `<p class="tcg-rule"><span class="tcg-rule-label">Effect</span> ${escapeHtml(eff)}</p>`,
@@ -292,7 +292,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
     ${deckNo}
     ${spellBadge}
     <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
-    <div class="tcg-pip tcg-pip-tr" title="Flux cost">${escapeHtml(pipTr)}</div>
+    <div class="tcg-pip tcg-pip-tr" title="Mana cost">${escapeHtml(pipTr)}</div>
     <div class="tcg-pip tcg-pip-bl" title="Charges per match">${escapeHtml(pipBl)}</div>
     <div class="tcg-pip tcg-pip-br" title="Charge cooldown">${escapeHtml(pipBr)}</div>
     <div class="tcg-art tcg-art--portrait">${portrait}</div>
@@ -341,7 +341,7 @@ export function tcgCardFullHtml(catalogId: string, variant: TcgCardVariant, deck
     ${spellBadge}
     ${sigEdge}
     <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
-    <div class="tcg-pip tcg-pip-tr" title="Flux cost">${escapeHtml(pipTr)}</div>
+    <div class="tcg-pip tcg-pip-tr" title="Mana cost">${escapeHtml(pipTr)}</div>
     <div class="tcg-pip tcg-pip-bl" title="Charges per match">${escapeHtml(pipBl)}</div>
     <div class="tcg-pip tcg-pip-br" title="Charge cooldown">${escapeHtml(pipBr)}</div>
     <div class="tcg-art tcg-art--portrait tcg-art--full-bleed">

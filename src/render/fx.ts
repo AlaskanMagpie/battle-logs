@@ -77,7 +77,34 @@ export function spawnCastFx(
       return spawnClaim(host, pos);
     case "lightning":
       return spawnLightning(host, pos);
+    case "hero_strike":
+      return spawnHeroStrike(host, pos);
   }
+}
+
+/** Short radial burst for wizard melee. */
+function spawnHeroStrike(host: FxHost, pos: { x: number; z: number }): void {
+  const life = 0.35;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.15, pos.z);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 1.2, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0xc9a8ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    ring.scale.setScalar(1 + p * 2.2);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
+  });
 }
 
 /** Expanding red ring + 12 ember billboards. */

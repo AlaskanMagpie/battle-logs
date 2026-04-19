@@ -6,7 +6,7 @@ export type UnitSizeClass = "Swarm" | "Line" | "Heavy" | "Titan";
 
 export type DoctrineEntryKind = "structure" | "command";
 
-export type GamePhase = "playing" | "win" | "lose";
+export type GamePhase = "setup" | "playing" | "win" | "lose";
 
 export interface Vec2 {
   x: number;
@@ -70,6 +70,8 @@ export interface MapData {
   playerRelaySlots: RelaySlotDef[];
   enemyRelaySlots: RelaySlotDef[];
   playerStart: Vec2;
+  /** Spawn for the AI enemy wizard; if omitted, code mirrors `playerStart` across the origin. */
+  enemyStart?: Vec2;
   enemyCamps: EnemyCampDef[];
   difficulty?: MapDifficulty;
   decor?: MapDecorDef[];

@@ -50,11 +50,13 @@ export function mountDoctrinePicker(root: HTMLElement, onStart: (slots: (string 
   root.innerHTML = `
     <div class="picker-shell picker-shell--solo">
       <div class="picker-panel picker-deck-panel picker-deck-solo">
-        <h2>Doctrine deck</h2>
-        <p class="pick-hint">4×4 roster — <strong>tap a slot</strong> to open the catalog and pick a card. <strong>Press and hold</strong> any card for full stats. Drag between slots to swap, or onto the catalog panel while open to clear.</p>
+        <div class="picker-deck-solo-head">
+          <h2>Doctrine deck</h2>
+          <p class="pick-hint">Two rows of eight — <strong>tap a slot</strong> to open the catalog and pick a card. <strong>Press and hold</strong> any card for full stats. Drag between slots to swap, or onto the catalog panel while open to clear.</p>
+        </div>
         <div class="picker-deck-solo-stack">
           <div class="picker-deck-view" id="picker-deck-view">
-            <div class="picker-card-track picker-deck-track picker-deck-grid-4x4" id="picker-deck-track" role="grid" aria-label="Doctrine slots"></div>
+            <div class="picker-card-track picker-deck-track picker-deck-grid-2x8" id="picker-deck-track" role="grid" aria-label="Doctrine slots, two by eight"></div>
           </div>
         </div>
         <div class="pick-actions">
