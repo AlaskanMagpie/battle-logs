@@ -1,11 +1,39 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { UnitSizeClass } from "../game/types";
+import { getCatalogEntry } from "../game/catalog";
+import { isCommandEntry, type UnitSizeClass } from "../game/types";
 
-let manifest: string[] | null = null;
+let manifest: string[] | undefined;
+let manifestPromise: Promise<string[]> | null = null;
 const loader = new GLTFLoader();
 /** Cached *template* roots (never added to scene). */
 const cache = new Map<string, THREE.Object3D>();
+/** In-flight loads: many units can request the same manifest URL before the first parse finishes. */
+const templateLoadPromises = new Map<string, Promise<THREE.Object3D>>();
+
+/** Cached GLTF root for a manifest URL (used by towers/units and card thumbnails). */
+export async function loadGltfTemplateRoot(url: string): Promise<THREE.Object3D> {
+  const done = cache.get(url);
+  if (done) return done;
+
+  let p = templateLoadPromises.get(url);
+  if (!p) {
+    p = loader
+      .loadAsync(url)
+      .then((gltf) => {
+        const root = gltf.scene;
+        cache.set(url, root);
+        templateLoadPromises.delete(url);
+        return root;
+      })
+      .catch((err) => {
+        templateLoadPromises.delete(url);
+        throw err;
+      });
+    templateLoadPromises.set(url, p);
+  }
+  return p;
+}
 
 /** Stable class → manifest index mapping so each unit class always looks the same.
  *  Swarm=0, Line=1, Heavy=2, Titan=3, hero=4. Falls back modulo manifest length. */
@@ -27,16 +55,27 @@ export function hashStringToSeed(s: string): number {
 }
 
 async function loadManifest(): Promise<string[]> {
-  if (manifest) return manifest;
-  try {
-    const res = await fetch("/assets/units/manifest.json");
-    if (!res.ok) return [];
-    const j = (await res.json()) as { files?: string[] };
-    manifest = j.files ?? [];
-  } catch {
-    manifest = [];
+  if (manifest !== undefined) return manifest;
+  if (!manifestPromise) {
+    manifestPromise = (async (): Promise<string[]> => {
+      try {
+        const res = await fetch("/assets/units/manifest.json");
+        if (!res.ok) return [];
+        const j = (await res.json()) as { files?: string[] };
+        return j.files ?? [];
+      } catch {
+        return [];
+      }
+    })()
+      .then((files) => {
+        manifest = files;
+        return files;
+      })
+      .finally(() => {
+        manifestPromise = null;
+      });
   }
-  return manifest;
+  return manifestPromise;
 }
 
 function pickFile(seed: number, files: string[]): string | null {
@@ -97,12 +136,7 @@ async function attachGlbByFile(
   parent.userData["glbPending"] = true;
 
   try {
-    let template = cache.get(url);
-    if (!template) {
-      const gltf = await loader.loadAsync(url);
-      template = gltf.scene;
-      cache.set(url, template);
-    }
+    const template = await loadGltfTemplateRoot(url);
     const inst = template.clone(true);
     setShadowRecursive(inst, true, true);
 
@@ -208,6 +242,17 @@ function towerManifestIndex(catalogId: string): number {
 function pickTowerFile(catalogId: string, files: string[]): string | null {
   if (!files.length) return null;
   return files[towerManifestIndex(catalogId) % files.length] ?? null;
+}
+
+/** Root-relative GLB URL for doctrine card thumbnail (structures only — spells use SVG art). */
+export async function getCatalogPreviewAssetUrl(catalogId: string): Promise<string | null> {
+  const files = await loadManifest();
+  if (!files.length) return null;
+  const entry = getCatalogEntry(catalogId);
+  if (!entry) return null;
+  if (isCommandEntry(entry)) return null;
+  const file = pickTowerFile(catalogId, files);
+  return file ? `/assets/units/${file}` : null;
 }
 
 /** Load tower art from the same unit manifest; hides procedural silhouette on success. */

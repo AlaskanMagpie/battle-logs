@@ -96,6 +96,10 @@ export function stateChecksum(s: GameState): number {
   h = mix(h, quant(s.enemyHero.z));
   h = mix(h, s.enemyHero.attackCooldownTicksRemaining | 0);
   h = mix(h, s.armyStance === "defense" ? 1 : 0);
+  h = mix(h, s.globalRallyActive ? 1 : 0);
+  h = mix(h, s.rallyClickPending ? 1 : 0);
+  h = mix(h, quant(s.globalRallyX));
+  h = mix(h, quant(s.globalRallyZ));
   for (const er of s.enemyRelays) {
     h = mix(h, quant(er.hp));
     h = mix(h, er.silencedUntilTick);
@@ -104,6 +108,7 @@ export function stateChecksum(s: GameState): number {
     h = mix(h, t.active ? 1 : 0);
     h = mix(h, quant(t.yieldRemaining));
     h = mix(h, t.ownerTeam === "player" ? 1 : t.ownerTeam === "enemy" ? 2 : 0);
+    h = mix(h, quant(t.anchorHp ?? 0));
   }
   return h >>> 0;
 }

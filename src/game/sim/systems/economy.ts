@@ -1,4 +1,5 @@
 import {
+  ENEMY_AI_PASSIVE_FLUX_PER_SEC,
   SALVAGE_FLUX_CAP_PER_SEC,
   SALVAGE_FLUX_PER_POOL_PER_SEC,
   TAP_FLUX_PER_SEC,
@@ -7,9 +8,16 @@ import {
 import type { GameState } from "../../state";
 
 export function economy(s: GameState): void {
+  if (s.phase === "playing") {
+    const d = s.map.difficulty;
+    const stress = d ? Math.max(d.enemyHpMult, d.enemyDmgMult) : 1;
+    const fluxMul = 0.78 + 0.28 * Math.min(Math.max(stress, 0.85), 1.75);
+    s.enemyFlux += (ENEMY_AI_PASSIVE_FLUX_PER_SEC * fluxMul) / TICK_HZ;
+  }
   const perTap = TAP_FLUX_PER_SEC / TICK_HZ;
   for (const t of s.taps) {
     if (!t.active) continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
     if (t.yieldRemaining <= 0) continue;
     const take = Math.min(t.yieldRemaining, perTap);
     const owner = t.ownerTeam ?? "player";

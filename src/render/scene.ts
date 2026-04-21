@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_CHANNEL_SEC,
@@ -17,8 +18,21 @@ import {
 } from "../game/state";
 import type { SignalType, StructureCatalogEntry, UnitSizeClass } from "../game/types";
 import { isStructureEntry } from "../game/types";
-import { createFxHost, spawnCastFx, spawnSiegeTell, stepFx, type FxHost } from "./fx";
+import {
+  clearFx,
+  createFxHost,
+  spawnCastFx,
+  spawnCombatHitMark,
+  spawnSiegeTell,
+  stepFx,
+  type FxHost,
+} from "./fx";
 import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbPool";
+
+/** Exponential follow (1/s); orbit pivot eases toward the wizard. */
+const CAMERA_HERO_FOLLOW_LAMBDA = 5.2;
+/** Orbit pivot height — slightly above the feet so framing feels natural. */
+const CAMERA_HERO_PIVOT_Y = 1.25;
 
 function unitScale(size: UnitSizeClass): number {
   switch (size) {
@@ -401,6 +415,9 @@ export class GameRenderer {
   private tapMeshes = new Map<string, THREE.Mesh>();
   private tapYieldArcs = new Map<string, THREE.Mesh>();
   private tapClaimArcs = new Map<string, THREE.Mesh>();
+  /** Destructible claim pillar on owned Mana nodes. */
+  private tapAnchorRoots = new Map<string, THREE.Group>();
+  private tapAnchorPrevHp = new Map<string, number>();
   /** Floating "Stand to claim" / "Depleted" label sprites keyed by tap defId. */
   private tapLabels = new Map<string, LabelSprite>();
   /** "Next node" highlight ring on the nearest unclaimed tap to the hero. */
@@ -429,6 +446,9 @@ export class GameRenderer {
   private auraRangeRing: THREE.Mesh | null = null;
   private rallyLine: THREE.Line | null = null;
   private rallyFlag: THREE.Mesh | null = null;
+  /** Selected friendly troop — small halo + weapon range ring. */
+  private unitSelHalo: THREE.Mesh | null = null;
+  private unitMeleeRing: THREE.Mesh | null = null;
   private campAggroRings = new Map<string, THREE.Mesh>();
   private campWakeRings = new Map<string, THREE.Mesh>();
   private decorBuilt = false;
@@ -443,6 +463,10 @@ export class GameRenderer {
   private lastSiegeTick = -1;
   private currentState: GameState | null = null;
   private worldPlaneHalf = 0;
+  /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
+  private terrainRoot: THREE.Group | null = null;
+  private terrainHits: THREE.Object3D[] = [];
+  private terrainSource: string | null = null;
   private readonly unitPrevHp = new Map<number, number>();
   private readonly structurePrevHp = new Map<number, number>();
   private readonly relayPrevHp = new Map<string, number>();
@@ -516,6 +540,11 @@ export class GameRenderer {
     };
   }
 
+  /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
+  clearCastFx(): void {
+    clearFx(this.fx);
+  }
+
   setSize(w: number, h: number): void {
     this.renderer.setSize(w, h, false);
     const aspect = w / Math.max(1, h);
@@ -532,9 +561,88 @@ export class GameRenderer {
     const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     this.ndc.set(x, y);
     this.raycaster.setFromCamera(this.ndc, this.camera);
+    if (this.terrainHits.length > 0) {
+      const hits = this.raycaster.intersectObjects(this.terrainHits, false);
+      const p = hits[0]?.point;
+      if (p) return { x: p.x, z: p.z };
+    }
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.plane, hit)) return null;
     return { x: hit.x, z: hit.z };
+  }
+
+  /** First unit mesh hit by screen ray (for selection); null if none. */
+  pickUnitId(clientX: number, clientY: number, rect: DOMRect): number | null {
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+    this.ndc.set(x, y);
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    if (this.unitMeshes.size === 0) return null;
+    const hits = this.raycaster.intersectObjects([...this.unitMeshes.values()], true);
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      while (o) {
+        const uid = o.userData["unitId"] as number | undefined;
+        if (uid !== undefined) return uid;
+        o = o.parent;
+      }
+    }
+    return null;
+  }
+
+  /** Remove custom terrain and show the default ground plane again. */
+  clearTerrain(): void {
+    if (this.terrainRoot) {
+      this.terrainRoot.traverse((obj) => {
+        const m = obj as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.geometry?.dispose();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+        else (mat as THREE.Material | undefined)?.dispose?.();
+      });
+      this.scene.remove(this.terrainRoot);
+      this.terrainRoot = null;
+    }
+    this.terrainHits = [];
+    this.terrainSource = null;
+    this.ground.visible = true;
+  }
+
+  /** Load GLB/GLTF terrain from `map.terrainGlbUrl` (site-root path). */
+  async loadTerrainFromMap(map: { terrainGlbUrl?: string }): Promise<void> {
+    const url = map.terrainGlbUrl?.trim();
+    if (!url) {
+      this.clearTerrain();
+      return;
+    }
+    if (url === this.terrainSource && this.terrainRoot) return;
+
+    this.clearTerrain();
+    this.terrainSource = url;
+    const loader = new GLTFLoader();
+    try {
+      const gltf = await loader.loadAsync(url);
+      const root = new THREE.Group();
+      root.name = "terrain_import";
+      root.add(gltf.scene);
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) {
+          m.castShadow = true;
+          m.receiveShadow = true;
+          this.terrainHits.push(m);
+        }
+      });
+      this.terrainRoot = root;
+      this.scene.add(root);
+      this.ground.visible = false;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("Failed to load terrain GLB:", url, e);
+      this.clearTerrain();
+    }
   }
 
   sync(state: GameState, useGlb: boolean): void {
@@ -568,6 +676,13 @@ export class GameRenderer {
     if (siege && siege.tick !== this.lastSiegeTick) {
       spawnSiegeTell(this.fx, { x: siege.x, z: siege.z });
       this.lastSiegeTick = siege.tick;
+    }
+    const marks = state.combatHitMarks;
+    if (marks.length > 0) {
+      for (const m of marks) {
+        spawnCombatHitMark(this.fx, m);
+      }
+      marks.length = 0;
     }
   }
 
@@ -632,7 +747,7 @@ export class GameRenderer {
         opacity: 0.75,
         depthWrite: false,
       });
-      this.cmdGhostCore = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.9, 32), coreMat);
+      this.cmdGhostCore = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.65, 32), coreMat);
       this.cmdGhostCore.rotation.x = -Math.PI / 2;
       this.cmdGhostCore.position.y = 0.09;
       this.scene.add(this.cmdGhostCore);
@@ -640,11 +755,14 @@ export class GameRenderer {
 
     const r = Math.max(1, radius ?? 1.5);
     this.cmdGhost.geometry.dispose();
-    this.cmdGhost.geometry = new THREE.RingGeometry(Math.max(0.1, r - 0.3), r, 64);
+    this.cmdGhost.geometry = new THREE.RingGeometry(Math.max(0.1, r - 0.35), r, 64);
     this.cmdGhost.position.set(pos.x, 0.08, pos.z);
     this.cmdGhost.visible = true;
     (this.cmdGhost.material as THREE.MeshBasicMaterial).color.set(valid ? 0xd87bff : 0xff6a6a);
 
+    const inner = Math.max(0.2, Math.min(1.2, (radius ?? 1.5) * 0.14));
+    this.cmdGhostCore.geometry.dispose();
+    this.cmdGhostCore.geometry = new THREE.RingGeometry(inner * 0.55, inner, 40);
     this.cmdGhostCore.position.set(pos.x, 0.09, pos.z);
     this.cmdGhostCore.visible = true;
     (this.cmdGhostCore.material as THREE.MeshBasicMaterial).color.set(
@@ -723,19 +841,27 @@ export class GameRenderer {
           this.tapClaimArcs.set(t.defId, claimArc);
         }
         claimArc.position.set(t.x, 0.07, t.z);
-        claimArc.geometry.dispose();
-        claimArc.geometry = new THREE.RingGeometry(
-          3.4,
-          3.9,
-          48,
-          1,
-          -Math.PI / 2,
-          Math.max(0.0001, frac * Math.PI * 2),
-        );
+        const channelKey = isEnemyChannel
+          ? `e:${state.enemyHero.claimChannelTicksRemaining}`
+          : `p:${hero.claimChannelTicksRemaining}`;
+        const ud = claimArc.userData as Record<string, unknown>;
+        if (ud["channelGeomKey"] !== channelKey) {
+          ud["channelGeomKey"] = channelKey;
+          claimArc.geometry.dispose();
+          claimArc.geometry = new THREE.RingGeometry(
+            3.4,
+            3.9,
+            48,
+            1,
+            -Math.PI / 2,
+            Math.max(0.0001, frac * Math.PI * 2),
+          );
+        }
         claimArc.visible = true;
         (claimArc.material as THREE.MeshBasicMaterial).color.set(isEnemyChannel ? 0xff8a8a : 0x6ae1ff);
       } else if (claimArc) {
         claimArc.visible = false;
+        (claimArc.userData as Record<string, unknown>)["channelGeomKey"] = undefined;
       }
 
       // Floating label: "Stand to claim — 20 Mana" on unclaimed taps, "Depleted"
@@ -744,6 +870,7 @@ export class GameRenderer {
       const claimedByPlayer = t.active && t.ownerTeam === "player";
       const claimedByEnemy = t.active && t.ownerTeam === "enemy";
       const depleted = t.active && t.yieldRemaining <= 0;
+      const anchorUp = (t.anchorHp ?? 0) > 0;
       if (!claimedByPlayer && !claimedByEnemy) {
         if (!label) {
           label = makeLabelSprite("Stand to claim", "#6ae1ff");
@@ -756,12 +883,22 @@ export class GameRenderer {
         label.sprite.position.set(t.x, 4.2, t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = depleted ? 0.55 : 1;
+      } else if (claimedByEnemy && anchorUp) {
+        if (!label) {
+          label = makeLabelSprite("Destroy anchor", "#ff9a7a");
+          this.markers.add(label.sprite);
+          this.tapLabels.set(t.defId, label);
+        }
+        drawLabel(label, "Destroy anchor to uncap", "#ff9a7a");
+        label.sprite.position.set(t.x, 5.1, t.z);
+        label.sprite.visible = true;
+        (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
       } else if (label) {
         label.sprite.visible = false;
       }
 
       let arc = this.tapYieldArcs.get(t.defId);
-      const active = t.active && t.yieldRemaining > 0;
+      const active = t.active && t.yieldRemaining > 0 && (t.anchorHp ?? 0) > 0;
       if (active) {
         const frac = Math.max(0, Math.min(1, t.yieldRemaining / TAP_YIELD_MAX));
         if (!arc) {
@@ -781,21 +918,77 @@ export class GameRenderer {
           this.tapYieldArcs.set(t.defId, arc);
         }
         arc.position.set(t.x, 0.07, t.z);
-        arc.geometry.dispose();
-        arc.geometry = new THREE.RingGeometry(
-          1.3,
-          2.0,
-          48,
-          1,
-          Math.PI / 2 - frac * Math.PI,
-          Math.max(0.0001, frac * Math.PI * 2),
-        );
+        const yieldKey = `${t.ownerTeam}:${t.yieldRemaining}`;
+        const arcUd = arc.userData as Record<string, unknown>;
+        if (arcUd["yieldGeomKey"] !== yieldKey) {
+          arcUd["yieldGeomKey"] = yieldKey;
+          arc.geometry.dispose();
+          arc.geometry = new THREE.RingGeometry(
+            1.3,
+            2.0,
+            48,
+            1,
+            Math.PI / 2 - frac * Math.PI,
+            Math.max(0.0001, frac * Math.PI * 2),
+          );
+        }
         (arc.material as THREE.MeshBasicMaterial).color.set(
           t.ownerTeam === "enemy" ? 0xff7070 : 0x7cf0b4,
         );
         arc.visible = true;
       } else if (arc) {
         arc.visible = false;
+        (arc.userData as Record<string, unknown>)["yieldGeomKey"] = undefined;
+      }
+    }
+
+    const aliveAnchors = new Set<string>();
+    for (const t of state.taps) {
+      if (!t.active || !t.ownerTeam) continue;
+      if ((t.anchorHp ?? 0) <= 0) continue;
+      aliveAnchors.add(t.defId);
+      let g = this.tapAnchorRoots.get(t.defId);
+      if (!g) {
+        g = new THREE.Group();
+        const body = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.42, 0.52, 1.12, 12),
+          new THREE.MeshStandardMaterial({
+            color: 0x9eb6d4,
+            roughness: 0.52,
+            metalness: 0.12,
+            emissive: 0x0a1420,
+          }),
+        );
+        body.position.y = 0.56;
+        body.castShadow = true;
+        body.receiveShadow = true;
+        body.userData["bodyMesh"] = body;
+        g.userData["bodyMesh"] = body;
+        g.add(body);
+        this.markers.add(g);
+        this.tapAnchorRoots.set(t.defId, g);
+      }
+      g.position.set(t.x, 0, t.z);
+      const body = g.userData["bodyMesh"] as THREE.Mesh;
+      const mat = body.material as THREE.MeshStandardMaterial;
+      mat.color.setHex(t.ownerTeam === "player" ? 0x5ba8e8 : 0xd86060);
+      const fg = t.ownerTeam === "player" ? 0x7ec8ff : 0xff8888;
+      const pair = this.ensureHpBarPair(g, "tapA", 1.32, fg);
+      const maxA = Math.max(1, t.anchorMaxHp ?? 1);
+      const hpA = t.anchorHp ?? 0;
+      this.setHpBarFrac(pair, hpA / maxA);
+      const prev = this.tapAnchorPrevHp.get(t.defId);
+      if (prev !== undefined && hpA < prev - 0.5) {
+        (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
+      }
+      this.tapAnchorPrevHp.set(t.defId, hpA);
+    }
+    for (const [defId, g] of this.tapAnchorRoots) {
+      if (!aliveAnchors.has(defId)) {
+        this.markers.remove(g);
+        this.disposeObject(g);
+        this.tapAnchorRoots.delete(defId);
+        this.tapAnchorPrevHp.delete(defId);
       }
     }
 
@@ -992,19 +1185,24 @@ export class GameRenderer {
     this.keepRing.visible = true;
 
     this.keepHpArc.position.set(keep.x, 0.065, keep.z);
-    this.keepHpArc.geometry.dispose();
-    this.keepHpArc.geometry = new THREE.RingGeometry(
-      4.5,
-      4.9,
-      64,
-      1,
-      Math.PI / 2 - frac * Math.PI,
-      Math.max(0.0001, frac * Math.PI * 2),
-    );
-    const arcMat = this.keepHpArc.material as THREE.MeshBasicMaterial;
-    if (frac < 0.35) arcMat.color.set(0xff7474);
-    else if (frac < 0.7) arcMat.color.set(0xffd08a);
-    else arcMat.color.set(0xd9b7ff);
+    const fracKey = Math.round(frac * 200);
+    const arcUd = this.keepHpArc.userData as Record<string, unknown>;
+    if (arcUd["keepArcFracKey"] !== fracKey) {
+      arcUd["keepArcFracKey"] = fracKey;
+      this.keepHpArc.geometry.dispose();
+      this.keepHpArc.geometry = new THREE.RingGeometry(
+        4.5,
+        4.9,
+        64,
+        1,
+        Math.PI / 2 - frac * Math.PI,
+        Math.max(0.0001, frac * Math.PI * 2),
+      );
+      const arcMat = this.keepHpArc.material as THREE.MeshBasicMaterial;
+      if (frac < 0.35) arcMat.color.set(0xff7474);
+      else if (frac < 0.7) arcMat.color.set(0xffd08a);
+      else arcMat.color.set(0xd9b7ff);
+    }
     this.keepHpArc.visible = true;
   }
 
@@ -1099,7 +1297,72 @@ export class GameRenderer {
     }
   }
 
+  private hideStructureSelectionVisuals(): void {
+    if (this.selectHalo) this.selectHalo.visible = false;
+    if (this.attackRangeRing) this.attackRangeRing.visible = false;
+    if (this.auraRangeRing) this.auraRangeRing.visible = false;
+    if (this.rallyLine) this.rallyLine.visible = false;
+    if (this.rallyFlag) this.rallyFlag.visible = false;
+  }
+
+  private hideUnitSelectionVisuals(): void {
+    if (this.unitSelHalo) this.unitSelHalo.visible = false;
+    if (this.unitMeleeRing) this.unitMeleeRing.visible = false;
+  }
+
   private syncSelectionAndRally(state: GameState): void {
+    const uSel = state.selectedUnitId;
+    const selU = uSel !== null ? state.units.find((x) => x.id === uSel) : null;
+    const plrUnit = selU && selU.team === "player" && selU.hp > 0 ? selU : null;
+
+    if (plrUnit) {
+      this.hideStructureSelectionVisuals();
+      const ux = plrUnit.x;
+      const uz = plrUnit.z;
+      const atkR = plrUnit.range;
+      if (!this.unitSelHalo) {
+        this.unitSelHalo = new THREE.Mesh(
+          new THREE.RingGeometry(0.52, 0.92, 36),
+          new THREE.MeshBasicMaterial({
+            color: 0x9ed8ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.72,
+            depthWrite: false,
+          }),
+        );
+        this.unitSelHalo.rotation.x = -Math.PI / 2;
+        this.markers.add(this.unitSelHalo);
+      }
+      this.unitSelHalo.position.set(ux, 0.045, uz);
+      this.unitSelHalo.visible = true;
+      if (!this.unitMeleeRing) {
+        this.unitMeleeRing = new THREE.Mesh(
+          new THREE.RingGeometry(Math.max(0.15, atkR - 0.12), atkR, 56),
+          new THREE.MeshBasicMaterial({
+            color: 0x7ec8ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.26,
+            depthWrite: false,
+          }),
+        );
+        this.unitMeleeRing.rotation.x = -Math.PI / 2;
+        this.markers.add(this.unitMeleeRing);
+      }
+      this.unitMeleeRing.geometry.dispose();
+      this.unitMeleeRing.geometry = new THREE.RingGeometry(
+        Math.max(0.15, atkR - 0.12),
+        atkR,
+        56,
+      );
+      this.unitMeleeRing.position.set(ux, 0.052, uz);
+      this.unitMeleeRing.visible = true;
+      return;
+    }
+
+    this.hideUnitSelectionVisuals();
+
     const selId = state.selectedStructureId;
     const st = selId !== null ? state.structures.find((x) => x.id === selId) : null;
 
@@ -1220,11 +1483,7 @@ export class GameRenderer {
         if (this.rallyFlag) this.rallyFlag.visible = false;
       }
     } else {
-      if (this.selectHalo) this.selectHalo.visible = false;
-      if (this.attackRangeRing) this.attackRangeRing.visible = false;
-      if (this.auraRangeRing) this.auraRangeRing.visible = false;
-      if (this.rallyLine) this.rallyLine.visible = false;
-      if (this.rallyFlag) this.rallyFlag.visible = false;
+      this.hideStructureSelectionVisuals();
     }
   }
 
@@ -1604,6 +1863,7 @@ export class GameRenderer {
       }
       obj.position.set(u.x, 0, u.z);
       const g = obj as THREE.Group;
+      g.userData["unitId"] = u.id;
       const h = unitScale(u.sizeClass) * 1.35;
       const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
       const pair = this.ensureHpBarPair(g, "u", h, fg);
@@ -1620,7 +1880,7 @@ export class GameRenderer {
     const cam = this.camera.position;
     const orient = (root: THREE.Object3D): void => {
       const ud = root.userData as Record<string, unknown>;
-      for (const key of ["u", "st", "relay"] as const) {
+      for (const key of ["u", "st", "relay", "tapA"] as const) {
         const bg = ud[`${key}_hpBg`] as THREE.Mesh | undefined;
         const fg = ud[`${key}_hpFg`] as THREE.Mesh | undefined;
         if (bg) bg.lookAt(cam);
@@ -1630,6 +1890,7 @@ export class GameRenderer {
     for (const g of this.unitMeshes.values()) orient(g);
     for (const g of this.structureMeshes.values()) orient(g);
     for (const m of this.relayMeshes.values()) orient(m);
+    for (const g of this.tapAnchorRoots.values()) orient(g);
     if (this.heroGroup && this.heroHpBarBg && this.heroHpBarFg) {
       this.heroHpBarBg.lookAt(cam);
       this.heroHpBarFg.lookAt(cam);
@@ -1638,6 +1899,31 @@ export class GameRenderer {
       this.enemyHeroHpBarBg.lookAt(cam);
       this.enemyHeroHpBarFg.lookAt(cam);
     }
+  }
+
+  /**
+   * Keeps OrbitControls' pivot on the player wizard with exponential smoothing.
+   * Moves camera by the same delta so zoom / orbit offset from the hero is preserved.
+   */
+  private applyHeroCameraFollow(dt: number): void {
+    const state = this.currentState;
+    if (!state || state.phase !== "playing") return;
+    const h = state.hero;
+    const desiredX = h.x;
+    const desiredY = CAMERA_HERO_PIVOT_Y;
+    const desiredZ = h.z;
+    const t = this.controls.target;
+    const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
+    const dx = (desiredX - t.x) * alpha;
+    const dy = (desiredY - t.y) * alpha;
+    const dz = (desiredZ - t.z) * alpha;
+    if (dx * dx + dy * dy + dz * dz < 1e-10) return;
+    t.x += dx;
+    t.y += dy;
+    t.z += dz;
+    this.camera.position.x += dx;
+    this.camera.position.y += dy;
+    this.camera.position.z += dz;
   }
 
   private tickHitPulses(dt: number): void {
@@ -1659,11 +1945,13 @@ export class GameRenderer {
     for (const g of this.unitMeshes.values()) pulse(g);
     for (const g of this.structureMeshes.values()) pulse(g);
     for (const m of this.relayMeshes.values()) pulse(m);
+    for (const g of this.tapAnchorRoots.values()) pulse(g);
     if (this.enemyHeroGroup) pulse(this.enemyHeroGroup);
   }
 
   render(): void {
     const dt = Math.min(0.1, this.clock.getDelta());
+    this.applyHeroCameraFollow(dt);
     this.controls.update();
     this.tickHitPulses(dt);
     this.orientHpBars();

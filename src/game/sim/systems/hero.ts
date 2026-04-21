@@ -7,7 +7,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
-import type { GameState } from "../../state";
+import { armTapClaimAnchor, type GameState } from "../../state";
 import { dist2 } from "./helpers";
 
 function moveHeroToward(s: GameState): void {
@@ -140,6 +140,7 @@ export function heroSystem(s: GameState): void {
           s.flux -= HERO_CLAIM_FLUX_FEE;
           tap.active = true;
           tap.ownerTeam = "player";
+          armTapClaimAnchor(tap);
           tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
           s.lastFx = { kind: "claim", x: tap.x, z: tap.z, tick: s.tick };
           s.lastMessage = `Node claimed (+1 Mana/sec). Territory expanded.`;

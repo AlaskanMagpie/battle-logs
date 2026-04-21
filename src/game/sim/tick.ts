@@ -14,10 +14,7 @@ import { loseCheck, winCheck } from "./systems/winlose";
 
 export { applyPlayerIntents } from "./systems/intents";
 
-/** Single fixed-step tick. Call at TICK_HZ (10 Hz) with accumulated player intents.
- *  Setup phase ticks too: economy, production, movement, claim channel, hero — but
- *  camp wake, reinforcements, combat, and win/lose checks stay quiet until the
- *  player presses Start Battle (handled by per-system guards below). */
+/** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
 export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   if (s.phase === "win" || s.phase === "lose") return;
   tickDoctrineCooldowns(s);

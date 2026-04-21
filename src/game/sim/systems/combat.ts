@@ -4,8 +4,9 @@ import {
   CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
   FORTIFY_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
+  TAP_ANCHOR_STRIKE_RADIUS,
 } from "../../constants";
-import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
+import { shatterTapAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
 import { dist2, TRAMPLE } from "./helpers";
 
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
@@ -25,9 +26,13 @@ function applyUnitDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   return d;
 }
 
+const COMBAT_MARK_MAX = 14;
+
 export function combat(s: GameState): void {
   s.lastSiegeHit = null;
-  if (s.phase === "setup") return;
+  s.combatHitMarks.length = 0;
+  const markAttackers = new Set<number>();
+
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
@@ -44,11 +49,24 @@ export function combat(s: GameState): void {
     }
     if (!best) continue;
     applyUnitDamage(u, best);
+    if (s.combatHitMarks.length < COMBAT_MARK_MAX && !markAttackers.has(u.id)) {
+      markAttackers.add(u.id);
+      s.combatHitMarks.push({
+        ax: u.x,
+        az: u.z,
+        tx: best.x,
+        tz: best.z,
+        range: u.range,
+        wide: !!(u.aoeRadius && u.aoeRadius > 0),
+      });
+    }
     if (u.aoeRadius && u.aoeRadius > 0) {
       const r2 = u.aoeRadius * u.aoeRadius;
       for (const splash of s.units) {
         if (splash === best || splash.team !== foeTeam || splash.hp <= 0) continue;
-        if (dist2(best, splash) <= r2) splash.hp -= physicalDamage(u, splash) * 0.6;
+        if (dist2(best, splash) <= r2) {
+          splash.hp -= physicalDamage(u, splash) * 0.6;
+        }
       }
     }
   }
@@ -112,6 +130,21 @@ export function combat(s: GameState): void {
         st.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
         if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
       }
+    }
+  }
+
+  // Units vs hostile Mana anchors (claim pillars on taps).
+  const ar2 = TAP_ANCHOR_STRIKE_RADIUS * TAP_ANCHOR_STRIKE_RADIUS;
+  for (const u of s.units) {
+    if (u.hp <= 0) continue;
+    const foeTeam = u.team === "player" ? "enemy" : "player";
+    for (const t of s.taps) {
+      if (!t.active || t.ownerTeam !== foeTeam) continue;
+      if ((t.anchorHp ?? 0) <= 0) continue;
+      if (dist2(u, t) > ar2) continue;
+      const mult = u.damageVsStructuresMult ?? 1;
+      t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - u.dmgPerTick * 0.42 * mult);
+      if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
     }
   }
 

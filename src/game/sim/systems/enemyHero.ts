@@ -2,6 +2,9 @@ import { getCatalogEntry } from "../../catalog";
 import {
   ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
   ENEMY_AI_BUILD_CATALOG_IDS,
+  ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE,
+  ENEMY_AI_CLAIM_RESERVE_TAP_GOAL,
+  ENEMY_AI_MIN_BUILD_SEP,
   ENEMY_HERO_STRIKE_COOLDOWN_TICKS,
   ENEMY_HERO_STRIKE_DAMAGE,
   ENEMY_TAP_WEDGE_MARGIN_X,
@@ -15,13 +18,16 @@ import {
 } from "../../constants";
 import { logGame } from "../../gameLog";
 import {
+  armTapClaimAnchor,
   canPlaceEnemyStructureAt,
   claimedEnemyTapCount,
   enemyTerritorySources,
   findKeep,
   inEnemyTerritory,
+  meetsEnemyStructureRequirements,
   nearEnemyInfra,
   rand,
+  shatterTapAnchor,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
@@ -111,12 +117,34 @@ function pickEnemyPreferredInactiveTap(s: GameState, actor: { x: number; z: numb
   return bestSide ?? bestAny;
 }
 
+function invalidateStaleEnemyHeroMoveTarget(s: GameState): void {
+  const h = s.enemyHero;
+  if (h.targetX === null || h.targetZ === null) return;
+  for (let i = 0; i < s.taps.length; i++) {
+    const t = s.taps[i]!;
+    const dx = t.x - h.targetX;
+    const dz = t.z - h.targetZ;
+    if (dx * dx + dz * dz > 0.25) continue;
+    if (t.active) {
+      h.targetX = null;
+      h.targetZ = null;
+    }
+    return;
+  }
+}
+
+/**
+ * Walk toward the best neutral tap. If we are already inside claim range of that tap, do **not**
+ * assign a move target — otherwise `moving` stays true forever and the claim channel never starts.
+ */
 function pickMoveTargetForEnemyHero(s: GameState): void {
   const h = s.enemyHero;
-  if (h.targetX !== null) return;
+  if (h.targetX !== null || h.targetZ !== null) return;
   const idx = pickEnemyPreferredInactiveTap(s, h);
   if (idx === null) return;
   const t = s.taps[idx]!;
+  const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
+  if (dist2(h, t) <= r2) return;
   h.targetX = t.x;
   h.targetZ = t.z;
 }
@@ -166,26 +194,76 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
   return true;
 }
 
+function unclaimedTapCount(s: GameState): number {
+  let n = 0;
+  for (const t of s.taps) {
+    if (!t.active) n++;
+  }
+  return n;
+}
+
+/** Mana floor to leave after a build so the rival can still channel the next node claim. */
+function enemyBuildFluxReserve(s: GameState): number {
+  const taps = claimedEnemyTapCount(s);
+  if (taps >= ENEMY_AI_CLAIM_RESERVE_TAP_GOAL) return 8;
+  if (unclaimedTapCount(s) === 0) return 0;
+  return HERO_CLAIM_FLUX_FEE + ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE;
+}
+
+function minDist2ToEnemyStructures(s: GameState, pos: { x: number; z: number }): number {
+  let m = Infinity;
+  for (const st of s.structures) {
+    if (st.team !== "enemy") continue;
+    const d = dist2(pos, st);
+    if (d < m) m = d;
+  }
+  return m;
+}
+
+function enemyAiBuildIntervalTicks(s: GameState): number {
+  const d = s.map.difficulty;
+  const stress = d ? Math.max(d.enemyHpMult, d.enemyDmgMult) : 1;
+  const cadence = 0.62 + 0.38 * Math.min(Math.max(stress, 0.85), 1.65);
+  return Math.max(
+    Math.round(1.6 * TICK_HZ),
+    Math.round(ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS / cadence),
+  );
+}
+
 function attemptEnemyAiBuild(s: GameState): void {
-  if (s.phase !== "setup" && s.phase !== "playing") return;
-  if (s.tick % ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS !== 0) return;
+  if (s.phase !== "playing") return;
+  if (s.tick % enemyAiBuildIntervalTicks(s) !== 0) return;
   const half = s.map.world.halfExtents;
   const sources = enemyTerritorySources(s);
-  if (sources.length === 0) return;
-  for (let attempt = 0; attempt < 18; attempt++) {
-    const base = sources[Math.floor(rand(s) * sources.length)]!;
+  const n = sources.length;
+  if (n === 0) return;
+  const reserve = enemyBuildFluxReserve(s);
+  const sep2 = ENEMY_AI_MIN_BUILD_SEP * ENEMY_AI_MIN_BUILD_SEP;
+  const legalIds = [...ENEMY_AI_BUILD_CATALOG_IDS].filter((id) => {
+    const e = getCatalogEntry(id);
+    return e && isStructureEntry(e) && meetsEnemyStructureRequirements(s, e);
+  });
+  if (legalIds.length === 0) return;
+  const sortedIds = legalIds.sort((a, b) => {
+    const ea = getCatalogEntry(a);
+    const eb = getCatalogEntry(b);
+    const ca = ea && isStructureEntry(ea) ? ea.fluxCost : 9999;
+    const cb = eb && isStructureEntry(eb) ? eb.fluxCost : 9999;
+    return ca - cb || a.localeCompare(b);
+  });
+  for (let attempt = 0; attempt < 22; attempt++) {
+    const pick = Math.min(n - 1, Math.max(0, Math.floor(rand(s) * n)));
+    const base = sources[pick];
+    if (!base) continue;
     const x = base.x + (rand(s) - 0.5) * 32;
     const z = base.z + (rand(s) - 0.5) * 32;
     if (Math.abs(x) > half - 8 || Math.abs(z) > half - 8) continue;
     if (!inEnemyTerritory(s, { x, z })) continue;
-    const sortedIds = [...ENEMY_AI_BUILD_CATALOG_IDS].sort((a, b) => {
-      const ea = getCatalogEntry(a);
-      const eb = getCatalogEntry(b);
-      const ca = ea && isStructureEntry(ea) ? ea.fluxCost : 9999;
-      const cb = eb && isStructureEntry(eb) ? eb.fluxCost : 9999;
-      return ca - cb || a.localeCompare(b);
-    });
+    if (minDist2ToEnemyStructures(s, { x, z }) < sep2) continue;
     for (const catalogId of sortedIds) {
+      const def = getCatalogEntry(catalogId);
+      if (!def || !isStructureEntry(def)) continue;
+      if (s.enemyFlux < def.fluxCost + reserve) continue;
       if (tryEnemyPlaceStructure(s, catalogId, { x, z })) return;
     }
   }
@@ -195,6 +273,7 @@ export function enemyHeroSystem(s: GameState): void {
   const h = s.enemyHero;
   if (h.attackCooldownTicksRemaining > 0) h.attackCooldownTicksRemaining -= 1;
 
+  invalidateStaleEnemyHeroMoveTarget(s);
   moveEnemyHeroToward(s);
   pickMoveTargetForEnemyHero(s);
 
@@ -236,6 +315,7 @@ export function enemyHeroSystem(s: GameState): void {
           s.enemyFlux -= HERO_CLAIM_FLUX_FEE;
           tap.active = true;
           tap.ownerTeam = "enemy";
+          armTapClaimAnchor(tap);
           tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
           emitFx(s, "claim", { x: tap.x, z: tap.z });
           logGame("claim", `Enemy wizard claimed ${tap.defId}`, s.tick);
@@ -255,7 +335,7 @@ export function enemyHeroSystem(s: GameState): void {
 
 /** Rival wizard melee: player hero, then a nearby player unit, then the Keep. */
 function enemyHeroTryStrike(s: GameState): void {
-  if (s.phase !== "setup" && s.phase !== "playing") return;
+  if (s.phase !== "playing") return;
   const h = s.enemyHero;
   if (h.hp <= 0 || h.attackCooldownTicksRemaining > 0) return;
   const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
@@ -281,6 +361,26 @@ function enemyHeroTryStrike(s: GameState): void {
     bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitFx(s, "hero_strike", { x: bestU.x, z: bestU.z });
+    return;
+  }
+
+  let bestTap: (typeof s.taps)[0] | null = null;
+  let bestTapD = r2;
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "player") continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
+    const d2 = dist2(h, t);
+    if (d2 <= bestTapD) {
+      bestTapD = d2;
+      bestTap = t;
+    }
+  }
+  if (bestTap) {
+    const cur = bestTap.anchorHp ?? 0;
+    bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * 0.42);
+    h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: bestTap.x, z: bestTap.z });
+    if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return;
   }
 

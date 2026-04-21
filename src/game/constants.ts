@@ -1,27 +1,59 @@
-/** Simulation ticks per second (PRD). */
-export const TICK_HZ = 10;
+/** Simulation ticks per second — higher = smoother movement/combat cadence (balance uses per-tick scaling). */
+export const TICK_HZ = 20;
+
+/** Cast FX (lightning, rings, etc.) are forcibly removed after this many wall-clock seconds. */
+export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 
 /** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
 export const DOCTRINE_COMMANDS_ENABLED = false;
 
-/** Enemy wizard initial Mana pool (setup / playing). */
+/** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
 
-/** Enemy AI tries to place a tower every N ticks (deterministic cadence). */
-export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 45;
+/** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2.8s at default TICK_HZ. */
+export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 56;
 
-/** Structure ids the enemy wizard may auto-build (cheapest viable first). */
-export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = ["outpost", "watchtower", "root_bunker"];
+/** Baseline Mana/sec for the rival wizard (scaled slightly by `map.difficulty`). */
+export const ENEMY_AI_PASSIVE_FLUX_PER_SEC = 2.5;
+
+/** While the rival has fewer than this many claimed nodes and neutral nodes remain, keep this much Mana in reserve so claims are not priced out by builds. */
+export const ENEMY_AI_CLAIM_RESERVE_TAP_GOAL = 2;
+export const ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE = 22;
+
+/** Prefer new enemy AI towers at least this far (world units) from existing enemy structures. */
+export const ENEMY_AI_MIN_BUILD_SEP = 11;
+
+/** Structure ids the enemy wizard may auto-build (cheapest viable first; placement still gated by `canPlaceEnemyStructureAt`). */
+export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
+  "outpost",
+  "watchtower",
+  "root_bunker",
+  "menders_hut",
+  "salvage_yard",
+  "war_camp",
+];
+
+/** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */
+export const ENEMY_UNIT_HUNT_DETECT = 95;
+
+/** Player units (offense): larger than old `max(10, range*3)` so armies actually contest space. */
+export const PLAYER_UNIT_HUNT_DETECT_MULT = 6;
+export const PLAYER_UNIT_HUNT_DETECT_MIN = 28;
 
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
 export const ENEMY_TAP_WEDGE_MARGIN_X = 28;
 
 /** Rival wizard melee — tuned slightly below player strike. */
 export const ENEMY_HERO_STRIKE_DAMAGE = 32;
-export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 11;
+export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 22;
 
 export const TAP_FLUX_PER_SEC = 1;
 export const TAP_YIELD_MAX = 250;
+
+/** Physical claim pillar on a Mana node — HP pool; when destroyed the node returns to neutral. */
+export const TAP_ANCHOR_MAX_HP = 200;
+/** Melee / strike range from unit or wizard to tap (x,z) to damage the anchor. */
+export const TAP_ANCHOR_STRIKE_RADIUS = 2.75;
 
 /** Build / place proximity to Tap or Keep (world units). */
 export const INFRA_PLACE_RADIUS = 16;
@@ -38,16 +70,11 @@ export const KEEP_MAX_HP = 900;
 export const KEEP_SWARM_PERIOD_SEC = 6;
 export const KEEP_ID = "wizard_keep";
 
-export const GLOBAL_POP_CAP = 80;
+/** Army-wide population ceiling (sum of unit `pop`). High cap for stress tests / swarm play. */
+export const GLOBAL_POP_CAP = 1000;
 
-/** Enough for Tap (80) + first Relay (0) + one Tier-1 structure in one beat (playtest pacing). */
+/** Enough for Tap + first Relay + one Tier-1 structure in one beat (playtest pacing). */
 export const PLAYER_STARTING_FLUX = 280;
-
-/** Bonus flux granted at the start of the Setup phase so the player can
- *  comfortably claim several nodes, build a relay, and queue towers before
- *  pressing Start Battle. Replaces `PLAYER_STARTING_FLUX` as the initial
- *  flux pool while `phase === "setup"`. */
-export const SETUP_STARTING_FLUX = 500;
 
 export const STRUCTURE_AGGRO_BLOCK_RADIUS = 12;
 
@@ -83,7 +110,7 @@ export const SHATTER_PRODUCTION_PAUSE_SEC = 10;
 
 /** Optional camp scenario: player units within this range of a camp origin damage the camp core while the camp is awake. */
 export const CAMP_CORE_ATTACK_RADIUS = 7;
-export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.45;
+export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
 export const ENEMY_WAVE_EVERY_TICKS = 18 * TICK_HZ;
@@ -98,10 +125,10 @@ export const HERO_CLAIM_FLUX_FEE = 20;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
 export const HERO_WASD_SPEED = 11;
-/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (10 Hz). */
+/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
 export const HERO_ATTACK_RANGE = 5.5;
 export const HERO_ATTACK_DAMAGE = 42;
-export const HERO_ATTACK_COOLDOWN_TICKS = 8;
+export const HERO_ATTACK_COOLDOWN_TICKS = 16;
 
 /** Procedural Mana nodes per match (each side). */
 export const TAP_NODES_PER_SIDE = 10;

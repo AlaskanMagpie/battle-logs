@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Signal Wars — Map editor</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+        background: #0b0f14;
+        color: #e8eef7;
+      }
+      #me-root {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+      #me-toolbar {
+        flex-shrink: 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 10px;
+        border-bottom: 1px solid #2a3545;
+        background: #121822;
+        font-size: 13px;
+      }
+      #me-toolbar label {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 11px;
+        opacity: 0.9;
+      }
+      #me-toolbar input[type="text"] {
+        min-width: 220px;
+        padding: 4px 6px;
+        border-radius: 6px;
+        border: 1px solid #2f3d52;
+        background: #0e1218;
+        color: #e8eef7;
+      }
+      #me-toolbar button,
+      #me-toolbar .me-btn {
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid #2f3d52;
+        background: #1a2230;
+        color: #e8eef7;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #me-toolbar button.me-active {
+        border-color: #6aa6ff;
+        background: #243044;
+      }
+      #me-main {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #me-sidebar {
+        width: 280px;
+        flex-shrink: 0;
+        padding: 10px;
+        border-right: 1px solid #2a3545;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #me-canvas-wrap {
+        flex: 1;
+        min-width: 0;
+        position: relative;
+      }
+      #me-log {
+        margin-top: 10px;
+        padding: 8px;
+        background: #0e1218;
+        border-radius: 8px;
+        border: 1px solid #2a3545;
+        white-space: pre-wrap;
+        max-height: 180px;
+        overflow: auto;
+        font-size: 11px;
+        opacity: 0.92;
+      }
+      code {
+        font-size: 11px;
+        color: #9ec5ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="me-root">
+      <div id="me-toolbar">
+        <button type="button" id="me-fetch-base">Load base from /map.json</button>
+        <label
+          >Base JSON
+          <input type="file" id="me-base" accept=".json,application/json" />
+        </label>
+        <label
+          >Terrain GLB / glTF
+          <input type="file" id="me-glb" accept=".glb,.gltf" />
+        </label>
+        <label
+          >Terrain OBJ
+          <input type="file" id="me-obj" accept=".obj" />
+        </label>
+        <span style="opacity: 0.7">|</span>
+        <button type="button" data-mode="tap" class="me-active">Place tap</button>
+        <button type="button" data-mode="pRelay">Player relay</button>
+        <button type="button" data-mode="eRelay">Enemy relay</button>
+        <button type="button" data-mode="pStart">Player start</button>
+        <button type="button" data-mode="eStart">Enemy start</button>
+        <span style="opacity: 0.7">|</span>
+        <button type="button" id="me-clear-taps">Clear taps</button>
+        <label style="flex-direction: row; align-items: center; gap: 6px"
+          ><span>Random taps</span><input type="number" id="me-random-count" value="8" min="1" max="80" style="width: 52px" /></label
+        >
+        <button type="button" id="me-random-taps">Scatter on mesh</button>
+        <span style="opacity: 0.7">|</span>
+        <label
+          >Terrain URL for game<br /><input
+            type="text"
+            id="me-terrain-url"
+            placeholder="/terrain/myarena.glb"
+          />
+        </label>
+        <button type="button" id="me-export">Export map.local.json</button>
+      </div>
+      <div id="me-main">
+        <aside id="me-sidebar">
+          <p><strong>Workflow</strong></p>
+          <ol>
+            <li>Load terrain (GLB preferred, OBJ supported).</li>
+            <li>Choose what you are placing; <strong>left-click</strong> on the mesh.</li>
+            <li>Use <strong>Scatter on mesh</strong> for random Mana nodes on the surface.</li>
+            <li>Copy your GLB into <code>public/terrain/</code> and set <strong>Terrain URL</strong> to match (e.g.
+              <code>/terrain/myarena.glb</code>).</li>
+            <li>Export — save as <code>public/map.local.json</code> to override the shipped map (see <code>loadMap.ts</code>).</li>
+          </ol>
+          <p>Green = taps · blue = player relays · red = enemy relays · tall spheres = wizard spawns.</p>
+          <div id="me-log"></div>
+        </aside>
+        <div id="me-canvas-wrap"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/mapEditor/main.ts"></script>
+  </body>
+</html>

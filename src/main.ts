@@ -17,7 +17,6 @@ import {
 import { clearGameLog, logGame } from "./game/gameLog";
 import { advanceTick } from "./game/sim/tick";
 import { GameRenderer } from "./render/scene";
-import { CARD_DETAIL_HOLD_MS, showDoctrineCardDetail } from "./ui/cardDetailPop";
 import { doctrineCardGhostSummary } from "./ui/doctrineCard";
 import {
   destroyDragGhost,
@@ -129,13 +128,10 @@ function wireDoctrineDragToMap(
     startY: number;
     slotIndex: number;
     catalogId: string;
-    detailTimer: ReturnType<typeof setTimeout> | null;
-    detailShown: boolean;
     captureEl: HTMLElement;
   } | null = null;
 
   function clearPending(): void {
-    if (pending?.detailTimer) clearTimeout(pending.detailTimer);
     if (pending) releasePointerSafe(pending.captureEl, pending.pointerId);
     pending = null;
   }
@@ -145,7 +141,6 @@ function wireDoctrineDragToMap(
     const dx = ev.clientX - pending.startX;
     const dy = ev.clientY - pending.startY;
     if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
-    if (pending.detailTimer) clearTimeout(pending.detailTimer);
     const snap = pending;
     pending = null;
     window.removeEventListener("pointermove", onPendingMove);
@@ -177,11 +172,9 @@ function wireDoctrineDragToMap(
     window.removeEventListener("pointermove", onPendingMove);
     window.removeEventListener("pointerup", onPendingUp);
     window.removeEventListener("pointercancel", onPendingUp);
-    if (pending.detailTimer) clearTimeout(pending.detailTimer);
     const snap = pending;
     pending = null;
     releasePointerSafe(snap.captureEl, ev.pointerId);
-    if (snap.detailShown) return;
     const dx = ev.clientX - snap.startX;
     const dy = ev.clientY - snap.startY;
     if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) onShortClickSelect(snap.slotIndex);
@@ -235,7 +228,7 @@ function wireDoctrineDragToMap(
       updateDragReason(
         ev.clientX,
         ev.clientY,
-        reason ?? "Ready — release to build.",
+        reason ?? "Release to place.",
         valid,
       );
       return;
@@ -255,8 +248,6 @@ function wireDoctrineDragToMap(
     if (cdTicks > 0) {
       warnings.push(`On cooldown ${Math.max(1, Math.ceil(cdTicks / TICK_HZ))}s`);
     }
-    const charges = st.doctrineChargesRemaining[session.slotIndex] ?? 0;
-    if (charges <= 0) warnings.push("No charges");
     if (st.flux < entry.fluxCost) {
       warnings.push(`Need ${entry.fluxCost} Mana (have ${Math.floor(st.flux)})`);
     }
@@ -291,12 +282,13 @@ function wireDoctrineDragToMap(
     hideDragReason();
 
     const dropPhase = getState().phase;
-    if (dropPhase !== "playing" && dropPhase !== "setup") return;
+    if (dropPhase !== "playing") return;
 
     const rect = canvas.getBoundingClientRect();
     if (!pointInRect(ev.clientX, ev.clientY, rect)) return;
     const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
     if (!hit) return;
+    const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
 
     pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
     pendingIntents.push({
@@ -304,12 +296,13 @@ function wireDoctrineDragToMap(
       pos: { x: hit.x, z: hit.z },
       shiftKey: ev.shiftKey,
       altKey: ev.altKey,
+      pickedUnitId,
     });
   }
 
   doctrine.addEventListener("pointerdown", (ev: PointerEvent) => {
     const pdPhase = getState().phase;
-    if (pdPhase !== "playing" && pdPhase !== "setup") return;
+    if (pdPhase !== "playing") return;
     const slot = (ev.target as HTMLElement).closest("[data-slot-index]") as HTMLElement | null;
     if (!slot || !doctrine.contains(slot)) return;
     if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
@@ -330,16 +323,8 @@ function wireDoctrineDragToMap(
       startY: ev.clientY,
       slotIndex: i,
       catalogId: id,
-      detailTimer: null,
-      detailShown: false,
       captureEl: slot,
     };
-    const downPid = ev.pointerId;
-    pending.detailTimer = setTimeout(() => {
-      if (!pending || pending.pointerId !== downPid) return;
-      pending.detailShown = true;
-      showDoctrineCardDetail(pending.catalogId);
-    }, CARD_DETAIL_HOLD_MS);
     window.addEventListener("pointermove", onPendingMove);
     window.addEventListener("pointerup", onPendingUp);
     window.addEventListener("pointercancel", onPendingUp);
@@ -349,10 +334,10 @@ function wireDoctrineDragToMap(
 function runMatch(initialDoctrine: (string | null)[]): void {
   void (async () => {
     const map = await loadMapMerged();
+    const renderer = new GameRenderer(canvas);
+    await renderer.loadTerrainFromMap(map);
     let state: GameState = createInitialState(map, initialDoctrine);
     let replay = createReplayCapture(state, map);
-
-    const renderer = new GameRenderer(canvas);
     const resize = (): void => {
       const { w, h } = viewportCssSize();
       renderer.setSize(w, h);
@@ -392,11 +377,16 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       last = now;
       acc += dt;
 
+      /** Avoid multi-second catch-up stalls after tab backgrounding or long breakpoints. */
+      /** Wall-time catch-up cap (~2.4s of sim at current TICK_HZ). */
+      const maxTicksThisFrame = 48;
+      let ticksThisFrame = 0;
       let first = true;
-      while (acc >= 1 / TICK_HZ) {
+      while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
+        ticksThisFrame += 1;
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
-        if (state.phase === "playing" || state.phase === "setup") {
+        if (state.phase === "playing") {
           let strafe = 0;
           let forward = 0;
           if (keysHeld.a) strafe -= 1;
@@ -428,6 +418,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       cancelAnimationFrame(rafId);
       pendingIntents.length = 0;
       clearGameLog();
+      renderer.clearCastFx();
       state = createInitialState(map, initialDoctrine);
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
@@ -437,7 +428,6 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     };
 
     mountHud(hudRoot, state, {
-      onClear: () => pendingIntents.push({ type: "clear_placement" }),
       onRematch: rematch,
       onEditDoctrine: () => {
         window.location.reload();
@@ -448,7 +438,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
     showRulesToast();
 
-    // Global hotkey: G toggles army stance between Offense and Defense.
+    // G = stance; R = arm global rally (next LMB on map sets rally point).
     window.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.repeat) return;
       const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
@@ -456,6 +446,9 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       if (ev.key === "g" || ev.key === "G") {
         ev.preventDefault();
         pendingIntents.push({ type: "toggle_army_stance" });
+      } else if (ev.key === "r" || ev.key === "R") {
+        ev.preventDefault();
+        pendingIntents.push({ type: "begin_rally_click" });
       }
     });
 
@@ -481,7 +474,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
 
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
-      if (state.phase !== "playing" && state.phase !== "setup") return;
+      if (state.phase !== "playing") return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
@@ -500,11 +493,13 @@ function runMatch(initialDoctrine: (string | null)[]): void {
         return;
       }
 
+      const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
       pendingIntents.push({
         type: "try_click_world",
         pos: { x: hit.x, z: hit.z },
         shiftKey: ev.shiftKey,
         altKey: ev.altKey,
+        pickedUnitId,
       });
     });
 

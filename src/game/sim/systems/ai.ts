@@ -1,4 +1,10 @@
-import { HERO_FOLLOW_RADIUS, TICK_HZ } from "../../constants";
+import {
+  ENEMY_UNIT_HUNT_DETECT,
+  HERO_FOLLOW_RADIUS,
+  PLAYER_UNIT_HUNT_DETECT_MIN,
+  PLAYER_UNIT_HUNT_DETECT_MULT,
+  TICK_HZ,
+} from "../../constants";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
 import type { Vec2 } from "../../types";
 import { dist2 } from "./helpers";
@@ -81,15 +87,15 @@ function clampToWorld(s: GameState, u: UnitRuntime): void {
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
 
-  for (const camp of s.map.enemyCamps) {
-    const awake = s.enemyCampAwake[camp.id];
-    if (!awake) continue;
+  const anyEnemyCampAwake = s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
+  if (anyEnemyCampAwake) {
+    const detect = ENEMY_UNIT_HUNT_DETECT;
+    const d2 = detect * detect;
     for (const u of s.units) {
       if (u.team !== "enemy" || u.hp <= 0) continue;
       const tgt = nearestEnemyAttackTarget(s, u);
       if (!tgt) continue;
-      const detect = Math.max(10, u.range * 3);
-      if (dist2(u, tgt) > detect * detect) continue;
+      if (dist2(u, tgt) > d2) continue;
       moveToward(u, tgt, u.speedPerSec * stepScale);
       clampToWorld(s, u);
     }
@@ -98,14 +104,14 @@ export function movement(s: GameState): void {
   const hero = s.hero;
   const heroR2 = HERO_FOLLOW_RADIUS * HERO_FOLLOW_RADIUS;
   const defense = s.armyStance === "defense";
-  const DEFENSE_ENGAGE_RADIUS = HERO_FOLLOW_RADIUS * 1.25;
+  const DEFENSE_ENGAGE_RADIUS = HERO_FOLLOW_RADIUS * 1.42;
   const defR2 = DEFENSE_ENGAGE_RADIUS * DEFENSE_ENGAGE_RADIUS;
 
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     const st = s.structures.find((x) => x.id === u.structureId);
     const hold = st?.holdOrders ?? false;
-    const detect = Math.max(10, u.range * 3);
+    const detect = Math.max(PLAYER_UNIT_HUNT_DETECT_MIN, u.range * PLAYER_UNIT_HUNT_DETECT_MULT);
     const foe = nearestEnemyUnit(s, u, detect * detect);
 
     // In Defense: units only engage foes that are near the wizard; otherwise
@@ -130,14 +136,14 @@ export function movement(s: GameState): void {
     if (defense) {
       // Every friendly gathers on the wizard. Small radius offset keeps them from stacking.
       target = { x: hero.x, z: hero.z };
+    } else if (s.globalRallyActive) {
+      target = { x: s.globalRallyX, z: s.globalRallyZ };
     } else {
       const near = dist2(u, hero) <= heroR2;
       if (near) {
         target = { x: hero.x, z: hero.z };
       } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
         target = { x: st.rallyX, z: st.rallyZ };
-      } else if (s.phase === "setup") {
-        target = st ? { x: st.x, z: st.z } : { x: u.x, z: u.z };
       } else {
         target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
       }
@@ -150,6 +156,14 @@ export function movement(s: GameState): void {
 function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {
   let best: Vec2 | null = null;
   let bestD = Infinity;
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || !st.complete) continue;
+    const d = dist2(from, st);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: st.x, z: st.z };
+    }
+  }
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
     const d = dist2(from, er);
@@ -170,7 +184,7 @@ function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {
 }
 
 export function wakeCamps(s: GameState): void {
-  if (s.phase === "setup") return;
+  if (s.phase !== "playing") return;
   for (const camp of s.map.enemyCamps) {
     if (s.enemyCampAwake[camp.id]) continue;
     const r = camp.wakeRadius;

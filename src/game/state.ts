@@ -1,4 +1,5 @@
 import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
+import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   ENEMY_RELAY_MAX_HP,
@@ -11,7 +12,8 @@ import {
   KEEP_ID,
   KEEP_MAX_HP,
   KEEP_SWARM_PERIOD_SEC,
-  SETUP_STARTING_FLUX,
+  PLAYER_STARTING_FLUX,
+  TAP_ANCHOR_MAX_HP,
   TAP_GENERATION_MIN_SEP,
   TAP_NODES_PER_SIDE,
   TERRITORY_RADIUS,
@@ -41,6 +43,18 @@ export type CastFxKind =
   | "lightning"
   | "hero_strike";
 
+/** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
+export interface CombatHitMark {
+  ax: number;
+  az: number;
+  tx: number;
+  tz: number;
+  /** Weapon reach used to cap wedge length (world units). */
+  range: number;
+  /** Wider cone for breath-style AoE attackers. */
+  wide: boolean;
+}
+
 export interface CastFxEvent {
   kind: CastFxKind;
   x: number;
@@ -58,6 +72,32 @@ export interface TapRuntime {
   yieldRemaining: number;
   /** Ownership: "player" once the hero claims, unset otherwise. */
   ownerTeam?: TeamId;
+  /**
+   * Claim anchor pillar — present while `active`; at 0 HP the node reverts to neutral (re-channel to claim).
+   */
+  anchorHp?: number;
+  anchorMaxHp?: number;
+}
+
+/** Instantly spawn full anchor HP when a wizard finishes claiming a node. */
+export function armTapClaimAnchor(tap: TapRuntime): void {
+  tap.anchorMaxHp = TAP_ANCHOR_MAX_HP;
+  tap.anchorHp = TAP_ANCHOR_MAX_HP;
+}
+
+/** Strip claim and yield when the anchor is destroyed. */
+export function shatterTapAnchor(s: GameState, tap: TapRuntime): void {
+  if (!tap.active) return;
+  const wasPlayer = tap.ownerTeam === "player";
+  tap.active = false;
+  tap.ownerTeam = undefined;
+  tap.anchorHp = undefined;
+  tap.anchorMaxHp = undefined;
+  tap.yieldRemaining = 0;
+  s.lastMessage = wasPlayer
+    ? "Your Mana anchor was destroyed — that node is neutral again."
+    : "Enemy Mana anchor destroyed — the node can be claimed again.";
+  logGame("claim", `Mana node ${tap.defId} anchor shattered`, s.tick);
 }
 
 export interface HeroRuntime {
@@ -169,10 +209,24 @@ export interface GameState {
   doctrineChargesRemaining: number[];
   doctrineCooldownTicks: number[];
   selectedDoctrineIndex: number | null;
+  /** @deprecated No longer set by gameplay; kept for replay/checksum compat. */
   selectedStructureId: number | null;
+  /** Friendly unit picked for range preview (LMB on unit when not placing/casting). */
+  selectedUnitId: number | null;
+  /**
+   * Throttled combat telegraphs for this tick (attacker-anchored wedges); renderer consumes and clears.
+   * Not part of replay checksum.
+   */
+  combatHitMarks: CombatHitMark[];
   pendingPlacementCatalogId: string | null;
   /** Global stance for friendly units. Offense → seek/engage; Defense → rally to wizard. */
   armyStance: ArmyStance;
+  /** After R / rally button: next map click sets `globalRally*`. */
+  rallyClickPending: boolean;
+  /** When true (offense only), player units march to `globalRallyX/Z` until stance toggles. */
+  globalRallyActive: boolean;
+  globalRallyX: number;
+  globalRallyZ: number;
   enemyCampAwake: Record<string, boolean>;
   lastMessage: string;
   /** Seeded RNG state (xorshift32). */
@@ -219,7 +273,7 @@ function dist2(a: Vec2, b: Vec2): number {
 export function claimedTapCount(s: GameState): number {
   let n = 0;
   for (const t of s.taps) {
-    if (t.active && t.ownerTeam === "player") n++;
+    if (t.active && t.ownerTeam === "player" && (t.anchorHp ?? 0) > 0) n++;
   }
   return n;
 }
@@ -227,7 +281,7 @@ export function claimedTapCount(s: GameState): number {
 export function claimedEnemyTapCount(s: GameState): number {
   let n = 0;
   for (const t of s.taps) {
-    if (t.active && t.ownerTeam === "enemy") n++;
+    if (t.active && t.ownerTeam === "enemy" && (t.anchorHp ?? 0) > 0) n++;
   }
   return n;
 }
@@ -285,13 +339,12 @@ export function isKeep(st: StructureRuntime): boolean {
   return st.team === "player" && st.catalogId === KEEP_ID;
 }
 
-function initDoctrineRuntime(slots: (string | null)[]): { charges: number[]; cd: number[] } {
+function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
   const charges: number[] = [];
   const cd: number[] = [];
   for (let i = 0; i < 16; i++) {
-    const id = slots[i] ?? null;
-    const e = getCatalogEntry(id);
-    charges.push(e ? e.maxCharges : 0);
+    /** Unused for locking — doctrine uses per-cast cooldown only. */
+    charges.push(1);
     cd.push(0);
   }
   return { charges, cd };
@@ -302,10 +355,14 @@ function initDoctrineRuntime(slots: (string | null)[]): { charges: number[]; cd:
  * ids by ascending flux cost (stable tie-break by id). Packs to 16 slots, nulls last.
  */
 export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
+  const catalogOk = (id: string | null): string | null => {
+    if (!id) return null;
+    return getCatalogEntry(id) ? id : null;
+  };
   if (DOCTRINE_COMMANDS_ENABLED) {
     const copy = [...slots];
     while (copy.length < 16) copy.push(null);
-    return copy.slice(0, 16);
+    return copy.slice(0, 16).map(catalogOk);
   }
   const structs: { id: string; cost: number }[] = [];
   for (const id of slots) {
@@ -423,7 +480,17 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const rt = initDoctrineRuntime(slots);
 
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
-  const taps = generateProceduralTaps(map, rngScratch);
+  const taps: TapRuntime[] =
+    map.useAuthorTapSlots && map.tapSlots.length > 0
+      ? map.tapSlots.map((ts) => ({
+          defId: ts.id,
+          x: ts.x,
+          z: ts.z,
+          active: false,
+          yieldRemaining: 0,
+          ownerTeam: undefined,
+        }))
+      : generateProceduralTaps(map, rngScratch);
   const mapResolved = mapWithRuntimeTapSlots(map, taps);
 
   const enemyRelays: EnemyRelayRuntime[] = map.enemyRelaySlots.map((r) => ({
@@ -464,7 +531,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: enemySpawn.z,
     targetX: null,
     targetZ: null,
-    speedPerSec: HERO_SPEED * 0.92,
+    speedPerSec: HERO_SPEED * 1.02,
     radius: HERO_FOLLOW_RADIUS,
     claimChannelTarget: null,
     claimChannelTicksRemaining: 0,
@@ -479,8 +546,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const state: GameState = {
     map: mapResolved,
     tick: 0,
-    phase: "setup",
-    flux: SETUP_STARTING_FLUX,
+    phase: "playing",
+    flux: PLAYER_STARTING_FLUX,
     salvage: 0,
     enemyFlux: ENEMY_SETUP_STARTING_FLUX,
     taps,
@@ -493,11 +560,16 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     doctrineCooldownTicks: rt.cd,
     selectedDoctrineIndex: null,
     selectedStructureId: null,
+    selectedUnitId: null,
+    combatHitMarks: [],
     pendingPlacementCatalogId: null,
     armyStance: "offense",
-    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, false])),
-    lastMessage:
-      "Setup: claim Mana nodes, summon towers with lightning — then press Start Battle.",
+    rallyClickPending: false,
+    globalRallyActive: false,
+    globalRallyX: 0,
+    globalRallyZ: 0,
+    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, true])),
+    lastMessage: "Battle on — claim nodes, summon towers, break the enemy.",
     rngState: rngScratch.v >>> 0,
     stats: {
       structuresBuilt: 0,
@@ -598,7 +670,7 @@ export function nearestEnemyAggroBlocked(s: GameState, pos: Vec2): boolean {
 export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "player") continue;
+    if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
     if (dist2(pos, t) <= r2) return true;
   }
   const keep = findKeep(s);
@@ -610,7 +682,7 @@ export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
 export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
     if (dist2(pos, t) <= r2) return true;
   }
   for (const er of s.enemyRelays) {
@@ -630,7 +702,7 @@ export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const keep = findKeep(s);
   if (keep && dist2(pos, keep) <= r2) return true;
   for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "player") continue;
+    if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
     if (dist2(pos, t) <= r2) return true;
   }
   return false;
@@ -644,7 +716,7 @@ export function inEnemyTerritory(s: GameState, pos: Vec2): boolean {
     if (dist2(pos, er) <= r2) return true;
   }
   for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
     if (dist2(pos, t) <= r2) return true;
   }
   for (const st of s.structures) {
@@ -660,7 +732,7 @@ export function enemyTerritorySources(s: GameState): Vec2[] {
     if (er.hp > 0) out.push({ x: er.x, z: er.z });
   }
   for (const t of s.taps) {
-    if (t.active && t.ownerTeam === "enemy") out.push({ x: t.x, z: t.z });
+    if (t.active && t.ownerTeam === "enemy" && (t.anchorHp ?? 0) > 0) out.push({ x: t.x, z: t.z });
   }
   for (const st of s.structures) {
     if (st.team === "enemy" && st.complete) out.push({ x: st.x, z: st.z });
@@ -674,7 +746,7 @@ export function territorySources(s: GameState): Vec2[] {
   const keep = findKeep(s);
   if (keep) out.push({ x: keep.x, z: keep.z });
   for (const t of s.taps) {
-    if (t.active && t.ownerTeam === "player") out.push({ x: t.x, z: t.z });
+    if (t.active && t.ownerTeam === "player" && (t.anchorHp ?? 0) > 0) out.push({ x: t.x, z: t.z });
   }
   return out;
 }
@@ -716,7 +788,6 @@ export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | nu
   const e = getCatalogEntry(id);
   if (!e) return "Unknown entry.";
   if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) return "Doctrine slot on cooldown.";
-  if ((s.doctrineChargesRemaining[slotIndex] ?? 0) <= 0) return "No charges remaining for this slot.";
   if (!meetsSignalRequirements(s, e)) return "Tier requirements not met.";
   return null;
 }
@@ -778,15 +849,12 @@ export function placementFailureReason(
     const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
     return `Card on cooldown (${secs}s).`;
   }
-  const charges = s.doctrineChargesRemaining[slotIndex] ?? 0;
-  if (charges <= 0) return "No charges remaining.";
-
   const tier = wizardTier(s);
   const need = Math.max(1, entry.requiredRelayTier || 1);
   if (tier < need) {
     const taps = claimedTapCount(s);
     const nextNeed = need === 2 ? 2 : 4;
-    return `Requires Tier ${need} (claim ${nextNeed} Mana nodes — you have ${taps}).`;
+    return `Requires wizard tier ${need} (claim ${nextNeed} Mana nodes — you have ${taps}).`;
   }
 
   if (s.flux < entry.fluxCost) {

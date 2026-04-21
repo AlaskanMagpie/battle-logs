@@ -13,16 +13,116 @@ import {
 } from "../game/state";
 import { getGameLogLines } from "../game/gameLog";
 import { isStructureEntry } from "../game/types";
+import {
+  CARD_PREVIEW_HOVER_MS,
+  onDoctrineCardPreviewHoverLeave,
+  showDoctrineCardDetail,
+} from "./cardDetailPop";
+import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineCardBody } from "./doctrineCard";
 
 const HAND_ACTIVE_LIFT = 5;
+
+/** Half angular span (rad) from end to end across all 8 slots on one circle — higher = less overlap. */
+const ARC_ALPHA_MAX = 0.42;
+const ARC_ALPHA_MIN = 0.15;
+const ARC_PAD_X = 10;
+const ARC_SLOT_COUNT = 8;
+
+/** θ_i = -α … +α in equal steps so every card center lies on one shared circular arc (one curve per hand). */
+function arcSlotThetas(alpha: number): number[] {
+  const n = ARC_SLOT_COUNT;
+  if (n <= 1) return [0];
+  return Array.from({ length: n }, (_, i) => -alpha + (i / (n - 1)) * (2 * alpha));
+}
+
+/**
+ * One circle per hand: 8 evenly spaced angles, single radius. Upper and lower hands use the same
+ * (α, R, θ_i); only DOM stacking separates the two rows — no inner/outer “double fan”.
+ */
+function layoutDoctrineDeckArc(track: HTMLElement): void {
+  if (!track.classList.contains("doctrine-track--deck2x8")) return;
+
+  const sampleCard = track.querySelector(
+    ".doctrine-hand--match .slot .doctrine-card-compact",
+  ) as HTMLElement | null;
+  const cardRect = sampleCard?.getBoundingClientRect();
+  const cardW = cardRect && cardRect.width > 2 ? cardRect.width : 0;
+  const cardH = cardRect && cardRect.height > 2 ? cardRect.height : 0;
+  if (cardW < 4 || cardH < 4) return;
+
+  const hands = [...track.querySelectorAll<HTMLElement>(".doctrine-hand--match")];
+  if (hands.length < 1) return;
+
+  const innerWs = hands.map((h) => Math.max(0, h.getBoundingClientRect().width - 2 * ARC_PAD_X));
+  const innerW = Math.min(...innerWs);
+  if (innerW < cardW + 8) return;
+
+  const spanX = (alpha: number, R: number): number => {
+    const thetas = arcSlotThetas(alpha);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    for (const th of thetas) {
+      const cx = innerW / 2 + R * Math.sin(th);
+      const half = (Math.abs(Math.cos(th)) * cardW + Math.abs(Math.sin(th)) * cardH) * 0.5;
+      minX = Math.min(minX, cx - half);
+      maxX = Math.max(maxX, cx + half);
+    }
+    return maxX - minX;
+  };
+
+  let alpha = ARC_ALPHA_MAX;
+  let arcR = Math.max(96, Math.min(300, innerW * 0.5));
+  for (let iter = 0; iter < 40; iter++) {
+    if (spanX(alpha, arcR) <= innerW && alpha >= ARC_ALPHA_MIN) break;
+    alpha *= 0.92;
+    arcR *= 0.965;
+    if (alpha < ARC_ALPHA_MIN) alpha = ARC_ALPHA_MIN;
+  }
+
+  const thetas = arcSlotThetas(alpha);
+  /** Circle center sits “below” the band so the segment reads as a gentle smile. */
+  const cyBase = arcR + cardH * 0.55;
+
+  const placeHand = (hand: HTMLElement): void => {
+    const handInnerW = Math.max(0, hand.getBoundingClientRect().width - 2 * ARC_PAD_X);
+    const slots = hand.querySelectorAll<HTMLElement>(".slot");
+
+    let minTop = Infinity;
+    let maxBot = -Infinity;
+    slots.forEach((slot, i) => {
+      if (i > 7) return;
+      if (slot.classList.contains("slot--hand-collapsed")) return;
+      const th = thetas[i]!;
+      const cx = handInnerW / 2 + arcR * Math.sin(th);
+      const cyy = cyBase - arcR * Math.cos(th);
+      const left = ARC_PAD_X + cx - cardW / 2;
+      const top = cyy - cardH / 2;
+      minTop = Math.min(minTop, top);
+      maxBot = Math.max(maxBot, top + cardH);
+      const rotDeg = (-th * 180) / Math.PI;
+      slot.style.setProperty("--arc-left", `${left}px`);
+      slot.style.setProperty("--arc-top", `${top}px`);
+      slot.style.setProperty("--arc-deg", `${rotDeg}deg`);
+    });
+
+    if (Number.isFinite(minTop) && Number.isFinite(maxBot)) {
+      const arcH = Math.max(maxBot - minTop + 10, cardH + 18);
+      hand.style.setProperty("--hand-arc-h", `${arcH}px`);
+    } else {
+      hand.style.removeProperty("--hand-arc-h");
+    }
+  };
+
+  for (const hand of hands) placeHand(hand);
+}
 
 /** Sizes the fanned overlap so every visible card fits flat in the tray with no clipping. */
 function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
   if (!track.classList.contains("doctrine-track--hand")) return;
 
   if (track.classList.contains("doctrine-track--deck2x8")) {
-    track.style.removeProperty("--hand-reveal");
+    layoutDoctrineDeckArc(track);
     return;
   }
 
@@ -50,7 +150,6 @@ function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
 export type HudIntentSink = (intent: PlayerIntent) => void;
 
 export type HudMountApi = {
-  onClear: () => void;
   onRematch?: () => void;
   onEditDoctrine?: () => void;
   pushIntent: HudIntentSink;
@@ -69,20 +168,12 @@ function enemyCount(state: GameState): number {
 
 function computeObjective(state: GameState): string {
   const claimedNodes = claimedTapCount(state);
-  const tier = wizardTier(state);
   const playerStructs = state.structures.filter((s) => s.team === "player");
   const playerTowers = playerStructs.filter((s) => {
     const e = getCatalogEntry(s.catalogId);
     return e && isStructureEntry(e) && s.catalogId !== "wizard_keep";
   });
   const playerUnits = state.units.filter((u) => u.team === "player" && u.hp > 0);
-
-  if (state.phase === "setup") {
-    if (claimedNodes === 0)
-      return "Setup: WASD or right-click to move; stand on a grey Mana ring to claim (no click-to-claim).";
-    if (playerTowers.length === 0) return "Setup: drag a tower card into your cyan territory — it arrives with a flash of lightning.";
-    return `Setup: Tier ${tier} · ${claimedNodes} Mana node${claimedNodes === 1 ? "" : "s"} claimed. Start Battle when ready.`;
-  }
 
   if (claimedNodes === 0)
     return "Claim a Mana node — walk your Wizard onto a grey ring and stand still; left-click attacks when idle.";
@@ -112,7 +203,7 @@ function campCoreSummary(state: GameState): string {
 }
 
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
-  const { onClear, onRematch, onEditDoctrine, pushIntent } = api;
+  const { onRematch, onEditDoctrine, pushIntent } = api;
   root.innerHTML = `
     <div class="hud-top">
       <div>Mana: <strong id="flux">0</strong></div>
@@ -134,16 +225,14 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     <div class="hud-phase" id="phase">playing</div>
     <div class="hud-msg" id="msg"></div>
     <div class="hud-actions">
-      <button class="hud-btn hud-btn--start" id="btn-start-battle" type="button" hidden title="Begin combat. Enemy camps wake up and the battle begins.">
-        Start Battle
+      <button class="hud-btn" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
+        Rally map…
       </button>
-      <button class="hud-btn" id="btn-orders" type="button" hidden>Orders: Rally</button>
       <button class="hud-btn hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
         Stance: Offense
       </button>
-      <button class="hud-btn" id="btn-clear" type="button">Clear placement</button>
     </div>
-    <div class="hud-doctrine-hint">WASD + RMB move · MMB camera · LMB strike when not placing · drag a card to summon · Alt+click toggles hold on nearby units · G toggles Offense/Defense</div>
+    <div class="hud-doctrine-hint">WASD + RMB move · MMB camera · LMB = wizard melee when not placing · troops auto-fight in weapon range · R then click = rally · drag a card to summon · Shift+click a finished friendly tower = free Muster (instant spawn) · Alt+click toggles Hold on a nearby tower · G = Offense/Defense</div>
     <div class="hud-endgame" id="hud-endgame" hidden>
       <div class="hud-endgame-panel">
         <h2 class="hud-endgame-title" id="hud-endgame-title">Match over</h2>
@@ -156,12 +245,17 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     </div>
     <div class="doctrine-wrap" id="doctrine-wrap">
       <div class="doctrine-view" id="doctrine-view">
-        <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two by eight"></div>
+        <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two hands of eight" aria-rowcount="2">
+          <div class="doctrine-hand doctrine-hand--match doctrine-hand--upper" role="row" aria-rowindex="1"></div>
+          <div class="doctrine-hand doctrine-hand--match doctrine-hand--lower" role="row" aria-rowindex="2"></div>
+        </div>
       </div>
     </div>
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
+  const handUpper = doctrineTrack.querySelector(".doctrine-hand--upper") as HTMLDivElement;
+  const handLower = doctrineTrack.querySelector(".doctrine-hand--lower") as HTMLDivElement;
 
   for (let i = 0; i < 16; i++) {
     const b = document.createElement("button");
@@ -169,26 +263,64 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     b.className = "slot";
     b.dataset.slotIndex = String(i);
     b.setAttribute("role", "gridcell");
+    b.setAttribute("aria-rowindex", String(Math.floor(i / 8) + 1));
+    b.setAttribute("aria-colindex", String((i % 8) + 1));
+    b.setAttribute("aria-label", `Doctrine slot ${i + 1}`);
     const catalogId = initial.doctrineSlotCatalogIds[i] ?? null;
     b.innerHTML = `${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
-    doctrineTrack.appendChild(b);
+    (i < 8 ? handUpper : handLower).appendChild(b);
   }
 
-  root.querySelector("#btn-clear")!.addEventListener("click", () => {
-    onClear();
-    for (const el of doctrineTrack.querySelectorAll(".slot")) el.classList.remove("active");
+  hydrateCardPreviewImages(doctrineTrack);
+
+  let doctrineHoverTimer: ReturnType<typeof setTimeout> | null = null;
+  let doctrineHoverId: string | null = null;
+  const clearDoctrineHover = (): void => {
+    if (doctrineHoverTimer) clearTimeout(doctrineHoverTimer);
+    doctrineHoverTimer = null;
+    doctrineHoverId = null;
+  };
+  doctrineTrack.addEventListener("mouseover", (ev) => {
+    if (!(ev.target instanceof Element)) return;
+    const slot = ev.target.closest(".slot");
+    if (!(slot instanceof HTMLElement) || !doctrineTrack.contains(slot)) return;
+    if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
+    const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
+    const id = card?.getAttribute("data-catalog-id");
+    if (!id) return;
+    if (doctrineHoverId === id) return;
+    clearDoctrineHover();
+    doctrineHoverId = id;
+    doctrineHoverTimer = setTimeout(() => {
+      doctrineHoverTimer = null;
+      showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
+    }, CARD_PREVIEW_HOVER_MS);
+  });
+  doctrineTrack.addEventListener("mouseout", (ev) => {
+    if (!(ev.target instanceof Element)) return;
+    const slot = ev.target.closest(".slot");
+    if (!(slot instanceof HTMLElement) || !doctrineTrack.contains(slot)) return;
+    const rel = ev.relatedTarget;
+    if (rel instanceof Node && slot.contains(rel)) return;
+    clearDoctrineHover();
+    onDoctrineCardPreviewHoverLeave(ev);
   });
 
-  root.querySelector("#btn-start-battle")!.addEventListener("click", () => {
-    pushIntent({ type: "start_battle" });
+  doctrineTrack.addEventListener("dblclick", (ev) => {
+    if (!(ev.target instanceof Element)) return;
+    const slot = ev.target.closest(".slot");
+    if (!slot || !doctrineTrack.contains(slot)) return;
+    if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
+    const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
+    const id = card?.getAttribute("data-catalog-id");
+    if (!id) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    showDoctrineCardDetail(id);
   });
 
-  root.querySelector("#btn-orders")!.addEventListener("click", () => {
-    const btn = root.querySelector<HTMLButtonElement>("#btn-orders");
-    if (!btn) return;
-    const id = Number(btn.dataset.structureId ?? "");
-    if (!Number.isFinite(id)) return;
-    pushIntent({ type: "toggle_structure_orders", structureId: id });
+  root.querySelector("#btn-rally")!.addEventListener("click", () => {
+    pushIntent({ type: "begin_rally_click" });
   });
 
   root.querySelector("#btn-stance")!.addEventListener("click", () => {
@@ -217,7 +349,8 @@ export function updateHud(state: GameState): void {
   const popVal = totalPlayerPop(state);
   if (pop) {
     pop.textContent = String(popVal);
-    const near = popVal >= GLOBAL_POP_CAP - 4;
+    const warnBand = Math.min(120, Math.max(8, Math.floor(GLOBAL_POP_CAP * 0.08)));
+    const near = popVal >= GLOBAL_POP_CAP - warnBand;
     const full = popVal >= GLOBAL_POP_CAP;
     pop.classList.toggle("cap-warn", near && !full);
     pop.classList.toggle("cap-full", full);
@@ -227,25 +360,14 @@ export function updateHud(state: GameState): void {
   if (mode) {
     mode.textContent = state.pendingPlacementCatalogId
       ? `placing:${state.pendingPlacementCatalogId}`
-      : state.selectedStructureId !== null
-        ? "rally"
-        : "idle";
+      : state.rallyClickPending
+        ? "rally-click"
+        : state.globalRallyActive && state.armyStance === "offense"
+          ? "marching"
+          : "idle";
   }
   if (phase) phase.textContent = `${state.phase} · tick ${state.tick}`;
   if (msg) msg.textContent = state.lastMessage;
-
-  const startBtn = document.querySelector<HTMLButtonElement>("#btn-start-battle");
-  if (startBtn) {
-    if (state.phase === "setup") {
-      startBtn.hidden = false;
-      const ready = !!findKeep(state);
-      startBtn.disabled = !ready;
-      startBtn.classList.toggle("hud-btn--start-ready", ready);
-      startBtn.textContent = ready ? "Start Battle" : "Start Battle (Keep missing)";
-    } else {
-      startBtn.hidden = true;
-    }
-  }
 
   const stanceBtn = document.querySelector<HTMLButtonElement>("#btn-stance");
   if (stanceBtn) {
@@ -261,12 +383,8 @@ export function updateHud(state: GameState): void {
     if (state.pendingPlacementCatalogId) {
       const e = getCatalogEntry(state.pendingPlacementCatalogId);
       if (e) label = `Selected: ${e.name}`;
-    } else if (state.selectedStructureId !== null) {
-      const st = state.structures.find((x) => x.id === state.selectedStructureId);
-      if (st) {
-        const e = getCatalogEntry(st.catalogId);
-        label = `Selected: ${e?.name ?? "Structure"} · ${st.holdOrders ? "Hold" : "Rally"}`;
-      }
+    } else if (state.rallyClickPending) {
+      label = "Rally armed — click map (R to cancel)";
     }
     if (label) {
       selTag.textContent = label;
@@ -274,6 +392,13 @@ export function updateHud(state: GameState): void {
     } else {
       selTag.hidden = true;
     }
+  }
+
+  const rallyBtn = document.querySelector<HTMLButtonElement>("#btn-rally");
+  if (rallyBtn) {
+    rallyBtn.textContent = state.rallyClickPending ? "Rally: click map" : "Rally map…";
+    rallyBtn.setAttribute("aria-pressed", state.rallyClickPending ? "true" : "false");
+    rallyBtn.classList.toggle("hud-btn--armed", state.rallyClickPending);
   }
 
   const readout = document.querySelector("#hud-readout");
@@ -296,7 +421,7 @@ export function updateHud(state: GameState): void {
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");
   const objText = document.querySelector<HTMLElement>("#hud-objective-text");
   if (objWrap && objText) {
-    if (state.phase === "playing" || state.phase === "setup") {
+    if (state.phase === "playing") {
       objText.textContent = ` ${computeObjective(state)}`;
       objWrap.hidden = false;
     } else {
@@ -323,27 +448,11 @@ export function updateHud(state: GameState): void {
     keepHpVal.textContent = keep ? `${pct}%` : "—";
   }
 
-  const ordersBtn = document.querySelector<HTMLButtonElement>("#btn-orders");
-  if (ordersBtn) {
-    if (state.selectedStructureId !== null) {
-      const st = state.structures.find((x) => x.id === state.selectedStructureId);
-      if (st && st.team === "player" && st.complete && st.catalogId !== "wizard_keep") {
-        ordersBtn.hidden = false;
-        ordersBtn.dataset.structureId = String(st.id);
-        ordersBtn.textContent = st.holdOrders ? "Orders: Hold" : "Orders: Rally";
-      } else {
-        ordersBtn.hidden = true;
-      }
-    } else {
-      ordersBtn.hidden = true;
-    }
-  }
-
   const end = document.querySelector("#hud-endgame") as HTMLElement | null;
   const endTitle = document.querySelector("#hud-endgame-title");
   const endStats = document.querySelector("#hud-endgame-stats");
   if (end && endTitle && endStats) {
-    if (state.phase === "playing" || state.phase === "setup") {
+    if (state.phase === "playing") {
       end.hidden = true;
       endTitle.textContent = "Match over";
       endStats.innerHTML = "";
@@ -399,6 +508,14 @@ export function updateHud(state: GameState): void {
     const clearHandLayout = (): void => {
       b.style.transform = "";
       b.style.zIndex = "";
+      b.style.removeProperty("--peel-tx");
+      b.style.removeProperty("--peel-ty");
+      b.style.removeProperty("--peel-sc");
+      if (isDeck2x8) {
+        b.style.removeProperty("--arc-left");
+        b.style.removeProperty("--arc-top");
+        b.style.removeProperty("--arc-deg");
+      }
     };
 
     b.querySelector(".slot-dup-count")?.remove();
@@ -429,8 +546,7 @@ export function updateHud(state: GameState): void {
     }
 
     const cd = state.doctrineCooldownTicks[i] ?? 0;
-    const ch = state.doctrineChargesRemaining[i] ?? 0;
-    const locked = cd > 0 || ch <= 0;
+    const locked = cd > 0;
     const tierOk = tierRequirementSatisfied(state, e);
     const sigOk = tierOk && signalCountsSatisfied(state, e);
     if (locked) b.classList.add("slot-locked");
@@ -439,19 +555,11 @@ export function updateHud(state: GameState): void {
     else b.classList.add("slot-ready");
 
     if (live) {
-      const parts: string[] = [];
-      parts.push(`Charges <b>${ch}</b>`);
-      if (cd > 0) parts.push(`CD <b>${(cd / TICK_HZ).toFixed(1)}s</b>`);
-      if (!tierOk) {
-        const need = Math.max(1, e.requiredRelayTier || 1);
-        const tapsNeeded = need === 2 ? 2 : 4;
-        parts.push(`<span class="live-info">Needs Tier ${need} (${tapsNeeded} nodes)</span>`);
-      }
-      live.innerHTML = parts.join(" · ");
+      live.innerHTML = cd > 0 ? `CD <b>${(cd / TICK_HZ).toFixed(1)}s</b>` : "";
     }
 
     const reason = placementFailureReason(state, id, null, i);
-    b.title = reason ?? "Ready — drag onto the map to summon with lightning.";
+    b.title = reason ?? "Drag onto the map to place.";
   });
 
   if (!isDeck2x8) {
@@ -557,18 +665,41 @@ export function updateHud(state: GameState): void {
       b.classList.add("hand-slot--peek-neighbor");
     }
 
-    b.style.transform =
-      sx !== 0 || sy !== 0 || sc !== 1 ? `translate(${sx}px, ${sy}px) scale(${sc})` : "";
+    if (isDeck2x8) {
+      if (sx !== 0 || sy !== 0 || sc !== 1) {
+        b.style.setProperty("--peel-tx", `${sx}px`);
+        b.style.setProperty("--peel-ty", `${sy}px`);
+        b.style.setProperty("--peel-sc", String(sc));
+      } else {
+        b.style.removeProperty("--peel-tx");
+        b.style.removeProperty("--peel-ty");
+        b.style.removeProperty("--peel-sc");
+      }
+    } else {
+      b.style.transform =
+        sx !== 0 || sy !== 0 || sc !== 1 ? `translate(${sx}px, ${sy}px) scale(${sc})` : "";
+    }
 
-    let z = 40 + i;
-    if (peekIdx !== null && i === peekIdx) z = 340;
-    else if (
-      peekIdx !== null &&
-      (i === peelLeftIdx || i === peelRightIdx || i === peelAboveIdx || i === peelBelowIdx)
-    )
-      z = 282;
-    else if (b.classList.contains("active")) z = 240;
-    b.style.zIndex = String(z);
+    if (isDeck2x8) {
+      b.style.removeProperty("z-index");
+      if (peekIdx !== null && i === peekIdx) b.style.setProperty("z-index", "380");
+      else if (
+        peekIdx !== null &&
+        (i === peelLeftIdx || i === peelRightIdx || i === peelAboveIdx || i === peelBelowIdx)
+      )
+        b.style.setProperty("z-index", "320");
+      else if (b.classList.contains("active")) b.style.setProperty("z-index", "260");
+    } else {
+      let z = 40 + i;
+      if (peekIdx !== null && i === peekIdx) z = 340;
+      else if (
+        peekIdx !== null &&
+        (i === peelLeftIdx || i === peelRightIdx || i === peelAboveIdx || i === peelBelowIdx)
+      )
+        z = 282;
+      else if (b.classList.contains("active")) z = 240;
+      b.style.zIndex = String(z);
+    }
   });
 }
 
@@ -593,9 +724,6 @@ export function attachDoctrineHandPeek(track: HTMLElement, getDragBusy: () => bo
       const i = Number(slot.dataset.slotIndex);
       if (!Number.isFinite(i)) return;
       setPeek(i);
-      if (!window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
-        queueMicrotask(() => slot.scrollIntoView({ inline: "center", block: "nearest", behavior: "auto" }));
-      }
     },
     true,
   );

@@ -22,7 +22,7 @@ const lines: GameLogLine[] = [];
 export function logGame(category: GameLogCategory, message: string, tick: number): void {
   lines.push({ tick, category, message });
   if (lines.length > MAX_LINES) lines.shift();
-  if (import.meta.env.DEV) {
+  if (import.meta.env?.DEV) {
     // eslint-disable-next-line no-console
     console.log(`[${category}@${tick}] ${message}`);
   }

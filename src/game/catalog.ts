@@ -47,7 +47,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     maxHp: 240,
     damagePerTick: 0,
     maxCharges: 3,
-    chargeCooldownSeconds: 28,
+    chargeCooldownSeconds: 11,
     producedFlavor: "Generic garrison (no signal requirement)",
   },
   {
@@ -67,7 +67,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Heavy",
     maxCharges: 3,
-    chargeCooldownSeconds: 25,
+    chargeCooldownSeconds: 10,
     producedFlavor: "Swarm scouts (ranged, fast, fragile)",
   },
   {
@@ -87,7 +87,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Swarm",
     maxCharges: 3,
-    chargeCooldownSeconds: 28,
+    chargeCooldownSeconds: 11,
     aura: { kind: "turret", radius: 6, value: 0.8 },
     producedFlavor: "Line sentinels (melee, shielded)",
   },
@@ -107,7 +107,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     maxHp: 180,
     damagePerTick: 0,
     maxCharges: 3,
-    chargeCooldownSeconds: 22,
+    chargeCooldownSeconds: 9,
     aura: { kind: "heal_structures", radius: 8, value: 1.5 },
     producedFlavor: "Line medics (heal nearest ally)",
   },
@@ -129,7 +129,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     producedAntiClass: "Line",
     producedDamageVsStructuresMult: 1.5,
     maxCharges: 2,
-    chargeCooldownSeconds: 45,
+    chargeCooldownSeconds: 14,
     producedFlavor: "Heavy rams (ignore 50% building armor)",
   },
   {
@@ -149,7 +149,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Line",
     maxCharges: 2,
-    chargeCooldownSeconds: 50,
+    chargeCooldownSeconds: 15,
     aura: { kind: "turret", radius: 7, value: 0.6 },
     producedFlavor: "Heavy knights (high HP melee)",
   },
@@ -170,7 +170,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Swarm",
     maxCharges: 2,
-    chargeCooldownSeconds: 35,
+    chargeCooldownSeconds: 11,
     aura: { kind: "salvage_bonus", radius: 12, value: 0.2 },
     producedFlavor: "Swarm scrappers (fast melee)",
   },
@@ -191,7 +191,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Heavy",
     maxCharges: 2,
-    chargeCooldownSeconds: 40,
+    chargeCooldownSeconds: 13,
     aura: { kind: "safe_deploy_radius", radius: 10, value: 1 },
     producedFlavor: "Line soldiers (balanced melee)",
   },
@@ -212,7 +212,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Swarm",
     maxCharges: 2,
-    chargeCooldownSeconds: 38,
+    chargeCooldownSeconds: 12,
     unitTrait: "lifesteal",
     producedFlavor: "Swarm raiders (heal on kill)",
   },
@@ -233,7 +233,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Line",
     maxCharges: 2,
-    chargeCooldownSeconds: 40,
+    chargeCooldownSeconds: 13,
     aura: { kind: "heal_structures", radius: 10, value: 2 },
     producedFlavor: "Line thorns (ranged, poison DoT)",
   },
@@ -254,7 +254,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Swarm",
     maxCharges: 1,
-    chargeCooldownSeconds: 90,
+    chargeCooldownSeconds: 28,
     unitAoeRadius: 3.5,
     unitFlying: true,
     producedFlavor: "Titan wyvern (flying, AoE breath)",
@@ -276,7 +276,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Heavy",
     maxCharges: 1,
-    chargeCooldownSeconds: 95,
+    chargeCooldownSeconds: 30,
     aura: { kind: "turret", radius: 8, value: 1.2 },
     producedFlavor: "Titan golem (massive HP, slow)",
   },
@@ -297,7 +297,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     damagePerTick: 0,
     producedAntiClass: "Titan",
     maxCharges: 1,
-    chargeCooldownSeconds: 80,
+    chargeCooldownSeconds: 26,
     salvageRefundFrac: 1,
     producedFlavor: "Heavy wraith (ranged, anti-Titan)",
   },
@@ -314,7 +314,7 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     signalTypes: ["Reclaim"],
     salvagePctOnCast: 100,
     maxCharges: 2,
-    chargeCooldownSeconds: 35,
+    chargeCooldownSeconds: 11,
     effect: { type: "recycle_structure" },
   },
   {
@@ -327,7 +327,7 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     signalTypes: ["Bastion"],
     salvagePctOnCast: 100,
     maxCharges: 2,
-    chargeCooldownSeconds: 40,
+    chargeCooldownSeconds: 13,
     effect: {
       type: "buff_structure",
       damageReductionPct: Math.round((1 - FORTIFY_INCOMING_DAMAGE_MULT) * 100),
@@ -344,24 +344,12 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     signalTypes: ["Vanguard"],
     salvagePctOnCast: 100,
     maxCharges: 2,
-    chargeCooldownSeconds: 45,
+    chargeCooldownSeconds: 15,
     effect: {
       type: "aoe_damage",
       radius: FIRESTORM_RADIUS,
       damage: FIRESTORM_DAMAGE_PER_UNIT,
     },
-  },
-  {
-    id: "muster",
-    name: "Muster",
-    kind: "command",
-    fluxCost: 50,
-    requiredRelayTier: 1,
-    salvagePctOnCast: 100,
-    maxCharges: 3,
-    chargeCooldownSeconds: 30,
-    signalTypes: ["Vanguard"],
-    effect: { type: "muster_structure" },
   },
   {
     id: "shatter",
@@ -373,7 +361,7 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     signalTypes: ["Vanguard", "Bastion"],
     salvagePctOnCast: 100,
     maxCharges: 1,
-    chargeCooldownSeconds: 55,
+    chargeCooldownSeconds: 18,
     effect: {
       type: "shatter_structure",
       damage: SHATTER_DAMAGE,
@@ -405,7 +393,7 @@ export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
   "watchtower",
   "root_bunker",
   "menders_hut",
-  "muster",
+  null,
   "recycle",
   "fortify",
   "firestorm",
@@ -434,8 +422,6 @@ export function commandTargetingHint(entry: CommandCatalogEntry): string {
       return "Drop on one of your structures to scrap it.";
     case "buff_structure":
       return "Drop on one of your structures to shield it.";
-    case "muster_structure":
-      return "Drop on one of your structures to rush production.";
     case "shatter_structure":
       return "Drop on an enemy Relay.";
     case "aoe_damage":
@@ -450,8 +436,6 @@ export function commandTargetingLabel(entry: CommandCatalogEntry): string {
   switch (entry.effect.type) {
     case "recycle_structure":
     case "buff_structure":
-    case "muster_structure":
-      return "Your structure";
     case "shatter_structure":
       return "Enemy Relay";
     case "aoe_damage":

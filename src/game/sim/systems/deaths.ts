@@ -44,6 +44,9 @@ export function cleanupDead(s: GameState): void {
     else s.stats.enemyKills += 1;
   }
   s.units = s.units.filter((u) => u.hp > 0);
+  if (s.selectedUnitId !== null && !s.units.some((u) => u.id === s.selectedUnitId)) {
+    s.selectedUnitId = null;
+  }
 
   const deadStructs = s.structures.filter((st) => st.hp <= 0);
   salvageFromDeadStructures(s, deadStructs);

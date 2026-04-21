@@ -17,16 +17,19 @@ import {
 import { isStructureEntry } from "../../types";
 import { unitStatsForCatalog } from "./helpers";
 
-export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
+/** Slightly wider ring than ±1 so units clear the tower footprint / GLB hull. */
+const SPAWN_JITTER = 3.5;
+
+function pushSpawnedUnit(s: GameState, st: StructureRuntime, team: "player" | "enemy"): void {
   const def = getCatalogEntry(st.catalogId);
   if (!def || !isStructureEntry(def)) return;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
   const u: UnitRuntime = {
     id: s.nextId.unit++,
-    team: "player",
+    team,
     structureId: st.id,
-    x: st.x + (rand(s) - 0.5) * 2,
-    z: st.z + (rand(s) - 0.5) * 2,
+    x: st.x + (rand(s) - 0.5) * SPAWN_JITTER,
+    z: st.z + (rand(s) - 0.5) * SPAWN_JITTER,
     hp: stStats.maxHp,
     maxHp: stStats.maxHp,
     sizeClass: def.producedSizeClass,
@@ -43,35 +46,15 @@ export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
     signal: dominantSignal(def),
   };
   s.units.push(u);
-  s.stats.unitsProduced += 1;
+  if (team === "player") s.stats.unitsProduced += 1;
+}
+
+export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
+  pushSpawnedUnit(s, st, "player");
 }
 
 export function spawnEnemyUnit(s: GameState, st: StructureRuntime): void {
-  const def = getCatalogEntry(st.catalogId);
-  if (!def || !isStructureEntry(def)) return;
-  const stStats = unitStatsForCatalog(def.producedSizeClass);
-  const u: UnitRuntime = {
-    id: s.nextId.unit++,
-    team: "enemy",
-    structureId: st.id,
-    x: st.x + (rand(s) - 0.5) * 2,
-    z: st.z + (rand(s) - 0.5) * 2,
-    hp: stStats.maxHp,
-    maxHp: stStats.maxHp,
-    sizeClass: def.producedSizeClass,
-    pop: stStats.pop,
-    speedPerSec: stStats.speedPerSec,
-    range: stStats.range,
-    dmgPerTick: stStats.dmgPerTick,
-    visualSeed: randU32(s),
-    antiClass: def.producedAntiClass,
-    trait: def.unitTrait,
-    aoeRadius: def.unitAoeRadius,
-    flying: def.unitFlying,
-    damageVsStructuresMult: def.producedDamageVsStructuresMult ?? 1,
-    signal: dominantSignal(def),
-  };
-  s.units.push(u);
+  pushSpawnedUnit(s, st, "enemy");
 }
 
 export function buildProgress(s: GameState): void {
@@ -101,23 +84,23 @@ export function production(s: GameState): void {
     const local = localPopForStructure(s, st.id);
     const global = totalPlayerPop(s);
     const defPop = unitStatsForCatalog(def.producedSizeClass).pop;
-    if (local + defPop > localCap) {
+    const maxFitLocal = Math.floor((localCap - local) / defPop);
+    const maxFitGlobal = Math.floor((GLOBAL_POP_CAP - global) / defPop);
+    const n = Math.min(maxFitLocal, maxFitGlobal);
+    if (n < 1) {
       if (st.productionTicksRemaining <= 0) {
-        s.lastMessage = `${def.name}: local pop cap reached (waiting…).`;
-      }
-      st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
-      continue;
-    }
-    if (global + defPop > GLOBAL_POP_CAP) {
-      if (st.productionTicksRemaining <= 0) {
-        s.lastMessage = `Global pop cap reached (${GLOBAL_POP_CAP}). Free a slot to resume production.`;
+        if (maxFitLocal < 1) s.lastMessage = `${def.name}: local pop cap reached (waiting…).`;
+        else s.lastMessage = `Global pop cap reached (${GLOBAL_POP_CAP}). Free a slot to resume production.`;
       }
       st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
       continue;
     }
 
-    spawnPlayerUnit(s, st);
-    s.lastMessage = `${def.name} produced a ${def.producedSizeClass}.`;
+    for (let i = 0; i < n; i++) spawnPlayerUnit(s, st);
+    s.lastMessage =
+      n === 1
+        ? `${def.name} produced a ${def.producedSizeClass}.`
+        : `${def.name} produced ${n}× ${def.producedSizeClass}.`;
     st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
   }
 
@@ -136,16 +119,15 @@ export function production(s: GameState): void {
     const local = localPopForEnemyStructure(s, st.id);
     const global = totalEnemyPop(s);
     const defPop = unitStatsForCatalog(def.producedSizeClass).pop;
-    if (local + defPop > localCap) {
-      st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
-      continue;
-    }
-    if (global + defPop > GLOBAL_POP_CAP) {
+    const maxFitLocal = Math.floor((localCap - local) / defPop);
+    const maxFitGlobal = Math.floor((GLOBAL_POP_CAP - global) / defPop);
+    const n = Math.min(maxFitLocal, maxFitGlobal);
+    if (n < 1) {
       st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
       continue;
     }
 
-    spawnEnemyUnit(s, st);
+    for (let i = 0; i < n; i++) spawnEnemyUnit(s, st);
     st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
   }
 }

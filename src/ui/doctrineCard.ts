@@ -1,19 +1,14 @@
-import { commandTargetingLabel, getCatalogEntry } from "../game/catalog";
-import type { CatalogEntry, CommandCatalogEntry, SignalCountRequirement, SignalType, StructureCatalogEntry } from "../game/types";
+import { commandEffectRadius, getCatalogEntry } from "../game/catalog";
+import { COMMAND_FRIENDLY_PRESENCE_RADIUS } from "../game/constants";
+import type {
+  CatalogEntry,
+  CommandCatalogEntry,
+  SignalCountRequirement,
+  SignalType,
+  StructureCatalogEntry,
+  UnitSizeClass,
+} from "../game/types";
 import { isCommandEntry, isStructureEntry } from "../game/types";
-
-function signalHue(sig: SignalType | undefined): number {
-  switch (sig) {
-    case "Vanguard":
-      return 22;
-    case "Bastion":
-      return 212;
-    case "Reclaim":
-      return 142;
-    default:
-      return 212;
-  }
-}
 
 function dominantSignalFromEntry(e: CatalogEntry): SignalType | undefined {
   if (!e.signalTypes.length) return undefined;
@@ -30,34 +25,116 @@ function dominantSignalFromEntry(e: CatalogEntry): SignalType | undefined {
   return best;
 }
 
-function signalReqLine(e: { requiredRelayTier: number; requiredSignalCounts?: SignalCountRequirement }): string {
-  const bits: string[] = [`R≥${e.requiredRelayTier}`];
-  const rc = e.requiredSignalCounts;
-  if (rc) {
-    for (const k of ["Vanguard", "Bastion", "Reclaim"] as const) {
-      const n = rc[k];
-      if (n && n > 0) bits.push(`${n}×${k.slice(0, 3)}`);
-    }
-  }
-  return bits.join(" ");
+function wizardTierShort(requiredTier: number): string {
+  const t = Math.max(1, requiredTier || 1);
+  return `Wizard Tier ${t}`;
 }
 
-function commandEffectLine(e: CommandCatalogEntry): string {
+/** Readable relay gate (matches `requiredSignalCounts` in catalog). */
+function formatRelayRequirement(rc: SignalCountRequirement): string {
+  const parts: string[] = [];
+  for (const k of ["Vanguard", "Bastion", "Reclaim"] as const) {
+    const n = rc[k];
+    if (n && n > 0) parts.push(`${n}× ${k}`);
+  }
+  return parts.join(", ");
+}
+
+function relayRequirementSentence(e: { requiredSignalCounts?: SignalCountRequirement }): string | null {
+  const rc = e.requiredSignalCounts;
+  if (!rc) return null;
+  const s = formatRelayRequirement(rc);
+  return s ? `You need ${s} on the field from built relays before you can play this card.` : null;
+}
+
+/** Readable spell summary for tooltips / titles. */
+function commandSpellTooltipSummary(e: CommandCatalogEntry): string {
+  const { target, rolls, payLine } = commandSpellFxRows(e);
+  return `${target} ${rolls.join(" ")} · ${payLine}`;
+}
+
+function commandSpellFxRows(e: CommandCatalogEntry): {
+  target: string;
+  rolls: string[];
+  payLine: string;
+} {
   const fx = e.effect;
+  const payLine = `Costs ${e.fluxCost} mana · ${e.salvagePctOnCast}% of that cost goes to Salvage · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
   switch (fx.type) {
     case "recycle_structure":
-      return "Click your structure → scrap + Salvage";
+      return {
+        target: "One of your finished towers (the Keep cannot be picked).",
+        rolls: [
+          "Destroys the tower and removes any units tied to it.",
+          "You gain Salvage equal to about 90% of that tower's original build price.",
+        ],
+        payLine,
+      };
     case "aoe_damage":
-      return `AoE ${fx.damage} dmg (radius ${fx.radius}) near friendlies`;
+      return {
+        target: `Ground point; a friendly unit or tower must be within ${COMMAND_FRIENDLY_PRESENCE_RADIUS} world units of the blast center.`,
+        rolls: [
+          `Ring radius ${fx.radius}: every enemy unit inside takes ${fx.damage} damage.`,
+          "Enemy Dark Fortresses touched by the ring take half that damage from this spell.",
+        ],
+        payLine,
+      };
     case "buff_structure":
-      return `Target structure: ${fx.damageReductionPct}% DR for ${fx.durationSeconds}s`;
-    case "muster_structure":
-      return "Target structure: produce next unit instantly";
+      return {
+        target: "One of your finished towers.",
+        rolls: [
+          `For ${fx.durationSeconds}s incoming damage to that tower is reduced by ${fx.damageReductionPct}% (multiplicative with other effects).`,
+        ],
+        payLine,
+      };
     case "shatter_structure":
-      return `Enemy Dark Fortress: ${fx.damage} dmg + ${fx.silenceSeconds}s silence`;
+      return {
+        target: "Enemy Dark Fortress — click the fortress itself.",
+        rolls: [
+          `The fortress loses ${fx.damage} HP.`,
+          `Its production is silenced for ${fx.silenceSeconds}s; nearby enemy towers can catch the same silence window.`,
+        ],
+        payLine,
+      };
     case "noop":
-      return "Stub — Mana becomes Salvage";
+      return {
+        target: "Anywhere on the map.",
+        rolls: ["No combat resolution yet — Mana is still spent and Salvage still applies per the card."],
+        payLine,
+      };
   }
+}
+
+function dmSpellCostLine(e: CommandCatalogEntry): string {
+  return `${e.fluxCost} mana · ${e.chargeCooldownSeconds}s cooldown · ${e.salvagePctOnCast}% → Salvage`;
+}
+
+function dmSpellFxCompact(e: CommandCatalogEntry): string {
+  const { target, rolls, payLine } = commandSpellFxRows(e);
+  const lis = rolls.map((t) => `<li class="dm-spell-fx-li">${escapeHtml(t)}</li>`).join("");
+  const tip = escapeHtml(`${e.name} — ${commandSpellTooltipSummary(e)}`);
+  return `<div class="dm-spell-fx" title="${tip}">
+    <div class="dm-spell-fx-cap">Effect</div>
+    <div class="dm-spell-fx-target"><span class="dm-spell-fx-k">Target</span> ${escapeHtml(target)}</div>
+    <ul class="dm-spell-fx-ul" aria-label="Spell resolution">${lis}</ul>
+    <div class="dm-spell-fx-pay">${escapeHtml(payLine)}</div>
+  </div>`;
+}
+
+function dcSpellEffectPanel(e: CommandCatalogEntry): string {
+  const { target, rolls, payLine } = commandSpellFxRows(e);
+  const lis = rolls.map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+  return `<section class="dc-spell-panel" aria-label="Spell effect details">
+    <div class="dc-spell-panel__banner" role="heading" aria-level="3">Spell effect</div>
+    <div class="dc-spell-panel__grid">
+      <div class="dc-spell-panel__label">Target</div>
+      <p class="dc-spell-panel__text">${escapeHtml(target)}</p>
+      <div class="dc-spell-panel__label">Resolves</div>
+      <ul class="dc-spell-panel__ul">${lis}</ul>
+      <div class="dc-spell-panel__label">Each cast</div>
+      <p class="dc-spell-panel__text dc-spell-panel__pay">${escapeHtml(payLine)}</p>
+    </div>
+  </section>`;
 }
 
 function escapeHtml(s: string): string {
@@ -68,54 +145,42 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Doctrine / HUD preview accent: one stable hue per produced class or spells. */
+const PREVIEW_HUE_SPELL = 278;
+const PREVIEW_HUE_BY_CLASS: Record<UnitSizeClass, number> = {
+  Swarm: 103,
+  Line: 199,
+  Heavy: 30,
+  Titan: 328,
+};
+
 /**
- * Hue derived from the card's dominant Signal (Vanguard / Bastion / Reclaim) so
- * frame + art palette match the 3D silhouette. Command cards get a shifted
- * warm magenta/purple hue so they stand out from structures even when they
- * share a signal tag. Falls back to a stable per-id hue for odd cases.
+ * Preview-card accent hue by type: **Spell**, **Swarm**, **Line**, **Heavy**, **Titan**
+ * (structures use `producedSizeClass`; commands use the spell bucket).
  */
+export function catalogPreviewTypeHue(e: CatalogEntry | null): number {
+  if (!e) return 210;
+  if (isCommandEntry(e)) return PREVIEW_HUE_SPELL;
+  if (isStructureEntry(e)) return PREVIEW_HUE_BY_CLASS[e.producedSizeClass] ?? 210;
+  return 210;
+}
+
+/** @deprecated Prefer `catalogPreviewTypeHue(getCatalogEntry(id))` — kept for call sites that only have an id string. */
 export function catalogCardHue(catalogId: string): number {
-  const e = getCatalogEntry(catalogId);
-  if (e) {
-    if (isCommandEntry(e)) {
-      // Warm magenta/violet range based on signal so different spells still
-      // read as distinct from each other without being confused with towers.
-      const dom = dominantSignalFromEntry(e);
-      switch (dom) {
-        case "Vanguard":
-          return 340;
-        case "Bastion":
-          return 290;
-        case "Reclaim":
-          return 310;
-        default:
-          return 320;
-      }
-    }
-    const dom = dominantSignalFromEntry(e);
-    if (dom) return signalHue(dom);
-  }
-  let h = 2166136261 >>> 0;
-  for (let i = 0; i < catalogId.length; i++) h = Math.imul(h ^ catalogId.charCodeAt(i), 16777619) >>> 0;
-  return h % 360;
+  return catalogPreviewTypeHue(getCatalogEntry(catalogId));
+}
+
+/** CSS hook `tcg--preview-type-*` for type-tinted chrome (Line / Swarm / Heavy / Titan / Spell). */
+export function catalogPreviewTypeClass(e: CatalogEntry): string {
+  if (isCommandEntry(e)) return "tcg--preview-type-spell";
+  if (isStructureEntry(e)) return `tcg--preview-type-${e.producedSizeClass}`;
+  return "tcg--preview-type-unknown";
 }
 
 function initials(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
   return name.slice(0, 2).toUpperCase();
-}
-
-function signalEdgePips(e: CatalogEntry): string {
-  const rc = e.requiredSignalCounts;
-  if (!rc) return "";
-  const pips: string[] = [];
-  for (const k of ["Vanguard", "Bastion", "Reclaim"] as const) {
-    const n = rc[k] ?? 0;
-    for (let i = 0; i < n; i++) pips.push(`<span class="tcg-sig-pip" title="${k}">${k[0]}</span>`);
-  }
-  if (pips.length === 0) return "";
-  return `<div class="tcg-sig-edge" aria-hidden="true">${pips.join("")}</div>`;
 }
 
 function signalTypesLine(e: CatalogEntry): string {
@@ -153,41 +218,6 @@ function traitLabel(e: StructureCatalogEntry): string | null {
     bits.push(`Refund ${Math.round(e.salvageRefundFrac * 100)}% on death`);
   }
   return bits.length ? bits.join(" · ") : null;
-}
-
-function rulesRowsStructureFull(e: StructureCatalogEntry): string {
-  const sig = signalReqLine(e);
-  const anti = e.producedAntiClass ? `Anti ${e.producedAntiClass}` : "Anti —";
-  const ch = `⚡${e.maxCharges} · CD ${e.chargeCooldownSeconds}s`;
-  const aura = auraLabel(e);
-  const trait = traitLabel(e);
-  const rows = [
-    `<p class="tcg-rule"><span class="tcg-rule-label">Mana</span> ${e.fluxCost} to summon</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">Build</span> ${e.buildSeconds}s · <span class="tcg-rule-label">Prod</span> ${e.productionSeconds}s</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">HP</span> ${e.maxHp}</p>`,
-    `<p class="tcg-rule">${escapeHtml(sig)}</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">Signals</span> ${escapeHtml(signalTypesLine(e))}</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">Unit</span> ${e.producedSizeClass} · pop ${e.producedPop} · cap ${e.localPopCap}</p>`,
-    `<p class="tcg-rule">${escapeHtml(anti)} · ${ch}</p>`,
-  ];
-  if (aura) rows.push(`<p class="tcg-rule"><span class="tcg-rule-label">Aura</span> ${escapeHtml(aura)}</p>`);
-  if (trait) rows.push(`<p class="tcg-rule"><span class="tcg-rule-label">Traits</span> ${escapeHtml(trait)}</p>`);
-  if (e.producedFlavor) rows.push(`<p class="tcg-rule"><em>${escapeHtml(e.producedFlavor)}</em></p>`);
-  return rows.join("");
-}
-
-function rulesRowsCommandFull(e: CommandCatalogEntry): string {
-  const sig = signalReqLine(e);
-  const ch = `⚡${e.maxCharges} · CD ${e.chargeCooldownSeconds}s`;
-  const eff = e.effect.type;
-  return [
-    `<p class="tcg-rule"><span class="tcg-rule-label">Cost</span> ${e.fluxCost} Mana → ${e.salvagePctOnCast}% Salvage</p>`,
-    `<p class="tcg-rule">${escapeHtml(sig)}</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">Signals</span> ${escapeHtml(signalTypesLine(e))}</p>`,
-    `<p class="tcg-rule"><span class="tcg-rule-label">Effect</span> ${escapeHtml(eff)}</p>`,
-    `<p class="tcg-rule">${escapeHtml(commandEffectLine(e))}</p>`,
-    `<p class="tcg-rule">${ch}</p>`,
-  ].join("");
 }
 
 function silhouetteShapes(e: StructureCatalogEntry): string {
@@ -233,6 +263,10 @@ function silhouetteShapes(e: StructureCatalogEntry): string {
   return vanguardSpire;
 }
 
+function cardDetailButton(catalogId: string): string {
+  return `<button type="button" class="tcg-detail-btn" data-card-detail="${escapeHtml(catalogId)}" aria-label="Full card details" title="Details">i</button>`;
+}
+
 /** Stylized structure / command portrait (no external image assets). */
 function catalogPortraitSvg(catalogId: string, hue: number, cmd: boolean, idSuffix: string): string {
   const gid = `svg_${idSuffix.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
@@ -263,109 +297,421 @@ function catalogPortraitSvg(catalogId: string, hue: number, cmd: boolean, idSuff
   </svg>`;
 }
 
+/* —— Doctrine card “blueprint” layout (dc-*) —— */
+
+const DC_ICON_SIG = `<svg class="dc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-10H7z"/></svg>`;
+const DC_ICON_LOCK = `<svg class="dc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1V8z"/></svg>`;
+const DC_ICON_SWORDS = `<span class="dc-ico dc-ico--txt" aria-hidden="true">⚔</span>`;
+
+function signalSlug(e: CatalogEntry): string {
+  const d = dominantSignalFromEntry(e);
+  if (!d) return "none";
+  return d.toLowerCase();
+}
+
+function unitPillTitle(e: StructureCatalogEntry): string {
+  const f = e.producedFlavor?.trim();
+  if (f) {
+    const head = f.split("(")[0]!.trim();
+    if (head) return head;
+  }
+  return `${e.producedSizeClass} squad`;
+}
+
+function flavorTraitTags(e: StructureCatalogEntry): string[] {
+  const f = e.producedFlavor;
+  if (!f) return [];
+  const m = f.match(/\(([^)]+)\)/);
+  if (!m) return [];
+  return m[1]!
+    .split(/[,/·]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.toUpperCase());
+}
+
+/** CSS `--spell-aoe` scale for impact rings (larger = reads as bigger in-world footprint). */
+function spellAoeScale(e: CommandCatalogEntry): string {
+  const rWorld = commandEffectRadius(e);
+  if (rWorld != null) {
+    const t = Math.min(1, Math.max(0, (rWorld - 5) / 10));
+    return (0.84 + t * 0.36).toFixed(3);
+  }
+  const fx = e.effect;
+  if (fx.type === "shatter_structure") return "0.78";
+  if (fx.type === "recycle_structure" || fx.type === "buff_structure") return "0.5";
+  if (fx.type === "noop") return "0.55";
+  return "0.65";
+}
+
+function spellGhostClass(e: CommandCatalogEntry): string {
+  switch (e.effect.type) {
+    case "aoe_damage":
+      return "spell-card-viz__ghost--firestorm";
+    case "buff_structure":
+      return "spell-card-viz__ghost--fortify";
+    case "shatter_structure":
+      return "spell-card-viz__ghost--shatter";
+    case "recycle_structure":
+      return "spell-card-viz__ghost--recycle";
+    default:
+      return "spell-card-viz__ghost--noop";
+  }
+}
+
+function spellAoeEmberDots(n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(`<span class="spell-card-viz__ember" style="--ember-i:${i}"></span>`);
+  }
+  return parts.join("");
+}
+
+function spellAoeCrackLines(n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(`<span class="spell-card-viz__crack" style="--crack-i:${i}"></span>`);
+  }
+  return parts.join("");
+}
+
+function spellRecycleCubes(n: number): string {
+  const parts: string[] = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(`<span class="spell-card-viz__scrap" style="--scrap-i:${i}"></span>`);
+  }
+  return parts.join("");
+}
+
+/** AoE footprint + looping “ghost” of the cast FX (card-only; mirrors `spawnCastFx` palettes). */
+function spellCardVizHtml(e: CommandCatalogEntry): string {
+  const fx = e.effect;
+  const aoe = spellAoeScale(e);
+  const ghost = spellGhostClass(e);
+  const fxType = fx.type;
+  let aoeDecor = "";
+  if (fxType === "aoe_damage") {
+    aoeDecor = `<div class="spell-card-viz__embers" aria-hidden="true">${spellAoeEmberDots(10)}</div>`;
+  } else if (fxType === "shatter_structure") {
+    aoeDecor = `<div class="spell-card-viz__cracks" aria-hidden="true">${spellAoeCrackLines(6)}</div>`;
+  }
+  let ghostDecor = "";
+  if (fxType === "recycle_structure") {
+    ghostDecor = `<div class="spell-card-viz__ghost-scraps" aria-hidden="true">${spellRecycleCubes(6)}</div>`;
+  }
+  return `<div class="spell-card-viz spell-card-viz--${escapeHtml(fxType)}" data-spell-effect="${escapeHtml(fxType)}" style="--spell-aoe:${aoe}">
+    <div class="spell-card-viz__aoe" aria-hidden="true">
+      <div class="spell-card-viz__aoe-ring spell-card-viz__aoe-ring--outer"></div>
+      <div class="spell-card-viz__aoe-ring spell-card-viz__aoe-ring--inner"></div>
+      ${aoeDecor}
+    </div>
+    <div class="spell-card-viz__ghost ${ghost}" aria-hidden="true">${ghostDecor}</div>
+  </div>`;
+}
+
+function spellPortraitStack(portrait: string, spell: CommandCatalogEntry): string {
+  return `<div class="tcg-portrait-fallback tcg-portrait-fallback--solo tcg-portrait-fallback--spell">
+    <div class="spell-card-portrait-under" aria-hidden="true">${portrait}</div>
+    ${spellCardVizHtml(spell)}
+  </div>`;
+}
+
+function dcHeroArt(
+  catalogId: string,
+  portrait: string,
+  compact: boolean,
+  useGlbPreview: boolean,
+  spell?: CommandCatalogEntry,
+): string {
+  const mod = compact ? "dc-hero-art--compact" : "dc-hero-art--full";
+  const img = useGlbPreview
+    ? `<img class="tcg-card-preview-img" data-catalog-preview="${escapeHtml(catalogId)}" alt="" decoding="async" hidden />`
+    : "";
+  if (spell) {
+    return `<div class="dc-hero-art dc-hero-art--spell ${mod}">
+      ${img}
+      ${spellPortraitStack(portrait, spell)}
+    </div>`;
+  }
+  const fbMod = useGlbPreview ? "" : " tcg-portrait-fallback--solo";
+  return `<div class="dc-hero-art ${mod}">
+    ${img}
+    <div class="tcg-portrait-fallback${fbMod}">${portrait}</div>
+  </div>`;
+}
+
+/** Compact face art — spells show AoE + ghost cast preview (structures may use GLB raster). */
+function dmHeroArt(catalogId: string, portrait: string, useGlbPreview: boolean, spell?: CommandCatalogEntry): string {
+  const img = useGlbPreview
+    ? `<img class="tcg-card-preview-img" data-catalog-preview="${escapeHtml(catalogId)}" alt="" decoding="async" hidden />`
+    : "";
+  if (spell) {
+    return `<div class="dm-art dm-art--spell">
+      ${img}
+      ${spellPortraitStack(portrait, spell)}
+    </div>`;
+  }
+  const fbMod = useGlbPreview ? "" : " tcg-portrait-fallback--solo";
+  return `<div class="dm-art">
+    ${img}
+    <div class="tcg-portrait-fallback${fbMod}">${portrait}</div>
+  </div>`;
+}
+
+function dmSignalLabel(e: CatalogEntry): string {
+  const dom = dominantSignalFromEntry(e);
+  if (dom) return dom;
+  if (e.signalTypes.length === 1) return e.signalTypes[0]!;
+  if (e.signalTypes.length > 1) return "Mixed signals";
+  return "—";
+}
+
+function dmCdTitle(cmd: boolean): string {
+  return cmd ? "Per-use cooldown after casting this spell" : "Cooldown between spawned units";
+}
+
+function dmStatsOneLine(e: CatalogEntry): string {
+  if (isCommandEntry(e)) {
+    return `${e.fluxCost} · ${e.chargeCooldownSeconds}s · ${e.salvagePctOnCast}%`;
+  }
+  return `${e.maxHp} HP · ${e.buildSeconds} / ${e.productionSeconds}s · ${e.producedPop}/${e.localPopCap}`;
+}
+
+function dcHeroTopTags(cmd: boolean, classOrSpell: string, cdSeconds: number): string {
+  const cdShow = cdSeconds > 0 ? `${cdSeconds}s` : "—";
+  const pillClass = cmd ? "dc-pill dc-pill--spell" : "dc-pill dc-pill--class";
+  const pillCd = "dc-pill dc-pill--cd";
+  return `<div class="dc-hero-tags">
+    <span class="${pillClass}"><span class="dc-pill-dot" aria-hidden="true"></span>${escapeHtml(classOrSpell)}</span>
+    <span class="${pillCd}"><span class="dc-pill-dot dc-pill-dot--cd" aria-hidden="true"></span>${escapeHtml(cdShow)}</span>
+  </div>`;
+}
+
+function dcTitleBlock(name: string, kindWord: "Structure" | "Command", compact: boolean): string {
+  const titleTag = compact ? "h2" : "h1";
+  const up = escapeHtml(name.toUpperCase());
+  return `<div class="dc-hero-titles">
+    <${titleTag} class="dc-title">${up}</${titleTag}>
+    <p class="dc-subtitle"><span class="dc-subtitle-strong">Doctrine</span><span class="dc-subtitle-sep"> • </span><span class="dc-subtitle-kind">${kindWord}</span></p>
+  </div>`;
+}
+
+type DcStatTone = "hp" | "build" | "prod" | "pop" | "mana" | "cd" | "salv" | "tier";
+
+function dcStatRail4(
+  a: { v: string; l: string; t: DcStatTone },
+  b: { v: string; l: string; t: DcStatTone },
+  c: { v: string; l: string; t: DcStatTone },
+  d: { v: string; l: string; t: DcStatTone },
+  compact: boolean,
+): string {
+  const cell = (x: { v: string; l: string; t: DcStatTone }) =>
+    `<div class="dc-stat"><span class="dc-stat-val dc-stat-val--${x.t}">${escapeHtml(x.v)}</span><span class="dc-stat-lbl">${escapeHtml(x.l)}</span></div>`;
+  const div = `<span class="dc-stat-div" aria-hidden="true"></span>`;
+  const railMod = compact ? "dc-stat-rail--compact" : "";
+  return `<div class="dc-stat-rail ${railMod}">${cell(a)}${div}${cell(b)}${div}${cell(c)}${div}${cell(d)}</div>`;
+}
+
+function dcMetaSignal(e: CatalogEntry): string {
+  const slug = signalSlug(e);
+  const line = signalTypesLine(e);
+  return `<div class="dc-meta-row">
+    <span class="dc-meta-ico dc-meta-ico--sig" aria-hidden="true">${DC_ICON_SIG}</span>
+    <span class="dc-meta-k">Signal</span>
+    <span class="dc-meta-v dc-meta-v--sig-${slug}">${escapeHtml(line)}</span>
+  </div>`;
+}
+
+function dcMetaUnlock(tier: number): string {
+  return `<div class="dc-meta-row">
+    <span class="dc-meta-ico dc-meta-ico--lock" aria-hidden="true">${DC_ICON_LOCK}</span>
+    <span class="dc-meta-k">Unlock</span>
+    <span class="dc-meta-v dc-meta-v--unlock">${escapeHtml(wizardTierShort(tier))}</span>
+  </div>`;
+}
+
+function dcRelayRow(e: CatalogEntry): string {
+  const s = relayRequirementSentence(e);
+  if (!s) return "";
+  return `<div class="dc-meta-row dc-meta-row--relay"><span class="dc-meta-k">Relays</span><span class="dc-meta-v dc-meta-v--relay">${escapeHtml(s)}</span></div>`;
+}
+
+function dcUnitPill(e: StructureCatalogEntry): string {
+  const tags = flavorTraitTags(e);
+  const tagHtml = tags.map((t) => `<span class="dc-unit-tag">${escapeHtml(t)}</span>`).join("");
+  return `<div class="dc-unit-pill">
+    <div class="dc-unit-pill-left"><span class="dc-unit-ico" aria-hidden="true">${DC_ICON_SWORDS}</span><span class="dc-unit-name">${escapeHtml(unitPillTitle(e))}</span></div>
+    <div class="dc-unit-tags">${tagHtml}</div>
+  </div>`;
+}
+
+function dcAbilityStructure(e: StructureCatalogEntry): string {
+  if (e.chargeCooldownSeconds <= 0 && !e.producedAntiClass) return "";
+  const title = e.producedAntiClass ? `Anti ${e.producedAntiClass}` : "Unit ability";
+  const cd = e.chargeCooldownSeconds > 0 ? `${e.chargeCooldownSeconds}s` : "—";
+  return `<div class="dc-ability" role="group" aria-label="Spawned unit ability">
+    <div class="dc-ability-ico" aria-hidden="true">⌖</div>
+    <div class="dc-ability-mid">
+      <div class="dc-ability-title">${escapeHtml(title)}</div>
+      <div class="dc-ability-sub">Unlimited uses</div>
+    </div>
+    <div class="dc-ability-right">
+      <div class="dc-ability-cd">${escapeHtml(cd)}</div>
+      <div class="dc-ability-cd-lbl">COOLDOWN</div>
+    </div>
+  </div>`;
+}
+
+function dcFlavor(text: string | undefined): string {
+  if (!text?.trim()) return "";
+  return `<div class="dc-flavor"><div class="dc-flavor-accent" aria-hidden="true"></div><p class="dc-flavor-text">${escapeHtml(text)}</p></div>`;
+}
+
+function dcAuxStructure(e: StructureCatalogEntry): string {
+  const a = auraLabel(e);
+  const t = traitLabel(e);
+  if (!a && !t) return "";
+  const bits: string[] = [];
+  if (a) bits.push(`<div class="dc-aux">${escapeHtml(a)}</div>`);
+  if (t) bits.push(`<div class="dc-aux">${escapeHtml(t)}</div>`);
+  return bits.join("");
+}
+
 export type TcgCardVariant = "hud" | "picker";
 
-/** Compact face: portrait, name, class line, corner costs only (no full rules). */
+/** Compact face: minimal layout — art + short lines only (full stats in modal / hover). */
 export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, deckSlotIndex?: number): string {
   const e = getCatalogEntry(catalogId);
   if (!e) {
-    return `<div class="tcg tcg--compact doctrine-card-compact tcg--unknown" data-catalog-id="${escapeHtml(catalogId)}"><div class="tcg-frame"><div class="tcg-art tcg-art--empty"><span>?</span></div><div class="tcg-title-band"><span class="tcg-name">Unknown</span></div><div class="tcg-class-line">—</div></div></div>`;
+    return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact tcg--unknown tcg--preview-type-unknown" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:210"><div class="dm-shell dm-shell--compact"><div class="dm-art dm-art--empty"><span class="dm-empty">?</span></div><div class="dm-name">Unknown</div><div class="dm-stats">—</div></div></div>`;
   }
-  const hue = catalogCardHue(catalogId);
+  const hue = catalogPreviewTypeHue(e);
+  const previewTypeClass = catalogPreviewTypeClass(e);
   const cmd = isCommandEntry(e);
-  const classLine = cmd ? "Spell" : e.producedSizeClass;
-  const targetCaption = cmd ? `Drop on: ${commandTargetingLabel(e as CommandCatalogEntry)}` : "";
-  const pipTl = `R${e.requiredRelayTier}`;
-  const pipTr = String(e.fluxCost);
-  const pipBl = `⚡${e.maxCharges}`;
-  const pipBr = `${e.chargeCooldownSeconds}s`;
+  const sizeClass = cmd ? "" : e.producedSizeClass;
+  const sizeMod = cmd ? "" : ` tcg--size-${sizeClass}`;
+  const classTag = cmd ? "Spell" : e.producedSizeClass;
+  const manaVal = String(e.fluxCost);
   const svgKey = deckSlotIndex != null ? `${catalogId}_slot${deckSlotIndex}` : `${catalogId}_${variant}`;
   const portrait = catalogPortraitSvg(catalogId, hue, cmd, svgKey);
   const deckNo =
     deckSlotIndex != null
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
-  const spellBadge = cmd ? `<div class="tcg-badge tcg-badge--spell" aria-label="Spell card">SPELL</div>` : "";
+  const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
+  const slug = signalSlug(e);
+  const sigLine = dmSignalLabel(e);
+  const tier = Math.max(1, e.requiredRelayTier || 1);
+  const cdSec = e.chargeCooldownSeconds;
+  const cdShow = cdSec > 0 ? `${cdSec}s` : "—";
+  const statsLine = dmStatsOneLine(e);
+  const statsTitle = isCommandEntry(e)
+    ? commandSpellTooltipSummary(e as CommandCatalogEntry)
+    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${e.productionSeconds}s spawn · ${e.producedPop}/${e.localPopCap} pop`;
+  const spellFx = cmd ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
+  const statsBlock = cmd
+    ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry))}</div>`
+    : `<div class="dm-stats" title="${escapeHtml(statsTitle)}">${escapeHtml(statsLine)}</div>`;
 
-  return `<div class="tcg tcg--compact doctrine-card-compact ${cmd ? "tcg--command" : "tcg--structure"}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
-  <div class="tcg-frame">
+  return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact ${kindClass} ${previewTypeClass}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
+  <div class="dm-shell dm-shell--compact">
     ${deckNo}
-    ${spellBadge}
-    <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
-    <div class="tcg-pip tcg-pip-tr" title="Mana cost">${escapeHtml(pipTr)}</div>
-    <div class="tcg-pip tcg-pip-bl" title="Charges per match">${escapeHtml(pipBl)}</div>
-    <div class="tcg-pip tcg-pip-br" title="Charge cooldown">${escapeHtml(pipBr)}</div>
-    <div class="tcg-art tcg-art--portrait">${portrait}</div>
-    <div class="tcg-title-band">
-      <span class="tcg-name">${escapeHtml(e.name)}</span>
+    ${dmHeroArt(catalogId, portrait, !cmd, cmd ? (e as CommandCatalogEntry) : undefined)}
+    <div class="dm-top">
+      <span class="dm-mana" title="Mana (flux) cost">${escapeHtml(manaVal)}</span>
+      <span class="dm-class" title="${cmd ? "Command spell" : "Produced unit class"}">${escapeHtml(classTag)}</span>
+      <span class="dm-cd" title="${escapeHtml(dmCdTitle(cmd))}">${escapeHtml(cdShow)}</span>
     </div>
-    <div class="tcg-class-line">${escapeHtml(classLine)}</div>
-    ${targetCaption ? `<div class="tcg-target-line" title="Spell target">${escapeHtml(targetCaption)}</div>` : ""}
+    <div class="dm-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</div>
+    ${spellFx}
+    ${statsBlock}
+    <div class="dm-foot">
+      <span class="dm-sig dm-sig--${slug}" title="Dominant signal">${escapeHtml(sigLine)}</span>
+      <span class="dm-tier" title="${escapeHtml(wizardTierShort(tier))}">T${tier}</span>
+    </div>
   </div>
 </div>`;
 }
 
-/** Full rules text, type line, watermark — use only in the long-press detail popover (or internal tooling). */
-export function tcgCardFullHtml(catalogId: string, variant: TcgCardVariant, deckSlotIndex?: number): string {
+export type TcgCardFullOpts = {
+  /** Full-screen detail overlay (scales to viewport). */
+  detailPop?: boolean;
+};
+
+/** Full doctrine card — blueprint layout (detail pop + any full-card surface). */
+export function tcgCardFullHtml(
+  catalogId: string,
+  variant: TcgCardVariant,
+  deckSlotIndex?: number,
+  opts?: TcgCardFullOpts,
+): string {
+  const detailPop = opts?.detailPop === true;
   const e = getCatalogEntry(catalogId);
   if (!e) {
-    return `<div class="tcg tcg--full tcg--unknown tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}"><div class="tcg-frame"><div class="tcg-art tcg-art--empty"><span>?</span></div><div class="tcg-title-band"><span class="tcg-name">Unknown</span></div><div class="tcg-type-line">—</div><div class="tcg-rules"></div></div></div>`;
+    return `<div class="tcg tcg--full tcg--layout-v2 tcg--unknown tcg--preview-type-unknown tcg--${variant}${detailPop ? " tcg--detail-pop" : ""}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:210"><div class="dc-shell"><header class="dc-hero dc-hero--full dc-hero--empty"><div class="dc-hero-art dc-hero-art--full"><span class="dc-empty-q">?</span></div>${dcTitleBlock("Unknown", "Structure", false)}</header></div></div>`;
   }
-  const hue = catalogCardHue(catalogId);
+  const hue = catalogPreviewTypeHue(e);
+  const previewTypeClass = catalogPreviewTypeClass(e);
   const cmd = isCommandEntry(e);
-  const artLine = cmd ? "Command" : e.producedSizeClass;
-  const pipTl = `R${e.requiredRelayTier}`;
-  const pipTr = String(e.fluxCost);
-  const pipBl = `⚡${e.maxCharges}`;
-  const pipBr = `${e.chargeCooldownSeconds}s`;
-  const typeLine = cmd ? "Doctrine — Command" : "Doctrine — Structure";
-  const rules = cmd ? rulesRowsCommandFull(e) : rulesRowsStructureFull(e as StructureCatalogEntry);
-  const sigEdge = signalEdgePips(e);
+  const sizeMod = cmd ? "" : ` tcg--size-${e.producedSizeClass}`;
+  const classTag = cmd ? "Spell" : e.producedSizeClass;
+  const manaVal = String(e.fluxCost);
   const svgKey = deckSlotIndex != null ? `${catalogId}_slot${deckSlotIndex}_full` : `${catalogId}_full_${variant}`;
   const portrait = catalogPortraitSvg(catalogId, hue, cmd, svgKey);
-
-  const artExtra = !cmd
-    ? `<span class="tcg-art-meta">${e.producedPop} pop · cap ${e.localPopCap}</span>`
-    : `<span class="tcg-art-meta">${e.salvagePctOnCast}% to Salvage</span>`;
-
   const deckNo =
     deckSlotIndex != null
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
+  const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
+  const detailCls = detailPop ? " tcg--detail-pop" : "";
+  const detailBtn = detailPop ? "" : cardDetailButton(catalogId);
+  const watermark = detailPop ? "" : `<div class="dc-id-watermark">${escapeHtml(catalogId)}</div>`;
+  const rail = isCommandEntry(e)
+    ? dcStatRail4(
+        { v: manaVal, l: "MANA", t: "mana" },
+        { v: `${e.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" },
+        { v: `${e.salvagePctOnCast}%`, l: "SALVAGE", t: "salv" },
+        { v: `T${Math.max(1, e.requiredRelayTier || 1)}`, l: "TIER", t: "tier" },
+        false,
+      )
+    : dcStatRail4(
+        { v: String(e.maxHp), l: "HP", t: "hp" },
+        { v: `${e.buildSeconds}s`, l: "BUILD", t: "build" },
+        { v: `${e.productionSeconds}s`, l: "PROD", t: "prod" },
+        {
+          v: `${e.producedPop}/${e.localPopCap}`,
+          l: "POP / CAP",
+          t: "pop",
+        },
+        false,
+      );
+  const bodyFull = cmd
+    ? `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcSpellEffectPanel(e as CommandCatalogEntry)}</div>`
+    : `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcUnitPill(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
 
-  const spellBadge = cmd ? `<div class="tcg-badge tcg-badge--spell" aria-label="Spell card">SPELL</div>` : "";
-
-  return `<div class="tcg tcg--full ${cmd ? "tcg--command" : "tcg--structure"} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
-  <div class="tcg-frame">
+  return `<div class="tcg tcg--full tcg--layout-v2 ${kindClass} ${previewTypeClass} tcg--${variant}${detailCls}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
+  <div class="dc-shell">
     ${deckNo}
-    ${spellBadge}
-    ${sigEdge}
-    <div class="tcg-pip tcg-pip-tl" title="Relay tier">${escapeHtml(pipTl)}</div>
-    <div class="tcg-pip tcg-pip-tr" title="Mana cost">${escapeHtml(pipTr)}</div>
-    <div class="tcg-pip tcg-pip-bl" title="Charges per match">${escapeHtml(pipBl)}</div>
-    <div class="tcg-pip tcg-pip-br" title="Charge cooldown">${escapeHtml(pipBr)}</div>
-    <div class="tcg-art tcg-art--portrait tcg-art--full-bleed">
-      ${portrait}
-      <span class="tcg-art-mono tcg-art-mono--overlay" aria-hidden="true">${escapeHtml(initials(e.name))}</span>
-      <span class="tcg-art-line tcg-art-line--overlay">${escapeHtml(artLine)}</span>
-      ${artExtra}
-    </div>
-    <div class="tcg-title-band">
-      <span class="tcg-name">${escapeHtml(e.name)}</span>
-    </div>
-    <div class="tcg-type-line">${typeLine}</div>
-    <div class="tcg-rules">${rules}</div>
-    <div class="tcg-id-watermark">${escapeHtml(catalogId)}</div>
+    ${detailBtn}
+    <header class="dc-hero dc-hero--full">
+      ${dcHeroArt(catalogId, portrait, false, !cmd, cmd ? (e as CommandCatalogEntry) : undefined)}
+      <div class="dc-hero-scrim" aria-hidden="true"></div>
+      <div class="dc-hero-top">
+        <span class="dc-mana" title="Mana cost">${escapeHtml(manaVal)}</span>
+        ${dcHeroTopTags(cmd, classTag, e.chargeCooldownSeconds)}
+      </div>
+      ${dcTitleBlock(e.name, cmd ? "Command" : "Structure", false)}
+    </header>
+    ${rail}
+    ${bodyFull}
+    ${watermark}
   </div>
 </div>`;
 }
 
 /** Large readable card for the global detail dialog (not bound to deck slot). */
 export function doctrineCardFullModalHtml(catalogId: string): string {
-  return tcgCardFullHtml(catalogId, "picker").replace(
-    /class="tcg tcg--full/g,
-    'class="tcg tcg--full tcg--detail-pop',
-  );
+  return tcgCardFullHtml(catalogId, "picker", undefined, { detailPop: true });
 }
 
 /** Picker catalog + deck slots: compact only. */
@@ -377,22 +723,22 @@ export function doctrineCardLibraryHtml(catalogId: string, deckSlotIndex?: numbe
 export function doctrineCardGhostSummary(catalogId: string): string {
   const e = getCatalogEntry(catalogId);
   if (!e) return `<span class="ghost-title">?</span>`;
-  const hue = catalogCardHue(catalogId);
-  const tag = isCommandEntry(e) ? "CMD" : "STR";
-  return `<div class="ghost-tcg" style="--tcg-h:${hue}"><span class="ghost-tcg-mono">${escapeHtml(initials(e.name))}</span><span class="ghost-title">${escapeHtml(e.name)}</span><span class="ghost-tag">${tag}</span><span class="ghost-flux">${e.fluxCost}</span></div>`;
+  const hue = catalogPreviewTypeHue(e);
+  const typeCls = catalogPreviewTypeClass(e);
+  const tag = isCommandEntry(e) ? "Spell" : e.producedSizeClass;
+  return `<div class="ghost-tcg ${typeCls}" style="--tcg-h:${hue}"><span class="ghost-tcg-mono">${escapeHtml(initials(e.name))}</span><span class="ghost-title">${escapeHtml(e.name)}</span><span class="ghost-tag">${escapeHtml(tag)}</span><span class="ghost-flux">${e.fluxCost}</span></div>`;
 }
 
-/** HUD tray slot body (compact). */
+/** HUD tray slot body (compact). In-match faces omit deck index — slot is obvious from grid position. */
 export function doctrineCardBody(slotIndex: number, catalogId: string | null): string {
   if (!catalogId) {
-    return `<div class="tcg tcg--compact doctrine-card-compact tcg--empty">
-      <div class="tcg-frame">
-        <div class="tcg-pip tcg-pip-tr tcg-pip--muted">${slotIndex + 1}</div>
-        <div class="tcg-art tcg-art--empty"><span class="tcg-art-mono">—</span><span class="tcg-art-line">Empty slot</span></div>
-        <div class="tcg-title-band"><span class="tcg-name">No card</span></div>
-        <div class="tcg-class-line">Deck</div>
+    return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact tcg--empty" data-slot-index="${slotIndex}">
+      <div class="dm-shell dm-shell--compact dm-shell--empty">
+        <div class="dm-art dm-art--empty"><span class="dm-empty">—</span></div>
+        <div class="dm-name dm-name--muted">Empty</div>
+        <div class="dm-stats dm-stats--muted">Locked or unused</div>
       </div>
     </div>`;
   }
-  return tcgCardCompactHtml(catalogId, "picker", slotIndex);
+  return tcgCardCompactHtml(catalogId, "picker");
 }

@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { CastFxKind } from "../game/state";
+import { FX_ABSOLUTE_MAX_LIFETIME_SEC } from "../game/constants";
+import type { CastFxKind, CombatHitMark } from "../game/state";
 
 /**
  * Rudimentary, procedural cast/damage FX. One shared group registered on the scene;
@@ -14,6 +15,8 @@ export interface FxHost {
 interface ActiveFx {
   age: number;
   life: number;
+  /** Wall-clock start for hard cap (handles stuck/zero `dt` or driver quirks). */
+  createdAtMs: number;
   node: THREE.Object3D;
   update: (t: number, dt: number) => void;
   dispose: () => void;
@@ -27,34 +30,71 @@ export function createFxHost(scene: THREE.Scene): FxHost {
 }
 
 export function stepFx(host: FxHost, dt: number): void {
+  const now = performance.now();
+  const maxWallMs = FX_ABSOLUTE_MAX_LIFETIME_SEC * 1000;
   const keep: ActiveFx[] = [];
   for (const fx of host.active) {
     fx.age += dt;
     fx.update(fx.age, dt);
-    if (fx.age < fx.life) {
+    const wallMs = now - fx.createdAtMs;
+    if (fx.age < fx.life && wallMs < maxWallMs) {
       keep.push(fx);
     } else {
-      host.group.remove(fx.node);
-      fx.dispose();
+      fx.node.visible = false;
+      try {
+        host.group.remove(fx.node);
+      } catch {
+        /* already detached */
+      }
+      try {
+        fx.dispose();
+      } catch {
+        /* ignore double-dispose */
+      }
     }
   }
   host.active = keep;
 }
 
+/** Remove every active FX (e.g. rematch) so nothing lingers in the scene graph. */
+export function clearFx(host: FxHost): void {
+  for (const fx of host.active) {
+    fx.node.visible = false;
+    try {
+      host.group.remove(fx.node);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fx.dispose();
+    } catch {
+      /* ignore */
+    }
+  }
+  host.active = [];
+}
+
 function disposeTree(obj: THREE.Object3D): void {
   obj.traverse((c) => {
-    if (c instanceof THREE.Mesh || c instanceof THREE.Line) {
-      c.geometry.dispose();
-      const m = c.material;
-      if (Array.isArray(m)) m.forEach((mm) => mm.dispose());
-      else (m as THREE.Material).dispose();
-    }
+    const geo = "geometry" in c ? (c as { geometry?: THREE.BufferGeometry }).geometry : undefined;
+    if (geo && typeof geo.dispose === "function") geo.dispose();
+    const m = "material" in c ? (c as { material?: THREE.Material | THREE.Material[] }).material : undefined;
+    if (!m) return;
+    if (Array.isArray(m)) for (const mm of m) mm?.dispose();
+    else m.dispose();
   });
 }
 
 function spawn(host: FxHost, node: THREE.Object3D, life: number, update: ActiveFx["update"]): void {
   host.group.add(node);
-  host.active.push({ age: 0, life, node, update, dispose: () => disposeTree(node) });
+  host.active.push({
+    age: 0,
+    life: Math.min(life, FX_ABSOLUTE_MAX_LIFETIME_SEC),
+    createdAtMs: performance.now(),
+    node,
+    update,
+    dispose: () => disposeTree(node),
+  });
 }
 
 export function spawnCastFx(
@@ -80,6 +120,43 @@ export function spawnCastFx(
     case "hero_strike":
       return spawnHeroStrike(host, pos);
   }
+}
+
+/**
+ * Ground wedge rooted on the attacker, opening toward the target — telegraphs strike direction
+ * (narrow melee vs wider breath-style when `wide`).
+ */
+export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
+  const dx = m.tx - m.ax;
+  const dz = m.tz - m.az;
+  const dist = Math.hypot(dx, dz);
+  const outer = Math.max(0.35, Math.min(m.range, dist + 0.5));
+  const inner = 0.08;
+  const arc = m.wide ? Math.PI * 0.38 : Math.PI * 0.2;
+  const thetaStart = -arc / 2;
+  const life = 0.34;
+  const group = new THREE.Group();
+  group.position.set(m.ax, 0.11, m.az);
+  group.rotation.y = Math.atan2(dx, dz) + Math.PI / 2;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(inner, outer, 28, 1, thetaStart, arc),
+    new THREE.MeshBasicMaterial({
+      color: m.wide ? 0xff7722 : 0xffcc55,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const s = 1 + p * 0.35;
+    group.scale.set(s, 1, s);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.62 * (1 - p);
+  });
 }
 
 /** Short radial burst for wizard melee. */
@@ -113,7 +190,8 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
   const group = new THREE.Group();
   group.position.set(pos.x, 0.12, pos.z);
 
-  const ringGeo = new THREE.RingGeometry(0.6, 1.0, 48);
+  /** Fixed band; scale each frame — avoids dispose+rebuild every step (GPU stalls). */
+  const ringGeo = new THREE.RingGeometry(0.1, 0.6, 48);
   const ringMat = new THREE.MeshBasicMaterial({
     color: 0xff6a2a,
     side: THREE.DoubleSide,
@@ -163,8 +241,7 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const rOuter = 0.6 + p * maxRadius;
-    ring.geometry.dispose();
-    ring.geometry = new THREE.RingGeometry(rOuter - 0.5, rOuter, 48);
+    ring.scale.setScalar(rOuter / 0.6);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
     (inner.material as THREE.MeshBasicMaterial).opacity = 0.85 * (1 - p * 1.4);
     inner.scale.setScalar(1 + p * 3);
@@ -187,7 +264,7 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }): void {
   const rings: { mesh: THREE.Mesh; speed: number }[] = [];
   for (let i = 0; i < 2; i++) {
     const r = new THREE.Mesh(
-      new THREE.RingGeometry(0.3, 0.55, 40),
+      new THREE.RingGeometry(0.2, 0.55, 40),
       new THREE.MeshBasicMaterial({
         color: i === 0 ? 0x8fd6ff : 0xc8b3ff,
         side: THREE.DoubleSide,
@@ -223,8 +300,7 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }): void {
     const p = Math.min(1, t / life);
     for (const r of rings) {
       const outer = 0.55 + t * r.speed;
-      r.mesh.geometry.dispose();
-      r.mesh.geometry = new THREE.RingGeometry(outer - 0.35, outer, 40);
+      r.mesh.scale.setScalar(outer / 0.55);
       (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - p);
     }
     for (const c of cracks) {
@@ -332,7 +408,7 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
   group.position.set(pos.x, 0.12, pos.z);
 
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.4, 0.8, 48),
+    new THREE.RingGeometry(0.3, 0.8, 48),
     new THREE.MeshBasicMaterial({
       color: 0x6ae1ff,
       side: THREE.DoubleSide,
@@ -369,8 +445,7 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const outer = 0.8 + p * maxR;
-    ring.geometry.dispose();
-    ring.geometry = new THREE.RingGeometry(Math.max(0.1, outer - 0.5), outer, 48);
+    ring.scale.setScalar(outer / 0.8);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - p);
     for (const st of streaks) {
       st.mesh.position.x += st.vx * dt;
@@ -389,7 +464,8 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
  * powerful spell being cast).
  */
 function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.7;
+  /** Short bolt read; wall-clock cap in `spawn` / `stepFx` enforces FX_ABSOLUTE_MAX_LIFETIME_SEC. */
+  const life = 0.42;
   const group = new THREE.Group();
   group.position.set(pos.x, 0, pos.z);
 
@@ -416,19 +492,6 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
   });
   const bolt = new THREE.Line(boltGeo, boltMat);
   group.add(bolt);
-
-  // Glow halo tube along the same path for extra punch.
-  const curve = new THREE.CatmullRomCurve3(pts);
-  const tubeGeo = new THREE.TubeGeometry(curve, 24, 0.18, 6, false);
-  const tubeMat = new THREE.MeshBasicMaterial({
-    color: 0x8fd6ff,
-    transparent: true,
-    opacity: 0.7,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const tube = new THREE.Mesh(tubeGeo, tubeMat);
-  group.add(tube);
 
   // Short-lived branch bolts.
   const branches: THREE.Line[] = [];
@@ -473,9 +536,9 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
   flash.position.y = 0.05;
   group.add(flash);
 
-  // Expanding shockwave ring.
+  // Expanding shockwave ring (scaled each frame — no geometry churn).
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.5, 0.9, 48),
+    new THREE.RingGeometry(0.4, 0.9, 48),
     new THREE.MeshBasicMaterial({
       color: 0x8fd6ff,
       side: THREE.DoubleSide,
@@ -519,10 +582,16 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
     // Bolt + tube flicker for the first ~0.18s, then fade.
     const strikePhase = t < 0.18 ? 1 : Math.max(0, 1 - (t - 0.18) / (life - 0.18));
     const flicker = 0.55 + 0.45 * Math.abs(Math.sin(t * 90));
-    (bolt.material as THREE.LineBasicMaterial).opacity = strikePhase * flicker;
-    (tube.material as THREE.MeshBasicMaterial).opacity = 0.7 * strikePhase;
+    const boltOp = strikePhase * flicker;
+    const boltMat = bolt.material as THREE.LineBasicMaterial;
+    boltMat.opacity = boltOp;
+    /* Some drivers still draw 1px lines at opacity 0; hide the object explicitly. */
+    bolt.visible = boltOp > 0.02;
     for (const br of branches) {
-      (br.material as THREE.LineBasicMaterial).opacity = 0.85 * strikePhase * flicker;
+      const bOp = 0.85 * strikePhase * flicker;
+      const bm = br.material as THREE.LineBasicMaterial;
+      bm.opacity = bOp;
+      br.visible = bOp > 0.02;
     }
     // Ground flash pops for ~0.12s then disappears.
     const flashP = t < 0.12 ? 1 - t / 0.12 : 0;
@@ -530,8 +599,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
     flash.scale.setScalar(1 + (1 - flashP) * 0.8);
     // Shockwave ring expands.
     const outer = 0.9 + p * maxRing;
-    ring.geometry.dispose();
-    ring.geometry = new THREE.RingGeometry(Math.max(0.1, outer - 0.5), outer, 48);
+    ring.scale.setScalar(outer / 0.9);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
     // Sparks arc outward with gravity.
     for (const sp of sparks) {
@@ -563,8 +631,7 @@ export function spawnSiegeTell(host: FxHost, pos: { x: number; z: number }): voi
   spawn(host, ring, life, (t) => {
     const p = Math.min(1, t / life);
     const rOuter = 0.7 + p * 1.2;
-    ring.geometry.dispose();
-    ring.geometry = new THREE.RingGeometry(rOuter - 0.3, rOuter, 24);
+    ring.scale.setScalar(rOuter / 0.7);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
   });
 }

@@ -6,7 +6,7 @@ export type UnitSizeClass = "Swarm" | "Line" | "Heavy" | "Titan";
 
 export type DoctrineEntryKind = "structure" | "command";
 
-export type GamePhase = "setup" | "playing" | "win" | "lose";
+export type GamePhase = "playing" | "win" | "lose";
 
 export interface Vec2 {
   x: number;
@@ -75,6 +75,16 @@ export interface MapData {
   enemyCamps: EnemyCampDef[];
   difficulty?: MapDifficulty;
   decor?: MapDecorDef[];
+  /**
+   * When true, `tapSlots` from this map file are used as Mana node positions instead of
+   * procedural `generateProceduralTaps` (editor / hand-authored layouts).
+   */
+  useAuthorTapSlots?: boolean;
+  /**
+   * Optional site-root URL for custom terrain (e.g. `/terrain/arena.glb`). When set, the
+   * renderer loads this mesh for raycasts and hides the default ground plane.
+   */
+  terrainGlbUrl?: string;
 }
 
 /** Minimum built relays of each signal type (count relays whose `signalTypes` includes that type). */
@@ -138,7 +148,6 @@ export type CommandEffect =
   | { type: "recycle_structure" }
   | { type: "aoe_damage"; radius: number; damage: number }
   | { type: "buff_structure"; damageReductionPct: number; durationSeconds: number }
-  | { type: "muster_structure" }
   | { type: "shatter_structure"; damage: number; silenceSeconds: number }
   | { type: "noop" };
 

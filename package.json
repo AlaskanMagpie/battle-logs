@@ -10,10 +10,15 @@
     "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs"
   },
   "dependencies": {
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
     "three": "^0.175.0"
   },
   "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@types/three": "^0.175.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "typescript": "~5.8.3",
     "vite": "^6.3.5"
   }

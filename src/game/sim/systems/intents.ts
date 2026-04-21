@@ -14,11 +14,11 @@ import type { PlayerIntent } from "../../intents";
 import {
   canPlaceStructureHere,
   canUseDoctrineSlot,
-  findKeep,
   isKeep,
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
+  shatterTapAnchor,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
@@ -106,11 +106,7 @@ function tryPlaceStructure(
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
   emitSummonFx(s, catalogId, pos);
-  s.doctrineChargesRemaining[doctrineSlotIndex] = Math.max(
-    0,
-    s.doctrineChargesRemaining[doctrineSlotIndex]! - 1,
-  );
-  if (s.doctrineChargesRemaining[doctrineSlotIndex]! <= 0) {
+  if (def.chargeCooldownSeconds > 0) {
     s.doctrineCooldownTicks[doctrineSlotIndex] = Math.round(def.chargeCooldownSeconds * TICK_HZ);
   }
   s.pendingPlacementCatalogId = null;
@@ -119,8 +115,7 @@ function tryPlaceStructure(
 }
 
 function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number): void {
-  s.doctrineChargesRemaining[slotIdx] = Math.max(0, s.doctrineChargesRemaining[slotIdx]! - 1);
-  if (s.doctrineChargesRemaining[slotIdx]! <= 0) {
+  if (cooldownSec > 0) {
     s.doctrineCooldownTicks[slotIdx] = Math.round(cooldownSec * TICK_HZ);
   }
   s.pendingPlacementCatalogId = null;
@@ -152,6 +147,21 @@ function emitFx(s: GameState, kind: CastFxKind, pos: Vec2): void {
   s.lastFx = { kind, x: pos.x, z: pos.z, tick: s.tick };
 }
 
+/** Shift+click a friendly tower — instant next spawn, no Mana, no doctrine slot (replaces the old Muster spell). */
+function tryFreeMuster(s: GameState, st: StructureRuntime): boolean {
+  if (st.team !== "player") return false;
+  if (!st.complete) {
+    s.lastMessage = "Muster: wait for the structure to finish building.";
+    return true;
+  }
+  st.productionTicksRemaining = 1;
+  emitFx(s, "lightning", { x: st.x, z: st.z });
+  emitFx(s, "muster", { x: st.x, z: st.z });
+  s.lastMessage = "Mustered — next unit spawns now (free).";
+  logGame("input", `Free muster → structure #${st.id} (${st.catalogId})`, s.tick);
+  return true;
+}
+
 /**
  * Summon FX hook for building placements. Always drops a lightning strike at
  * the summoned tower — this is the signature wizard flourish. The main hook
@@ -163,7 +173,7 @@ function emitSummonFx(s: GameState, _catalogId: string, pos: Vec2): void {
 }
 
 function tryHeroAttack(s: GameState, _click: Vec2): void {
-  if (s.phase !== "setup" && s.phase !== "playing") return;
+  if (s.phase !== "playing") return;
   const h = s.hero;
   if (h.attackCooldownTicksRemaining > 0) {
     s.lastMessage = "Attack on cooldown.";
@@ -231,6 +241,26 @@ function tryHeroAttack(s: GameState, _click: Vec2): void {
     emitFx(s, "hero_strike", { x: bestSt.x, z: bestSt.z });
     logGame("attack", `Wizard strike → enemy structure #${bestSt.id}`, s.tick);
     s.lastMessage = "Strike the enemy tower!";
+    return;
+  }
+  let bestTap: (typeof s.taps)[0] | null = null;
+  let bestTapD = r2;
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
+    const d = dist2(h, t);
+    if (d <= bestTapD) {
+      bestTapD = d;
+      bestTap = t;
+    }
+  }
+  if (bestTap) {
+    bestTap.anchorHp = Math.max(0, (bestTap.anchorHp ?? 0) - HERO_ATTACK_DAMAGE * 0.42);
+    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+    emitFx(s, "hero_strike", { x: bestTap.x, z: bestTap.z });
+    logGame("attack", `Wizard strike → enemy Mana anchor (${bestTap.defId})`, s.tick);
+    s.lastMessage = "Strike the enemy Mana anchor!";
+    if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return;
   }
   s.lastMessage = "No target in melee range.";
@@ -319,25 +349,6 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       s.lastMessage = `${cmd.name}: ${fx.damageReductionPct}% damage reduction for ${fx.durationSeconds}s.`;
       return;
     }
-    case "muster_structure": {
-      const stId = pickPlayerStructure(s, pos);
-      if (stId === null) {
-        s.lastMessage = `${cmd.name}: click one of your structures.`;
-        return;
-      }
-      const st = s.structures.find((x) => x.id === stId);
-      if (!st || !st.complete) {
-        s.lastMessage = `${cmd.name}: target must be a completed structure.`;
-        return;
-      }
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
-      st.productionTicksRemaining = 1;
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
-      emitFx(s, "lightning", { x: st.x, z: st.z });
-      emitFx(s, "muster", { x: st.x, z: st.z });
-      s.lastMessage = `${cmd.name}: next unit produced immediately.`;
-      return;
-    }
     case "shatter_structure": {
       const erIdx = pickEnemyRelay(s, pos);
       if (erIdx === null) {
@@ -393,9 +404,11 @@ function nearestPlayerStructureWithin(
 function handleWorldClick(
   s: GameState,
   pos: Vec2,
-  _shiftKey: boolean,
+  shiftKey: boolean,
   altKey: boolean,
+  pickedUnitId?: number | null,
 ): void {
+  if (s.phase !== "playing") return;
   if (altKey) {
     const stIdExact = pickPlayerStructure(s, pos);
     const stExact = stIdExact !== null ? s.structures.find((x) => x.id === stIdExact) : null;
@@ -409,24 +422,12 @@ function handleWorldClick(
     return;
   }
 
-  const stId = pickPlayerStructure(s, pos);
-  if (stId !== null) {
-    s.selectedStructureId = stId;
-    s.pendingPlacementCatalogId = null;
-    s.selectedDoctrineIndex = null;
-    s.lastMessage = "Structure selected — click ground to set rally, or toggle Hold.";
-    return;
-  }
-
-  if (s.selectedStructureId !== null) {
-    const st = s.structures.find((x) => x.id === s.selectedStructureId);
-    if (st && st.team === "player") {
-      st.rallyX = pos.x;
-      st.rallyZ = pos.z;
-      st.holdOrders = false;
-      s.lastMessage = "Rally updated.";
+  if (shiftKey && !s.pendingPlacementCatalogId) {
+    const stId = pickPlayerStructure(s, pos);
+    if (stId !== null) {
+      const st = s.structures.find((x) => x.id === stId);
+      if (st && tryFreeMuster(s, st)) return;
     }
-    return;
   }
 
   const pending = s.pendingPlacementCatalogId;
@@ -443,7 +444,37 @@ function handleWorldClick(
     }
   }
 
+  if (s.rallyClickPending) {
+    s.rallyClickPending = false;
+    s.globalRallyActive = true;
+    s.globalRallyX = pos.x;
+    s.globalRallyZ = pos.z;
+    s.lastMessage =
+      "Rally point set — army marches there in Offense (toggle G to change stance and cancel march).";
+    return;
+  }
+
+  if (pickedUnitId != null) {
+    const u = s.units.find((x) => x.id === pickedUnitId);
+    if (u && u.hp > 0) {
+      if (u.team === "player") {
+        s.selectedUnitId = s.selectedUnitId === u.id ? null : u.id;
+        s.selectedStructureId = null;
+        s.lastMessage = s.selectedUnitId
+          ? `Troop selected — melee range ${u.range.toFixed(1)}.`
+          : "Troop deselected.";
+        return;
+      }
+      s.selectedUnitId = null;
+    }
+  }
+
   tryHeroAttack(s, pos);
+}
+
+function clearGlobalRally(s: GameState): void {
+  s.globalRallyActive = false;
+  s.rallyClickPending = false;
 }
 
 export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void {
@@ -462,15 +493,25 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.selectedDoctrineIndex = it.index;
       s.pendingPlacementCatalogId = id;
       s.selectedStructureId = null;
+      s.selectedUnitId = null;
+      s.rallyClickPending = false;
       s.lastMessage = e
         ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast." : "click map to summon."}`
         : `Selected ${id}`;
+    } else if (it.type === "begin_rally_click") {
+      if (s.phase !== "playing") continue;
+      s.rallyClickPending = !s.rallyClickPending;
+      s.lastMessage = s.rallyClickPending
+        ? "Rally armed — click the map to set rally (R again to cancel)."
+        : "Rally arm cancelled.";
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
+      s.selectedUnitId = null;
+      s.rallyClickPending = false;
       s.lastMessage = "Cleared placement selection.";
     } else if (it.type === "try_click_world") {
-      handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true);
+      handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true, it.pickedUnitId);
     } else if (it.type === "toggle_structure_orders") {
       const st = s.structures.find((x) => x.id === it.structureId);
       if (st && st.team === "player") {
@@ -479,6 +520,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       }
     } else if (it.type === "set_army_stance") {
       if (s.armyStance !== it.stance) {
+        clearGlobalRally(s);
         s.armyStance = it.stance;
         s.lastMessage =
           it.stance === "defense"
@@ -486,6 +528,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
             : "Stance: Offense — army seeks out foes.";
       }
     } else if (it.type === "toggle_army_stance") {
+      clearGlobalRally(s);
       s.armyStance = s.armyStance === "offense" ? "defense" : "offense";
       s.lastMessage =
         s.armyStance === "defense"
@@ -515,14 +558,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.hero.targetX = null;
       s.hero.targetZ = null;
     } else if (it.type === "start_battle") {
-      if (s.phase !== "setup") continue;
-      const keep = findKeep(s);
-      if (!keep) {
-        s.lastMessage = "Your Keep is missing — cannot start battle.";
-        continue;
-      }
-      s.phase = "playing";
-      s.lastMessage = "Battle started — enemy camps are waking.";
+      /* No setup phase — match begins in playing. Intent kept for replay compat. */
     }
   }
 }
