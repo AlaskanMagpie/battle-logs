@@ -14,6 +14,27 @@ export const TRAMPLE: Record<UnitSizeClass, Partial<Record<UnitSizeClass, number
   Line: {},
 };
 
+/** Minimum center spacing in XZ so units (especially swarms) do not sit on one spot. */
+export function unitSeparationRadiusXZ(size: UnitSizeClass, flying?: boolean): number {
+  let r: number;
+  switch (size) {
+    case "Swarm":
+      r = 1.08;
+      break;
+    case "Line":
+      r = 1.48;
+      break;
+    case "Heavy":
+      r = 2.1;
+      break;
+    case "Titan":
+      r = 3.35;
+      break;
+  }
+  if (flying) r *= 0.78;
+  return r;
+}
+
 export function unitStatsForCatalog(size: UnitSizeClass): {
   maxHp: number;
   speedPerSec: number;

@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_CHANNEL_SEC,
+  HERO_CLAIM_RADIUS,
   TAP_YIELD_MAX,
   TERRITORY_RADIUS,
   TICK_HZ,
@@ -27,12 +28,40 @@ import {
   stepFx,
   type FxHost,
 } from "./fx";
+import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbPool";
 
-/** Exponential follow (1/s); orbit pivot eases toward the wizard. */
-const CAMERA_HERO_FOLLOW_LAMBDA = 5.2;
-/** Orbit pivot height — slightly above the feet so framing feels natural. */
-const CAMERA_HERO_PIVOT_Y = 1.25;
+/** Exponential follow (1/s); orbit pivot eases toward the look-ahead point. */
+const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
+/** When not orbiting, offset from target → camera eases toward this ideal (1/s). */
+const CAMERA_HERO_ORBIT_RECOVER_LAMBDA = 3.8;
+/** Exponential smoothing for hero facing (1/s) — camera lags slightly on fast turns. */
+const CAMERA_HERO_FACING_SMOOTH_LAMBDA = 11;
+/** Orbit pivot / look-at height — chest-ish so the horizon and battle read clearly. */
+const CAMERA_HERO_PIVOT_Y = 1.38;
+/** World units ahead of the wizard (along smoothed facing) — keeps the fight in frame. */
+const CAMERA_HERO_LOOK_AHEAD = 15;
+/** How far behind the wizard feet the camera sits (along -facing). */
+const CAMERA_HERO_BEHIND = 10;
+/** Lateral offset using "wizard right" = look past near shoulder (OTS). */
+const CAMERA_HERO_SHOULDER = 2.85;
+/** Camera eye height for third-person. */
+const CAMERA_HERO_CAM_Y = 3.15;
+
+const _camPrevT = new THREE.Vector3();
+const _camPrevC = new THREE.Vector3();
+const _camIdealT = new THREE.Vector3();
+const _camIdealC = new THREE.Vector3();
+const _camF = new THREE.Vector3();
+const _camR = new THREE.Vector3();
+const _camIdealOff = new THREE.Vector3();
+
+function lerpAngleRad(from: number, to: number, t: number): number {
+  let d = to - from;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return from + d * t;
+}
 
 function unitScale(size: UnitSizeClass): number {
   switch (size) {
@@ -402,7 +431,9 @@ export class GameRenderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   private readonly ground: THREE.Mesh;
-  private grid: THREE.GridHelper;
+  private readonly hemiLight: THREE.HemisphereLight;
+  private readonly sunLight: THREE.DirectionalLight;
+  private groundVisualKey = "";
   private readonly root = new THREE.Group();
   private readonly markers = new THREE.Group();
   private readonly entities = new THREE.Group();
@@ -472,45 +503,43 @@ export class GameRenderer {
   private readonly relayPrevHp = new Map<string, number>();
   /** Seconds of forward lunge after a wizard strike FX. */
   private heroLungeTimer = 0;
+  /** When true, orbit pivot eases toward the player wizard each frame; when false, MMB orbit stays put. */
+  private cameraFollowHero = true;
+  private lastCameraLimitsHalf = 0;
+  /** Smoothed yaw for cinematic camera (radians); avoids twitchy framing on fast turns. */
+  private cameraHeroFacingSmooth = 0;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: "high-performance",
+      stencil: false,
+      depth: true,
+    });
+    /** Cap DPR for 120Hz — full retina is often fill-rate bound. */
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    this.renderer.shadowMap.enabled = false;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0e1116);
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 650);
+    this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
     this.camera.lookAt(0, 4, 0);
 
     this.scene.add(new THREE.AmbientLight(0xcfd9ff, 0.38));
-    this.scene.add(new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.35));
-    const sun = new THREE.DirectionalLight(0xfff4e6, 1.05);
-    sun.position.set(-55, 110, 40);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.00025;
-    const sc = sun.shadow.camera as THREE.OrthographicCamera;
-    sc.left = -220;
-    sc.right = 220;
-    sc.top = 220;
-    sc.bottom = -220;
-    sc.near = 10;
-    sc.far = 520;
-    sc.updateProjectionMatrix();
-    this.scene.add(sun);
+    this.hemiLight = new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.35);
+    this.scene.add(this.hemiLight);
+    this.sunLight = new THREE.DirectionalLight(0xfff4e6, 1.05);
+    this.sunLight.position.set(-55, 110, 40);
+    this.sunLight.castShadow = false;
+    this.scene.add(this.sunLight);
 
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.92, metalness: 0.04 });
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), groundMat);
     this.ground.rotation.x = -Math.PI / 2;
-    this.ground.receiveShadow = true;
+    this.ground.receiveShadow = false;
     this.scene.add(this.ground);
-
-    this.grid = new THREE.GridHelper(220, 44, 0x2a3545, 0x1f2937);
-    this.grid.position.y = 0.02;
-    this.scene.add(this.grid);
 
     this.territoryGroup.name = "territory";
     this.root.add(this.decor, this.markers, this.entities, this.territoryGroup);
@@ -520,15 +549,15 @@ export class GameRenderer {
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 0, 0);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.07;
+    this.controls.enableDamping = false;
     this.controls.screenSpacePanning = true;
-    this.controls.minDistance = 48;
+    this.controls.minDistance = 34;
     this.controls.maxDistance = 280;
-    this.controls.maxPolarAngle = Math.PI / 2 - 0.08;
-    this.controls.minPolarAngle = 0.36;
+    /** Keep the lens low — more horizon, less RTS “map cam”. */
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.06;
+    this.controls.minPolarAngle = 0.82;
     this.controls.zoomSpeed = 0.82;
-    this.controls.rotateSpeed = 0.42;
+    this.controls.rotateSpeed = 0.36;
     this.controls.panSpeed = 0.58;
     this.controls.enableRotate = true;
     this.controls.enablePan = false;
@@ -554,6 +583,65 @@ export class GameRenderer {
 
   setControlsEnabled(enabled: boolean): void {
     this.controls.enabled = enabled;
+  }
+
+  getCameraFollowHero(): boolean {
+    return this.cameraFollowHero;
+  }
+
+  /** Snap orbit pivot to the player wizard (used when re-enabling follow mode). */
+  setCameraFollowHero(follow: boolean): void {
+    this.cameraFollowHero = follow;
+    if (follow) this.snapCameraPivotToPlayerHero();
+  }
+
+  /** @returns new follow state */
+  toggleCameraFollowHero(): boolean {
+    this.cameraFollowHero = !this.cameraFollowHero;
+    if (this.cameraFollowHero) this.snapCameraPivotToPlayerHero();
+    return this.cameraFollowHero;
+  }
+
+  /** Fill `outT` / `outC` with ideal orbit target (look-ahead) and third-person camera (OTS). */
+  private setIdealCinematicHeroCamera(
+    facing: number,
+    h: { x: number; z: number },
+    outT: THREE.Vector3,
+    outC: THREE.Vector3,
+  ): void {
+    const sin = Math.sin(facing);
+    const cos = Math.cos(facing);
+    _camF.set(sin, 0, cos);
+    _camR.set(cos, 0, -sin);
+    outT.set(
+      h.x + sin * CAMERA_HERO_LOOK_AHEAD,
+      CAMERA_HERO_PIVOT_Y,
+      h.z + cos * CAMERA_HERO_LOOK_AHEAD,
+    );
+    outC.set(h.x, CAMERA_HERO_CAM_Y, h.z);
+    outC.addScaledVector(_camF, -CAMERA_HERO_BEHIND);
+    // Camera slightly on the wizard's left (-R): past the right shoulder, battle ahead stays centered.
+    outC.addScaledVector(_camR, -CAMERA_HERO_SHOULDER);
+  }
+
+  private snapCameraPivotToPlayerHero(): void {
+    const st = this.currentState;
+    if (!st || st.phase !== "playing") return;
+    const h = st.hero;
+    this.cameraHeroFacingSmooth = h.facing;
+    this.setIdealCinematicHeroCamera(this.cameraHeroFacingSmooth, h, _camIdealT, _camIdealC);
+    this.controls.target.copy(_camIdealT);
+    this.camera.position.copy(_camIdealC);
+    this.controls.update();
+  }
+
+  private syncCameraLimits(half: number): void {
+    if (half === this.lastCameraLimitsHalf) return;
+    this.lastCameraLimitsHalf = half;
+    this.controls.minDistance = Math.max(28, half * 0.055);
+    this.controls.maxDistance = Math.min(1500, Math.max(260, half * 2.35));
+    this.camera.far = Math.max(2200, half * 6.2);
+    this.camera.updateProjectionMatrix();
   }
 
   pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number } | null {
@@ -649,6 +737,8 @@ export class GameRenderer {
     this.currentState = state;
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
+    this.syncCameraLimits(state.map.world.halfExtents);
+    this.applyMapVisual(state);
     this.syncMapDecor(state);
     this.syncTerritory(state);
     this.syncMarkers(state);
@@ -668,7 +758,11 @@ export class GameRenderer {
   private consumeCastEvents(state: GameState): void {
     const fxEvt = state.lastFx;
     if (fxEvt && fxEvt.tick !== this.lastFxTick) {
-      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z });
+      const boltFrom =
+        fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
+          ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
+          : undefined;
+      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, boltFrom);
       if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
       this.lastFxTick = fxEvt.tick;
     }
@@ -772,6 +866,15 @@ export class GameRenderer {
 
   private syncTaps(state: GameState): void {
     const hero = state.hero;
+    const claimR = HERO_CLAIM_RADIUS;
+    const ringIn = claimR * 0.58;
+    const ringOut = claimR * 0.92;
+    const chIn = claimR * 0.76;
+    const chOut = claimR * 0.98;
+    const yIn = claimR * 0.22;
+    const yOut = claimR * 0.36;
+    const nhIn = claimR * 0.88;
+    const nhOut = claimR * 1.08;
 
     // Find the nearest neutral tap to the hero — we highlight it with an
     // extra pulsing ring so the player always has an obvious "go here next".
@@ -794,7 +897,7 @@ export class GameRenderer {
       const t = state.taps[idx]!;
       let m = this.tapMeshes.get(t.defId);
       if (!m) {
-        const geo = new THREE.RingGeometry(2.2, 3.2, 32);
+        const geo = new THREE.RingGeometry(ringIn, ringOut, 32);
         const mat = new THREE.MeshBasicMaterial({
           color: 0x666666,
           side: THREE.DoubleSide,
@@ -826,7 +929,7 @@ export class GameRenderer {
           : Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
         if (!claimArc) {
           claimArc = new THREE.Mesh(
-            new THREE.RingGeometry(3.4, 3.9, 48, 1, 0, 0.0001),
+            new THREE.RingGeometry(chIn, chOut, 48, 1, 0, 0.0001),
             new THREE.MeshBasicMaterial({
               color: state.enemyHero.claimChannelTarget === idx ? 0xff8a8a : 0x6ae1ff,
               side: THREE.DoubleSide,
@@ -849,8 +952,8 @@ export class GameRenderer {
           ud["channelGeomKey"] = channelKey;
           claimArc.geometry.dispose();
           claimArc.geometry = new THREE.RingGeometry(
-            3.4,
-            3.9,
+            chIn,
+            chOut,
             48,
             1,
             -Math.PI / 2,
@@ -880,7 +983,7 @@ export class GameRenderer {
         const text = depleted ? "Depleted" : "Stand to claim";
         const accent = depleted ? "#8a96a6" : "#6ae1ff";
         drawLabel(label, text, accent);
-        label.sprite.position.set(t.x, 4.2, t.z);
+        label.sprite.position.set(t.x, Math.max(5.2, claimR * 0.45 + 3.8), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = depleted ? 0.55 : 1;
       } else if (claimedByEnemy && anchorUp) {
@@ -890,7 +993,7 @@ export class GameRenderer {
           this.tapLabels.set(t.defId, label);
         }
         drawLabel(label, "Destroy anchor to uncap", "#ff9a7a");
-        label.sprite.position.set(t.x, 5.1, t.z);
+        label.sprite.position.set(t.x, Math.max(6, claimR * 0.48 + 4.2), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
       } else if (label) {
@@ -903,7 +1006,7 @@ export class GameRenderer {
         const frac = Math.max(0, Math.min(1, t.yieldRemaining / TAP_YIELD_MAX));
         if (!arc) {
           arc = new THREE.Mesh(
-            new THREE.RingGeometry(1.3, 2.0, 48, 1, 0, Math.PI * 2),
+            new THREE.RingGeometry(yIn, yOut, 48, 1, 0, Math.PI * 2),
             new THREE.MeshBasicMaterial({
               color: 0x7cf0b4,
               side: THREE.DoubleSide,
@@ -924,8 +1027,8 @@ export class GameRenderer {
           arcUd["yieldGeomKey"] = yieldKey;
           arc.geometry.dispose();
           arc.geometry = new THREE.RingGeometry(
-            1.3,
-            2.0,
+            yIn,
+            yOut,
             48,
             1,
             Math.PI / 2 - frac * Math.PI,
@@ -997,7 +1100,7 @@ export class GameRenderer {
       const t = state.taps.find((x) => x.defId === nearestId)!;
       if (!this.nearestTapRing) {
         this.nearestTapRing = new THREE.Mesh(
-          new THREE.RingGeometry(3.5, 4.1, 48),
+          new THREE.RingGeometry(nhIn, nhOut, 48),
           new THREE.MeshBasicMaterial({
             color: 0x6ae1ff,
             side: THREE.DoubleSide,
@@ -1476,7 +1579,7 @@ export class GameRenderer {
           this.markers.add(this.rallyFlag);
         }
         this.rallyFlag.position.set(st.rallyX, 0.55, st.rallyZ);
-        this.rallyFlag.rotation.y = this.clock.getElapsedTime() * 1.4;
+        this.rallyFlag.rotation.y = Math.atan2(st.rallyX - st.x, st.rallyZ - st.z);
         this.rallyFlag.visible = true;
       } else {
         if (this.rallyLine) this.rallyLine.visible = false;
@@ -1494,12 +1597,46 @@ export class GameRenderer {
     const size = half * 2;
     this.ground.geometry.dispose();
     this.ground.geometry = new THREE.PlaneGeometry(size, size);
-    this.scene.remove(this.grid);
-    this.grid.dispose();
-    const divs = Math.max(24, Math.round(size / 6));
-    this.grid = new THREE.GridHelper(size * 0.96, divs, 0x2a3545, 0x1f2937);
-    this.grid.position.y = 0.02;
-    this.scene.add(this.grid);
+    this.groundVisualKey = "";
+  }
+
+  /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
+  private applyMapVisual(state: GameState): void {
+    if (!this.ground.visible) return;
+    const v = state.map.visual;
+    const preset = v?.groundPreset ?? "solid";
+    const fogH = v?.fogHex;
+    const skyH = v?.skyHex;
+    const sunH = v?.sunHex;
+    const key = `${preset}|${fogH ?? ""}|${skyH ?? ""}|${sunH ?? ""}`;
+    if (key !== this.groundVisualKey) {
+      this.groundVisualKey = key;
+      if (fogH != null) {
+        this.scene.fog = new THREE.Fog(fogH, v?.fogNear ?? 200, v?.fogFar ?? 960);
+      } else {
+        this.scene.fog = null;
+      }
+      if (skyH != null) this.hemiLight.color.setHex(skyH);
+      if (sunH != null) this.sunLight.color.setHex(sunH);
+
+      const disposeGroundMat = (): void => {
+        const m = this.ground.material;
+        if (Array.isArray(m)) m.forEach((x) => x.dispose());
+        else (m as THREE.Material).dispose?.();
+      };
+
+      if (preset === "solid" || !isShaderGroundPreset(preset)) {
+        disposeGroundMat();
+        this.ground.material = new THREE.MeshStandardMaterial({
+          color: 0x1b2430,
+          roughness: 0.92,
+          metalness: 0.04,
+        });
+      } else {
+        disposeGroundMat();
+        this.ground.material = createGroundShaderMaterial(preset);
+      }
+    }
   }
 
   private ensureHpBarPair(
@@ -1575,6 +1712,41 @@ export class GameRenderer {
           }),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
+      } else if (d.kind === "sphere") {
+        const r = d.radius;
+        const cy = d.y ?? r;
+        mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 20, 16),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x5a6270,
+            roughness: 0.78,
+            metalness: 0.12,
+          }),
+        );
+        mesh.position.set(d.x, cy, d.z);
+      } else if (d.kind === "cone") {
+        mesh = new THREE.Mesh(
+          new THREE.ConeGeometry(d.radius, d.h, 14),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x4d5a68,
+            roughness: 0.88,
+            metalness: 0.06,
+          }),
+        );
+        mesh.position.set(d.x, d.h / 2, d.z);
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+      } else if (d.kind === "torus") {
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x3d4555,
+            roughness: 0.8,
+            metalness: 0.18,
+          }),
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        mesh.position.set(d.x, d.tube * 0.5 + 0.02, d.z);
       }
       if (!mesh) continue;
       mesh.castShadow = true;
@@ -1902,28 +2074,47 @@ export class GameRenderer {
   }
 
   /**
-   * Keeps OrbitControls' pivot on the player wizard with exponential smoothing.
-   * Moves camera by the same delta so zoom / orbit offset from the hero is preserved.
+   * Cinematic follow: look-ahead orbit pivot + behind-the-shoulder offset that recovers after orbit.
+   * While MMB orbit drags, only translates rig so user framing is not overwritten mid-drag.
    */
   private applyHeroCameraFollow(dt: number): void {
+    if (!this.cameraFollowHero) return;
     const state = this.currentState;
     if (!state || state.phase !== "playing") return;
     const h = state.hero;
-    const desiredX = h.x;
-    const desiredY = CAMERA_HERO_PIVOT_Y;
-    const desiredZ = h.z;
-    const t = this.controls.target;
-    const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
-    const dx = (desiredX - t.x) * alpha;
-    const dy = (desiredY - t.y) * alpha;
-    const dz = (desiredZ - t.z) * alpha;
-    if (dx * dx + dy * dy + dz * dz < 1e-10) return;
-    t.x += dx;
-    t.y += dy;
-    t.z += dz;
-    this.camera.position.x += dx;
-    this.camera.position.y += dy;
-    this.camera.position.z += dz;
+
+    const faceAlpha = 1 - Math.exp(-CAMERA_HERO_FACING_SMOOTH_LAMBDA * dt);
+    this.cameraHeroFacingSmooth = lerpAngleRad(this.cameraHeroFacingSmooth, h.facing, faceAlpha);
+
+    this.setIdealCinematicHeroCamera(this.cameraHeroFacingSmooth, h, _camIdealT, _camIdealC);
+
+    const dragging = (this.controls as OrbitControls & { state: number }).state !== -1;
+
+    if (dragging) {
+      const t = this.controls.target;
+      const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
+      const dx = (_camIdealT.x - t.x) * alpha;
+      const dy = (_camIdealT.y - t.y) * alpha;
+      const dz = (_camIdealT.z - t.z) * alpha;
+      if (dx * dx + dy * dy + dz * dz < 1e-10) return;
+      t.x += dx;
+      t.y += dy;
+      t.z += dz;
+      this.camera.position.x += dx;
+      this.camera.position.y += dy;
+      this.camera.position.z += dz;
+      return;
+    }
+
+    const alphaT = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
+    const alphaO = 1 - Math.exp(-CAMERA_HERO_ORBIT_RECOVER_LAMBDA * dt);
+    _camPrevT.copy(this.controls.target);
+    _camPrevC.copy(this.camera.position);
+    this.controls.target.lerp(_camIdealT, alphaT);
+    _camIdealOff.subVectors(_camIdealC, _camIdealT);
+    _camF.subVectors(_camPrevC, _camPrevT);
+    _camF.lerp(_camIdealOff, alphaO);
+    this.camera.position.copy(this.controls.target).add(_camF);
   }
 
   private tickHitPulses(dt: number): void {
@@ -1956,10 +2147,6 @@ export class GameRenderer {
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    // Re-run selection/rally pose updates on the flag so it keeps rotating between sim ticks.
-    if (this.currentState && this.rallyFlag?.visible) {
-      this.rallyFlag.rotation.y = this.clock.getElapsedTime() * 1.4;
-    }
     this.renderer.render(this.scene, this.camera);
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }

@@ -9,6 +9,7 @@ import {
 import { logGame } from "../../gameLog";
 import { armTapClaimAnchor, type GameState } from "../../state";
 import { dist2 } from "./helpers";
+import { tryPlayerHeroStrike } from "./heroStrike";
 
 function moveHeroToward(s: GameState): void {
   const h = s.hero;
@@ -150,5 +151,10 @@ export function heroSystem(s: GameState): void {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
     }
+  }
+
+  // Auto arcane strike when in range (no HUD copy; intents still handle manual LMB feedback).
+  if (h.attackCooldownTicksRemaining === 0) {
+    tryPlayerHeroStrike(s);
   }
 }

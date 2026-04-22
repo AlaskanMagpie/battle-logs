@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { createBinderCardBackTexture } from "./binderCardBackTexture";
 
 /** Binder layout + flip physics (ported from CardBinder.jsx). */
@@ -118,7 +119,7 @@ export class CardBinderEngine {
   private pitch = -0.12;
   /** Doctrine assignment: catalog order + slots for green panel outlines in 3D. */
   private doctrOrder: string[] = [];
-  private doctrSlots: (string | null)[] = Array.from({ length: 16 }, () => null);
+  private doctrSlots: (string | null)[] = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null);
   private doctrActive: number | null = null;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
@@ -457,8 +458,9 @@ export class CardBinderEngine {
     activeSlot: number | null,
   ): void {
     this.doctrOrder = [...orderedCatalogIds];
-    this.doctrSlots = slots.length ? [...slots] : Array.from({ length: 16 }, () => null);
-    while (this.doctrSlots.length < 16) this.doctrSlots.push(null);
+    this.doctrSlots = slots.length ? [...slots] : Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null);
+    if (this.doctrSlots.length > DOCTRINE_SLOT_COUNT) this.doctrSlots = this.doctrSlots.slice(0, DOCTRINE_SLOT_COUNT);
+    while (this.doctrSlots.length < DOCTRINE_SLOT_COUNT) this.doctrSlots.push(null);
     this.doctrActive = activeSlot;
     this._applyPanelHighlights();
   }

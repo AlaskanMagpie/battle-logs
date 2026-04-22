@@ -3,7 +3,7 @@ import {
   commandTargetingHint,
   getCatalogEntry,
 } from "./game/catalog";
-import { TICK_HZ } from "./game/constants";
+import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
 import { loadMapMerged } from "./game/loadMap";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
@@ -307,7 +307,7 @@ function wireDoctrineDragToMap(
     if (!slot || !doctrine.contains(slot)) return;
     if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
     const i = Number(slot.dataset.slotIndex);
-    if (!Number.isFinite(i)) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
     const id = getState().doctrineSlotCatalogIds[i];
     if (!id) return;
     ev.preventDefault();
@@ -331,13 +331,15 @@ function wireDoctrineDragToMap(
   });
 }
 
-function runMatch(initialDoctrine: (string | null)[]): void {
+function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
   void (async () => {
-    const map = await loadMapMerged();
+    const map = await loadMapMerged(mapUrl);
     const renderer = new GameRenderer(canvas);
     await renderer.loadTerrainFromMap(map);
     let state: GameState = createInitialState(map, initialDoctrine);
     let replay = createReplayCapture(state, map);
+    renderer.sync(state, USE_GLB);
+    renderer.setCameraFollowHero(true);
     const resize = (): void => {
       const { w, h } = viewportCssSize();
       renderer.setSize(w, h);
@@ -422,6 +424,8 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       state = createInitialState(map, initialDoctrine);
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
+      renderer.sync(state, USE_GLB);
+      if (renderer.getCameraFollowHero()) renderer.setCameraFollowHero(true);
       acc = 0;
       last = performance.now();
       rafId = requestAnimationFrame(tick);
@@ -449,6 +453,12 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       } else if (ev.key === "r" || ev.key === "R") {
         ev.preventDefault();
         pendingIntents.push({ type: "begin_rally_click" });
+      } else if (ev.code === "KeyC") {
+        ev.preventDefault();
+        const follow = renderer.toggleCameraFollowHero();
+        state.lastMessage = follow
+          ? "Camera follows your wizard (C = free orbit)."
+          : "Camera: free orbit — pivot stays put (C = follow wizard).";
       }
     });
 
@@ -573,6 +583,6 @@ function runMatch(initialDoctrine: (string | null)[]): void {
   });
 }
 
-mountDoctrinePicker(pickerRoot, (slots) => {
-  runMatch(slots);
+mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
+  runMatch(slots, chosenMapUrl);
 });

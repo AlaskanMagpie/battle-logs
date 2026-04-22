@@ -21,6 +21,7 @@ import {
   armTapClaimAnchor,
   canPlaceEnemyStructureAt,
   claimedEnemyTapCount,
+  emitHeroStrikeFx,
   enemyTerritorySources,
   findKeep,
   inEnemyTerritory,
@@ -340,10 +341,11 @@ function enemyHeroTryStrike(s: GameState): void {
   if (h.hp <= 0 || h.attackCooldownTicksRemaining > 0) return;
   const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
 
+  const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
     s.hero.hp = Math.max(0, s.hero.hp - ENEMY_HERO_STRIKE_DAMAGE);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: s.hero.x, z: s.hero.z });
+    emitHeroStrikeFx(s, { x: s.hero.x, z: s.hero.z }, from);
     return;
   }
 
@@ -360,7 +362,7 @@ function enemyHeroTryStrike(s: GameState): void {
   if (bestU) {
     bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestU.x, z: bestU.z });
+    emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from);
     return;
   }
 
@@ -379,7 +381,7 @@ function enemyHeroTryStrike(s: GameState): void {
     const cur = bestTap.anchorHp ?? 0;
     bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * 0.42);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestTap.x, z: bestTap.z });
+    emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from);
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return;
   }
@@ -388,6 +390,6 @@ function enemyHeroTryStrike(s: GameState): void {
   if (keep && dist2(h, keep) <= r2) {
     keep.hp -= ENEMY_HERO_STRIKE_DAMAGE * 0.45;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: keep.x, z: keep.z });
+    emitHeroStrikeFx(s, { x: keep.x, z: keep.z }, from);
   }
 }

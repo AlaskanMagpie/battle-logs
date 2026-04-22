@@ -4,10 +4,14 @@ import {
   PLAYER_UNIT_HUNT_DETECT_MIN,
   PLAYER_UNIT_HUNT_DETECT_MULT,
   TICK_HZ,
+  UNIT_SEPARATION_GRID,
+  UNIT_SEPARATION_MAX_STEP,
+  UNIT_SEPARATION_PASSES,
+  UNIT_SEPARATION_STRENGTH,
 } from "../../constants";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
 import type { Vec2 } from "../../types";
-import { dist2 } from "./helpers";
+import { dist2, unitSeparationRadiusXZ } from "./helpers";
 
 export function nearestEnemyUnit(s: GameState, from: Vec2, maxD2: number): UnitRuntime | null {
   let best: UnitRuntime | null = null;
@@ -84,6 +88,82 @@ function clampToWorld(s: GameState, u: UnitRuntime): void {
   u.z = Math.max(-h, Math.min(h, u.z));
 }
 
+/** Push overlapping units apart (all teams) so large armies keep readable spacing. */
+function applyUnitSeparation(s: GameState): void {
+  const alive = s.units.filter((u) => u.hp > 0);
+  if (alive.length < 2) return;
+
+  const G = UNIT_SEPARATION_GRID;
+  const str = UNIT_SEPARATION_STRENGTH;
+  const cap = UNIT_SEPARATION_MAX_STEP;
+
+  for (let pass = 0; pass < UNIT_SEPARATION_PASSES; pass++) {
+    const buckets = new Map<string, UnitRuntime[]>();
+    for (const u of alive) {
+      const k = `${Math.floor(u.x / G)},${Math.floor(u.z / G)}`;
+      const arr = buckets.get(k);
+      if (arr) arr.push(u);
+      else buckets.set(k, [u]);
+    }
+
+    const fx = new Map<number, number>();
+    const fz = new Map<number, number>();
+
+    const add = (id: number, dx: number, dz: number): void => {
+      fx.set(id, (fx.get(id) ?? 0) + dx);
+      fz.set(id, (fz.get(id) ?? 0) + dz);
+    };
+
+    for (const u of alive) {
+      const gx = Math.floor(u.x / G);
+      const gz = Math.floor(u.z / G);
+      const ru = unitSeparationRadiusXZ(u.sizeClass, u.flying);
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const cell = buckets.get(`${gx + ox},${gz + oz}`);
+          if (!cell) continue;
+          for (const o of cell) {
+            if (o.id <= u.id) continue;
+            const ro = unitSeparationRadiusXZ(o.sizeClass, o.flying);
+            const minD = ru + ro;
+            let dx = o.x - u.x;
+            let dz = o.z - u.z;
+            let d = Math.hypot(dx, dz);
+            if (d < 1e-5) {
+              const a = (((u.id * 7919) ^ (o.id * 66041)) >>> 0) / 0xffffffff;
+              const ang = a * Math.PI * 2;
+              dx = Math.cos(ang);
+              dz = Math.sin(ang);
+              d = 1;
+            }
+            if (d >= minD) continue;
+            const overlap = (minD - d) * str;
+            const nx = dx / d;
+            const nz = dz / d;
+            const half = overlap * 0.5;
+            add(u.id, -nx * half, -nz * half);
+            add(o.id, nx * half, nz * half);
+          }
+        }
+      }
+    }
+
+    for (const u of alive) {
+      let dx = fx.get(u.id) ?? 0;
+      let dz = fz.get(u.id) ?? 0;
+      const m = Math.hypot(dx, dz);
+      if (m > cap && m > 1e-6) {
+        const scl = cap / m;
+        dx *= scl;
+        dz *= scl;
+      }
+      u.x += dx;
+      u.z += dz;
+      clampToWorld(s, u);
+    }
+  }
+}
+
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
 
@@ -151,6 +231,8 @@ export function movement(s: GameState): void {
     moveToward(u, target, u.speedPerSec * stepScale);
     clampToWorld(s, u);
   }
+
+  applyUnitSeparation(s);
 }
 
 function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {

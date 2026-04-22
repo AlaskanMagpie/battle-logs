@@ -61,7 +61,53 @@ export type MapDecorDef =
     radius: number;
     h: number;
     color?: number;
+  }
+  | {
+    kind: "sphere";
+    x: number;
+    z: number;
+    radius: number;
+    /** Center Y; defaults to `radius` so the sphere sits on the ground. */
+    y?: number;
+    color?: number;
+  }
+  | {
+    kind: "cone";
+    x: number;
+    z: number;
+    radius: number;
+    h: number;
+    rotYDeg?: number;
+    color?: number;
+  }
+  | {
+    kind: "torus";
+    x: number;
+    z: number;
+    /** Major radius of the ring. */
+    radius: number;
+    /** Tube thickness. */
+    tube: number;
+    rotYDeg?: number;
+    color?: number;
   };
+
+/** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */
+export type MapGroundPreset = "solid" | "ember_wastes" | "glacier_grid" | "mesa_band";
+
+export interface MapVisualSettings {
+  groundPreset?: MapGroundPreset;
+  /** Ignored by the renderer (grid removed); kept for older map JSON. */
+  showGrid?: boolean;
+  /** Exponential fog color (hex, e.g. 0x0e1116). */
+  fogHex?: number;
+  fogNear?: number;
+  fogFar?: number;
+  /** Hemisphere sky color (hex). */
+  skyHex?: number;
+  /** Directional light color (hex). */
+  sunHex?: number;
+}
 
 export interface MapData {
   version: number;
@@ -75,6 +121,10 @@ export interface MapData {
   enemyCamps: EnemyCampDef[];
   difficulty?: MapDifficulty;
   decor?: MapDecorDef[];
+  /** Optional id for tooling / UI (e.g. `forgewarden`). */
+  mapId?: string;
+  /** Renderer: ground shader, fog, lighting tweaks. */
+  visual?: MapVisualSettings;
   /**
    * When true, `tapSlots` from this map file are used as Mana node positions instead of
    * procedural `generateProceduralTaps` (editor / hand-authored layouts).

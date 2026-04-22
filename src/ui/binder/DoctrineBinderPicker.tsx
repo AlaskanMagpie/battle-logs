@@ -2,6 +2,8 @@ import * as THREE from "three";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CATALOG, DEFAULT_DOCTRINE_SLOTS } from "../../game/catalog";
+import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
+import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
 import { sortCatalogIds, type CatalogSortKey } from "../../game/catalogSort";
 import { isCommandEntry } from "../../game/types";
 import { preloadCardPreviewDataUrls } from "../cardGlbPreview";
@@ -13,12 +15,12 @@ import "./binderPicker.css";
 
 const CATALOG_IDS = CATALOG.map((c) => c.id);
 const validIds = new Set(CATALOG_IDS);
-const MIN_FILLED = Math.ceil(16 * 0.75);
+const MIN_FILLED = Math.ceil(DOCTRINE_SLOT_COUNT * 0.75);
 
 export function DoctrineBinderPicker({
   onStart,
 }: {
-  onStart: (slots: (string | null)[]) => void;
+  onStart: (slots: (string | null)[], mapUrl: string) => void;
 }): ReactElement {
   const [sortKey, setSortKey] = useState<CatalogSortKey>("catalog");
   const orderedRef = useRef<string[]>([]);
@@ -31,6 +33,13 @@ export function DoctrineBinderPicker({
   const [activeSlot, setActiveSlot] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState({ c: 0, t: 1 });
+  const [mapUrl, setMapUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem("signalWarsMapUrl") || DEFAULT_MAP_URL;
+    } catch {
+      return DEFAULT_MAP_URL;
+    }
+  });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -178,8 +187,13 @@ export function DoctrineBinderPicker({
   const startMatch = useCallback(() => {
     if (slots.filter(Boolean).length < MIN_FILLED) return;
     saveDoctrineSlots(slots);
-    onStart(slots);
-  }, [slots, onStart]);
+    try {
+      localStorage.setItem("signalWarsMapUrl", mapUrl);
+    } catch {
+      /* ignore */
+    }
+    onStart(slots, mapUrl);
+  }, [slots, onStart, mapUrl]);
 
   return (
     <div className="binder-picker-root">
@@ -231,6 +245,21 @@ export function DoctrineBinderPicker({
       <footer className="binder-picker-toolbar">
         <div className="binder-picker-toolbar-top">
           <div className="binder-picker-toolbar-row">
+            <label htmlFor="binder-map">Battlefield</label>
+            <select
+              id="binder-map"
+              disabled={loading}
+              value={mapUrl}
+              onChange={(ev) => setMapUrl(ev.target.value)}
+            >
+              {MAP_REGISTRY.map((m) => (
+                <option key={m.id} value={m.url}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="binder-picker-toolbar-row">
             <label htmlFor="binder-sort">Sort</label>
             <select
               id="binder-sort"
@@ -251,7 +280,7 @@ export function DoctrineBinderPicker({
             role="group"
             aria-label="Doctrine slots: choose one, then tap a card in the binder"
           >
-            {Array.from({ length: 16 }, (_, i) => (
+            {Array.from({ length: DOCTRINE_SLOT_COUNT }, (_, i) => (
               <button
                 key={i}
                 type="button"

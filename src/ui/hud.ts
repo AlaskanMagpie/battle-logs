@@ -1,5 +1,5 @@
 import { getCatalogEntry } from "../game/catalog";
-import { GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
+import { DOCTRINE_SLOT_COUNT, GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
@@ -127,9 +127,13 @@ function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
   }
 
   let n = 0;
-  for (let i = 0; i < 16; i++) {
-    const id = state.doctrineSlotCatalogIds[i] ?? null;
-    if (id && getCatalogEntry(id)) n++;
+  if (track.classList.contains("doctrine-track--deck10")) {
+    n = DOCTRINE_SLOT_COUNT;
+  } else {
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      const id = state.doctrineSlotCatalogIds[i] ?? null;
+      if (id && getCatalogEntry(id)) n++;
+    }
   }
   if (n <= 1) {
     track.style.removeProperty("--hand-reveal");
@@ -143,7 +147,8 @@ function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
   const pad = 24;
   const avail = Math.max(0, track.getBoundingClientRect().width - pad);
   const idealReveal = (avail - cw) / (n - 1);
-  const reveal = Math.max(12, Math.min(cw, idealReveal));
+  const minReveal = track.classList.contains("doctrine-track--deck10") ? 6 : 12;
+  const reveal = Math.max(minReveal, Math.min(cw, idealReveal));
   track.style.setProperty("--hand-reveal", `${reveal}px`);
 }
 
@@ -205,34 +210,31 @@ function campCoreSummary(state: GameState): string {
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
   const { onRematch, onEditDoctrine, pushIntent } = api;
   root.innerHTML = `
-    <div class="hud-top">
-      <div>Mana: <strong id="flux">0</strong></div>
-      <div>Salvage: <strong id="salvage">0</strong></div>
-      <div>Pop: <strong id="pop">0</strong> / ${GLOBAL_POP_CAP}</div>
-      <div>Tier: <strong id="tier">1</strong></div>
-      <div>Nodes: <strong id="nodes">0</strong></div>
-      <div>Mode: <strong id="mode">idle</strong></div>
-    </div>
-    <div class="hud-readout" id="hud-readout"></div>
-    <details class="hud-gamelog" id="hud-gamelog">
-      <summary>Battle log</summary>
-      <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
-    </details>
-    <div class="hud-hero-hp" id="hud-hero-hp">Wizard: <span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
-    <div class="hud-keep-hp" id="hud-keep-hp">Keep: <span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
-    <div class="hud-objective" id="hud-objective" hidden><b>Objective</b><span id="hud-objective-text"></span></div>
-    <div class="hud-select-tag" id="hud-select-tag" hidden></div>
-    <div class="hud-phase" id="phase">playing</div>
-    <div class="hud-msg" id="msg"></div>
-    <div class="hud-actions">
-      <button class="hud-btn" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
-        Rally map…
-      </button>
-      <button class="hud-btn hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
-        Stance: Offense
-      </button>
-    </div>
-    <div class="hud-doctrine-hint">WASD + RMB move · MMB camera · LMB = wizard melee when not placing · troops auto-fight in weapon range · R then click = rally · drag a card to summon · Shift+click a finished friendly tower = free Muster (instant spawn) · Alt+click toggles Hold on a nearby tower · G = Offense/Defense</div>
+    <header class="hud-chrome" aria-label="Match status">
+      <div class="hud-chrome__row hud-chrome__row--primary">
+        <div class="hud-chrome__stats">
+          <span class="hud-stat">Mana <strong id="flux">0</strong></span>
+          <span class="hud-stat">Salvage <strong id="salvage">0</strong></span>
+          <span class="hud-stat">Pop <strong id="pop">0</strong> / ${GLOBAL_POP_CAP}</span>
+          <span class="hud-stat">Tier <strong id="tier">1</strong></span>
+          <span class="hud-stat">Nodes <strong id="nodes">0</strong></span>
+          <span class="hud-stat">Mode <strong id="mode">idle</strong></span>
+        </div>
+        <div class="hud-chrome__phase" id="phase">playing · tick 0</div>
+      </div>
+      <div class="hud-chrome__row hud-chrome__row--secondary">
+        <div class="hud-chrome__readout" id="hud-readout"></div>
+        <div class="hud-chrome__vitals">
+          <div class="hud-vital" id="hud-hero-hp"><span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
+          <div class="hud-vital" id="hud-keep-hp"><span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
+        </div>
+      </div>
+      <div class="hud-chrome__objective" id="hud-objective" hidden role="status">
+        <span class="hud-chrome__objective-k">Next</span>
+        <span class="hud-chrome__objective-t" id="hud-objective-text"></span>
+      </div>
+      <div class="hud-select-tag" id="hud-select-tag" hidden></div>
+    </header>
     <div class="hud-endgame" id="hud-endgame" hidden>
       <div class="hud-endgame-panel">
         <h2 class="hud-endgame-title" id="hud-endgame-title">Match over</h2>
@@ -243,32 +245,57 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
       </div>
     </div>
-    <div class="doctrine-wrap" id="doctrine-wrap">
-      <div class="doctrine-view" id="doctrine-view">
-        <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two hands of eight" aria-rowcount="2">
-          <div class="doctrine-hand doctrine-hand--match doctrine-hand--upper" role="row" aria-rowindex="1"></div>
-          <div class="doctrine-hand doctrine-hand--match doctrine-hand--lower" role="row" aria-rowindex="2"></div>
+    <footer class="hud-dock" id="hud-dock">
+      <details class="hud-dock__help-drawer">
+        <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
+        <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
+          <div class="hud-help-item"><kbd>WASD</kbd> wizard · <kbd>RMB</kbd> move</div>
+          <div class="hud-help-item"><kbd>MMB</kbd> orbit · <kbd>C</kbd> camera follow</div>
+          <div class="hud-help-item"><kbd>LMB</kbd> strike / select · drag <strong>card</strong> to map to build</div>
+          <div class="hud-help-item"><kbd>R</kbd> rally then click map · <kbd>G</kbd> offense / defense</div>
+          <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
+        </div>
+      </details>
+      <div class="hud-dock__bar">
+        <div class="hud-dock__actions">
+          <button class="hud-btn hud-btn--ghost" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
+            Rally…
+          </button>
+          <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
+            Stance: Offense
+          </button>
+          <details class="hud-gamelog" id="hud-gamelog">
+            <summary>Log</summary>
+            <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
+          </details>
+        </div>
+        <p class="hud-dock__msg" id="msg"></p>
+      </div>
+      <div class="doctrine-wrap" id="doctrine-wrap">
+        <div class="doctrine-view" id="doctrine-view">
+          <div class="doctrine-track doctrine-track--hand doctrine-track--deck10" id="doctrine-track" role="grid" aria-label="Doctrine deck, ten slots" aria-rowcount="1">
+            <div class="doctrine-hand doctrine-hand--match" role="row" aria-rowindex="1"></div>
+          </div>
         </div>
       </div>
-    </div>
+    </footer>
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
-  const handUpper = doctrineTrack.querySelector(".doctrine-hand--upper") as HTMLDivElement;
-  const handLower = doctrineTrack.querySelector(".doctrine-hand--lower") as HTMLDivElement;
+  const doctrineHand = doctrineTrack.querySelector(".doctrine-hand--match") as HTMLDivElement;
 
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "slot";
     b.dataset.slotIndex = String(i);
     b.setAttribute("role", "gridcell");
-    b.setAttribute("aria-rowindex", String(Math.floor(i / 8) + 1));
-    b.setAttribute("aria-colindex", String((i % 8) + 1));
+    b.setAttribute("aria-rowindex", "1");
+    b.setAttribute("aria-colindex", String(i + 1));
     b.setAttribute("aria-label", `Doctrine slot ${i + 1}`);
     const catalogId = initial.doctrineSlotCatalogIds[i] ?? null;
     b.innerHTML = `${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
-    (i < 8 ? handUpper : handLower).appendChild(b);
+    doctrineHand.appendChild(b);
   }
 
   hydrateCardPreviewImages(doctrineTrack);
@@ -422,7 +449,7 @@ export function updateHud(state: GameState): void {
   const objText = document.querySelector<HTMLElement>("#hud-objective-text");
   if (objWrap && objText) {
     if (state.phase === "playing") {
-      objText.textContent = ` ${computeObjective(state)}`;
+      objText.textContent = computeObjective(state);
       objWrap.hidden = false;
     } else {
       objWrap.hidden = true;
@@ -480,9 +507,10 @@ export function updateHud(state: GameState): void {
   if (!doctrineTrack) return;
   const buttons = doctrineTrack.querySelectorAll<HTMLButtonElement>(".slot");
   const isDeck2x8 = doctrineTrack.classList.contains("doctrine-track--deck2x8");
+  const isDeck10 = doctrineTrack.classList.contains("doctrine-track--deck10");
 
   const idTotalCount = new Map<string, number>();
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const id = state.doctrineSlotCatalogIds[i] ?? null;
     if (!id || !getCatalogEntry(id)) continue;
     idTotalCount.set(id, (idTotalCount.get(id) ?? 0) + 1);
@@ -490,7 +518,7 @@ export function updateHud(state: GameState): void {
 
   buttons.forEach((b) => {
     const i = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(i) || i < 0 || i > 15) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
 
     b.classList.remove(
       "slot-empty",
@@ -522,7 +550,7 @@ export function updateHud(state: GameState): void {
 
     if (!id) {
       b.classList.add("slot-empty");
-      if (!isDeck2x8) b.classList.add("slot--hand-collapsed");
+      if (!isDeck2x8 && !isDeck10) b.classList.add("slot--hand-collapsed");
       if (live) live.textContent = "";
       b.title = "Empty slot — add a card in the pre-match deck builder.";
       clearHandLayout();
@@ -531,7 +559,7 @@ export function updateHud(state: GameState): void {
     const e = getCatalogEntry(id);
     if (!e) {
       b.classList.add("slot-empty");
-      if (!isDeck2x8) b.classList.add("slot--hand-collapsed");
+      if (!isDeck2x8 && !isDeck10) b.classList.add("slot--hand-collapsed");
       if (live) live.textContent = "";
       clearHandLayout();
       return;
@@ -562,7 +590,7 @@ export function updateHud(state: GameState): void {
     b.title = reason ?? "Drag onto the map to place.";
   });
 
-  if (!isDeck2x8) {
+  if (!isDeck2x8 && !isDeck10) {
     let seenFilled = false;
     buttons.forEach((b) => {
       if (b.classList.contains("slot--hand-collapsed")) return;
@@ -581,7 +609,7 @@ export function updateHud(state: GameState): void {
   const visibleIdx: number[] = [];
   buttons.forEach((b) => {
     const si = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(si) || si < 0 || si > 15) return;
+    if (!Number.isFinite(si) || si < 0 || si >= DOCTRINE_SLOT_COUNT) return;
     if (!b.classList.contains("slot--hand-collapsed")) visibleIdx.push(si);
   });
 
@@ -641,7 +669,7 @@ export function updateHud(state: GameState): void {
 
   buttons.forEach((b) => {
     const i = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(i) || i < 0 || i > 15) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
     if (b.classList.contains("slot--hand-collapsed")) return;
     b.classList.remove("hand-slot--peek-focus", "hand-slot--peek-neighbor");
     const lift = b.classList.contains("active") ? HAND_ACTIVE_LIFT : 0;

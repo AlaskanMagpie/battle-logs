@@ -101,6 +101,7 @@ export function spawnCastFx(
   host: FxHost,
   kind: CastFxKind,
   pos: { x: number; z: number },
+  opts?: { from?: { x: number; z: number } },
 ): void {
   switch (kind) {
     case "firestorm":
@@ -118,7 +119,7 @@ export function spawnCastFx(
     case "lightning":
       return spawnLightning(host, pos);
     case "hero_strike":
-      return spawnHeroStrike(host, pos);
+      return spawnHeroStrike(host, pos, opts?.from);
   }
 }
 
@@ -159,11 +160,48 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   });
 }
 
-/** Short radial burst for wizard melee. */
-function spawnHeroStrike(host: FxHost, pos: { x: number; z: number }): void {
+/** Jagged polyline in world space (XZ + arc height) for arcane bolt. */
+function heroStrikeBoltPoints(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  segments: number,
+  jitter: number,
+  seed: number,
+): Float32Array {
+  const px = bz - az;
+  const pz = -(bx - ax);
+  const plen = Math.hypot(px, pz) || 1;
+  const nx = px / plen;
+  const nz = pz / plen;
+  const rnd = (i: number) => {
+    const u = Math.sin(seed * 12.9898 + i * 78.233 + ax * 0.1 + bz * 0.07) * 43758.5453;
+    return (u - Math.floor(u)) * 2 - 1;
+  };
+  const arr = new Float32Array((segments + 1) * 3);
+  let o = 0;
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const arc = Math.sin(t * Math.PI);
+    const j = i > 0 && i < segments ? rnd(i) * jitter : 0;
+    arr[o++] = ax + (bx - ax) * t + nx * j;
+    arr[o++] = 0.35 + arc * 3.2;
+    arr[o++] = az + (bz - az) * t + nz * j;
+  }
+  return arr;
+}
+
+/** Short radial burst for wizard melee + optional bolt from caster. */
+function spawnHeroStrike(
+  host: FxHost,
+  pos: { x: number; z: number },
+  from?: { x: number; z: number },
+): void {
   const life = 0.35;
-  const group = new THREE.Group();
-  group.position.set(pos.x, 0.15, pos.z);
+  const root = new THREE.Group();
+  const ringWrap = new THREE.Group();
+  ringWrap.position.set(pos.x, 0.15, pos.z);
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.4, 1.2, 32),
     new THREE.MeshBasicMaterial({
@@ -176,11 +214,48 @@ function spawnHeroStrike(host: FxHost, pos: { x: number; z: number }): void {
     }),
   );
   ring.rotation.x = -Math.PI / 2;
-  group.add(ring);
-  spawn(host, group, life, (t) => {
+  ringWrap.add(ring);
+  root.add(ringWrap);
+
+  let boltMat: THREE.LineBasicMaterial | null = null;
+  let forkMat: THREE.LineBasicMaterial | null = null;
+  if (from) {
+    const ax = from.x;
+    const az = from.z;
+    const dist = Math.hypot(pos.x - ax, pos.z - az);
+    const segs = Math.max(6, Math.min(14, Math.round(dist * 1.2)));
+    const jitter = Math.min(1.4, 0.25 + dist * 0.08);
+    const seed = (ax + pos.z) * 0.413 + dist * 0.17;
+    const positions = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter, seed);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    boltMat = new THREE.LineBasicMaterial({
+      color: 0xe8ddff,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    root.add(new THREE.Line(geo, boltMat));
+    const forkGeo = new THREE.BufferGeometry();
+    const forkPos = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.85, seed + 19.1);
+    forkGeo.setAttribute("position", new THREE.BufferAttribute(forkPos, 3));
+    forkMat = new THREE.LineBasicMaterial({
+      color: 0xaaccff,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    root.add(new THREE.Line(forkGeo, forkMat));
+  }
+
+  spawn(host, root, life, (t) => {
     const p = Math.min(1, t / life);
     ring.scale.setScalar(1 + p * 2.2);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
+    if (boltMat) boltMat.opacity = 0.92 * (1 - p);
+    if (forkMat) forkMat.opacity = 0.55 * (1 - p);
   });
 }
 

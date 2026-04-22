@@ -28,27 +28,27 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0c10);
 const camera = new THREE.PerspectiveCamera(48, 1, 0.5, 2000);
 camera.position.set(120, 90, 120);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
+const renderer = new THREE.WebGLRenderer({
+  antialias: false,
+  powerPreference: "high-performance",
+  stencil: false,
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+renderer.shadowMap.enabled = false;
 const canvas = renderer.domElement;
 canvas.style.flex = "1";
 canvas.style.minWidth = "0";
 canvas.style.minHeight = "0";
 
 const controls = new OrbitControls(camera, canvas);
-controls.enableDamping = true;
+controls.enableDamping = false;
 controls.target.set(0, 0, 0);
-
-const grid = new THREE.GridHelper(320, 32, 0x2a3545, 0x1a2230);
-grid.position.y = 0.01;
-scene.add(grid);
 
 const amb = new THREE.AmbientLight(0xcfd9ff, 0.45);
 const hem = new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.4);
 const sun = new THREE.DirectionalLight(0xfff4e6, 0.95);
 sun.position.set(-80, 140, 40);
-sun.castShadow = true;
+sun.castShadow = false;
 scene.add(amb, hem, sun);
 
 const markers = new THREE.Group();
@@ -93,7 +93,7 @@ function rebuildMarkers(): void {
       new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25 }),
     );
     m.position.set(x, y, z);
-    m.castShadow = true;
+    m.castShadow = false;
     markers.add(m);
   };
   for (const t of tapSlots) mk(t.x, t.z, 0x5fc48a);
@@ -153,8 +153,8 @@ async function loadTerrainGlb(file: File): Promise<void> {
   terrainGroup = g;
   terrainMeshes = collectMeshes(g);
   for (const m of terrainMeshes) {
-    m.castShadow = true;
-    m.receiveShadow = true;
+    m.castShadow = false;
+    m.receiveShadow = false;
   }
   log(`GLB loaded: ${terrainMeshes.length} mesh(es).`);
 }
@@ -170,8 +170,8 @@ async function loadTerrainObj(file: File): Promise<void> {
   terrainGroup = g;
   terrainMeshes = collectMeshes(g);
   for (const m of terrainMeshes) {
-    m.castShadow = true;
-    m.receiveShadow = true;
+    m.castShadow = false;
+    m.receiveShadow = false;
   }
   log(`OBJ loaded: ${terrainMeshes.length} mesh(es).`);
 }

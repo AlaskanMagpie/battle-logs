@@ -2,6 +2,7 @@ import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
+  DOCTRINE_SLOT_COUNT,
   ENEMY_RELAY_MAX_HP,
   ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
@@ -60,6 +61,21 @@ export interface CastFxEvent {
   x: number;
   z: number;
   tick: number;
+  /** Strike origin (wizard xz) — when set, renderer draws a bolt from here to (x,z). */
+  fromX?: number;
+  fromZ?: number;
+}
+
+/** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */
+export function emitHeroStrikeFx(s: GameState, target: Vec2, from: Vec2): void {
+  s.lastFx = {
+    kind: "hero_strike",
+    x: target.x,
+    z: target.z,
+    tick: s.tick,
+    fromX: from.x,
+    fromZ: from.z,
+  };
 }
 
 export type ArmyStance = "offense" | "defense";
@@ -342,7 +358,7 @@ export function isKeep(st: StructureRuntime): boolean {
 function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
   const charges: number[] = [];
   const cd: number[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     /** Unused for locking — doctrine uses per-cast cooldown only. */
     charges.push(1);
     cd.push(0);
@@ -352,7 +368,7 @@ function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd
 
 /**
  * One-time match init: optionally strip command cards, then sort remaining structure
- * ids by ascending flux cost (stable tie-break by id). Packs to 16 slots, nulls last.
+ * ids by ascending flux cost (stable tie-break by id). Packs to DOCTRINE_SLOT_COUNT slots, nulls last.
  */
 export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
   const catalogOk = (id: string | null): string | null => {
@@ -361,8 +377,8 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   };
   if (DOCTRINE_COMMANDS_ENABLED) {
     const copy = [...slots];
-    while (copy.length < 16) copy.push(null);
-    return copy.slice(0, 16).map(catalogOk);
+    while (copy.length < DOCTRINE_SLOT_COUNT) copy.push(null);
+    return copy.slice(0, DOCTRINE_SLOT_COUNT).map(catalogOk);
   }
   const structs: { id: string; cost: number }[] = [];
   for (const id of slots) {
@@ -374,8 +390,8 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   }
   structs.sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id));
   const out: (string | null)[] = structs.map((s) => s.id);
-  while (out.length < 16) out.push(null);
-  return out.slice(0, 16);
+  while (out.length < DOCTRINE_SLOT_COUNT) out.push(null);
+  return out.slice(0, DOCTRINE_SLOT_COUNT);
 }
 
 /** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
@@ -391,20 +407,23 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
     return (rngScratch.v & 0xffffffff) / 0x100000000;
   }
   const half = map.world.halfExtents;
-  const margin = 32;
+  const margin = Math.min(140, Math.max(44, half * 0.2));
   const minSep2 = TAP_GENERATION_MIN_SEP * TAP_GENERATION_MIN_SEP;
   const sx = map.playerStart?.x ?? 0;
   const sz = map.playerStart?.z ?? 0;
   const placed: { x: number; z: number }[] = [];
+  const edgePad = Math.max(18, half * 0.04);
+  const keepClear = Math.max(36, half * 0.11);
+  const keepClear2 = keepClear * keepClear;
 
   function okPos(x: number, z: number, playerSide: boolean): boolean {
-    if (Math.abs(x) > half - 12 || Math.abs(z) > half - 12) return false;
+    if (Math.abs(x) > half - edgePad || Math.abs(z) > half - edgePad) return false;
     if (playerSide) {
       if (x > -margin) return false;
     } else if (x < margin) {
       return false;
     }
-    const kd2 = 26 * 26;
+    const kd2 = keepClear2;
     if ((x - sx) * (x - sx) + (z - sz) * (z - sz) < kd2) return false;
     for (const p of placed) {
       const dx = p.x - x;
@@ -422,9 +441,9 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
     while (n < TAP_NODES_PER_SIDE && attempts < 1200) {
       attempts++;
       const x = playerSide
-        ? -margin - rnd() * Math.max(8, half - margin * 2)
-        : margin + rnd() * Math.max(8, half - margin * 2);
-      const z = (rnd() * 2 - 1) * (half - 24);
+        ? -margin - rnd() * Math.max(16, half - margin * 2)
+        : margin + rnd() * Math.max(16, half - margin * 2);
+      const z = (rnd() * 2 - 1) * (half - margin - edgePad);
       if (!okPos(x, z, playerSide)) continue;
       placed.push({ x, z });
       taps.push({
@@ -783,6 +802,7 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
 }
 
 export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | null {
+  if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return "Invalid doctrine slot.";
   const id = s.doctrineSlotCatalogIds[slotIndex] ?? null;
   if (!id) return "Empty doctrine slot.";
   const e = getCatalogEntry(id);

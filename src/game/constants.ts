@@ -7,6 +7,9 @@ export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 /** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
 export const DOCTRINE_COMMANDS_ENABLED = false;
 
+/** Player doctrine deck size (pre-match + in-match HUD tray). */
+export const DOCTRINE_SLOT_COUNT = 10;
+
 /** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
 
@@ -40,8 +43,20 @@ export const ENEMY_UNIT_HUNT_DETECT = 95;
 export const PLAYER_UNIT_HUNT_DETECT_MULT = 6;
 export const PLAYER_UNIT_HUNT_DETECT_MIN = 28;
 
+/** Spatial hash cell size (world XZ) for unit–unit separation. */
+export const UNIT_SEPARATION_GRID = 3.5;
+
+/** Portion of pairwise overlap to resolve per separation pass (0..1). */
+export const UNIT_SEPARATION_STRENGTH = 0.62;
+
+/** Extra separation passes per tick (rebuilds grid each pass) for dense armies. */
+export const UNIT_SEPARATION_PASSES = 2;
+
+/** Max XZ displacement from separation in one pass (world units). */
+export const UNIT_SEPARATION_MAX_STEP = 1.6;
+
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
-export const ENEMY_TAP_WEDGE_MARGIN_X = 28;
+export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
 
 /** Rival wizard melee — tuned slightly below player strike. */
 export const ENEMY_HERO_STRIKE_DAMAGE = 32;
@@ -53,7 +68,7 @@ export const TAP_YIELD_MAX = 250;
 /** Physical claim pillar on a Mana node — HP pool; when destroyed the node returns to neutral. */
 export const TAP_ANCHOR_MAX_HP = 200;
 /** Melee / strike range from unit or wizard to tap (x,z) to damage the anchor. */
-export const TAP_ANCHOR_STRIKE_RADIUS = 2.75;
+export const TAP_ANCHOR_STRIKE_RADIUS = 3.2;
 
 /** Build / place proximity to Tap or Keep (world units). */
 export const INFRA_PLACE_RADIUS = 16;
@@ -119,7 +134,8 @@ export const ENEMY_WAVE_GLOBAL_CAP = 22;
 /** Player-controlled hero. */
 export const HERO_SPEED = 11;
 export const HERO_FOLLOW_RADIUS = 14;
-export const HERO_CLAIM_RADIUS = 4;
+/** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
+export const HERO_CLAIM_RADIUS = 12;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
 export const HERO_MAX_HP = 500;
@@ -132,7 +148,8 @@ export const HERO_ATTACK_COOLDOWN_TICKS = 16;
 
 /** Procedural Mana nodes per match (each side). */
 export const TAP_NODES_PER_SIDE = 10;
-export const TAP_GENERATION_MIN_SEP = 20;
+/** Minimum spacing between procedurally placed Mana nodes (world units). */
+export const TAP_GENERATION_MIN_SEP = 36;
 
 /** Territory: union of radii around the Keep + claimed player taps. */
-export const TERRITORY_RADIUS = 48;
+export const TERRITORY_RADIUS = 72;

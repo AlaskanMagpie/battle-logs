@@ -8,14 +8,17 @@ export { sortCatalogIds } from "../game/catalogSort";
 
 let pickerRoot: Root | null = null;
 
-export function mountDoctrinePicker(rootEl: HTMLElement, onStart: (slots: (string | null)[]) => void): void {
+export function mountDoctrinePicker(
+  rootEl: HTMLElement,
+  onStart: (slots: (string | null)[], mapUrl: string) => void,
+): void {
   if (pickerRoot) pickerRoot.unmount();
   pickerRoot = createRoot(rootEl);
   pickerRoot.render(
     createElement(DoctrineBinderPicker, {
-      onStart: (slots: (string | null)[]) => {
+      onStart: (slots: (string | null)[], mapUrl: string) => {
         rootEl.style.display = "none";
-        onStart(slots);
+        onStart(slots, mapUrl);
       },
     }),
   );

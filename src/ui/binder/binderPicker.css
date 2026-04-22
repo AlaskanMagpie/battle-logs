@@ -63,9 +63,9 @@
 
 .binder-slot-grid {
   display: grid;
-  grid-template-columns: repeat(8, minmax(28px, 36px));
-  grid-template-rows: repeat(2, auto);
-  gap: 4px 6px;
+  grid-template-columns: repeat(10, minmax(26px, 34px));
+  grid-template-rows: auto;
+  gap: 4px 5px;
   justify-content: flex-end;
   max-width: 100%;
   overflow-x: auto;
