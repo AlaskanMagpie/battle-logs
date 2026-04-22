@@ -384,8 +384,8 @@ export const COMMAND_BY_ID: Record<string, CommandCatalogEntry> = Object.fromEnt
   COMMANDS.map((c) => [c.id, c]),
 );
 
-/** Default 10-slot loadout for first boot / reset.
- *  Ordered so tier-1 cards front-load (slot 0 is the always-playable Outpost).
+/** Default 10-card doctrine for first boot / reset.
+ *  Ordered so tier-1 cards front-load the hand (slot 0 is the always-playable Outpost).
  */
 export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
   "outpost",

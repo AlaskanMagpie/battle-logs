@@ -14,6 +14,8 @@ import { CardBinderEngine } from "./CardBinderEngine";
 import "./binderPicker.css";
 
 const CATALOG_IDS = CATALOG.map((c) => c.id);
+/** Doctrine binder pages: structures only (commands stay in catalog elsewhere). */
+const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 const validIds = new Set(CATALOG_IDS);
 const MIN_FILLED = Math.ceil(DOCTRINE_SLOT_COUNT * 0.75);
 
@@ -24,13 +26,13 @@ export function DoctrineBinderPicker({
 }): ReactElement {
   const [sortKey, setSortKey] = useState<CatalogSortKey>("catalog");
   const orderedRef = useRef<string[]>([]);
-  /** Same order as Sort — full-card faces via `tcgCardFullHtml` in binderCardTexture. */
-  const binderPanelIds = useMemo(() => sortCatalogIds(CATALOG_IDS, sortKey), [sortKey]);
+  const binderPanelIds = useMemo(() => sortCatalogIds(STRUCTURE_CATALOG_IDS, sortKey), [sortKey]);
   orderedRef.current = binderPanelIds;
   const [slots, setSlots] = useState<(string | null)[]>(() =>
     loadDoctrineSlots().map((id) => (id && validIds.has(id) ? id : null)),
   );
-  const [activeSlot, setActiveSlot] = useState<number | null>(null);
+  /** Highlights the doctrine slot last filled from the binder (primary outline in 3D). */
+  const [activeDoctrineSlot, setActiveDoctrineSlot] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState({ c: 0, t: 1 });
   const [mapUrl, setMapUrl] = useState<string>(() => {
@@ -45,8 +47,6 @@ export function DoctrineBinderPicker({
   const wrapRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CardBinderEngine | null>(null);
 
-  const activeRef = useRef(activeSlot);
-  activeRef.current = activeSlot;
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
 
@@ -56,13 +56,37 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
-        setActiveSlot(null);
+        setActiveDoctrineSlot(null);
         return;
       }
-      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
       const t = (e.target as HTMLElement | null)?.tagName?.toLowerCase() ?? "";
       if (t === "select" || t === "input" || t === "textarea" || t === "button") return;
-      if (e.key === "ArrowRight") engineRef.current?.flipNext();
+
+      const pageKeys =
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key === "PageUp" ||
+        e.key === "PageDown" ||
+        e.key === "," ||
+        e.key === ".";
+
+      if (!engineRef.current?.isBinderOpen()) {
+        if (e.key === "Home" || e.key === "End" || pageKeys) e.preventDefault();
+        return;
+      }
+
+      if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        if (e.key === "Home") engineRef.current?.jumpToFirstSpread();
+        else engineRef.current?.jumpToLastSpread();
+        return;
+      }
+
+      if (!pageKeys) return;
+      e.preventDefault();
+      const next =
+        e.key === "ArrowRight" || e.key === "PageDown" || (e.key === "." && !e.shiftKey);
+      if (next) engineRef.current?.flipNext();
       else engineRef.current?.flipPrev();
     };
     window.addEventListener("keydown", onKey);
@@ -98,19 +122,21 @@ export function DoctrineBinderPicker({
       if (cancelled) return;
 
       const next = new CardBinderEngine(canvas, texList);
+      next.snapBinderFullyOpen();
       next.onPageChange = (c, t) => setPage({ c, t });
       next.onPickCatalogIndex = (idx) => {
         if (idx === null || idx < 0) return;
         const id = orderedRef.current[idx];
         if (!id || !validIds.has(id)) return;
-        const slot = activeRef.current;
-        if (slot === null) {
-          showDoctrineCardDetail(id);
-          return;
-        }
         setSlots((prev) => {
+          const empty = prev.findIndex((s) => !s);
+          if (empty < 0) {
+            showDoctrineCardDetail(id);
+            return prev;
+          }
+          setActiveDoctrineSlot(empty);
           const copy = [...prev];
-          copy[slot] = id;
+          copy[empty] = id;
           return copy;
         });
       };
@@ -125,7 +151,7 @@ export function DoctrineBinderPicker({
 
       eng = next;
       engineRef.current = next;
-      next.syncDoctrineHighlights(orderedRef.current, slotsRef.current, activeRef.current);
+      next.syncDoctrineHighlights(orderedRef.current, slotsRef.current, null);
       ro = new ResizeObserver((es) => {
         for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
       });
@@ -143,8 +169,8 @@ export function DoctrineBinderPicker({
 
   useEffect(() => {
     if (loading) return;
-    engineRef.current?.syncDoctrineHighlights(binderPanelIds, slots, activeSlot);
-  }, [loading, binderPanelIds, slots, activeSlot]);
+    engineRef.current?.syncDoctrineHighlights(binderPanelIds, slots, activeDoctrineSlot);
+  }, [loading, binderPanelIds, slots, activeDoctrineSlot]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -168,6 +194,8 @@ export function DoctrineBinderPicker({
   }, []);
 
   const onCanvasDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    engineRef.current?.cancelPendingCatalogPick();
     const rect = e.currentTarget.getBoundingClientRect();
     const idx = engineRef.current?.pickAt(e.clientX, e.clientY, rect);
     if (idx == null || idx < 0) return;
@@ -176,11 +204,11 @@ export function DoctrineBinderPicker({
   }, []);
 
   const resetDefaults = useCallback(() => {
+    setActiveDoctrineSlot(null);
     setSlots(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null)));
-    setActiveSlot(null);
   }, []);
 
-  const confirmDoctrine = useCallback(() => {
+  const saveDoctrine = useCallback(() => {
     saveDoctrineSlots(slots);
   }, [slots]);
 
@@ -203,13 +231,23 @@ export function DoctrineBinderPicker({
             Loading…
           </div>
         ) : null}
+        {!loading ? (
+          <div className="binder-picker-tome-hint" role="status">
+            Tap a card to assign it to the next free doctrine slot. Double-click for full rules. Drag page edges or
+            use Prev/Next.
+          </div>
+        ) : null}
         <canvas
           ref={canvasRef}
           className="binder-picker-canvas"
+          tabIndex={0}
+          role="application"
+          aria-label="Doctrine codex — three-ring binder. Tap a card to add to doctrine; double-click for details."
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => engineRef.current?.clearCardHover()}
           onWheel={onWheel}
           onDoubleClick={onCanvasDoubleClick}
           onContextMenu={(e) => e.preventDefault()}
@@ -219,32 +257,40 @@ export function DoctrineBinderPicker({
             <button
               type="button"
               className="binder-picker-btn"
-              disabled={page.c <= 0}
+              title="Previous spread"
+              disabled={loading || page.c <= 0}
               onClick={() => engineRef.current?.flipPrev()}
             >
-              ◂ Prev
+              Prev
             </button>
-            <span>
+            <span className="binder-picker-nav-page">
               {page.c + 1} / {page.t}
             </span>
             <button
               type="button"
               className="binder-picker-btn"
-              disabled={page.c >= page.t - 1}
+              title="Next spread"
+              disabled={loading || page.c >= page.t - 1}
               onClick={() => engineRef.current?.flipNext()}
             >
-              Next ▸
+              Next
             </button>
-            <button type="button" className="binder-picker-btn" onClick={() => engineRef.current?.resetCam()}>
-              Reset view
+            <button
+              type="button"
+              className="binder-picker-btn"
+              title="Reset camera"
+              disabled={loading}
+              onClick={() => engineRef.current?.resetCam()}
+            >
+              View
             </button>
           </div>
         ) : null}
       </div>
 
       <footer className="binder-picker-toolbar">
-        <div className="binder-picker-toolbar-top">
-          <div className="binder-picker-toolbar-row">
+        <div className="binder-picker-toolbar-inner">
+          <div className="binder-picker-toolbar-map">
             <label htmlFor="binder-map">Battlefield</label>
             <select
               id="binder-map"
@@ -259,59 +305,40 @@ export function DoctrineBinderPicker({
               ))}
             </select>
           </div>
-          <div className="binder-picker-toolbar-row">
-            <label htmlFor="binder-sort">Sort</label>
-            <select
-              id="binder-sort"
-              disabled={loading}
-              value={sortKey}
-              onChange={(ev) => setSortKey(ev.target.value as CatalogSortKey)}
-            >
-              <option value="catalog">Catalog order</option>
-              <option value="name">Name</option>
-              <option value="cost">Mana cost</option>
-              <option value="cooldown">Cooldown</option>
-              <option value="kind">Kind (structures first)</option>
-              <option value="class">Unit class</option>
-            </select>
-          </div>
-          <div
-            className="binder-slot-grid"
-            role="group"
-            aria-label="Doctrine slots: choose one, then tap a card in the binder"
-          >
-            {Array.from({ length: DOCTRINE_SLOT_COUNT }, (_, i) => (
-              <button
-                key={i}
-                type="button"
-                className={
-                  "binder-slot-ix" +
-                  (activeSlot === i ? " binder-slot-ix--active" : "") +
-                  (slots[i] ? " binder-slot-ix--filled" : "")
-                }
-                aria-pressed={activeSlot === i}
-                onClick={() => setActiveSlot((prev) => (prev === i ? null : i))}
+          <div className="binder-picker-toolbar-main">
+            <div className="binder-picker-toolbar-left">
+              <label htmlFor="binder-sort">Sort</label>
+              <select
+                id="binder-sort"
+                disabled={loading}
+                value={sortKey}
+                onChange={(ev) => setSortKey(ev.target.value as CatalogSortKey)}
               >
-                {i + 1}
+                <option value="catalog">Catalog</option>
+                <option value="name">Name</option>
+                <option value="cost">Cost</option>
+                <option value="cooldown">Cooldown</option>
+                <option value="kind">Kind</option>
+                <option value="class">Class</option>
+              </select>
+            </div>
+            <div className="binder-picker-toolbar-actions">
+              <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
+                Reset
               </button>
-            ))}
+              <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
+                Save
+              </button>
+              <button
+                type="button"
+                className="binder-picker-btn binder-picker-btn--primary"
+                disabled={loading || !canStart}
+                onClick={startMatch}
+              >
+                Start
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="binder-picker-actions">
-          <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
-            Reset defaults
-          </button>
-          <button type="button" className="binder-picker-btn" disabled={loading} onClick={confirmDoctrine}>
-            Confirm
-          </button>
-          <button
-            type="button"
-            className="binder-picker-btn binder-picker-btn--primary"
-            disabled={loading || !canStart}
-            onClick={startMatch}
-          >
-            Start match
-          </button>
         </div>
       </footer>
     </div>

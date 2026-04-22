@@ -5,13 +5,14 @@ import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
 import { getCardPreviewDataUrl } from "../cardGlbPreview";
 import { binderPanelPixelSize } from "./CardBinderEngine";
+import { binderSleevePixelSize, composeCardIntoBinderSleeve } from "./binderSleeveComposite";
 
 const cache = new Map<string, Promise<THREE.CanvasTexture>>();
 
 function binderTextureCacheKey(catalogId: string): string {
-  const { w, h } = binderPanelPixelSize();
-  /* c2d = canvas2d painter (no html-to-image). */
-  return `${catalogId}@${w}x${h}c2d`;
+  const { w, h } = binderSleevePixelSize();
+  /* Sleeve composite output size; bump token when raster pipeline changes. */
+  return `${catalogId}@${w}x${h}sleeve_v2`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -89,9 +90,9 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
   const heroH = Math.round(h * 0.40);
 
   const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, "#141820");
-  bg.addColorStop(0.55, "#0a0d12");
-  bg.addColorStop(1, "#06080c");
+  bg.addColorStop(0, "#1c2430");
+  bg.addColorStop(0.5, "#121722");
+  bg.addColorStop(1, "#0a0e14");
   ctx.fillStyle = bg;
   roundRectPath(ctx, 0, 0, w, h, 10);
   ctx.fill();
@@ -101,7 +102,7 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
   roundRectPath(ctx, 1, 1, w - 2, h - 2, 9);
   ctx.stroke();
 
-  ctx.fillStyle = "#05070b";
+  ctx.fillStyle = "#0a1018";
   roundRectPath(ctx, pad, pad, w - pad * 2, heroH - pad, 6);
   ctx.fill();
 
@@ -127,33 +128,33 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
     ctx.fillStyle = g2;
     roundRectPath(ctx, pad + 2, pad + 2, w - (pad + 2) * 2, heroH - pad - 4, 4);
     ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.88)";
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
     ctx.textAlign = "center";
-    const fs = Math.max(10, Math.round(w * 0.034));
+    const fs = Math.max(12, Math.round(w * 0.038));
     ctx.font = `bold ${fs}px system-ui, Segoe UI, sans-serif`;
     ctx.fillText("SPELL", w / 2, pad + (heroH - pad) * 0.42);
     const eff = cmd.effect.type.replace(/_/g, " ");
-    ctx.font = `${Math.max(8, Math.round(w * 0.026))}px system-ui, Segoe UI, sans-serif`;
-    ctx.fillStyle = "rgba(210,220,240,0.78)";
+    ctx.font = `${Math.max(10, Math.round(w * 0.03))}px system-ui, Segoe UI, sans-serif`;
+    ctx.fillStyle = "rgba(228,236,248,0.92)";
     ctx.fillText(eff.toUpperCase(), w / 2, pad + (heroH - pad) * 0.62);
   }
 
   let y = heroH + 8;
   ctx.textAlign = "center";
-  ctx.fillStyle = "#f0f4fc";
-  const nameSize = Math.max(11, Math.round(w * 0.034));
+  ctx.fillStyle = "#f6f9ff";
+  const nameSize = Math.max(13, Math.round(w * 0.038));
   ctx.font = `bold ${nameSize}px Georgia, "Times New Roman", serif`;
   ctx.fillText(e.name.toUpperCase(), w / 2, y + nameSize * 0.85);
 
   y += nameSize + 6;
-  ctx.font = `${Math.max(7, Math.round(w * 0.02))}px ui-monospace, monospace`;
-  ctx.fillStyle = `hsla(${hue}, 42%, 68%, 0.92)`;
+  ctx.font = `${Math.max(9, Math.round(w * 0.022))}px ui-monospace, monospace`;
+  ctx.fillStyle = `hsla(${hue}, 48%, 76%, 0.96)`;
   ctx.fillText(isCommandEntry(e) ? "DOCTRINE • COMMAND" : "DOCTRINE • STRUCTURE", w / 2, y);
 
   y += 14;
   const colW = (w - pad * 2) / 4;
-  const statFs = Math.max(9, Math.round(w * 0.024));
-  const lblFs = Math.max(6, Math.round(w * 0.016));
+  const statFs = Math.max(11, Math.round(w * 0.028));
+  const lblFs = Math.max(8, Math.round(w * 0.019));
 
   if (isStructureEntry(e)) {
     const st = e as StructureCatalogEntry;
@@ -169,7 +170,7 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
       ctx.fillStyle = cols[i]!.color;
       ctx.fillText(cols[i]!.v, cx, y + 11);
       ctx.font = `${lblFs}px system-ui, Segoe UI, sans-serif`;
-      ctx.fillStyle = "rgba(180,190,210,0.55)";
+      ctx.fillStyle = "rgba(200,210,228,0.78)";
       ctx.fillText(cols[i]!.l, cx, y + 24);
     }
   } else {
@@ -186,26 +187,26 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
       ctx.fillStyle = cols[i]!.color;
       ctx.fillText(cols[i]!.v, cx, y + 11);
       ctx.font = `${lblFs}px system-ui, Segoe UI, sans-serif`;
-      ctx.fillStyle = "rgba(180,190,210,0.55)";
+      ctx.fillStyle = "rgba(200,210,228,0.78)";
       ctx.fillText(cols[i]!.l, cx, y + 24);
     }
   }
 
   y += 36;
   ctx.textAlign = "left";
-  ctx.font = `${Math.max(7, Math.round(w * 0.022))}px system-ui, Segoe UI, sans-serif`;
-  ctx.fillStyle = "rgba(160,175,200,0.78)";
+  ctx.font = `${Math.max(9, Math.round(w * 0.024))}px system-ui, Segoe UI, sans-serif`;
+  ctx.fillStyle = "rgba(190,204,226,0.9)";
   ctx.fillText(`Signal  ${dominantSignalLabel(e)}`, pad, y);
   ctx.textAlign = "right";
   ctx.fillText(`Unlock  Wizard Tier ${Math.max(1, e.requiredRelayTier)}`, w - pad, y);
 
   y += 16;
   ctx.textAlign = "left";
-  ctx.fillStyle = "rgba(130,145,170,0.72)";
+  ctx.fillStyle = "rgba(160,176,200,0.86)";
   const foot = isStructureEntry(e)
     ? (e.producedFlavor ?? "").trim()
     : (e as CommandCatalogEntry).effect.type.replace(/_/g, " ");
-  ctx.font = `italic ${Math.max(6, Math.round(w * 0.018))}px system-ui, Segoe UI, sans-serif`;
+  ctx.font = `italic ${Math.max(8, Math.round(w * 0.02))}px system-ui, Segoe UI, sans-serif`;
   const maxW = w - pad * 2;
   let line = foot.slice(0, 120);
   while (line.length > 8 && ctx.measureText(`${line}…`).width > maxW) {
@@ -218,7 +219,8 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
 }
 
 async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
-  const cvs = await paintBinderPanelCanvas(catalogId);
+  const inner = await paintBinderPanelCanvas(catalogId);
+  const cvs = composeCardIntoBinderSleeve(inner);
   const tex = new THREE.CanvasTexture(cvs);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;

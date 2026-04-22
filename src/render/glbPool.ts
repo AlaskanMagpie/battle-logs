@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
-import { isCommandEntry, type UnitSizeClass } from "../game/types";
+import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
 
 let manifest: string[] | undefined;
 let manifestPromise: Promise<string[]> | null = null;
@@ -89,6 +89,21 @@ function pickFileForClass(kind: UnitSizeClass | "hero", files: string[]): string
   return files[idx % files.length] ?? files[0] ?? null;
 }
 
+/** Subtle warm push so enemy GLBs read red vs blue rim rings (safe on StandardMaterial only). */
+function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
+  if (team !== "enemy") return;
+  const mul = new THREE.Color(1.12, 0.72, 0.72);
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.material) return;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    for (const raw of mats) {
+      const mat = raw as THREE.MeshStandardMaterial;
+      if (mat.isMeshStandardMaterial && mat.color) mat.color.multiply(mul);
+    }
+  });
+}
+
 function setShadowRecursive(root: THREE.Object3D, cast: boolean, receive: boolean): void {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -121,6 +136,8 @@ export function setGlbOpacity(group: THREE.Group, opacity: number): void {
 type AttachGlbOpts = {
   /** If set, hide this object (from `parent.userData[key]`) after a successful load. */
   hideSilhouetteUserDataKey?: string;
+  /** Shallow multiply on StandardMaterial albedo for team read at a glance. */
+  teamTint?: TeamId;
 };
 
 async function attachGlbByFile(
@@ -160,6 +177,8 @@ async function attachGlbByFile(
     parent.add(inst);
     parent.userData["glbRoot"] = inst;
 
+    if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
+
     const hideKey = opts?.hideSilhouetteUserDataKey;
     if (hideKey) {
       const silo = parent.userData[hideKey] as THREE.Object3D | undefined;
@@ -189,24 +208,26 @@ export async function attachGlbForClass(
   kind: UnitSizeClass | "hero",
   placeholder: THREE.Mesh,
   targetMaxExtent: number,
+  teamTint?: TeamId,
 ): Promise<void> {
   const files = await loadManifest();
   const file = pickFileForClass(kind, files);
   if (!file) return;
-  await attachGlbByFile(file, placeholder, targetMaxExtent);
+  await attachGlbByFile(file, placeholder, targetMaxExtent, teamTint ? { teamTint } : undefined);
 }
 
 /** Default per-class target extent (world units). Kept in scale with procedural silhouettes. */
 export async function requestGlbForUnit(
   kind: UnitSizeClass,
   placeholder: THREE.Mesh,
+  team: TeamId = "player",
 ): Promise<void> {
   const extent = kind === "Swarm" ? 1.4 : kind === "Line" ? 1.9 : kind === "Heavy" ? 2.6 : 3.4;
-  await attachGlbForClass(kind, placeholder, extent);
+  await attachGlbForClass(kind, placeholder, extent, team);
 }
 
 export async function requestGlbForHero(placeholder: THREE.Mesh): Promise<void> {
-  await attachGlbForClass("hero", placeholder, 3.0);
+  await attachGlbForClass("hero", placeholder, 3.0, "player");
 }
 
 /** Line unit default max extent in `requestGlbForUnit` — towers scale relative to this. */

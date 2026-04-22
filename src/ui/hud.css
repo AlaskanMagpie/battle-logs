@@ -564,7 +564,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
 
-/* In-match: two hands × 8 — each hand is one smooth arc (JS: 8 equal angles, one radius). */
+/* In-match: two rows × 5 — each row is one smooth arc (JS: five equal angles, one radius). */
 .doctrine-track--hand.doctrine-track--deck2x8 {
   display: flex;
   flex-direction: column;
@@ -575,7 +575,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   width: 100%;
   min-width: 0;
-  --hand-card-h: clamp(52px, min(10dvh, 10vw), 92px);
+  --hand-card-h: clamp(56px, min(11dvh, 11vw), 100px);
   --hand-reveal: 22px;
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
@@ -672,12 +672,12 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
     0 0 0 1px rgba(0, 0, 0, 0.3) inset;
 }
 
-/* Second half of the arc (slots 5–8): slightly dimmed / behind first four. */
-.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(n + 5) {
+/* Outer pair of each 5-slot arc: slightly dimmed / behind the center three. */
+.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(n + 4) {
   z-index: 2;
   filter: brightness(0.93);
 }
-.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(-n + 4) {
+.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(-n + 3) {
   z-index: 10;
 }
 
@@ -795,7 +795,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.12;
-  font-size: clamp(7px, 11cqi, 11px);
+  font-size: clamp(8px, 12cqi, 12px);
   word-break: normal;
 }
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-title,
@@ -809,7 +809,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   word-break: normal;
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-subtitle {
-  font-size: clamp(5px, 7cqi, 8px);
+  font-size: clamp(6px, 8cqi, 9px);
 }
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-subtitle {
   font-size: clamp(7px, 9cqi, 10px);
@@ -817,7 +817,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-stats,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-spell-fx,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-foot {
-  font-size: clamp(5px, 7cqi, 8px);
+  font-size: clamp(6px, 8cqi, 9px);
 }
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-stats,
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-spell-fx,
@@ -839,7 +839,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   line-height: 1.2;
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-meta-row {
-  font-size: clamp(5.5px, 7.5cqi, 9px);
+  font-size: clamp(6px, 8.5cqi, 10px);
 }
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-meta-row {
   font-size: clamp(7px, 9.5cqi, 11px);
@@ -1963,7 +1963,7 @@ button.hud-btn--armed::after {
   flex: 0 0 auto !important;
 }
 
-/* Pre-match doctrine deck: two rows × eight columns (slots 0–7 top, 8–15 bottom). */
+/* Legacy pre-match grid (unused with binder picker): two rows × eight columns. */
 .picker-deck-track.picker-deck-grid-2x8 {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));

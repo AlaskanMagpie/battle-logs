@@ -5,17 +5,27 @@
   z-index: 50000;
   overflow: hidden;
   background: #0a0a0f;
+  /* Override hud.css: padding on this node created a full-window “gutter” where clicks hit
+     #doctrine-picker instead of the WebGL canvas — no raycasts, only stray focus UI. */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  pointer-events: auto;
 }
 
 .binder-picker-root {
+  box-sizing: border-box;
   width: 100%;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) 0
+    max(8px, env(safe-area-inset-left, 0px));
   background: #0a0a0f;
-  color: #c8ccd8;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #b8c0d0;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
 }
 
@@ -25,7 +35,18 @@
   position: relative;
 }
 
+.binder-picker-binder-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.35);
+}
+
 .binder-picker-canvas {
+  position: relative;
+  z-index: 2;
   display: block;
   width: 100%;
   height: 100%;
@@ -33,111 +54,110 @@
   touch-action: none;
 }
 
+/* Clicks focus the canvas (tabIndex); don’t paint a viewport-sized ring on mouse use. */
+.binder-picker-canvas:focus {
+  outline: none;
+}
+
+.binder-picker-canvas:focus-visible {
+  outline: 2px solid rgba(120, 165, 255, 0.75);
+  outline-offset: 2px;
+}
+
+.binder-picker-canvas:active {
+  cursor: grabbing;
+}
+
 .binder-picker-toolbar {
-  position: relative;
-  z-index: 2;
   flex-shrink: 0;
+  z-index: 2;
+  padding: 12px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(14, 16, 24, 0.98) 0%, rgba(8, 9, 14, 0.98) 100%);
+  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.binder-picker-toolbar-inner {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(14, 16, 24, 0.95), rgba(8, 9, 14, 0.98));
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
-.binder-picker-toolbar-top {
+.binder-picker-toolbar-main {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px 16px;
+  gap: 12px 18px;
 }
 
-.binder-picker-toolbar-row {
+.binder-picker-toolbar-map {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-}
-
-.binder-slot-grid {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(26px, 34px));
-  grid-template-rows: auto;
-  gap: 4px 5px;
-  justify-content: flex-end;
-  max-width: 100%;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-
-.binder-slot-ix {
-  appearance: none;
-  margin: 0;
-  min-height: 30px;
-  padding: 4px 0;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  color: #9aa6bc;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.binder-slot-ix:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  color: #d0d8e8;
-}
-
-.binder-slot-ix--filled {
-  border-color: rgba(100, 200, 255, 0.35);
-  color: #c8e0ff;
-}
-
-.binder-slot-ix--active {
-  outline: 2px solid rgba(92, 255, 154, 0.95);
-  outline-offset: 1px;
-  color: #e8fff0;
-}
-
-.binder-picker-toolbar label {
-  font-size: 11px;
-  opacity: 0.85;
-  margin-right: 4px;
-}
-
-.binder-picker-toolbar select {
-  background: rgba(0, 0, 0, 0.45);
-  color: #dde4f0;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.binder-picker-actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
+  width: 100%;
+}
+
+.binder-picker-toolbar-map label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.binder-picker-toolbar-map select {
+  flex: 1;
+  min-width: 160px;
+  max-width: 100%;
+  background: rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.binder-picker-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  gap: 8px;
+}
+
+.binder-picker-toolbar-left label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.binder-picker-toolbar-left select {
+  background: rgba(0, 0, 0, 0.35);
+  color: #e2e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.binder-picker-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .binder-picker-btn {
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.55);
-  color: #ccc;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.4);
+  color: #c8d0e0;
   font-family: inherit;
-  font-size: 11px;
-  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
   cursor: pointer;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .binder-picker-btn:disabled {
@@ -146,9 +166,9 @@
 }
 
 .binder-picker-btn--primary {
-  border-color: rgba(100, 170, 255, 0.45);
-  color: #dfefff;
-  font-weight: 650;
+  border-color: rgba(90, 150, 230, 0.45);
+  color: #eef6ff;
+  font-weight: 600;
 }
 
 .binder-picker-loading {
@@ -157,27 +177,56 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(8, 10, 16, 0.72);
+  background: rgba(8, 10, 16, 0.65);
   font-size: 13px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
+  color: rgba(200, 210, 225, 0.85);
   z-index: 2;
+}
+
+.binder-picker-tome-hint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(230, 236, 248, 0.92);
+  background: rgba(12, 14, 22, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
 }
 
 .binder-picker-nav {
   position: absolute;
-  bottom: 12px;
+  bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
   z-index: 4;
   pointer-events: auto;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(6, 8, 14, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.binder-picker-nav span {
-  min-width: 72px;
+.binder-picker-nav .binder-picker-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  text-transform: none;
+}
+
+.binder-picker-nav-page {
+  min-width: 52px;
   text-align: center;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13px;
+  color: rgba(220, 228, 240, 0.95);
 }

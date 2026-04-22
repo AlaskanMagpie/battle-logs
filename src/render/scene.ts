@@ -2029,7 +2029,7 @@ export class GameRenderer {
         if (this.useGlb) {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
-            void requestGlbForUnit(u.sizeClass, placeholder);
+            void requestGlbForUnit(u.sizeClass, placeholder, u.team);
           }
         }
       }

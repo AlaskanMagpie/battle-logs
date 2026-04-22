@@ -7,8 +7,11 @@ export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 /** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
 export const DOCTRINE_COMMANDS_ENABLED = false;
 
-/** Player doctrine deck size (pre-match + in-match HUD tray). */
+/** Player doctrine size everywhere (binder picker, match HUD, sim). */
 export const DOCTRINE_SLOT_COUNT = 10;
+
+/** In-match HUD: two fanned rows of this many slots each. */
+export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
 
 /** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
@@ -151,5 +154,5 @@ export const TAP_NODES_PER_SIDE = 10;
 /** Minimum spacing between procedurally placed Mana nodes (world units). */
 export const TAP_GENERATION_MIN_SEP = 36;
 
-/** Territory: union of radii around the Keep + claimed player taps. */
+/** Territory: union of radii around the Keep, the Wizard, and claimed player taps (world units). */
 export const TERRITORY_RADIUS = 72;

@@ -1,5 +1,5 @@
 const ROOT_ID = "signal-wars-onboarding";
-const STORAGE_KEY = "sw:onboarding:v2:dismissed";
+const STORAGE_KEY = "sw:onboarding:hero-pivot:v1:dismissed";
 
 const STAGES: string[] = [
   "You are a <b>Wizard</b>. <b>WASD</b> strafes; <b>right-click</b> sets a move goal; <b>hold right-click</b> to follow the cursor. <b>Middle mouse</b> orbits the camera.",
