@@ -2,6 +2,7 @@ import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
+  DOCTRINE_SLOT_COUNT,
   ENEMY_RELAY_MAX_HP,
   ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
@@ -342,7 +343,7 @@ export function isKeep(st: StructureRuntime): boolean {
 function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
   const charges: number[] = [];
   const cd: number[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     /** Unused for locking — doctrine uses per-cast cooldown only. */
     charges.push(1);
     cd.push(0);
@@ -352,7 +353,7 @@ function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd
 
 /**
  * One-time match init: optionally strip command cards, then sort remaining structure
- * ids by ascending flux cost (stable tie-break by id). Packs to 16 slots, nulls last.
+ * ids by ascending flux cost (stable tie-break by id). Packs to `DOCTRINE_SLOT_COUNT` slots, nulls last.
  */
 export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
   const catalogOk = (id: string | null): string | null => {
@@ -361,8 +362,8 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   };
   if (DOCTRINE_COMMANDS_ENABLED) {
     const copy = [...slots];
-    while (copy.length < 16) copy.push(null);
-    return copy.slice(0, 16).map(catalogOk);
+    while (copy.length < DOCTRINE_SLOT_COUNT) copy.push(null);
+    return copy.slice(0, DOCTRINE_SLOT_COUNT).map(catalogOk);
   }
   const structs: { id: string; cost: number }[] = [];
   for (const id of slots) {
@@ -374,8 +375,8 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   }
   structs.sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id));
   const out: (string | null)[] = structs.map((s) => s.id);
-  while (out.length < 16) out.push(null);
-  return out.slice(0, 16);
+  while (out.length < DOCTRINE_SLOT_COUNT) out.push(null);
+  return out.slice(0, DOCTRINE_SLOT_COUNT);
 }
 
 /** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
@@ -475,7 +476,11 @@ function spawnKeep(state: GameState): void {
 }
 
 export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
-  const rawSlots = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const rawIn = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const rawSlots =
+    rawIn.length >= DOCTRINE_SLOT_COUNT
+      ? rawIn.slice(0, DOCTRINE_SLOT_COUNT)
+      : [...rawIn, ...Array.from({ length: DOCTRINE_SLOT_COUNT - rawIn.length }, () => null)];
   const slots = normalizeDoctrineSlotsForMatch(rawSlots);
   const rt = initDoctrineRuntime(slots);
 

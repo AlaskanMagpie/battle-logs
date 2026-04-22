@@ -1,5 +1,5 @@
 import { getCatalogEntry } from "../game/catalog";
-import { GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
+import { DOCTRINE_HAND_ROW_SIZE, DOCTRINE_SLOT_COUNT, GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
@@ -23,11 +23,11 @@ import { doctrineCardBody } from "./doctrineCard";
 
 const HAND_ACTIVE_LIFT = 5;
 
-/** Half angular span (rad) from end to end across all 8 slots on one circle — higher = less overlap. */
+/** Half angular span (rad) from end to end across one fanned row — higher = less overlap. */
 const ARC_ALPHA_MAX = 0.42;
-const ARC_ALPHA_MIN = 0.15;
+const ARC_ALPHA_MIN = 0.12;
 const ARC_PAD_X = 10;
-const ARC_SLOT_COUNT = 8;
+const ARC_SLOT_COUNT = DOCTRINE_HAND_ROW_SIZE;
 
 /** θ_i = -α … +α in equal steps so every card center lies on one shared circular arc (one curve per hand). */
 function arcSlotThetas(alpha: number): number[] {
@@ -37,7 +37,7 @@ function arcSlotThetas(alpha: number): number[] {
 }
 
 /**
- * One circle per hand: 8 evenly spaced angles, single radius. Upper and lower hands use the same
+ * One circle per hand row: evenly spaced angles, single radius. Upper and lower rows share the same
  * (α, R, θ_i); only DOM stacking separates the two rows — no inner/outer “double fan”.
  */
 function layoutDoctrineDeckArc(track: HTMLElement): void {
@@ -91,7 +91,7 @@ function layoutDoctrineDeckArc(track: HTMLElement): void {
     let minTop = Infinity;
     let maxBot = -Infinity;
     slots.forEach((slot, i) => {
-      if (i > 7) return;
+      if (i >= ARC_SLOT_COUNT) return;
       if (slot.classList.contains("slot--hand-collapsed")) return;
       const th = thetas[i]!;
       const cx = handInnerW / 2 + arcR * Math.sin(th);
@@ -127,7 +127,7 @@ function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
   }
 
   let n = 0;
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const id = state.doctrineSlotCatalogIds[i] ?? null;
     if (id && getCatalogEntry(id)) n++;
   }
@@ -245,7 +245,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     </div>
     <div class="doctrine-wrap" id="doctrine-wrap">
       <div class="doctrine-view" id="doctrine-view">
-        <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two hands of eight" aria-rowcount="2">
+        <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two rows of five" aria-rowcount="2">
           <div class="doctrine-hand doctrine-hand--match doctrine-hand--upper" role="row" aria-rowindex="1"></div>
           <div class="doctrine-hand doctrine-hand--match doctrine-hand--lower" role="row" aria-rowindex="2"></div>
         </div>
@@ -257,18 +257,18 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   const handUpper = doctrineTrack.querySelector(".doctrine-hand--upper") as HTMLDivElement;
   const handLower = doctrineTrack.querySelector(".doctrine-hand--lower") as HTMLDivElement;
 
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "slot";
     b.dataset.slotIndex = String(i);
     b.setAttribute("role", "gridcell");
-    b.setAttribute("aria-rowindex", String(Math.floor(i / 8) + 1));
-    b.setAttribute("aria-colindex", String((i % 8) + 1));
+    b.setAttribute("aria-rowindex", String(Math.floor(i / DOCTRINE_HAND_ROW_SIZE) + 1));
+    b.setAttribute("aria-colindex", String((i % DOCTRINE_HAND_ROW_SIZE) + 1));
     b.setAttribute("aria-label", `Doctrine slot ${i + 1}`);
     const catalogId = initial.doctrineSlotCatalogIds[i] ?? null;
     b.innerHTML = `${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
-    (i < 8 ? handUpper : handLower).appendChild(b);
+    (i < DOCTRINE_HAND_ROW_SIZE ? handUpper : handLower).appendChild(b);
   }
 
   hydrateCardPreviewImages(doctrineTrack);
@@ -482,7 +482,7 @@ export function updateHud(state: GameState): void {
   const isDeck2x8 = doctrineTrack.classList.contains("doctrine-track--deck2x8");
 
   const idTotalCount = new Map<string, number>();
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const id = state.doctrineSlotCatalogIds[i] ?? null;
     if (!id || !getCatalogEntry(id)) continue;
     idTotalCount.set(id, (idTotalCount.get(id) ?? 0) + 1);
@@ -490,7 +490,7 @@ export function updateHud(state: GameState): void {
 
   buttons.forEach((b) => {
     const i = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(i) || i < 0 || i > 15) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
 
     b.classList.remove(
       "slot-empty",
@@ -581,7 +581,7 @@ export function updateHud(state: GameState): void {
   const visibleIdx: number[] = [];
   buttons.forEach((b) => {
     const si = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(si) || si < 0 || si > 15) return;
+    if (!Number.isFinite(si) || si < 0 || si >= DOCTRINE_SLOT_COUNT) return;
     if (!b.classList.contains("slot--hand-collapsed")) visibleIdx.push(si);
   });
 
@@ -607,13 +607,13 @@ export function updateHud(state: GameState): void {
     peelCenterTy = reducedMotion ? -2 : -10;
 
     if (isDeck2x8) {
-      const row = Math.floor(peekIdx / 8);
-      const col = peekIdx % 8;
+      const row = Math.floor(peekIdx / DOCTRINE_HAND_ROW_SIZE);
+      const col = peekIdx % DOCTRINE_HAND_ROW_SIZE;
       const vis = (j: number) => (visibleIdx.includes(j) ? j : null);
       peelLeftIdx = col > 0 ? vis(peekIdx - 1) : null;
-      peelRightIdx = col < 7 ? vis(peekIdx + 1) : null;
-      peelAboveIdx = row > 0 ? vis(peekIdx - 8) : null;
-      peelBelowIdx = row < 1 ? vis(peekIdx + 8) : null;
+      peelRightIdx = col < DOCTRINE_HAND_ROW_SIZE - 1 ? vis(peekIdx + 1) : null;
+      peelAboveIdx = row > 0 ? vis(peekIdx - DOCTRINE_HAND_ROW_SIZE) : null;
+      peelBelowIdx = row < 1 ? vis(peekIdx + DOCTRINE_HAND_ROW_SIZE) : null;
     } else {
       const pos = visibleIdx.indexOf(peekIdx);
       peelLeftIdx = pos > 0 ? visibleIdx[pos - 1]! : null;
@@ -641,7 +641,7 @@ export function updateHud(state: GameState): void {
 
   buttons.forEach((b) => {
     const i = Number(b.dataset.slotIndex);
-    if (!Number.isFinite(i) || i < 0 || i > 15) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
     if (b.classList.contains("slot--hand-collapsed")) return;
     b.classList.remove("hand-slot--peek-focus", "hand-slot--peek-neighbor");
     const lift = b.classList.contains("active") ? HAND_ACTIVE_LIFT : 0;

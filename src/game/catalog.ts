@@ -384,9 +384,8 @@ export const COMMAND_BY_ID: Record<string, CommandCatalogEntry> = Object.fromEnt
   COMMANDS.map((c) => [c.id, c]),
 );
 
-/** Default 16-slot loadout for first boot / reset.
- *  Ordered so tier-1 cards front-load the hand (slot 0 is the always-playable Outpost);
- *  tier-2/3 cards are collapsed in the HUD until the player reaches that relay count.
+/** Default 10-card doctrine for first boot / reset.
+ *  Ordered so tier-1 cards front-load the hand (slot 0 is the always-playable Outpost).
  */
 export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
   "outpost",
@@ -399,12 +398,6 @@ export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
   "firestorm",
   "siege_works",
   "bastion_keep",
-  "salvage_yard",
-  "war_camp",
-  "shatter",
-  "dragon_roost",
-  "ironhold_citadel",
-  "reclamation_spire",
 ];
 
 export function getCatalogEntry(id: string | null | undefined): CatalogEntry | null {
