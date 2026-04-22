@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CATALOG, DEFAULT_DOCTRINE_SLOTS } from "../../game/catalog";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
@@ -16,6 +16,11 @@ import "./binderPicker.css";
 const CATALOG_IDS = CATALOG.map((c) => c.id);
 /** Doctrine binder pages: structures only (commands stay in catalog elsewhere). */
 const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
+/**
+ * 3D binder textures and raycast pick indices always follow **catalog order**.
+ * The Sort control does not remap the codex (avoids “shuffled” cards when sort changes).
+ */
+const BINDER_GRID_CATALOG_IDS: readonly string[] = sortCatalogIds(STRUCTURE_CATALOG_IDS, "catalog");
 const validIds = new Set(CATALOG_IDS);
 const MIN_FILLED = Math.ceil(DOCTRINE_SLOT_COUNT * 0.75);
 
@@ -25,9 +30,7 @@ export function DoctrineBinderPicker({
   onStart: (slots: (string | null)[], mapUrl: string) => void;
 }): ReactElement {
   const [sortKey, setSortKey] = useState<CatalogSortKey>("catalog");
-  const orderedRef = useRef<string[]>([]);
-  const binderPanelIds = useMemo(() => sortCatalogIds(STRUCTURE_CATALOG_IDS, sortKey), [sortKey]);
-  orderedRef.current = binderPanelIds;
+  const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
   const [slots, setSlots] = useState<(string | null)[]>(() =>
     loadDoctrineSlots().map((id) => (id && validIds.has(id) ? id : null)),
   );
@@ -113,7 +116,7 @@ export function DoctrineBinderPicker({
       }
       if (cancelled) return;
 
-      const ids = binderPanelIds;
+      const ids = BINDER_GRID_CATALOG_IDS;
       const texList: THREE.Texture[] = [];
       for (let i = 0; i < ids.length; i++) {
         if (cancelled) return;
@@ -151,7 +154,7 @@ export function DoctrineBinderPicker({
 
       eng = next;
       engineRef.current = next;
-      next.syncDoctrineHighlights(orderedRef.current, slotsRef.current, null);
+      next.syncDoctrineHighlights([...BINDER_GRID_CATALOG_IDS], slotsRef.current, null);
       ro = new ResizeObserver((es) => {
         for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
       });
@@ -165,15 +168,33 @@ export function DoctrineBinderPicker({
       eng?.dispose();
       engineRef.current = null;
     };
-  }, [sortKey, binderPanelIds]);
+  }, []);
 
   useEffect(() => {
     if (loading) return;
-    engineRef.current?.syncDoctrineHighlights(binderPanelIds, slots, activeDoctrineSlot);
-  }, [loading, binderPanelIds, slots, activeDoctrineSlot]);
+    engineRef.current?.syncDoctrineHighlights([...BINDER_GRID_CATALOG_IDS], slots, activeDoctrineSlot);
+  }, [loading, slots, activeDoctrineSlot]);
+
+  useEffect(() => {
+    if (loading) return;
+    const end = () => engineRef.current?.releaseInterruptedGesture();
+    const onVis = () => {
+      if (document.visibilityState === "hidden") end();
+    };
+    window.addEventListener("blur", end);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("blur", end);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [loading]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* setPointerCapture can fail in edge pointer states */
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     engineRef.current?.pD(e.nativeEvent, rect);
   }, []);
@@ -183,7 +204,14 @@ export function DoctrineBinderPicker({
     engineRef.current?.pM(e.nativeEvent, rect);
   }, []);
 
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+  const onPointerReleased = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      /* ignore */
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     engineRef.current?.pU(e.nativeEvent, rect);
   }, []);
@@ -245,51 +273,45 @@ export function DoctrineBinderPicker({
           aria-label="Doctrine codex — three-ring binder. Tap a card to add to doctrine; double-click for details."
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
+          onPointerUp={onPointerReleased}
+          onPointerCancel={onPointerReleased}
           onPointerLeave={() => engineRef.current?.clearCardHover()}
           onWheel={onWheel}
           onDoubleClick={onCanvasDoubleClick}
           onContextMenu={(e) => e.preventDefault()}
         />
-        {!loading ? (
-          <div className="binder-picker-nav">
-            <button
-              type="button"
-              className="binder-picker-btn"
-              title="Previous spread"
-              disabled={loading || page.c <= 0}
-              onClick={() => engineRef.current?.flipPrev()}
-            >
-              Prev
-            </button>
-            <span className="binder-picker-nav-page">
-              {page.c + 1} / {page.t}
-            </span>
-            <button
-              type="button"
-              className="binder-picker-btn"
-              title="Next spread"
-              disabled={loading || page.c >= page.t - 1}
-              onClick={() => engineRef.current?.flipNext()}
-            >
-              Next
-            </button>
-            <button
-              type="button"
-              className="binder-picker-btn"
-              title="Reset camera"
-              disabled={loading}
-              onClick={() => engineRef.current?.resetCam()}
-            >
-              View
-            </button>
-          </div>
-        ) : null}
       </div>
 
       <footer className="binder-picker-toolbar">
         <div className="binder-picker-toolbar-inner">
+          {!loading ? (
+            <div className="binder-picker-nav">
+              <button
+                type="button"
+                className="binder-picker-btn"
+                title={page.t > 1 ? "Previous spread (wraps from first)" : "Previous spread"}
+                disabled={page.t <= 1}
+                onClick={() => engineRef.current?.flipPrev()}
+              >
+                Prev
+              </button>
+              <span className="binder-picker-nav-page">
+                {page.c + 1} / {page.t}
+              </span>
+              <button
+                type="button"
+                className="binder-picker-btn"
+                title={page.t > 1 ? "Next spread (wraps from last)" : "Next spread"}
+                disabled={page.t <= 1}
+                onClick={() => engineRef.current?.flipNext()}
+              >
+                Next
+              </button>
+              <button type="button" className="binder-picker-btn" title="Reset camera" onClick={() => engineRef.current?.resetCam()}>
+                View
+              </button>
+            </div>
+          ) : null}
           <div className="binder-picker-toolbar-map">
             <label htmlFor="binder-map">Battlefield</label>
             <select
@@ -307,11 +329,14 @@ export function DoctrineBinderPicker({
           </div>
           <div className="binder-picker-toolbar-main">
             <div className="binder-picker-toolbar-left">
-              <label htmlFor="binder-sort">Sort</label>
+              <label htmlFor="binder-sort" title="Does not reorder the 3D codex; binder grid is fixed catalog order.">
+                Sort
+              </label>
               <select
                 id="binder-sort"
                 disabled={loading}
                 value={sortKey}
+                title="Reserved for future list UI; the 3D binder stays catalog order."
                 onChange={(ev) => setSortKey(ev.target.value as CatalogSortKey)}
               >
                 <option value="catalog">Catalog</option>

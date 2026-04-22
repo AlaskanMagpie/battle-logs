@@ -10,6 +10,7 @@ import {
   type BinderUiMode,
 } from "./binderInteractionState";
 import { composeCardIntoBinderSleeve } from "./binderSleeveComposite";
+import { BinderPageAudio } from "./binderPageAudio";
 import { createGrimoireCoverTexture } from "./binderTomeArt";
 
 /** Binder layout + flip physics (ported from CardBinder.jsx). */
@@ -19,11 +20,12 @@ export const BINDER_CFG = {
   seamGap: 0.04,
   seamFlex: 0.18,
   rowDroop: 0.06,
-  springStiff: 80,
-  springDamp: 12,
+  /** Snappier settle + slightly less overshoot than legacy defaults. */
+  springStiff: 96,
+  springDamp: 14.5,
   panelTexW: 400,
-  /** Scene clear color — matches standalone `CardBinder.html`. */
-  bg: 0x0a0a0f,
+  /** Scene clear — parchment (never “void black” at grazing angles). */
+  bg: 0xebe4d8,
 } as const;
 
 /** 3×3 cells per page (matches catalog binder reference: nine sleeves per face). */
@@ -37,7 +39,7 @@ export const BINDER_CELLS_PER_PAGE = BINDER_COLS * BINDER_ROWS;
 export const BINDER_TEST_EXTRA_PAGES = 0;
 
 /** Doctrine codex: always this many spreads (empty sleeves pad the catalog). */
-export const BINDER_CODEX_SPREAD_COUNT = 10;
+export const BINDER_CODEX_SPREAD_COUNT = 9;
 
 export type CardBinderEngineOptions = {
   /** @deprecated Shell is always on (CardBinder.html); kept for API compatibility. */
@@ -52,7 +54,7 @@ export function binderPanelPixelSize(): { w: number; h: number } {
   return { w: TCG_FULL_CARD_W, h: TCG_FULL_CARD_H };
 }
 
-/** Sleeve planes sit slightly in front of leather (CardBinder.html `view()` / `staticPage`). */
+/** Folio paper / magnet grid sits slightly in front of the leather deck. */
 const PAGE_SURFACE_Z = -0.005;
 /**
  * Page flip hinge: `fp` rotates about **world Y** through origin. Layout places the gutter near **x = 0**
@@ -61,19 +63,25 @@ const PAGE_SURFACE_Z = -0.005;
 const FLIP_LEAF_HINGE_X = 0;
 const FLIP_LEAF_Z_EPS = 0.012;
 const UNDER_PAGE_Z_LIFT = 0.004;
-/** Two thin faces per flip cell — avoids `gl_FrontFacing` swapping recto/verso while the leaf rotates. */
-const FLIP_FACE_SEP = 0.0022;
-/** Phase C: recto lift toward camera (local +Z) for hover / active doctrine card. */
-/** Baseline lift so recto sleeves clear the page / deck in the depth buffer (hover adds on top). */
-const CARD_FLOAT_BASE_Z = 0.024;
-const CARD_FLOAT_HOVER_Z = 0.036;
-const CARD_FLOAT_SELECT_Z = 0.054;
-const CARD_FLOAT_LAMBDA = 14;
-const CARD_EDGE_DEPTH = 0.014;
+/**
+ * Duplex “magnet” slot: recto + verso are parallel planes with a tiny symmetric gap (no pocket, no per-recto lift).
+ * Each page is a 3×3 grid of these slots; the turning leaf is the same rigid geometry, only the whole `fp` rotates.
+ */
+const MAGNET_FACE_GAP = 0.0022;
+/** Slight per-slot Z bias so nine coplanar quads rarely z-fight in the depth buffer. */
+const MAGNET_SLOT_Z_STAGGER = 0.0001;
 
-const PANEL_VS = `varying vec2 vUv;varying vec3 vN;varying vec3 vP;void main(){vUv=uv;vec4 w=modelMatrix*vec4(position,1.0);vP=w.xyz;vN=normalize(mat3(modelMatrix)*normal);gl_Position=projectionMatrix*viewMatrix*w;}`;
-/** Slight edge falloff + warm paper cast (keeps faces legible; does not affect flip geometry). */
-const PANEL_SINGLE_FS = `precision highp float;uniform sampler2D uM;uniform vec3 uL;uniform float uFlipU;uniform float uFlipV;varying vec2 vUv;varying vec3 vN;varying vec3 vP;void main(){vec2 uv=vec2(mix(vUv.x,1.0-vUv.x,uFlipU),mix(vUv.y,1.0-vUv.y,uFlipV));vec3 V=normalize(cameraPosition-vP);vec3 N=normalize(vN);vec4 base=texture2D(uM,uv);vec3 L=normalize(uL);vec3 Hn=normalize(L+V);float diff=max(dot(N,L),0.0)*0.28+0.78;float spec=pow(max(dot(N,Hn),0.0),72.0)*0.45;float fres=pow(1.0-max(dot(N,V),0.0),3.0)*0.06;float vig=mix(0.93,1.0,smoothstep(0.78,0.2,length(vUv-vec2(0.5))*1.14));vec3 col=base.rgb*diff+spec+vec3(0.55,0.62,1.0)*fres;col*=vig;col=mix(col,col*vec3(1.02,1.01,0.985),0.07);gl_FragColor=vec4(col,base.a);}`;
+/** RMB-orbit: keep the camera in front of the folio (pages lie in XY); unbounded yaw looks straight through the card planes. */
+const BINDER_ORBIT_YAW_LIMIT = 0.76;
+const BINDER_ORBIT_PITCH_MIN = -0.48;
+const BINDER_ORBIT_PITCH_MAX = 0.4;
+
+function dragAngleShaped(raw: number): number {
+  const r = THREE.MathUtils.clamp(raw, 0, Math.PI);
+  const t = r / Math.PI;
+  const s = t * t * (3.0 - 2.0 * t);
+  return Math.PI * THREE.MathUtils.lerp(t, s, 0.38);
+}
 
 /** Empty sleeve panel — same 2D treatment as catalog cards. */
 export function makeEmptyBinderPanelCanvas(): HTMLCanvasElement {
@@ -160,8 +168,6 @@ export class CardBinderEngine {
   private readonly _shellMaterials: THREE.MeshStandardMaterial[] = [];
   private readonly _ownedLights: THREE.Light[] = [];
   private readonly pg: THREE.PlaneGeometry;
-  private readonly _cardEdgeGeo: THREE.BoxGeometry;
-  private readonly _cardEdgeMat: THREE.MeshStandardMaterial;
   private etex: THREE.CanvasTexture;
   private readonly cardBackTex: THREE.CanvasTexture;
   private ctex: THREE.Texture[];
@@ -206,7 +212,6 @@ export class CardBinderEngine {
   private pendingCardTap = false;
   private readonly FLIP_ARM_PX = 10;
   private readonly TAP_MAX_PX = 14;
-  private readonly _panelLightDir = new THREE.Vector3(1, 3, 4).normalize();
   /** 0 = closed tome, 1 = fully open binder; animated toward `openingTarget`. */
   private openingProgress = 0;
   private openingTarget: number | null = null;
@@ -215,15 +220,33 @@ export class CardBinderEngine {
   private readonly marginHitGroup = new THREE.Group();
   private _marginMat: THREE.MeshBasicMaterial | null = null;
   private _pickDebounceHandle: ReturnType<typeof globalThis.setTimeout> | null = null;
-  /** Catalog panel index under cursor (open binder, idle). */
-  private hoverCatalogIndex: number | null = null;
+  private readonly pageAudio: BinderPageAudio;
+  /** Full two-page parchment behind `lp`/`rp` so the folio never reads as the scene clear color. */
+  private readonly folioPaperMesh: THREE.Mesh;
+  /** Pointer horizontal speed (normalized) during page drag — used on release for flick commit. */
+  private pointerVxNorm = 0;
+  private lastMoveClientX = 0;
+  private lastMoveT = 0;
+  private _lastMechTe = 0;
+  private _metalTickDoneForOpen = false;
+  /** Shared thin quads faking page block thickness under static spreads. */
+  private readonly paperStackGeo: THREE.PlaneGeometry;
 
   constructor(canvas: HTMLCanvasElement, textures: THREE.Texture[], _opts?: CardBinderEngineOptions) {
-    this.R = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.pageAudio = new BinderPageAudio();
+
+    this.R = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance",
+    });
     this.R.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.R.outputColorSpace = THREE.SRGBColorSpace;
     this.R.toneMapping = THREE.ACESFilmicToneMapping;
-    this.R.toneMappingExposure = 1.72;
+    /** Leather shell only — catalog panels use `toneMapped:false` so ACES + high exposure cannot crush sleeve art to black. */
+    this.R.toneMappingExposure = 1.02;
+    this.R.setClearColor(BINDER_CFG.bg, 1);
 
     this.S = new THREE.Scene();
     this.S.background = new THREE.Color(BINDER_CFG.bg);
@@ -234,7 +257,7 @@ export class CardBinderEngine {
       this._ownedLights.push(L);
     };
 
-    addLight(new THREE.AmbientLight(0xffffff, 0.52));
+    addLight(new THREE.AmbientLight(0xfff5ec, 0.62));
     /** Open folio: cool skylight vs warm desk bounce. */
     addLight(new THREE.HemisphereLight(0xc8d6f0, 0x4a3020, 0.2));
     const d1 = new THREE.DirectionalLight(0xfff8ee, 1.12);
@@ -246,8 +269,8 @@ export class CardBinderEngine {
     const d3 = new THREE.DirectionalLight(0x8899cc, 0.3);
     d3.position.set(0, -1, -3);
     addLight(d3);
-    const spine = new THREE.PointLight(0xffecd8, 0.22, 9);
-    spine.position.set(-2.35, 0.15, 1.05);
+    const spine = new THREE.PointLight(0xffecd8, 0.28, 11);
+    spine.position.set(0.15, 0.25, 1.15);
     addLight(spine);
 
     this.G = new THREE.Group();
@@ -256,19 +279,46 @@ export class CardBinderEngine {
     this._sharedLeatherTex = createProceduralLeatherTexture();
 
     this.tomeBackGroup.name = "binder_tome_back";
+    this.tomeBackGroup.renderOrder = -30;
     this.G.add(this.tomeBackGroup);
     this._addTomeBackPlate(this.tomeBackGroup, this._sharedLeatherTex);
 
     this.shellGroup = new THREE.Group();
     this.shellGroup.name = "binder_ring_shell";
+    this.shellGroup.renderOrder = -30;
     this.G.add(this.shellGroup);
     this.ringMechanismGroup.name = "binder_three_ring_mechanism";
+    this.ringMechanismGroup.renderOrder = -28;
     this.shellGroup.add(this.ringMechanismGroup);
     this._addRingBinderMechanism(this.shellGroup, this.ringMechanismGroup, this._sharedLeatherTex);
 
     this.innerGroup = new THREE.Group();
     this.innerGroup.name = "binder_inner_pages";
+    /** Pull folio + cards **in front of** leather shell / rings in Z so nothing can paint over sleeves (depth + sort). */
+    this.innerGroup.position.z = 0.065;
+    this.innerGroup.renderOrder = 40;
     this.G.add(this.innerGroup);
+
+    {
+      const PW = BINDER_CFG.pageWidth;
+      const PH = BINDER_CFG.pageHeight;
+      const spreadW = PW * 2 + BINDER_CFG.seamGap * 2 + 0.14;
+      const spreadH = PH + 0.1;
+      const geo = new THREE.PlaneGeometry(spreadW, spreadH);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xede6dc,
+        transparent: false,
+        toneMapped: false,
+        depthWrite: true,
+        depthTest: true,
+      });
+      this.folioPaperMesh = new THREE.Mesh(geo, mat);
+      this.folioPaperMesh.name = "binder_folio_paper";
+      this.folioPaperMesh.position.set(0, 0, PAGE_SURFACE_Z - 0.026);
+      this.folioPaperMesh.renderOrder = -12;
+      this.folioPaperMesh.userData.binderRole = "folio_spread_paper";
+      this.innerGroup.add(this.folioPaperMesh);
+    }
 
     this.marginHitGroup.name = "binder_margin_hits";
     this.innerGroup.add(this.marginHitGroup);
@@ -278,15 +328,7 @@ export class CardBinderEngine {
     this._addFrontCover(this.coverHinge, this._sharedLeatherTex);
 
     this.pg = new THREE.PlaneGeometry(colW, rowH);
-    this._cardEdgeGeo = new THREE.BoxGeometry(colW * 0.96, rowH * 0.96, CARD_EDGE_DEPTH);
-    this._cardEdgeMat = new THREE.MeshStandardMaterial({
-      color: 0x24180e,
-      roughness: 0.62,
-      metalness: 0.08,
-    });
-    this._cardEdgeMat.polygonOffset = true;
-    this._cardEdgeMat.polygonOffsetFactor = 2;
-    this._cardEdgeMat.polygonOffsetUnits = 1;
+    this.paperStackGeo = new THREE.PlaneGeometry(BINDER_CFG.pageWidth * 0.98, BINDER_CFG.pageHeight * 0.97);
     this.etex = makeEmptyTexture();
     this.cardBackTex = createBinderCardBackTexture();
     this.ctex = this._withTestPagePadding(textures);
@@ -340,28 +382,31 @@ export class CardBinderEngine {
   private _leftSpread(chunkIdx: number): { toward: number[]; paired: number[] } | null {
     if (chunkIdx <= 0) return null;
     const toward = this.chunks[chunkIdx - 1]!;
-    if (!this._chunkHasCards(toward)) return null;
+    /** Always return when `chunkIdx > 0`: an all-empty prior chunk still needs a left leaf (empty sleeves), otherwise `_v` skips `lp` and the folio shows a black void. */
     return { toward, paired: [...this.chunks[chunkIdx]!] };
   }
 
-  private _matSingleFace(
-    map: THREE.Texture,
-    opts?: { flipU?: boolean; flipV?: boolean },
-  ): THREE.ShaderMaterial {
-    const m = new THREE.ShaderMaterial({
-      uniforms: {
-        uM: { value: map },
-        uL: { value: this._panelLightDir },
-        uFlipU: { value: opts?.flipU ? 1 : 0 },
-        uFlipV: { value: opts?.flipV ? 1 : 0 },
-      },
-      vertexShader: PANEL_VS,
-      fragmentShader: PANEL_SINGLE_FS,
-      side: THREE.FrontSide,
+  /** Catalog / sleeve quads — unlit; `toneMapped:false` keeps CanvasTexture art readable under ACES on the renderer. */
+  private _matPanel(map: THREE.Texture, opts?: { flipU?: boolean; flipV?: boolean }): THREE.MeshBasicMaterial {
+    let tex: THREE.Texture = map;
+    if (opts?.flipU || opts?.flipV) {
+      tex = map.clone();
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(opts.flipU ? -1 : 1, opts.flipV ? -1 : 1);
+      tex.offset.set(opts.flipU ? 1 : 0, opts.flipV ? 1 : 0);
+      tex.needsUpdate = true;
+    }
+    return new THREE.MeshBasicMaterial({
+      map: tex,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      transparent: false,
+      opacity: 1,
+      depthWrite: true,
+      depthTest: true,
+      polygonOffset: false,
     });
-    // Avoid polygon offset here: it pushes sleeves behind coplanar leather in the depth buffer so
-    // faces read as solid black until hover lifts the card group toward the camera.
-    return m;
   }
 
   /** Rear board + spine — the “outer” tome you feel behind the folio. */
@@ -372,6 +417,8 @@ export class CardBinderEngine {
       map: leatherMap,
       roughness: 0.9,
       metalness: 0.04,
+      emissive: new THREE.Color(0x1a1008),
+      emissiveIntensity: 0.12,
     });
     this._shellMaterials.push(leather);
 
@@ -382,17 +429,18 @@ export class CardBinderEngine {
     back.position.set(0, 0, -0.132);
     parent.add(back);
 
+    /** Center gutter / binding — reads as the spine between left and right pages when open. */
     const spine = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, spreadH + 0.04, backDepth + 0.08),
+      new THREE.BoxGeometry(0.14, spreadH + 0.04, backDepth + 0.08),
       leather,
     );
-    spine.position.set(-PW - 0.08, 0, -0.075);
+    spine.position.set(0, 0, -0.075);
     parent.add(spine);
 
     const paper = new THREE.MeshStandardMaterial({ color: 0xeae4d8, roughness: 0.94, metalness: 0 });
     this._shellMaterials.push(paper);
-    const pageBlock = new THREE.Mesh(new THREE.BoxGeometry(0.06, spreadH * 0.9, 0.035), paper);
-    pageBlock.position.set(-PW + 0.03, 0, -0.055);
+    const pageBlock = new THREE.Mesh(new THREE.BoxGeometry(0.05, spreadH * 0.9, 0.032), paper);
+    pageBlock.position.set(0, 0, -0.055);
     parent.add(pageBlock);
 
     const ribM = new THREE.MeshStandardMaterial({
@@ -404,8 +452,8 @@ export class CardBinderEngine {
     });
     this._shellMaterials.push(ribM);
     const ribbon = new THREE.Mesh(new THREE.BoxGeometry(0.038, PH * 0.5, 0.016), ribM);
-    ribbon.position.set(-PW - 0.05, PH * 0.06, 0.035);
-    ribbon.rotation.set(0.05, -0.12, 0.08);
+    ribbon.position.set(0, PH * 0.04, -0.055);
+    ribbon.rotation.set(0, 0, 0);
     ribbon.renderOrder = -2;
     parent.add(ribbon);
   }
@@ -424,6 +472,8 @@ export class CardBinderEngine {
       color: 0x3a2418,
       roughness: 0.86,
       metalness: 0.05,
+      emissive: new THREE.Color(0x1c1008),
+      emissiveIntensity: 0.1,
     });
     this._shellMaterials.push(deckMat);
     const deck = new THREE.Mesh(new THREE.BoxGeometry(PW * 2 + 0.3, PH + 0.2, 0.052), deckMat);
@@ -441,7 +491,7 @@ export class CardBinderEngine {
     for (const sx of [-1, 1] as const) {
       for (const sy of [-1, 1] as const) {
         const riv = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.022), gold);
-        riv.position.set(sx * (PW + 0.05), sy * (PH / 2 + 0.06), 0.012);
+        riv.position.set(sx * (PW + 0.05), sy * (PH / 2 + 0.06), -0.028);
         shell.add(riv);
       }
     }
@@ -455,25 +505,28 @@ export class CardBinderEngine {
     });
     this._shellMaterials.push(metal);
 
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.09, PH * 0.9, 0.042), metal);
-    rail.position.set(-PW - 0.03, 0, 0.008);
+    /** Rings sit on the spine (x≈0) but **behind** card quads — card mats use depthWrite so metal cannot paint over the folio. */
+    const gutterX = 0;
+    ringRoot.position.set(0, 0, -0.048);
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.09, PH * 0.9, 0.038), metal);
+    rail.position.set(gutterX, 0, 0.004);
     ringRoot.add(rail);
 
-    const postX = -PW - 0.03;
-    const ringZ = 0.042;
+    const postX = gutterX;
+    const ringZ = -0.006;
     const ringYs = [-PH * 0.34, 0, PH * 0.34];
     for (const y of ringYs) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.078, 0.016, 16, 40), metal);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.072, 0.014, 16, 40), metal);
       ring.position.set(postX + 0.02, y, ringZ);
       ring.rotation.y = Math.PI / 2;
       ringRoot.add(ring);
 
       const post = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.09, 12), metal);
-      post.position.set(postX - 0.02, y, -0.015);
+      post.position.set(postX - 0.02, y, -0.018);
       post.rotation.z = Math.PI / 2;
       ringRoot.add(post);
 
-      const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.034, 0.018), metal);
+      const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.034, 0.016), metal);
       clasp.position.set(postX + 0.055, y, ringZ);
       ringRoot.add(clasp);
     }
@@ -569,6 +622,26 @@ export class CardBinderEngine {
     return side > 0 ? this._cX(col) : -(BINDER_CFG.pageWidth - this._cX(col));
   }
 
+  /** Opaque folio paper behind the 3×3 slot grid so margins / grazing angles never read as the scene clear color. */
+  private _makeHalfPagePaperBacking(side: 1 | -1): THREE.Mesh {
+    const PW = BINDER_CFG.pageWidth;
+    const PH = BINDER_CFG.pageHeight;
+    const geo = new THREE.PlaneGeometry(PW * 0.996, PH * 0.996);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xe9e3da,
+      transparent: false,
+      toneMapped: false,
+      depthWrite: true,
+      depthTest: true,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(side * (PW / 2), 0, -0.0075);
+    m.renderOrder = -5;
+    m.userData.binderRole = "page_paper_backing";
+    m.userData.ownsGeometry = true;
+    return m;
+  }
+
   /**
    * One half-page (9 cells): **same** code path for static spread and flip leaf (`kind` only changes render order).
    */
@@ -580,6 +653,7 @@ export class CardBinderEngine {
     meshRenderOrder: number,
   ): THREE.Group {
     const g = new THREE.Group();
+    g.add(this._makeHalfPagePaperBacking(side));
     for (let r = 0; r < BINDER_ROWS; r++) {
       for (let c = 0; c < BINDER_COLS; c++) {
         const k = CardBinderEngine._cellIndex(r, c);
@@ -587,7 +661,16 @@ export class CardBinderEngine {
         const pi = paired[k]!;
         const frontT = this._gT(ti);
         const backT = pi >= 0 ? this._gT(pi) : this.cardBackTex;
-        const cell = this._binderCellPair(frontT, backT, ti, kind, meshRenderOrder, pi >= 0 ? pi : undefined);
+        const cell = this._binderCellPair(
+          frontT,
+          backT,
+          ti,
+          kind,
+          meshRenderOrder,
+          pi >= 0 ? pi : undefined,
+          k,
+          side,
+        );
         cell.position.set(this._cellLocalX(c, side), this._rY(r), 0);
         cell.userData.gridRow = r;
         cell.userData.gridCol = c;
@@ -603,60 +686,67 @@ export class CardBinderEngine {
     return this._pageSheet(toward, paired, s, "static", meshRenderOrder);
   }
 
+  /**
+   * One catalog duplex: recto + verso are two parallel card quads (magnet front/back), sharing the cell’s XY plane.
+   * `_kind` only affects render order for the turning leaf vs static spreads.
+   */
   private _binderCellPair(
     frontTex: THREE.Texture,
     backTex: THREE.Texture,
     rectoPickIndex: number,
-    _kind: "static" | "flip",
-    meshRenderOrder: number,
-    versoPickIndex?: number,
+    kind: "static" | "flip",
+    _meshRenderOrder: number,
+    versoPickIndex: number | undefined,
+    slotDepthIndex: number,
+    halfPageSide: 1 | -1,
   ): THREE.Group {
     const cell = new THREE.Group();
-    const hz = FLIP_FACE_SEP * 0.5;
-    const front = new THREE.Mesh(this.pg, this._matSingleFace(frontTex));
-    front.position.z = hz;
-    front.renderOrder = meshRenderOrder;
+    const half = MAGNET_FACE_GAP * 0.5;
+    const zBias = slotDepthIndex * MAGNET_SLOT_Z_STAGGER;
+
+    const front = new THREE.Mesh(this.pg, this._matPanel(frontTex));
+    front.position.z = half + zBias;
+    front.renderOrder = kind === "flip" ? 160 : 110;
     front.userData.pickIndex = rectoPickIndex;
     front.userData.gridPick = rectoPickIndex >= 0;
     front.userData.binderFace = "recto" as const;
-    front.userData.binderRole = "sleeve_recto" as const;
+    front.userData.binderRole = "slot_recto" as const;
     if (rectoPickIndex >= 0) front.userData.catalogIndex = rectoPickIndex;
 
-    const back = new THREE.Mesh(this.pg, this._matSingleFace(backTex, { flipV: true }));
-    back.position.z = -hz;
+    // Left half-page sits in -X; mirror verso U so backs read correctly vs right half.
+    const back = new THREE.Mesh(
+      this.pg,
+      this._matPanel(backTex, { flipV: true, flipU: halfPageSide < 0 }),
+    );
+    back.position.z = -half - zBias;
     back.rotation.x = Math.PI;
-    back.renderOrder = meshRenderOrder;
+    back.renderOrder = kind === "flip" ? 158 : 108;
     back.userData.binderFace = "verso" as const;
-    back.userData.binderRole = "sleeve_verso" as const;
+    back.userData.binderRole = "slot_verso" as const;
     if (versoPickIndex !== undefined && versoPickIndex >= 0) {
       back.userData.pickIndex = versoPickIndex;
       back.userData.catalogIndex = versoPickIndex;
     }
 
-    if (rectoPickIndex >= 0) {
-      const cardFloat = new THREE.Group();
-      cardFloat.name = "binder_card_float";
-      cardFloat.userData.catalogPickIndex = rectoPickIndex;
-      cardFloat.position.z = CARD_FLOAT_BASE_Z;
-
-      const edgeGeo = this._cardEdgeGeo.clone();
-      const edge = new THREE.Mesh(edgeGeo, this._cardEdgeMat);
-      edge.userData.skipMaterialDispose = true;
-      edge.userData.ownsGeometry = true;
-      edge.position.z = hz - CARD_EDGE_DEPTH * 0.35;
-      edge.renderOrder = meshRenderOrder;
-      cardFloat.add(edge);
-
-      front.position.z = hz + 0.004;
-      cardFloat.add(front);
-      cell.add(cardFloat);
-    } else {
-      front.position.z = hz;
-      cell.add(front);
-    }
-
+    cell.add(front);
     cell.add(back);
     return cell;
+  }
+
+  private _addPaperStackUnder(page: THREE.Group, xCenter: number): void {
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xe6e0d6,
+        transparent: true,
+        opacity: 0.042 + i * 0.014,
+        depthWrite: false,
+      });
+      const m = new THREE.Mesh(this.paperStackGeo, mat);
+      m.position.set(xCenter, 0, PAGE_SURFACE_Z - 0.0024 - i * 0.00105);
+      m.renderOrder = -6 - i;
+      m.userData.binderRole = "paper_stack";
+      page.add(m);
+    }
   }
 
   private _cl(p: THREE.Group | null): void {
@@ -684,16 +774,19 @@ export class CardBinderEngine {
     if (left) {
       this.lp = this._sp(left.toward, left.paired, -1);
       this.lp.position.z = PAGE_SURFACE_Z;
+      this._addPaperStackUnder(this.lp, -BINDER_CFG.pageWidth / 2);
       this.innerGroup.add(this.lp);
     } else if (s === 0) {
       /** First spread: `_leftSpread(0)` is null — still draw the left leaf so both halves read as a folio. */
       this.lp = this._sp(this._emptyChunk(), this._emptyChunk(), -1);
       this.lp.position.z = PAGE_SURFACE_Z;
+      this._addPaperStackUnder(this.lp, -BINDER_CFG.pageWidth / 2);
       this.innerGroup.add(this.lp);
     }
     if (this.chunks[s]) {
       this.rp = this._sp(this.chunks[s]!, this._pairedVersoRight(s), 1);
       this.rp.position.z = PAGE_SURFACE_Z;
+      this._addPaperStackUnder(this.rp, BINDER_CFG.pageWidth / 2);
       this.innerGroup.add(this.rp);
     }
     this._notifyPage();
@@ -706,6 +799,16 @@ export class CardBinderEngine {
     this.fp = null;
     const s = this.cur;
     if (this.fl === 1 && this.chunks[s]) {
+      const dest = s + 1;
+      /** Destination left page under the turn — matches post-flip `_v` so cards don’t “swap” mid-animation. */
+      this._cl(this.lp);
+      this.lp = null;
+      const ld = this._leftSpread(dest);
+      if (ld) {
+        this.lp = this._sp(ld.toward, ld.paired, -1, 1);
+        this.lp.position.z = PAGE_SURFACE_Z - UNDER_PAGE_Z_LIFT;
+        this.innerGroup.add(this.lp);
+      }
       this.fp = this._pageSheet(this.chunks[s]!, this._pairedVersoRight(s), 1, "flip", 5);
       this.fp.position.set(FLIP_LEAF_HINGE_X, 0, PAGE_SURFACE_Z + FLIP_LEAF_Z_EPS);
       this.innerGroup.add(this.fp);
@@ -720,14 +823,26 @@ export class CardBinderEngine {
       this._applyPanelHighlights();
     }
     if (this.fl === -1 && this.chunks[s - 1]) {
+      const dest = s - 1;
       this.fp = this._pageSheet(this.chunks[s - 1]!, this.chunks[s]!, -1, "flip", 5);
       this.fp.position.set(FLIP_LEAF_HINGE_X, 0, PAGE_SURFACE_Z + FLIP_LEAF_Z_EPS);
       this.innerGroup.add(this.fp);
+      /** Static right page must be the **destination** spread, not the old one (was causing wrong cards mid-flip). */
+      this._cl(this.rp);
+      this.rp = null;
+      this.rp = this._sp(this.chunks[dest]!, this._pairedVersoRight(dest), 1, 1);
+      this.rp.position.z = PAGE_SURFACE_Z - UNDER_PAGE_Z_LIFT;
+      this.innerGroup.add(this.rp);
       this._cl(this.lp);
       this.lp = null;
-      const uc = s >= 2 ? s - 2 : null;
-      if (uc !== null && this._chunkHasCards(this.chunks[uc]!)) {
-        this.lp = this._sp(this.chunks[uc]!, this._pairedVersoRight(uc), -1, 1);
+      const ll = this._leftSpread(dest);
+      if (ll) {
+        this.lp = this._sp(ll.toward, ll.paired, -1, 1);
+        this.lp.position.z = PAGE_SURFACE_Z - UNDER_PAGE_Z_LIFT;
+        this.innerGroup.add(this.lp);
+      } else if (dest === 0) {
+        /** Match `_v` for spread 0 — otherwise the left folio is missing for the whole peel and cards read “wrong”. */
+        this.lp = this._sp(this._emptyChunk(), this._emptyChunk(), -1, 1);
         this.lp.position.z = PAGE_SURFACE_Z - UNDER_PAGE_Z_LIFT;
         this.innerGroup.add(this.lp);
       }
@@ -739,6 +854,10 @@ export class CardBinderEngine {
   private _aa(a: number): void {
     if (!this.fp) return;
     this.fp.rotation.y = this.fl === 1 ? -a : a;
+    const sn = Math.sin(a);
+    const lift = sn * (1.0 - Math.cos(a)) * 0.5;
+    this.fp.position.x = FLIP_LEAF_HINGE_X;
+    this.fp.position.z = PAGE_SURFACE_Z + FLIP_LEAF_Z_EPS + 0.032 * lift;
   }
 
   private _done(): void {
@@ -748,6 +867,8 @@ export class CardBinderEngine {
     this.ang = 0;
     this.vel = 0;
     this.tgt = null;
+    this.pageAudio.thud();
+    this.pageAudio.frictionStop();
     this._v();
   }
 
@@ -756,6 +877,8 @@ export class CardBinderEngine {
     this.ang = 0;
     this.vel = 0;
     this.tgt = null;
+    this.pageAudio.rustle();
+    this.pageAudio.frictionStop();
     this._v();
   }
 
@@ -764,9 +887,13 @@ export class CardBinderEngine {
   }
 
   flipNext(): void {
-    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl || this.cur >= this.chunks.length - 1)
-      return;
+    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl) return;
+    if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
+    if (this.cur >= this.chunks.length - 1) {
+      this.jumpToFirstSpread();
+      return;
+    }
     this.fl = 1;
     this.ang = 0;
     this.vel = 0;
@@ -775,8 +902,14 @@ export class CardBinderEngine {
   }
 
   flipPrev(): void {
-    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl || this.cur <= 0) return;
+    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl) return;
+    if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
+    /** Spread 0: no left leaf to peel — jump to end so “Prev” still moves backward through the codex. */
+    if (this.cur <= 0) {
+      this.jumpToLastSpread();
+      return;
+    }
     this.fl = -1;
     this.ang = 0;
     this.vel = 0;
@@ -826,6 +959,34 @@ export class CardBinderEngine {
     const open = this.openingProgress >= BINDER_FULLY_OPEN_PROGRESS;
     this.pitch = open ? -0.14 : -0.27;
     this.dist = open ? 5.88 : 4.92;
+    this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
+  }
+
+  /**
+   * OS overlays (screenshots), tab blur, or lost capture can skip `pointerup` — finish an active page drag
+   * so the spring (`tgt`) runs and the leaf does not freeze mid-turn.
+   */
+  releaseInterruptedGesture(): void {
+    this.orb = false;
+    this.coverTapArmed = false;
+    this.pendingCardTap = false;
+    this.flipArm = null;
+    if (this.drag) this._settleActivePageDrag();
+  }
+
+  private _settleActivePageDrag(): void {
+    if (!this.drag) return;
+    this.drag = false;
+    this.pageAudio.frictionStop();
+    const pv = Math.abs(this.pointerVxNorm);
+    this.pointerVxNorm = 0;
+    this.flipArm = null;
+    if (this.fl === 0) {
+      this.tgt = null;
+      return;
+    }
+    const thr = Math.PI * (0.4 - Math.min(0.17, pv));
+    this.tgt = this.ang >= thr ? Math.PI : 0;
   }
 
   syncDoctrineHighlights(
@@ -886,10 +1047,12 @@ export class CardBinderEngine {
         color: primary ? 0x5cff9a : 0x2ab86a,
         transparent: true,
         opacity: primary ? 1 : 0.88,
+        depthTest: true,
+        depthWrite: false,
       });
       const lines = new THREE.LineLoop(g, mat);
-      lines.position.z = 0.018;
-      lines.renderOrder = 10;
+      lines.position.z = 0.008;
+      lines.renderOrder = 130;
       mesh.add(lines);
       mesh.userData._outline = lines;
     });
@@ -932,46 +1095,19 @@ export class CardBinderEngine {
     return out;
   }
 
-  /** Invisible gutter-adjacent planes for page-turn drag (replaces NDC fraction fallback). */
+  /**
+   * Previously spawned large “invisible” gutter meshes for ray hits; some GPUs still drew them as a black slab.
+   * Page-turn arming uses `_edgeTurnSideFromPlane` + `hitSpreadSide` fallback (see `pD`) — no margin quads needed.
+   */
   private _syncMarginHits(): void {
-    if (!this._marginMat) {
-      this._marginMat = new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      });
-    }
     for (const ch of [...this.marginHitGroup.children]) {
       const m = ch as THREE.Mesh;
       this.marginHitGroup.remove(m);
       m.geometry.dispose();
     }
-    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS) return;
-
-    const spineHalf = 0.07;
-    const PW = BINDER_CFG.pageWidth;
-    const PH = BINDER_CFG.pageHeight;
-    const z = PAGE_SURFACE_Z + 0.028;
-    const w = Math.max(0.22, PW * 0.54 - spineHalf);
-    const h = PH * 0.9;
-
-    if (this.cur < this.chunks.length - 1) {
-      const geo = new THREE.PlaneGeometry(w, h);
-      const mesh = new THREE.Mesh(geo, this._marginMat);
-      mesh.position.set(spineHalf + w / 2, 0, z);
-      mesh.userData.binderRole = "page_margin";
-      mesh.userData.marginSide = "right";
-      this.marginHitGroup.add(mesh);
-    }
-    if (this.cur > 0) {
-      const geo = new THREE.PlaneGeometry(w, h);
-      const mesh = new THREE.Mesh(geo, this._marginMat);
-      mesh.position.set(-(spineHalf + w / 2), 0, z);
-      mesh.userData.binderRole = "page_margin";
-      mesh.userData.marginSide = "left";
-      this.marginHitGroup.add(mesh);
+    if (this._marginMat) {
+      this._marginMat.dispose();
+      this._marginMat = null;
     }
   }
 
@@ -981,6 +1117,15 @@ export class CardBinderEngine {
     this.innerGroup.visible = this.openingProgress > 0.09;
     this.coverHinge.visible = this.openingProgress < 0.992;
     const mechTe = THREE.MathUtils.smoothstep(this.openingProgress, 0.04, 0.24);
+    if (this.openingProgress < 0.035) {
+      this._metalTickDoneForOpen = false;
+      this._lastMechTe = 0;
+    }
+    if (!this._metalTickDoneForOpen && this._lastMechTe < 0.17 && mechTe >= 0.17) {
+      this.pageAudio.metalTick();
+      this._metalTickDoneForOpen = true;
+    }
+    this._lastMechTe = mechTe;
     this.shellGroup.visible = this.openingProgress > 0.035;
     this.shellGroup.position.z = THREE.MathUtils.lerp(-0.036, 0.014, te);
     this.ringMechanismGroup.scale.setScalar(0.78 + 0.22 * mechTe);
@@ -988,8 +1133,12 @@ export class CardBinderEngine {
     const open = this.openingProgress >= BINDER_FULLY_OPEN_PROGRESS;
     if (open !== this._lastNotifiedOpen) {
       this._lastNotifiedOpen = open;
+      if (open) {
+        this._syncMarginHits();
+        /** Rebuild spreads once the folio is actually open — avoids the first `_v()` while `openingProgress===0` (logged in NDJSON) and keeps slots aligned with visibility gates. */
+        if (!this.disposed) this._v();
+      }
       this.onOpenStateChange?.(open);
-      if (open) this._syncMarginHits();
     }
   }
 
@@ -1011,14 +1160,14 @@ export class CardBinderEngine {
     const hits = this.raycaster.intersectObjects(objs, false);
     if (hits.length === 0) return null;
     const side = hits[0]!.object.userData.marginSide as "left" | "right" | undefined;
-    if (side === "right" && this.cur < this.chunks.length - 1) return "right";
-    if (side === "left" && this.cur > 0) return "left";
+    if (side === "right" && this.chunks.length > 1) return "right";
+    if (side === "left" && this.chunks.length > 1) return "left";
     return null;
   }
 
   /**
    * Outer horizontal bands on the folio plane — arms page turns before card picks (doctrine UX).
-   * Uses the sleeve plane z, not margin quads (those sit in front of cards in ray order).
+   * Uses the folio plane z, not margin quads (those sit in front of card slots in ray order).
    */
   private _edgeTurnSideFromPlane(clientX: number, clientY: number, rect: DOMRect): "left" | "right" | null {
     if (!interactionMayArmPageTurn(this.getBinderUiMode())) return null;
@@ -1032,61 +1181,20 @@ export class CardBinderEngine {
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
     if (Math.abs(hit.y) > PH * 0.58) return null;
-    if (hit.x >= edge && this.cur < this.chunks.length - 1) return "right";
-    if (hit.x <= -edge && this.cur > 0) return "left";
+    if (hit.x >= edge && this.chunks.length > 1) return "right";
+    if (hit.x <= -edge && this.chunks.length > 1) return "left";
     return null;
   }
 
-  /** Clear hover lift targets (e.g. pointer left canvas). */
-  clearCardHover(): void {
-    this.hoverCatalogIndex = null;
-  }
-
-  private _refreshHoverCatalog(clientX: number, clientY: number, rect: DOMRect): void {
-    if (
-      this.getBinderUiMode() !== "open_idle" ||
-      this.fl !== 0 ||
-      this.openingProgress < BINDER_FULLY_OPEN_PROGRESS
-    ) {
-      this.hoverCatalogIndex = null;
-      return;
-    }
-    const idx = this.pickAt(clientX, clientY, rect);
-    this.hoverCatalogIndex = idx !== null && idx >= 0 ? idx : null;
-  }
-
-  private _updateCardFloatMotion(dt: number): void {
-    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS) return;
-
-    const order = this.doctrOrder;
-    const slots = this.doctrSlots;
-    const slotId =
-      this.doctrActive !== null && this.doctrActive >= 0 && this.doctrActive < slots.length
-        ? slots[this.doctrActive]!
-        : null;
-
-    const k = Math.min(1, CARD_FLOAT_LAMBDA * dt);
-    this.innerGroup.traverse((ch) => {
-      const o = ch as THREE.Group;
-      if (o.name !== "binder_card_float") return;
-      const ix = o.userData.catalogPickIndex as number;
-      if (typeof ix !== "number" || ix < 0) return;
-
-      const cid = ix < order.length ? order[ix]! : null;
-      const hoverZ = this.hoverCatalogIndex === ix ? CARD_FLOAT_HOVER_Z : 0;
-      const selectZ = slotId && cid && cid === slotId ? CARD_FLOAT_SELECT_Z : 0;
-      const targetZ = CARD_FLOAT_BASE_Z + Math.max(hoverZ, selectZ);
-
-      o.position.z = THREE.MathUtils.lerp(o.position.z, targetZ, k);
-    });
-  }
+  /** Kept for canvas `pointerleave` — slots stay flat (no hover depth motion). */
+  clearCardHover(): void {}
 
   pD(e: PointerEvent, rect: DOMRect): void {
+    this.pageAudio.resumeFromGesture();
     this.cancelPendingCatalogPick();
     this.pendingCardTap = false;
 
     if (e.button === 2 || e.shiftKey) {
-      this.hoverCatalogIndex = null;
       this.orb = true;
       this.oSX = e.clientX;
       this.oSY = e.clientY;
@@ -1097,7 +1205,6 @@ export class CardBinderEngine {
 
     const mode = this.getBinderUiMode();
     if (mode === "closed" || mode === "opening") {
-      this.hoverCatalogIndex = null;
       this.flipArm = null;
       this.coverTapArmed = mode === "closed" && this._rayHitsCover(e.clientX, e.clientY, rect);
       this.armSX = e.clientX;
@@ -1135,8 +1242,12 @@ export class CardBinderEngine {
     if (this.orb) {
       const dx = (e.clientX - this.oSX) / rect.width;
       const dy = (e.clientY - this.oSY) / rect.height;
-      this.yaw = this.oSY2 + dx * Math.PI;
-      this.pitch = Math.max(-1, Math.min(1, this.oSP + dy * Math.PI * 0.6));
+      this.yaw = THREE.MathUtils.clamp(this.oSY2 + dx * Math.PI, -BINDER_ORBIT_YAW_LIMIT, BINDER_ORBIT_YAW_LIMIT);
+      this.pitch = THREE.MathUtils.clamp(
+        this.oSP + dy * Math.PI * 0.6,
+        BINDER_ORBIT_PITCH_MIN,
+        BINDER_ORBIT_PITCH_MAX,
+      );
       return;
     }
 
@@ -1166,16 +1277,34 @@ export class CardBinderEngine {
       this.dSX = e.clientX;
       this.dSA = this.ang;
       this.flipArm = null;
+      this.pageAudio.resumeFromGesture();
+      this.pageAudio.frictionStart();
+      this.lastMoveClientX = e.clientX;
+      this.lastMoveT = performance.now();
+      this.pointerVxNorm = 0;
     }
 
     if (!this.drag) {
-      this._refreshHoverCatalog(e.clientX, e.clientY, rect);
       return;
     }
 
-    this.hoverCatalogIndex = null;
+    const now = performance.now();
+    const dtMs = now - this.lastMoveT;
+    if (dtMs > 0 && dtMs < 90) {
+      const vx = (e.clientX - this.lastMoveClientX) / dtMs;
+      this.pointerVxNorm = THREE.MathUtils.lerp(this.pointerVxNorm, vx * 10, 0.4);
+    }
+    this.lastMoveClientX = e.clientX;
+    this.lastMoveT = now;
     const drag = ((e.clientX - this.dSX) / rect.width) * Math.PI * 1.5;
-    this.ang = Math.max(0, Math.min(Math.PI, this.dSA - drag));
+    // Next: drag from the right gutter toward the spine (mouse left) increases angle.
+    // Prev: drag from the left gutter outward (mouse right) must increase angle — same `- drag` would clamp to 0.
+    const raw = THREE.MathUtils.clamp(
+      this.fl === 1 ? this.dSA - drag : this.dSA + drag,
+      0,
+      Math.PI,
+    );
+    this.ang = dragAngleShaped(raw);
   }
 
   pU(e: PointerEvent, rect: DOMRect): void {
@@ -1223,9 +1352,7 @@ export class CardBinderEngine {
       return;
     }
 
-    this.drag = false;
-    this.tgt = this.ang > Math.PI * 0.4 ? Math.PI : 0;
-    this.flipArm = null;
+    this._settleActivePageDrag();
   }
 
   pickAt(clientX: number, clientY: number, rect: DOMRect): number | null {
@@ -1270,18 +1397,21 @@ export class CardBinderEngine {
         (this.fl === 1 && this.tgt === Math.PI && this.ang >= Math.PI - 0.01) ||
         (this.fl === -1 && this.tgt === Math.PI && this.ang >= Math.PI - 0.01)
       ) {
-        if (Math.abs(this.vel) < 0.3) this._done();
+        if (Math.abs(this.vel) < 0.36) this._done();
       } else if (
         (this.fl === 1 && this.tgt === 0 && this.ang <= 0.01) ||
         (this.fl === -1 && this.tgt === 0 && this.ang <= 0.01)
       ) {
-        if (Math.abs(this.vel) < 0.3) this._canc();
+        if (Math.abs(this.vel) < 0.36) this._canc();
       }
     }
     if (this.fp) this._aa(this.ang);
-    this._updateCardFloatMotion(dt);
+    this.yaw = THREE.MathUtils.clamp(this.yaw, -BINDER_ORBIT_YAW_LIMIT, BINDER_ORBIT_YAW_LIMIT);
+    this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
+    const flipping = this.fl !== 0 && this.fp !== null;
     const tCam = easeOutCubic(this.openingProgress);
-    const distBlend = THREE.MathUtils.lerp(4.88, this.dist, tCam);
+    let distBlend = THREE.MathUtils.lerp(4.88, this.dist, tCam);
+    if (flipping) distBlend *= 1 + 0.016 * Math.sin(this.ang);
     const pitchBlend = THREE.MathUtils.lerp(-0.28, this.pitch, tCam);
     const yawNudge = THREE.MathUtils.lerp(0.09, 0, tCam);
     this.cam.position.set(
@@ -1362,10 +1492,13 @@ export class CardBinderEngine {
     this.coverBoard = null;
     this.G.remove(this.coverHinge);
 
+    this.innerGroup.remove(this.folioPaperMesh);
+    this.folioPaperMesh.geometry.dispose();
+    (this.folioPaperMesh.material as THREE.Material).dispose();
+    this.pageAudio.dispose();
     this.G.remove(this.innerGroup);
     this._sharedLeatherTex.dispose();
-    this._cardEdgeGeo.dispose();
-    this._cardEdgeMat.dispose();
+    this.paperStackGeo.dispose();
     this.pg.dispose();
     this.R.dispose();
   }
@@ -1385,6 +1518,10 @@ export class CardBinderEngine {
     this.openingTarget = null;
     this._lastNotifiedOpen = false;
     this._applyBinderOpenness();
+    if (!this.disposed) {
+      this.cam.updateProjectionMatrix();
+      this.R.render(this.S, this.cam);
+    }
   }
 
   get pageIndex(): number {

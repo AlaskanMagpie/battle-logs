@@ -4,9 +4,6 @@ import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
   FORWARD_BUILD_TIME_MULT,
-  HERO_ATTACK_COOLDOWN_TICKS,
-  HERO_ATTACK_DAMAGE,
-  HERO_ATTACK_RANGE,
   HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_FLUX_FEE,
   SHATTER_TARGET_RADIUS,
@@ -29,7 +26,6 @@ import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { findNeutralTapIndexNearHero } from "./hero";
 import { dist2 } from "./helpers";
-import { tryPlayerHeroStrike, type PlayerHeroStrikeTag } from "./heroStrike";
 
 const ALT_HOLD_PICK_RADIUS = 6;
 
@@ -174,29 +170,6 @@ function tryFreeMuster(s: GameState, st: StructureRuntime): boolean {
  */
 function emitSummonFx(s: GameState, _catalogId: string, pos: Vec2): void {
   emitFx(s, "lightning", pos);
-}
-
-function tryHeroAttack(s: GameState, _click: Vec2): void {
-  if (s.phase !== "playing") return;
-  const h = s.hero;
-  if (h.attackCooldownTicksRemaining > 0) {
-    s.lastMessage = "Attack on cooldown.";
-    return;
-  }
-  const r = tryPlayerHeroStrike(s);
-  if (!r.ok) {
-    s.lastMessage = "No target in melee range.";
-    logGame("attack", "Wizard swing — no target in range", s.tick);
-    return;
-  }
-  const msg: Record<PlayerHeroStrikeTag, string> = {
-    unit: "Arcane strike!",
-    enemyWizard: "Strike the rival Wizard!",
-    fortress: "Strike the fortress!",
-    structure: "Strike the enemy tower!",
-    tap: "Strike the enemy Mana anchor!",
-  };
-  s.lastMessage = msg[r.tag];
 }
 
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
@@ -401,7 +374,6 @@ function handleWorldClick(
     }
   }
 
-  tryHeroAttack(s, pos);
 }
 
 function clearGlobalRally(s: GameState): void {
@@ -479,8 +451,31 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));
-      s.hero.wasdStrafe = sx;
-      s.hero.wasdForward = sz;
+      const { camFx, camFz, camRx, camRz } = it;
+      if (
+        camFx !== undefined &&
+        camFz !== undefined &&
+        camRx !== undefined &&
+        camRz !== undefined &&
+        (sx !== 0 || sz !== 0)
+      ) {
+        // World XZ move (normalized): W/S along camera forward on ground, A/D along camera right.
+        let wx = sz * camFx + sx * camRx;
+        let wz = sz * camFz + sx * camRz;
+        const len = Math.hypot(wx, wz);
+        if (len > 1e-6) {
+          wx /= len;
+          wz /= len;
+        } else {
+          wx = 0;
+          wz = 0;
+        }
+        s.hero.wasdStrafe = wx;
+        s.hero.wasdForward = wz;
+      } else {
+        s.hero.wasdStrafe = sx;
+        s.hero.wasdForward = -sz;
+      }
     } else if (it.type === "hero_cancel_claim") {
       if (s.hero.claimChannelTarget !== null) {
         s.hero.claimChannelTarget = null;

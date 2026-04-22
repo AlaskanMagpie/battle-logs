@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BINDER_CELLS_PER_PAGE, BINDER_CODEX_SPREAD_COUNT } from "../ui/binder/CardBinderEngine";
 import { CATALOG } from "./catalog";
 import { sortCatalogIds } from "./catalogSort";
 import { isCommandEntry } from "./types";
@@ -6,6 +7,12 @@ import { isCommandEntry } from "./types";
 const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 
 describe("Doctrine binder catalog", () => {
+  it("pads the doctrine codex to nine spreads of nine cells", () => {
+    expect(BINDER_CODEX_SPREAD_COUNT).toBe(9);
+    expect(BINDER_CELLS_PER_PAGE).toBe(9);
+    expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_PAGE).toBe(81);
+  });
+
   it("includes enough structures to fill more than one 3×3 page", () => {
     expect(STRUCTURE_CATALOG_IDS.length).toBeGreaterThan(9);
   });

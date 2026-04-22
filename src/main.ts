@@ -34,6 +34,13 @@ const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
 const pickerRoot = document.querySelector<HTMLElement>("#doctrine-picker")!;
 
+function syncCameraFollowUi(root: HTMLElement, follow: boolean): void {
+  const btn = root.querySelector("#btn-camera-follow");
+  if (!btn) return;
+  btn.textContent = follow ? "Camera: lock" : "Camera: free";
+  btn.setAttribute("aria-pressed", follow ? "true" : "false");
+}
+
 function bindReplayDebugGlobals(getReplay: () => ReplayCapture): void {
   const w = window as Window & {
     __signalWarsReplay?: ReplayCapture;
@@ -384,11 +391,16 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       const maxTicksThisFrame = 48;
       let ticksThisFrame = 0;
       let first = true;
+      const camBasis =
+        state.phase === "playing" &&
+        (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)
+          ? renderer.getCameraGroundMoveBasis()
+          : null;
       while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
         ticksThisFrame += 1;
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
-        if (state.phase === "playing") {
+        if (state.phase === "playing" && camBasis) {
           let strafe = 0;
           let forward = 0;
           if (keysHeld.a) strafe -= 1;
@@ -396,7 +408,8 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
           if (keysHeld.w) forward += 1;
           if (keysHeld.s) forward -= 1;
           if (strafe !== 0 || forward !== 0) {
-            chunk.push({ type: "hero_wasd", strafe, forward });
+            const { fx, fz, rx, rz } = camBasis;
+            chunk.push({ type: "hero_wasd", strafe, forward, camFx: fx, camFz: fz, camRx: rx, camRz: rz });
           }
         }
         const tickBefore = state.tick;
@@ -426,9 +439,18 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       renderer.setPlacementGhost(null, false);
       renderer.sync(state, USE_GLB);
       if (renderer.getCameraFollowHero()) renderer.setCameraFollowHero(true);
+      syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
       acc = 0;
       last = performance.now();
       rafId = requestAnimationFrame(tick);
+    };
+
+    const applyCameraToggle = (): void => {
+      const follow = renderer.toggleCameraFollowHero();
+      state.lastMessage = follow
+        ? "Camera locked on wizard — zoom with the mouse wheel only."
+        : "Camera free — MMB orbit; lock on wizard with Camera or C.";
+      syncCameraFollowUi(hudRoot, follow);
     };
 
     mountHud(hudRoot, state, {
@@ -436,17 +458,48 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       onEditDoctrine: () => {
         window.location.reload();
       },
+      onCameraFollowToggle: applyCameraToggle,
       pushIntent: (intent) => pendingIntents.push(intent),
     });
+    syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
     const doctrineTrackEl = hudRoot.querySelector("#doctrine-track");
     if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
     showRulesToast();
 
-    // G = stance; R = arm global rally (next LMB on map sets rally point).
+    const digitKeyToDoctrineSlot: Record<string, number> = {
+      Digit1: 0,
+      Digit2: 1,
+      Digit3: 2,
+      Digit4: 3,
+      Digit5: 4,
+      Digit6: 5,
+      Digit7: 6,
+      Digit8: 7,
+      Digit9: 8,
+      Digit0: 9,
+    };
+
+    const selectDoctrineSlotUi = (index: number): void => {
+      if (state.phase !== "playing") return;
+      if (index < 0 || index >= DOCTRINE_SLOT_COUNT) return;
+      pendingIntents.push({ type: "select_doctrine_slot", index });
+      const d = hudRoot.querySelector("#doctrine-track");
+      if (!d) return;
+      for (const el of d.querySelectorAll(".slot")) el.classList.remove("active");
+      d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
+    };
+
+    // G = stance; R = arm global rally; C = camera; 1–0 = doctrine slots.
     window.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.repeat) return;
       const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
       if (tag === "input" || tag === "textarea") return;
+      const slotIdx = digitKeyToDoctrineSlot[ev.code];
+      if (slotIdx !== undefined) {
+        ev.preventDefault();
+        selectDoctrineSlotUi(slotIdx);
+        return;
+      }
       if (ev.key === "g" || ev.key === "G") {
         ev.preventDefault();
         pendingIntents.push({ type: "toggle_army_stance" });
@@ -455,10 +508,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
         pendingIntents.push({ type: "begin_rally_click" });
       } else if (ev.code === "KeyC") {
         ev.preventDefault();
-        const follow = renderer.toggleCameraFollowHero();
-        state.lastMessage = follow
-          ? "Camera follows your wizard (C = free orbit)."
-          : "Camera: free orbit — pivot stays put (C = follow wizard).";
+        applyCameraToggle();
       }
     });
 
@@ -468,13 +518,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       () => state,
       renderer,
       pendingIntents,
-      (index) => {
-        pendingIntents.push({ type: "select_doctrine_slot", index });
-        const d = hudRoot.querySelector("#doctrine-track");
-        if (!d) return;
-        for (const el of d.querySelectorAll(".slot")) el.classList.remove("active");
-        d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
-      },
+      selectDoctrineSlotUi,
       doctrineDragRef,
     );
 
@@ -485,6 +529,8 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       if (state.phase !== "playing") return;
+      // Middle = camera pan (OrbitControls); do not treat as a map click.
+      if (ev.button !== 0 && ev.button !== 2) return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;

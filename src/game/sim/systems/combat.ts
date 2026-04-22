@@ -74,8 +74,9 @@ export function combat(s: GameState): void {
   // Enemy → player structures (Keep is just another player structure).
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
+    const ur2 = u.range * u.range;
     let best: StructureRuntime | null = null;
-    let bestD = 2.5 * 2.5;
+    let bestD = ur2;
     for (const st of s.structures) {
       if (st.team !== "player") continue;
       const d = dist2(u, st);
@@ -92,13 +93,11 @@ export function combat(s: GameState): void {
     }
   }
 
-  // Enemy units ↦ Wizard hero (melee-range chip damage).
+  // Enemy units ↦ Wizard hero (automatic melee at unit weapon range).
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (s.hero.hp <= 0) break;
-    const dx = u.x - s.hero.x;
-    const dz = u.z - s.hero.z;
-    if (dx * dx + dz * dz <= 2.2 * 2.2) {
+    if (dist2(u, s.hero) <= u.range * u.range) {
       s.hero.hp = Math.max(0, s.hero.hp - u.dmgPerTick * 0.4);
     }
   }

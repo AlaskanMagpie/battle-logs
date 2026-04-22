@@ -3,16 +3,18 @@
 }
 :root {
   /* In-match doctrine tray — max cap only; row sizes to cards (no empty slab). */
-  --doctrine-tray-h: clamp(112px, min(20dvh, calc(14vw + 56px)), 200px);
+  --doctrine-tray-h: clamp(120px, min(32dvh, calc(18vw + 72px)), 320px);
   /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
   --tcg-aspect-w: 5;
   --tcg-aspect-h: 7;
   --tcg-card-aspect: 5 / 7;
+  /** Bottom-right embed (e.g. Vibe Jam) — keep doctrine row clear of it. */
+  --hud-corner-widget-reserve: 220px;
 }
 
 @media (pointer: coarse) {
   :root {
-    --doctrine-tray-h: clamp(120px, min(22dvh, calc(15vw + 60px)), 210px);
+    --doctrine-tray-h: clamp(128px, min(34dvh, calc(19vw + 76px)), 330px);
   }
 }
 
@@ -227,6 +229,20 @@ body {
   backdrop-filter: blur(14px) saturate(1.06) brightness(0.92);
   -webkit-backdrop-filter: blur(14px) saturate(1.06) brightness(0.92);
 }
+/* In-match: no dock “window” — controls + doctrine float over the canvas. */
+.hud-dock.hud-dock--overlay {
+  background: none;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+  max-width: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+.hud-dock.hud-dock--overlay::before {
+  display: none;
+}
 @media (prefers-reduced-transparency: reduce) {
   .hud-dock::before {
     backdrop-filter: none;
@@ -242,6 +258,11 @@ body {
 details.hud-dock__help-drawer {
   flex: 0 0 auto;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.hud-dock--overlay details.hud-dock__help-drawer {
+  border-bottom: none;
+  align-self: flex-start;
+  margin-left: max(8px, env(safe-area-inset-left, 0px));
 }
 .hud-dock__help-summary {
   list-style: none;
@@ -279,6 +300,24 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   align-items: center;
   gap: 8px 12px;
   padding: 6px 10px 5px;
+}
+.hud-dock--overlay .hud-dock__bar {
+  padding: 4px max(8px, env(safe-area-inset-left, 0px)) 2px max(8px, env(safe-area-inset-right, 0px));
+  background: none;
+}
+.hud-dock--overlay .hud-btn--ghost {
+  background: rgba(6, 8, 14, 0.48);
+  border-color: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.hud-dock--overlay .hud-dock__msg {
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+.hud-dock--overlay .hud-dock__help-summary {
+  background: rgba(6, 8, 14, 0.42);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 .hud-dock__actions {
   display: flex;
@@ -517,6 +556,23 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 35%);
 }
 
+.doctrine-wrap.doctrine-wrap--rail {
+  max-height: none;
+  width: 100%;
+  padding: 2px max(6px, env(safe-area-inset-left, 0px)) max(10px, env(safe-area-inset-bottom, 0px))
+    max(6px, env(safe-area-inset-right, 0px));
+  background: none;
+  overflow-x: visible;
+  overflow-y: visible;
+}
+.doctrine-wrap--rail .doctrine-view {
+  overflow: visible;
+  width: 100%;
+}
+.doctrine-wrap.doctrine-wrap--rail::before {
+  display: none;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .doctrine-wrap::before {
     mask-image: none;
@@ -604,6 +660,55 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   width: 100%;
 }
 
+/* In-match: one straight row 1–0 — 10 cards, edge-to-edge (minus safe areas + corner widget), tight gaps, 5:7 from width. */
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: visible;
+  --hand-slot-gap: clamp(2px, 0.28vw, 4px);
+  --hand-rail-pl: max(8px, env(safe-area-inset-left, 0px));
+  --hand-rail-pr: max(calc(8px + var(--hud-corner-widget-reserve, 118px)), env(safe-area-inset-right, 0px));
+  padding: 2px var(--hand-rail-pr) max(6px, env(safe-area-inset-bottom, 0px)) var(--hand-rail-pl);
+  --hand-reveal: 0px;
+  --hand-card-w: min(
+    200px,
+    max(
+      46px,
+      calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)
+    )
+  );
+  --hand-card-h: calc(var(--hand-card-w) * var(--tcg-aspect-h) / var(--tcg-aspect-w));
+}
+
+.doctrine-track--rail .doctrine-hand--match {
+  gap: var(--hand-slot-gap, 3px);
+  max-width: 100%;
+  width: 100%;
+  min-height: calc(var(--hand-card-h) + 14px);
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+.slot-hotkey {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  z-index: 8;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.2em;
+  text-align: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #f2f7ff;
+  background: rgba(4, 6, 10, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
 .doctrine-hand--match {
   display: flex;
   flex-direction: row;
@@ -615,6 +720,15 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   max-width: min(1280px, 99vw);
   min-height: calc(var(--hand-card-h) + 8px);
   padding: 0 2px;
+}
+
+.doctrine-track--rail .doctrine-hand--match .slot:not(:first-child) {
+  margin-left: 0;
+}
+
+.doctrine-track--rail .doctrine-hand--match .slot {
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match {
@@ -724,7 +838,8 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot.hand-slot--peek-focus,
-.doctrine-track--hand.doctrine-track--deck10 .doctrine-hand--match .slot.hand-slot--peek-focus {
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-hand--match .slot.hand-slot--peek-focus,
+.doctrine-track--hand.doctrine-track--rail .doctrine-hand--match .slot.hand-slot--peek-focus {
   box-shadow:
     0 0 0 1px rgba(91, 163, 255, 0.42),
     0 8px 22px rgba(91, 163, 255, 0.2),
@@ -786,6 +901,16 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   /* Width only — `size` on the slot was collapsing the portrait stack (no GLB/SVG art). */
   container-type: inline-size;
   container-name: doctrine-cell;
+}
+
+/* Rail 1–0 row: slot width matches computed card column; face height follows 5:7 from width only. */
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot {
+  padding: 2px 0 4px;
+  flex: 0 0 var(--hand-card-w);
+}
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot .doctrine-card-compact {
+  height: auto;
+  max-height: none;
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-title,
@@ -1874,9 +1999,9 @@ button.hud-btn--armed::after {
   z-index: 50000;
   display: flex;
   flex-direction: column;
-  padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
-    max(calc(72px + env(safe-area-inset-bottom, 0px)), 8px) max(8px, env(safe-area-inset-left, 0px));
-  background: rgba(8, 10, 14, 0.94);
+  /* Single shell — no extra padding/gutter (clicks + visuals stay on the binder). */
+  padding: 0;
+  background: #ebe4d8;
   pointer-events: auto;
   overflow: hidden;
   min-height: 0;
@@ -2459,6 +2584,27 @@ button.hud-btn--armed::after {
 }
 .card-detail-pop[hidden] {
   display: none !important;
+}
+
+/* Hover preview: large card above the doctrine rail — no full-screen dimmer, rail cards stay put. */
+.card-detail-pop.card-detail-pop--hover-dock {
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 8px)
+    max(10px, env(safe-area-inset-left, 0px));
+  pointer-events: none;
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-backdrop {
+  background: rgba(4, 6, 10, 0.25);
+  pointer-events: auto;
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-body {
+  pointer-events: auto;
+  max-height: min(72dvh, 640px);
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-fit {
+  width: min(420px, calc(100vw - 24px));
+  height: min(630px, 72dvh);
 }
 .card-detail-pop-backdrop {
   position: fixed;

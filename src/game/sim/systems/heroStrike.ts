@@ -20,7 +20,7 @@ export type PlayerHeroStrikeResult =
   | { ok: true; tag: PlayerHeroStrikeTag };
 
 /**
- * Player wizard strike resolution (LMB + auto-fire). Caller must ensure
+ * Player wizard strike resolution (auto-fire each tick when off cooldown). Caller must ensure
  * `s.hero.attackCooldownTicksRemaining === 0` before calling.
  */
 export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {

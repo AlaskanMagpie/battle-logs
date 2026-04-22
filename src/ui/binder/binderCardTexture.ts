@@ -12,7 +12,7 @@ const cache = new Map<string, Promise<THREE.CanvasTexture>>();
 function binderTextureCacheKey(catalogId: string): string {
   const { w, h } = binderSleevePixelSize();
   /* Sleeve composite output size; bump token when raster pipeline changes. */
-  return `${catalogId}@${w}x${h}sleeve_v2`;
+  return `${catalogId}@${w}x${h}sleeve_v3`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {

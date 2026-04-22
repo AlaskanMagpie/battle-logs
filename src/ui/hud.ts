@@ -1,5 +1,5 @@
 import { getCatalogEntry } from "../game/catalog";
-import { DOCTRINE_HAND_ROW_SIZE, DOCTRINE_SLOT_COUNT, GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
+import { DOCTRINE_SLOT_COUNT, GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
@@ -27,7 +27,7 @@ const HAND_ACTIVE_LIFT = 5;
 const ARC_ALPHA_MAX = 0.42;
 const ARC_ALPHA_MIN = 0.12;
 const ARC_PAD_X = 10;
-const ARC_SLOT_COUNT = DOCTRINE_HAND_ROW_SIZE;
+const ARC_SLOT_COUNT = 5;
 
 /** θ_i = -α … +α in equal steps so every card center lies on one shared circular arc (one curve per hand). */
 function arcSlotThetas(alpha: number): number[] {
@@ -121,6 +121,11 @@ function layoutDoctrineDeckArc(track: HTMLElement): void {
 function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
   if (!track.classList.contains("doctrine-track--hand")) return;
 
+  if (track.classList.contains("doctrine-track--rail")) {
+    track.style.removeProperty("--hand-reveal");
+    return;
+  }
+
   if (track.classList.contains("doctrine-track--deck2x8")) {
     layoutDoctrineDeckArc(track);
     return;
@@ -157,6 +162,8 @@ export type HudIntentSink = (intent: PlayerIntent) => void;
 export type HudMountApi = {
   onRematch?: () => void;
   onEditDoctrine?: () => void;
+  /** Lock camera pivot on wizard vs free orbit (same as C). */
+  onCameraFollowToggle?: () => void;
   pushIntent: HudIntentSink;
 };
 
@@ -208,7 +215,7 @@ function campCoreSummary(state: GameState): string {
 }
 
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
-  const { onRematch, onEditDoctrine, pushIntent } = api;
+  const { onRematch, onEditDoctrine, onCameraFollowToggle, pushIntent } = api;
   root.innerHTML = `
     <header class="hud-chrome" aria-label="Match status">
       <div class="hud-chrome__row hud-chrome__row--primary">
@@ -245,13 +252,13 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
       </div>
     </div>
-    <footer class="hud-dock" id="hud-dock">
+    <footer class="hud-dock hud-dock--overlay" id="hud-dock">
       <details class="hud-dock__help-drawer">
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item"><kbd>WASD</kbd> wizard · <kbd>RMB</kbd> move</div>
-          <div class="hud-help-item"><kbd>MMB</kbd> orbit · <kbd>C</kbd> camera follow</div>
-          <div class="hud-help-item"><kbd>LMB</kbd> strike / select · drag <strong>card</strong> to map to build</div>
+          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> move (camera-relative) · <kbd>RMB</kbd> move to point</div>
+          <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> / Camera = follow wizard on/off</div>
+          <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
           <div class="hud-help-item"><kbd>R</kbd> rally then click map · <kbd>G</kbd> offense / defense</div>
           <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
         </div>
@@ -264,6 +271,15 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
             Stance: Offense
           </button>
+          <button
+            class="hud-btn hud-btn--ghost"
+            id="btn-camera-follow"
+            type="button"
+            aria-pressed="true"
+            title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
+          >
+            Camera: lock
+          </button>
           <details class="hud-gamelog" id="hud-gamelog">
             <summary>Log</summary>
             <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
@@ -271,11 +287,16 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
         <p class="hud-dock__msg" id="msg"></p>
       </div>
-      <div class="doctrine-wrap" id="doctrine-wrap">
+      <div class="doctrine-wrap doctrine-wrap--rail" id="doctrine-wrap">
         <div class="doctrine-view" id="doctrine-view">
-          <div class="doctrine-track doctrine-track--hand doctrine-track--deck2x8" id="doctrine-track" role="grid" aria-label="Doctrine deck, two rows of five" aria-rowcount="2">
-            <div class="doctrine-hand doctrine-hand--match doctrine-hand--upper" role="row" aria-rowindex="1"></div>
-            <div class="doctrine-hand doctrine-hand--match doctrine-hand--lower" role="row" aria-rowindex="2"></div>
+          <div
+            class="doctrine-track doctrine-track--hand doctrine-track--deck10 doctrine-track--rail"
+            id="doctrine-track"
+            role="grid"
+            aria-label="Doctrine deck, slots 1 through 0"
+            aria-rowcount="1"
+          >
+            <div class="doctrine-hand doctrine-hand--match" role="row" aria-rowindex="1"></div>
           </div>
         </div>
       </div>
@@ -283,8 +304,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
-  const handUpper = doctrineTrack.querySelector(".doctrine-hand--upper") as HTMLDivElement;
-  const handLower = doctrineTrack.querySelector(".doctrine-hand--lower") as HTMLDivElement;
+  const doctrineHand = doctrineTrack.querySelector(".doctrine-hand--match") as HTMLDivElement;
 
   for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const b = document.createElement("button");
@@ -292,12 +312,13 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     b.className = "slot";
     b.dataset.slotIndex = String(i);
     b.setAttribute("role", "gridcell");
-    b.setAttribute("aria-rowindex", String(Math.floor(i / DOCTRINE_HAND_ROW_SIZE) + 1));
-    b.setAttribute("aria-colindex", String((i % DOCTRINE_HAND_ROW_SIZE) + 1));
-    b.setAttribute("aria-label", `Doctrine slot ${i + 1}`);
+    b.setAttribute("aria-rowindex", "1");
+    b.setAttribute("aria-colindex", String(i + 1));
+    const hotkey = i === 9 ? "0" : String(i + 1);
+    b.setAttribute("aria-label", `Doctrine slot ${i + 1}, key ${hotkey}`);
     const catalogId = initial.doctrineSlotCatalogIds[i] ?? null;
-    b.innerHTML = `${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
-    (i < DOCTRINE_HAND_ROW_SIZE ? handUpper : handLower).appendChild(b);
+    b.innerHTML = `<span class="slot-hotkey">${hotkey}</span>${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
+    doctrineHand.appendChild(b);
   }
 
   hydrateCardPreviewImages(doctrineTrack);
@@ -354,6 +375,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
 
   root.querySelector("#btn-stance")!.addEventListener("click", () => {
     pushIntent({ type: "toggle_army_stance" });
+  });
+
+  root.querySelector("#btn-camera-follow")?.addEventListener("click", () => {
+    onCameraFollowToggle?.();
   });
 
   root.querySelector("#btn-rematch")?.addEventListener("click", () => {
@@ -510,6 +535,7 @@ export function updateHud(state: GameState): void {
   const buttons = doctrineTrack.querySelectorAll<HTMLButtonElement>(".slot");
   const isDeck2x8 = doctrineTrack.classList.contains("doctrine-track--deck2x8");
   const isDeck10 = doctrineTrack.classList.contains("doctrine-track--deck10");
+  const isRail = doctrineTrack.classList.contains("doctrine-track--rail");
 
   const idTotalCount = new Map<string, number>();
   for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
@@ -546,23 +572,31 @@ export function updateHud(state: GameState): void {
         b.style.removeProperty("--arc-top");
         b.style.removeProperty("--arc-deg");
       }
+      if (isRail) {
+        b.style.removeProperty("--arc-left");
+        b.style.removeProperty("--arc-top");
+        b.style.removeProperty("--arc-deg");
+      }
     };
 
     b.querySelector(".slot-dup-count")?.remove();
 
     if (!id) {
       b.classList.add("slot-empty");
-      if (!isDeck2x8 && !isDeck10) b.classList.add("slot--hand-collapsed");
+      if (!isDeck2x8 && !isDeck10 && !isRail) b.classList.add("slot--hand-collapsed");
       if (live) live.textContent = "";
-      b.title = "Empty slot — add a card in the pre-match deck builder.";
+      const hkE = i === 9 ? "0" : String(i + 1);
+      b.title = `Empty slot — add a card in the pre-match deck builder. (key ${hkE})`;
       clearHandLayout();
       return;
     }
     const e = getCatalogEntry(id);
     if (!e) {
       b.classList.add("slot-empty");
-      if (!isDeck2x8 && !isDeck10) b.classList.add("slot--hand-collapsed");
+      if (!isDeck2x8 && !isDeck10 && !isRail) b.classList.add("slot--hand-collapsed");
       if (live) live.textContent = "";
+      const hkU = i === 9 ? "0" : String(i + 1);
+      b.title = `Unknown card in slot. (key ${hkU})`;
       clearHandLayout();
       return;
     }
@@ -589,10 +623,11 @@ export function updateHud(state: GameState): void {
     }
 
     const reason = placementFailureReason(state, id, null, i);
-    b.title = reason ?? "Drag onto the map to place.";
+    const hk = i === 9 ? "0" : String(i + 1);
+    b.title = `${reason ?? "Drag onto the map to place."} (key ${hk})`;
   });
 
-  if (!isDeck2x8 && !isDeck10) {
+  if (!isDeck2x8 && !isDeck10 && !isRail) {
     let seenFilled = false;
     buttons.forEach((b) => {
       if (b.classList.contains("slot--hand-collapsed")) return;
@@ -628,6 +663,18 @@ export function updateHud(state: GameState): void {
   let peelCenterScale = 1;
   let peelCenterTy = 0;
   if (peekIdx !== null && visibleIdx.includes(peekIdx)) {
+    if (isRail) {
+      peelLeftIdx = null;
+      peelRightIdx = null;
+      peelAboveIdx = null;
+      peelBelowIdx = null;
+      peelTxLeft = 0;
+      peelTxRight = 0;
+      peelTyAbove = 0;
+      peelTyBelow = 0;
+      peelCenterScale = 1;
+      peelCenterTy = 0;
+    } else {
     const peelGrid = reducedMotion ? 7 : 13;
     peelTxLeft = -peelGrid;
     peelTxRight = peelGrid;
@@ -637,13 +684,14 @@ export function updateHud(state: GameState): void {
     peelCenterTy = reducedMotion ? -2 : -10;
 
     if (isDeck2x8) {
-      const row = Math.floor(peekIdx / DOCTRINE_HAND_ROW_SIZE);
-      const col = peekIdx % DOCTRINE_HAND_ROW_SIZE;
+      const deck2x8Cols = 8;
+      const row = Math.floor(peekIdx / deck2x8Cols);
+      const col = peekIdx % deck2x8Cols;
       const vis = (j: number) => (visibleIdx.includes(j) ? j : null);
       peelLeftIdx = col > 0 ? vis(peekIdx - 1) : null;
-      peelRightIdx = col < DOCTRINE_HAND_ROW_SIZE - 1 ? vis(peekIdx + 1) : null;
-      peelAboveIdx = row > 0 ? vis(peekIdx - DOCTRINE_HAND_ROW_SIZE) : null;
-      peelBelowIdx = row < 1 ? vis(peekIdx + DOCTRINE_HAND_ROW_SIZE) : null;
+      peelRightIdx = col < deck2x8Cols - 1 ? vis(peekIdx + 1) : null;
+      peelAboveIdx = row > 0 ? vis(peekIdx - deck2x8Cols) : null;
+      peelBelowIdx = row < 1 ? vis(peekIdx + deck2x8Cols) : null;
     } else {
       const pos = visibleIdx.indexOf(peekIdx);
       peelLeftIdx = pos > 0 ? visibleIdx[pos - 1]! : null;
@@ -664,6 +712,7 @@ export function updateHud(state: GameState): void {
       peelTxRight = peel;
       peelCenterScale = reducedMotion ? 1.02 : 1.1;
       peelCenterTy = reducedMotion ? -2 : -14;
+    }
     }
   }
 

@@ -16,6 +16,35 @@ export function binderSleevePixelSize(): { w: number; h: number } {
   return { w: PANEL_TEX_W, h };
 }
 
+/** Three ring punch marks on both vertical margins (matches D-ring vertical thirds). */
+function drawBinderRingPunchArcs(ctx: CanvasRenderingContext2D, W: number, H: number, b: number): void {
+  const innerTop = b + 16;
+  const innerH = H - b * 2 - 32;
+  const ys = [innerTop + innerH * 0.18, innerTop + innerH * 0.5, innerTop + innerH * 0.82];
+  const cardInset = b + 6;
+  const r = 3.6;
+  const leftCx = cardInset - r - 1.2;
+  const rightCx = W - cardInset + r + 1.2;
+  for (const y of ys) {
+    for (const cx of [leftCx, rightCx]) {
+      ctx.fillStyle = "rgba(92, 78, 62, 0.28)";
+      ctx.beginPath();
+      ctx.arc(cx, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1.05;
+      ctx.beginPath();
+      ctx.arc(cx, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(62, 52, 40, 0.35)";
+      ctx.lineWidth = 0.75;
+      ctx.beginPath();
+      ctx.arc(cx, y, r - 0.35, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
 function roundRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -73,19 +102,20 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
 
   const b = 14;
 
-  ctx.fillStyle = "#0c0e14";
+  /** Parchment sleeve — must never read as a “dead black plane” on spread 1 (empty left leaf). */
+  ctx.fillStyle = "#e4dccf";
   ctx.fillRect(0, 0, W, H);
 
   const pocketRim = ctx.createLinearGradient(0, 0, W, H);
-  pocketRim.addColorStop(0, "rgba(210, 225, 245, 0.14)");
-  pocketRim.addColorStop(0.5, "rgba(120, 135, 160, 0.06)");
-  pocketRim.addColorStop(1, "rgba(40, 48, 62, 0.12)");
+  pocketRim.addColorStop(0, "rgba(255, 255, 255, 0.5)");
+  pocketRim.addColorStop(0.5, "rgba(200, 188, 168, 0.12)");
+  pocketRim.addColorStop(1, "rgba(120, 102, 82, 0.1)");
   ctx.strokeStyle = pocketRim;
   ctx.lineWidth = 2.2;
   roundRectPath(ctx, 5, 5, W - 10, H - 10, 10);
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(255,255,255,.09)";
+  ctx.fillStyle = "rgba(255,255,255,.22)";
   for (let i = 0; i < 20; i++) {
     const t = i / 19;
     ctx.fillRect(6 + t * (W - 12), 3, 2, 2);
@@ -97,15 +127,15 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
     ctx.fillRect(W - 5, 6 + t * (H - 12), 2, 2);
   }
 
-  ctx.fillStyle = "#06070c";
+  ctx.fillStyle = "#d8cfbf";
   roundRectPath(ctx, b, b, W - b * 2, H - b * 2, 8);
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.1)";
+  ctx.strokeStyle = "rgba(70, 58, 44, 0.14)";
   ctx.lineWidth = 1;
   roundRectPath(ctx, b + 0.5, b + 0.5, W - b * 2 - 1, H - b * 2 - 1, 7.5);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  ctx.strokeStyle = "rgba(255,255,255,0.2)";
   ctx.lineWidth = 1;
   roundRectPath(ctx, b + 3, b + 3, W - b * 2 - 6, H - b * 2 - 6, 6.5);
   ctx.stroke();
@@ -118,20 +148,20 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
   if (inner) {
     drawImageContain(ctx, inner, cardX, cardY, cardW, cardH);
   } else {
-    ctx.fillStyle = "rgba(255,255,255,.035)";
+    ctx.fillStyle = "rgba(255,255,255,.35)";
     roundRectPath(ctx, b + 4, b + 4, W - b * 2 - 8, H - b * 2 - 8, 6);
     ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,.1)";
-    ctx.font = "500 12px monospace";
+    ctx.fillStyle = "rgba(72, 62, 48, 0.55)";
+    ctx.font = "600 11px system-ui, Segoe UI, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("EMPTY", W / 2, H / 2);
+    ctx.fillText("Empty slot", W / 2, H / 2);
   }
 
   ctx.save();
   ctx.globalCompositeOperation = "soft-light";
   const ringSh = ctx.createLinearGradient(b, 0, b + 22, 0);
-  ringSh.addColorStop(0, "rgba(255,255,255,0.22)");
-  ringSh.addColorStop(0.45, "rgba(180,195,220,0.08)");
+  ringSh.addColorStop(0, "rgba(255,255,255,0.35)");
+  ringSh.addColorStop(0.45, "rgba(220, 210, 190, 0.12)");
   ringSh.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = ringSh;
   ctx.fillRect(b, b, 20, H - b * 2);
@@ -139,35 +169,37 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
 
   let gr: CanvasGradient;
   gr = ctx.createLinearGradient(0, b, 0, b + 22);
-  gr.addColorStop(0, "rgba(0,0,0,.6)");
+  gr.addColorStop(0, "rgba(88, 72, 52, 0.08)");
   gr.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = gr;
   ctx.fillRect(b, b, W - b * 2, 22);
   gr = ctx.createLinearGradient(0, H - b, 0, H - b - 16);
-  gr.addColorStop(0, "rgba(0,0,0,.45)");
+  gr.addColorStop(0, "rgba(88, 72, 52, 0.09)");
   gr.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = gr;
   ctx.fillRect(b, H - b - 16, W - b * 2, 16);
   gr = ctx.createLinearGradient(b, 0, b + 14, 0);
-  gr.addColorStop(0, "rgba(0,0,0,.4)");
+  gr.addColorStop(0, "rgba(88, 72, 52, 0.07)");
   gr.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = gr;
   ctx.fillRect(b, b + 16, 14, H - b * 2 - 16);
   gr = ctx.createLinearGradient(W - b, 0, W - b - 14, 0);
-  gr.addColorStop(0, "rgba(0,0,0,.4)");
+  gr.addColorStop(0, "rgba(88, 72, 52, 0.07)");
   gr.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = gr;
   ctx.fillRect(W - b - 14, b + 16, 14, H - b * 2 - 16);
 
-  ctx.globalAlpha = 0.07;
+  ctx.globalAlpha = 0.06;
   gr = ctx.createLinearGradient(0, 0, W, H);
   gr.addColorStop(0, "rgba(255,255,255,0)");
-  gr.addColorStop(0.38, "rgba(200,220,255,.6)");
-  gr.addColorStop(0.62, "rgba(200,220,255,.6)");
+  gr.addColorStop(0.38, "rgba(255,255,255,.55)");
+  gr.addColorStop(0.62, "rgba(255,255,255,.55)");
   gr.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = gr;
   ctx.fillRect(0, 0, W, H);
   ctx.globalAlpha = 1;
+
+  drawBinderRingPunchArcs(ctx, W, H, b);
 
   return c;
 }

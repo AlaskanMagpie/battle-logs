@@ -16,8 +16,8 @@ export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
 /** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
 
-/** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2.8s at default TICK_HZ. */
-export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 56;
+/** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2s at default TICK_HZ. */
+export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 40;
 
 /** Baseline Mana/sec for the rival wizard (scaled slightly by `map.difficulty`). */
 export const ENEMY_AI_PASSIVE_FLUX_PER_SEC = 2.5;
@@ -40,7 +40,7 @@ export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
 ];
 
 /** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */
-export const ENEMY_UNIT_HUNT_DETECT = 95;
+export const ENEMY_UNIT_HUNT_DETECT = 118;
 
 /** Player units (offense): larger than old `max(10, range*3)` so armies actually contest space. */
 export const PLAYER_UNIT_HUNT_DETECT_MULT = 6;
@@ -131,7 +131,7 @@ export const CAMP_CORE_ATTACK_RADIUS = 7;
 export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
-export const ENEMY_WAVE_EVERY_TICKS = 18 * TICK_HZ;
+export const ENEMY_WAVE_EVERY_TICKS = 12 * TICK_HZ;
 export const ENEMY_WAVE_GLOBAL_CAP = 22;
 
 /** Player-controlled hero. */

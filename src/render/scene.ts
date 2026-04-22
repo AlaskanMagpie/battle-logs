@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
@@ -31,48 +32,21 @@ import {
 import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbPool";
 
-/** Exponential follow (1/s); orbit pivot eases toward the look-ahead point. */
+/** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
-/** When not orbiting, offset from target → camera eases toward this ideal (1/s). */
-const CAMERA_HERO_ORBIT_RECOVER_LAMBDA = 3.8;
-/** Exponential smoothing for hero facing (1/s) — camera lags slightly on fast turns. */
-const CAMERA_HERO_FACING_SMOOTH_LAMBDA = 11;
-/** Orbit pivot / look-at height — chest-ish so the horizon and battle read clearly. */
+/** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
 const CAMERA_HERO_PIVOT_Y = 1.38;
-/** World units ahead of the wizard (along smoothed facing) — keeps the fight in frame. */
-const CAMERA_HERO_LOOK_AHEAD = 15;
-/** How far behind the wizard feet the camera sits (along -facing). */
-const CAMERA_HERO_BEHIND = 10;
-/** Lateral offset using "wizard right" = look past near shoulder (OTS). */
-const CAMERA_HERO_SHOULDER = 2.85;
-/** Camera eye height for third-person. */
-const CAMERA_HERO_CAM_Y = 3.15;
-
-const _camPrevT = new THREE.Vector3();
-const _camPrevC = new THREE.Vector3();
-const _camIdealT = new THREE.Vector3();
-const _camIdealC = new THREE.Vector3();
-const _camF = new THREE.Vector3();
-const _camR = new THREE.Vector3();
-const _camIdealOff = new THREE.Vector3();
-
-function lerpAngleRad(from: number, to: number, t: number): number {
-  let d = to - from;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return from + d * t;
-}
 
 function unitScale(size: UnitSizeClass): number {
   switch (size) {
     case "Swarm":
-      return 0.55;
+      return 0.72;
     case "Line":
-      return 0.75;
+      return 0.98;
     case "Heavy":
-      return 1.15;
+      return 1.48;
     case "Titan":
-      return 1.7;
+      return 2.15;
   }
 }
 
@@ -417,6 +391,8 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.72,
+      depthWrite: false,
+      depthTest: false,
     }),
   );
   ring.rotation.x = -Math.PI / 2;
@@ -489,6 +465,9 @@ export class GameRenderer {
   private cmdGhostCore: THREE.Mesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
+  /** Scratch: camera-relative WASD on the XZ plane (world up). */
+  private readonly camGroundFwd = new THREE.Vector3();
+  private readonly camGroundRight = new THREE.Vector3();
   private readonly fx: FxHost;
   private lastFxTick = -1;
   private lastSiegeTick = -1;
@@ -506,8 +485,28 @@ export class GameRenderer {
   /** When true, orbit pivot eases toward the player wizard each frame; when false, MMB orbit stays put. */
   private cameraFollowHero = true;
   private lastCameraLimitsHalf = 0;
-  /** Smoothed yaw for cinematic camera (radians); avoids twitchy framing on fast turns. */
-  private cameraHeroFacingSmooth = 0;
+
+  /** Rigid translate: preserves camera↔target offset (OrbitControls distance = zoom). */
+  private nudgeCameraRigTowardHeroPivot(dt: number): void {
+    const state = this.currentState;
+    if (!state || state.phase !== "playing") return;
+    const h = state.hero;
+    const t = this.controls.target;
+    const desiredX = h.x;
+    const desiredY = CAMERA_HERO_PIVOT_Y;
+    const desiredZ = h.z;
+    const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
+    const dx = (desiredX - t.x) * alpha;
+    const dy = (desiredY - t.y) * alpha;
+    const dz = (desiredZ - t.z) * alpha;
+    if (dx * dx + dy * dy + dz * dz < 1e-14) return;
+    t.x += dx;
+    t.y += dy;
+    t.z += dz;
+    this.camera.position.x += dx;
+    this.camera.position.y += dy;
+    this.camera.position.z += dz;
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -558,13 +557,13 @@ export class GameRenderer {
     this.controls.minPolarAngle = 0.82;
     this.controls.zoomSpeed = 0.82;
     this.controls.rotateSpeed = 0.36;
-    this.controls.panSpeed = 0.58;
+    this.controls.panSpeed = 0.92;
     this.controls.enableRotate = true;
-    this.controls.enablePan = false;
-    // Middle = orbit; left/right disabled so LMB/RMB go to the game (RMB move on canvas).
+    this.controls.enablePan = true;
+    // LMB/RMB stay with the game; middle = pan the rig. Shift+MMB = orbit (OrbitControls default for PAN+modifier).
     (this.controls as unknown as { mouseButtons: { LEFT: number; MIDDLE: number; RIGHT: number } }).mouseButtons = {
       LEFT: -1,
-      MIDDLE: 0,
+      MIDDLE: MOUSE.PAN,
       RIGHT: -1,
     };
   }
@@ -585,6 +584,39 @@ export class GameRenderer {
     this.controls.enabled = enabled;
   }
 
+  /**
+   * Normalized XZ basis for camera-relative WASD: **W/S** = along the camera view direction flattened
+   * onto the ground; **A/D** = strafe (right-hand rule with world +Y). Matches typical third-person controls.
+   */
+  getCameraGroundMoveBasis(): { fx: number; fz: number; rx: number; rz: number } {
+    this.camera.updateMatrixWorld(true);
+    this.camera.getWorldDirection(this.camGroundFwd);
+    this.camGroundFwd.y = 0;
+    let len = this.camGroundFwd.length();
+    if (len < 1e-5) {
+      const st = this.currentState;
+      if (st?.phase === "playing") {
+        const face = st.hero.facing;
+        this.camGroundFwd.set(Math.sin(face), 0, Math.cos(face));
+      } else {
+        this.camGroundFwd.set(0, 0, 1);
+      }
+      len = 1;
+    } else {
+      this.camGroundFwd.multiplyScalar(1 / len);
+    }
+    const fx = this.camGroundFwd.x;
+    const fz = this.camGroundFwd.z;
+    this.camGroundRight.crossVectors(this.camera.up, this.camGroundFwd).normalize();
+    this.camGroundRight.y = 0;
+    if (this.camGroundRight.lengthSq() < 1e-8) {
+      this.camGroundRight.set(fz, 0, -fx);
+    } else {
+      this.camGroundRight.normalize();
+    }
+    return { fx, fz, rx: this.camGroundRight.x, rz: this.camGroundRight.z };
+  }
+
   getCameraFollowHero(): boolean {
     return this.cameraFollowHero;
   }
@@ -602,36 +634,22 @@ export class GameRenderer {
     return this.cameraFollowHero;
   }
 
-  /** Fill `outT` / `outC` with ideal orbit target (look-ahead) and third-person camera (OTS). */
-  private setIdealCinematicHeroCamera(
-    facing: number,
-    h: { x: number; z: number },
-    outT: THREE.Vector3,
-    outC: THREE.Vector3,
-  ): void {
-    const sin = Math.sin(facing);
-    const cos = Math.cos(facing);
-    _camF.set(sin, 0, cos);
-    _camR.set(cos, 0, -sin);
-    outT.set(
-      h.x + sin * CAMERA_HERO_LOOK_AHEAD,
-      CAMERA_HERO_PIVOT_Y,
-      h.z + cos * CAMERA_HERO_LOOK_AHEAD,
-    );
-    outC.set(h.x, CAMERA_HERO_CAM_Y, h.z);
-    outC.addScaledVector(_camF, -CAMERA_HERO_BEHIND);
-    // Camera slightly on the wizard's left (-R): past the right shoulder, battle ahead stays centered.
-    outC.addScaledVector(_camR, -CAMERA_HERO_SHOULDER);
-  }
-
+  /** Snap pivot to hero in one frame without changing camera–target distance (zoom unchanged). */
   private snapCameraPivotToPlayerHero(): void {
     const st = this.currentState;
     if (!st || st.phase !== "playing") return;
     const h = st.hero;
-    this.cameraHeroFacingSmooth = h.facing;
-    this.setIdealCinematicHeroCamera(this.cameraHeroFacingSmooth, h, _camIdealT, _camIdealC);
-    this.controls.target.copy(_camIdealT);
-    this.camera.position.copy(_camIdealC);
+    const t = this.controls.target;
+    const nx = h.x;
+    const ny = CAMERA_HERO_PIVOT_Y;
+    const nz = h.z;
+    const dx = nx - t.x;
+    const dy = ny - t.y;
+    const dz = nz - t.z;
+    t.set(nx, ny, nz);
+    this.camera.position.x += dx;
+    this.camera.position.y += dy;
+    this.camera.position.z += dz;
     this.controls.update();
   }
 
@@ -826,6 +844,7 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.35,
         depthWrite: false,
+        depthTest: false,
         blending: THREE.AdditiveBlending,
       });
       this.cmdGhost = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.2, 48), mat);
@@ -840,6 +859,7 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.75,
         depthWrite: false,
+        depthTest: false,
       });
       this.cmdGhostCore = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.65, 32), coreMat);
       this.cmdGhostCore.rotation.x = -Math.PI / 2;
@@ -903,6 +923,8 @@ export class GameRenderer {
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 0.9,
+          depthWrite: false,
+          depthTest: false,
         });
         m = new THREE.Mesh(geo, mat);
         m.rotation.x = -Math.PI / 2;
@@ -936,6 +958,7 @@ export class GameRenderer {
               transparent: true,
               opacity: 0.95,
               depthWrite: false,
+              depthTest: false,
             }),
           );
           claimArc.rotation.x = -Math.PI / 2;
@@ -1013,6 +1036,7 @@ export class GameRenderer {
               transparent: true,
               opacity: 0.9,
               depthWrite: false,
+              depthTest: false,
             }),
           );
           arc.rotation.x = -Math.PI / 2;
@@ -1107,6 +1131,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.85,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         this.nearestTapRing.rotation.x = -Math.PI / 2;
@@ -1203,6 +1228,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.22,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         aggro.rotation.x = -Math.PI / 2;
@@ -1222,6 +1248,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.1,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         wake.rotation.x = -Math.PI / 2;
@@ -1259,6 +1286,7 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.6,
           depthWrite: false,
+          depthTest: false,
           blending: THREE.AdditiveBlending,
         }),
       );
@@ -1276,6 +1304,7 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.9,
           depthWrite: false,
+          depthTest: false,
         }),
       );
       arc.rotation.x = -Math.PI / 2;
@@ -1432,6 +1461,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.72,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         this.unitSelHalo.rotation.x = -Math.PI / 2;
@@ -1448,6 +1478,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.26,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         this.unitMeleeRing.rotation.x = -Math.PI / 2;
@@ -1479,6 +1510,7 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.75,
             depthWrite: false,
+            depthTest: false,
           }),
         );
         this.selectHalo.rotation.x = -Math.PI / 2;
@@ -1499,6 +1531,7 @@ export class GameRenderer {
               transparent: true,
               opacity: 0.28,
               depthWrite: false,
+              depthTest: false,
             }),
           );
           this.attackRangeRing.rotation.x = -Math.PI / 2;
@@ -1523,6 +1556,7 @@ export class GameRenderer {
                 transparent: true,
                 opacity: 0.24,
                 depthWrite: false,
+                depthTest: false,
               }),
             );
             this.auraRangeRing.rotation.x = -Math.PI / 2;
@@ -1557,6 +1591,8 @@ export class GameRenderer {
               color: 0x6ae1ff,
               transparent: true,
               opacity: 0.85,
+              depthWrite: false,
+              depthTest: false,
             }),
           );
           this.markers.add(this.rallyLine);
@@ -1819,6 +1855,7 @@ export class GameRenderer {
       transparent: true,
       opacity: 0.08,
       depthWrite: false,
+      depthTest: false,
       blending: THREE.AdditiveBlending,
     });
     for (const p of sources) {
@@ -1834,6 +1871,7 @@ export class GameRenderer {
 
   private buildHeroMesh(): THREE.Group {
     const g = new THREE.Group();
+    g.scale.setScalar(1.2);
     // Team plinth (blue).
     const plinth = new THREE.Mesh(
       new THREE.CylinderGeometry(1.2, 1.3, 0.22, 28),
@@ -1868,6 +1906,7 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
+        depthTest: false,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
@@ -1879,6 +1918,7 @@ export class GameRenderer {
 
   private buildRivalHeroMesh(): THREE.Group {
     const g = new THREE.Group();
+    g.scale.setScalar(1.2);
     const plinth = new THREE.Mesh(
       new THREE.CylinderGeometry(1.2, 1.3, 0.22, 28),
       new THREE.MeshStandardMaterial({
@@ -1915,6 +1955,7 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
+        depthTest: false,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
@@ -2073,48 +2114,10 @@ export class GameRenderer {
     }
   }
 
-  /**
-   * Cinematic follow: look-ahead orbit pivot + behind-the-shoulder offset that recovers after orbit.
-   * While MMB orbit drags, only translates rig so user framing is not overwritten mid-drag.
-   */
+  /** Lock mode: move orbit pivot with the hero; camera moves by the same delta so zoom (scroll) is unchanged. */
   private applyHeroCameraFollow(dt: number): void {
     if (!this.cameraFollowHero) return;
-    const state = this.currentState;
-    if (!state || state.phase !== "playing") return;
-    const h = state.hero;
-
-    const faceAlpha = 1 - Math.exp(-CAMERA_HERO_FACING_SMOOTH_LAMBDA * dt);
-    this.cameraHeroFacingSmooth = lerpAngleRad(this.cameraHeroFacingSmooth, h.facing, faceAlpha);
-
-    this.setIdealCinematicHeroCamera(this.cameraHeroFacingSmooth, h, _camIdealT, _camIdealC);
-
-    const dragging = (this.controls as OrbitControls & { state: number }).state !== -1;
-
-    if (dragging) {
-      const t = this.controls.target;
-      const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
-      const dx = (_camIdealT.x - t.x) * alpha;
-      const dy = (_camIdealT.y - t.y) * alpha;
-      const dz = (_camIdealT.z - t.z) * alpha;
-      if (dx * dx + dy * dy + dz * dz < 1e-10) return;
-      t.x += dx;
-      t.y += dy;
-      t.z += dz;
-      this.camera.position.x += dx;
-      this.camera.position.y += dy;
-      this.camera.position.z += dz;
-      return;
-    }
-
-    const alphaT = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
-    const alphaO = 1 - Math.exp(-CAMERA_HERO_ORBIT_RECOVER_LAMBDA * dt);
-    _camPrevT.copy(this.controls.target);
-    _camPrevC.copy(this.camera.position);
-    this.controls.target.lerp(_camIdealT, alphaT);
-    _camIdealOff.subVectors(_camIdealC, _camIdealT);
-    _camF.subVectors(_camPrevC, _camPrevT);
-    _camF.lerp(_camIdealOff, alphaO);
-    this.camera.position.copy(this.controls.target).add(_camF);
+    this.nudgeCameraRigTowardHeroPivot(dt);
   }
 
   private tickHitPulses(dt: number): void {

@@ -5,7 +5,7 @@ import { doctrineCardFullModalHtml } from "./doctrineCard";
 export const CARD_DETAIL_HOLD_MS = 0;
 
 /** Hover preview only after the pointer rests this long (ms). */
-export const CARD_PREVIEW_HOVER_MS = 1000;
+export const CARD_PREVIEW_HOVER_MS = 320;
 
 let layer: HTMLElement | null = null;
 let detailResizeRo: ResizeObserver | null = null;
@@ -119,6 +119,7 @@ function closePop(): void {
   unwireDetailResize();
   layer.setAttribute("hidden", "");
   layer.setAttribute("aria-hidden", "true");
+  layer.classList.remove("card-detail-pop--hover-dock");
   const body = layer.querySelector("#card-detail-pop-body");
   if (body) body.innerHTML = "";
 }
@@ -181,6 +182,8 @@ export function showDoctrineCardDetail(catalogId: string, opts?: ShowDoctrineCar
   detailOpenedFromHover = wantHover && !!src;
   hoverPreviewSourceEl = src;
   const el = ensureLayer();
+  if (detailOpenedFromHover) el.classList.add("card-detail-pop--hover-dock");
+  else el.classList.remove("card-detail-pop--hover-dock");
   const body = el.querySelector("#card-detail-pop-body") as HTMLElement;
   body.innerHTML = `<div class="card-detail-pop-fit">${doctrineCardFullModalHtml(catalogId)}</div>`;
   hydrateCardPreviewImages(body);

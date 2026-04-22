@@ -131,9 +131,9 @@ export interface HeroRuntime {
   hp: number;
   maxHp: number;
   facing: number;
-  /** -1 / 0 / 1 strafe (world X) from WASD; cleared after each sim tick. */
+  /** World X impulse from WASD this tick (camera-relative or legacy axis); cleared after sim. */
   wasdStrafe: number;
-  /** -1 / 0 / 1 forward (world -Z as "up" in key W) from WASD; cleared after each sim tick. */
+  /** World Z impulse from WASD this tick; cleared after sim. */
   wasdForward: number;
   attackCooldownTicksRemaining: number;
 }

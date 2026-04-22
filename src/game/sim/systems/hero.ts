@@ -57,11 +57,11 @@ function moveHeroToward(s: GameState): void {
 
 function applyWasd(s: GameState): boolean {
   const h = s.hero;
-  const sx = h.wasdStrafe;
-  const sz = h.wasdForward;
-  if (sx === 0 && sz === 0) return false;
-  let dx = sx;
-  let dz = -sz;
+  const wx = h.wasdStrafe;
+  const wz = h.wasdForward;
+  if (wx === 0 && wz === 0) return false;
+  let dx = wx;
+  let dz = wz;
   const len = Math.hypot(dx, dz);
   if (len < 1e-6) return false;
   dx /= len;
