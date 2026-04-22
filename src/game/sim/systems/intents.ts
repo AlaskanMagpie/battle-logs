@@ -6,6 +6,8 @@ import {
   HERO_ATTACK_COOLDOWN_TICKS,
   HERO_ATTACK_DAMAGE,
   HERO_ATTACK_RANGE,
+  HERO_CLAIM_CHANNEL_SEC,
+  HERO_CLAIM_FLUX_FEE,
   SHATTER_TARGET_RADIUS,
   TICK_HZ,
 } from "../../constants";
@@ -25,6 +27,7 @@ import {
 } from "../../state";
 import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
+import { findNeutralTapIndexNearHero } from "./hero";
 import { dist2 } from "./helpers";
 
 const ALT_HOLD_PICK_RADIUS = 6;
@@ -557,6 +560,15 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "hero_claim") {
       s.hero.targetX = null;
       s.hero.targetZ = null;
+      const idx = findNeutralTapIndexNearHero(s);
+      if (idx !== null && s.hero.claimChannelTarget === null && s.flux >= HERO_CLAIM_FLUX_FEE) {
+        const tap = s.taps[idx];
+        if (tap && !tap.active) {
+          s.hero.claimChannelTarget = idx;
+          s.hero.claimChannelTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ);
+          s.lastMessage = `Claiming node… stand still for ${HERO_CLAIM_CHANNEL_SEC.toFixed(0)}s (−${HERO_CLAIM_FLUX_FEE} Mana).`;
+        }
+      }
     } else if (it.type === "start_battle") {
       /* No setup phase — match begins in playing. Intent kept for replay compat. */
     }

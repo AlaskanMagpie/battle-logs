@@ -73,10 +73,19 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
 
   const b = 14;
 
-  ctx.fillStyle = "#111318";
+  ctx.fillStyle = "#0c0e14";
   ctx.fillRect(0, 0, W, H);
 
-  ctx.fillStyle = "rgba(255,255,255,.12)";
+  const pocketRim = ctx.createLinearGradient(0, 0, W, H);
+  pocketRim.addColorStop(0, "rgba(210, 225, 245, 0.14)");
+  pocketRim.addColorStop(0.5, "rgba(120, 135, 160, 0.06)");
+  pocketRim.addColorStop(1, "rgba(40, 48, 62, 0.12)");
+  ctx.strokeStyle = pocketRim;
+  ctx.lineWidth = 2.2;
+  roundRectPath(ctx, 5, 5, W - 10, H - 10, 10);
+  ctx.stroke();
+
+  ctx.fillStyle = "rgba(255,255,255,.09)";
   for (let i = 0; i < 20; i++) {
     const t = i / 19;
     ctx.fillRect(6 + t * (W - 12), 3, 2, 2);
@@ -88,12 +97,17 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
     ctx.fillRect(W - 5, 6 + t * (H - 12), 2, 2);
   }
 
-  ctx.fillStyle = "#08090e";
+  ctx.fillStyle = "#06070c";
   roundRectPath(ctx, b, b, W - b * 2, H - b * 2, 8);
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.07)";
+  ctx.strokeStyle = "rgba(255,255,255,0.1)";
   ctx.lineWidth = 1;
   roundRectPath(ctx, b + 0.5, b + 0.5, W - b * 2 - 1, H - b * 2 - 1, 7.5);
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(255,255,255,0.045)";
+  ctx.lineWidth = 1;
+  roundRectPath(ctx, b + 3, b + 3, W - b * 2 - 6, H - b * 2 - 6, 6.5);
   ctx.stroke();
 
   const cardX = b + 6;
@@ -104,14 +118,24 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
   if (inner) {
     drawImageContain(ctx, inner, cardX, cardY, cardW, cardH);
   } else {
-    ctx.fillStyle = "rgba(255,255,255,.04)";
+    ctx.fillStyle = "rgba(255,255,255,.035)";
     roundRectPath(ctx, b + 4, b + 4, W - b * 2 - 8, H - b * 2 - 8, 6);
     ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,.12)";
+    ctx.fillStyle = "rgba(255,255,255,.1)";
     ctx.font = "500 12px monospace";
     ctx.textAlign = "center";
     ctx.fillText("EMPTY", W / 2, H / 2);
   }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "soft-light";
+  const ringSh = ctx.createLinearGradient(b, 0, b + 22, 0);
+  ringSh.addColorStop(0, "rgba(255,255,255,0.22)");
+  ringSh.addColorStop(0.45, "rgba(180,195,220,0.08)");
+  ringSh.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = ringSh;
+  ctx.fillRect(b, b, 20, H - b * 2);
+  ctx.restore();
 
   let gr: CanvasGradient;
   gr = ctx.createLinearGradient(0, b, 0, b + 22);

@@ -510,7 +510,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const hpMult = map.difficulty?.enemyHpMult ?? 1;
   const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
 
-  const heroSpawn = mapResolved.playerStart ?? { x: 0, z: 0 };
+  /** Plan: spawn at first player relay slot when the map defines one; else `playerStart` (with Keep). */
+  const relay0 = mapResolved.playerRelaySlots[0];
+  const heroSpawn = relay0 != null ? { x: relay0.x, z: relay0.z } : (mapResolved.playerStart ?? { x: 0, z: 0 });
   const hero: HeroRuntime = {
     x: heroSpawn.x,
     z: heroSpawn.z,
@@ -701,9 +703,10 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
-/** Territory = union of `TERRITORY_RADIUS` around the Keep and claimed taps. */
+/** Territory = union of `TERRITORY_RADIUS` around the Keep, the Wizard, and claimed taps. */
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
+  if (s.hero.hp > 0 && dist2(pos, s.hero) <= r2) return true;
   const keep = findKeep(s);
   if (keep && dist2(pos, keep) <= r2) return true;
   for (const t of s.taps) {
@@ -745,9 +748,10 @@ export function enemyTerritorySources(s: GameState): Vec2[] {
   return out;
 }
 
-/** Current list of positions feeding the territory union (Keep + claimed taps). */
+/** Current list of positions feeding the territory union (Wizard + Keep + claimed taps). */
 export function territorySources(s: GameState): Vec2[] {
   const out: Vec2[] = [];
+  if (s.hero.hp > 0) out.push({ x: s.hero.x, z: s.hero.z });
   const keep = findKeep(s);
   if (keep) out.push({ x: keep.x, z: keep.z });
   for (const t of s.taps) {

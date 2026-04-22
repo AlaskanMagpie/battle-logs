@@ -1,13 +1,12 @@
 const ROOT_ID = "signal-wars-onboarding";
-const STORAGE_KEY = "sw:onboarding:v2:dismissed";
+const STORAGE_KEY = "sw:onboarding:hero-pivot:v1:dismissed";
 
 const STAGES: string[] = [
-  "You are a <b>Wizard</b>. <b>WASD</b> strafes; <b>right-click</b> sets a move goal; <b>hold right-click</b> to follow the cursor. <b>Middle mouse</b> orbits the camera.",
-  "Walk onto a grey <b>Mana node</b> and stand still to claim it (no click-to-claim). A physical <b>anchor pillar</b> appears with an <b>HP bar</b> — enemies can smash it to make the node <b>neutral</b> again, then contest it. Your claim grants <b>Mana/sec</b>, raises <b>Tier</b> (2 nodes = T2, 4 = T3), and expands cyan <b>territory</b> while the anchor stands.",
-  "<b>Unit combat is automatic</b>: anything in <b>weapon range</b> trades damage on the sim clock (watch HP rings shrink; orange <b>wedges</b> show who is striking and toward whom). <b>Swarm · Line · Heavy · Titan</b> matters; <b>anti-Class</b> tags and <b>trample</b> (e.g. Heavy vs Swarm) change damage. That is <b>not</b> your <b>left-click</b> — LMB is a separate <b>wizard melee slam</b> with its own cooldown. <b>Click a friendly troop</b> (when not summoning) to preview its <b>melee range ring</b>; click again to clear.",
-  "<b>Left-click</b> swings at nearby enemies when you are not placing a tower. <b>R</b> arms a global rally — your next click sets where the army marches in Offense; <b>G</b> toggling stance cancels that march. Drag a tower card onto the map to summon.",
-  "<b>G</b> toggles Offense / Defense. Offense: engage foes; with a rally point set, units march there until you change stance. Defense: army gathers on you.",
-  "Defeat = your <b>Keep</b> or <b>Wizard</b> dies. Victory = shatter the red <b>Dark Fortresses</b> or rout the camps. Good luck.",
+  "You are the <b>blue Wizard</b>. <b>Right-click</b> to move. <b>Hold right-click</b> to follow the cursor. <b>WASD</b> strafes; <b>middle mouse</b> orbits the camera.",
+  "Walk onto a <b>grey Mana node</b> to claim it. Claiming gives <b>Mana/sec</b> and expands your <b>territory</b> (cyan area) while the anchor stands.",
+  "Inside your territory, <b>drag a tower card</b> from the deck onto the ground to summon. Towers auto-produce units.",
+  "Units push toward the <b>red Dark Fortresses</b> by default. Stay close and they will follow you. <b>Alt+click</b> a tower to toggle <b>Hold</b>.",
+  "Destroy the red fortresses or wipe the enemy camps to win.",
 ];
 
 /** Show a staged, dismissible overlay that can be skipped forever (per browser). */

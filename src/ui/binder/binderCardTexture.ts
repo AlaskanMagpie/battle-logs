@@ -5,13 +5,14 @@ import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
 import { getCardPreviewDataUrl } from "../cardGlbPreview";
 import { binderPanelPixelSize } from "./CardBinderEngine";
+import { binderSleevePixelSize, composeCardIntoBinderSleeve } from "./binderSleeveComposite";
 
 const cache = new Map<string, Promise<THREE.CanvasTexture>>();
 
 function binderTextureCacheKey(catalogId: string): string {
-  const { w, h } = binderPanelPixelSize();
-  /* c2d = canvas2d painter (no html-to-image). */
-  return `${catalogId}@${w}x${h}c2d`;
+  const { w, h } = binderSleevePixelSize();
+  /* Sleeve composite output size; bump token when raster pipeline changes. */
+  return `${catalogId}@${w}x${h}sleeve_v2`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -218,7 +219,8 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
 }
 
 async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
-  const cvs = await paintBinderPanelCanvas(catalogId);
+  const inner = await paintBinderPanelCanvas(catalogId);
+  const cvs = composeCardIntoBinderSleeve(inner);
   const tex = new THREE.CanvasTexture(cvs);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;

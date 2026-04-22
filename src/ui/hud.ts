@@ -176,8 +176,8 @@ function computeObjective(state: GameState): string {
   const playerUnits = state.units.filter((u) => u.team === "player" && u.hp > 0);
 
   if (claimedNodes === 0)
-    return "Claim a Mana node — walk your Wizard onto a grey ring and stand still; left-click attacks when idle.";
-  if (playerTowers.length === 0) return "Drag a tower card into your cyan territory to summon it.";
+    return "Claim a node — walk to the nearest grey ring and stand still to channel (need Mana for the claim fee).";
+  if (playerTowers.length === 0) return "Drop a tower inside your cyan territory to summon production.";
   if (playerUnits.length === 0) {
     const producing = playerStructs.find((st) => st.complete);
     if (producing) {
@@ -188,7 +188,7 @@ function computeObjective(state: GameState): string {
     }
     return "Waiting for your tower to finish summoning…";
   }
-  return "Push toward a red Dark Fortress — shatter them to win.";
+  return "Push toward the red Dark Fortresses — shatter them to win.";
 }
 
 function campCoreSummary(state: GameState): string {

@@ -140,5 +140,5 @@ export const HERO_ATTACK_COOLDOWN_TICKS = 16;
 export const TAP_NODES_PER_SIDE = 10;
 export const TAP_GENERATION_MIN_SEP = 20;
 
-/** Territory: union of radii around the Keep + claimed player taps. */
-export const TERRITORY_RADIUS = 48;
+/** Territory: union of radii around the Keep, the Wizard, and claimed player taps (world units). */
+export const TERRITORY_RADIUS = 16;

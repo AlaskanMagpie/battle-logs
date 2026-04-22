@@ -10,6 +10,23 @@ import { logGame } from "../../gameLog";
 import { armTapClaimAnchor, type GameState } from "../../state";
 import { dist2 } from "./helpers";
 
+/** Neutral tap index within `HERO_CLAIM_RADIUS` of the Wizard (closest wins). */
+export function findNeutralTapIndexNearHero(s: GameState): number | null {
+  const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
+  let best: number | null = null;
+  let bestD = r2;
+  for (let i = 0; i < s.taps.length; i++) {
+    const t = s.taps[i]!;
+    if (t.active) continue;
+    const d = dist2(s.hero, t);
+    if (d <= bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 function moveHeroToward(s: GameState): void {
   const h = s.hero;
   if (h.targetX === null || h.targetZ === null) return;
@@ -35,22 +52,6 @@ function moveHeroToward(s: GameState): void {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
-}
-
-function findClaimableTapIndex(s: GameState): number | null {
-  const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
-  let best: number | null = null;
-  let bestD = r2;
-  for (let i = 0; i < s.taps.length; i++) {
-    const t = s.taps[i]!;
-    if (t.active) continue;
-    const d = dist2(s.hero, t);
-    if (d <= bestD) {
-      bestD = d;
-      best = i;
-    }
-  }
-  return best;
 }
 
 function applyWasd(s: GameState): boolean {
@@ -112,7 +113,7 @@ export function heroSystem(s: GameState): void {
 
   // Auto-start a channel when idle inside range of a neutral tap (and can afford the fee).
   if (!moving && h.claimChannelTarget === null) {
-    const idx = findClaimableTapIndex(s);
+    const idx = findNeutralTapIndexNearHero(s);
     if (idx !== null) {
       if (s.flux < HERO_CLAIM_FLUX_FEE) {
         // Only surface the message once per tap-adjacency to avoid tick spam.

@@ -128,7 +128,14 @@ export function movement(s: GameState): void {
       continue;
     }
     if (hold && !defense) {
-      clampToWorld(s, u);
+      if (st) {
+        const jx = ((u.id * 13) % 10) * 0.55 - 2.5;
+        const jz = ((u.id * 7) % 11) * 0.5 - 2.5;
+        moveToward(u, { x: st.x + jx, z: st.z + jz }, u.speedPerSec * stepScale);
+        clampToWorld(s, u);
+      } else {
+        clampToWorld(s, u);
+      }
       continue;
     }
 
@@ -141,7 +148,9 @@ export function movement(s: GameState): void {
     } else {
       const near = dist2(u, hero) <= heroR2;
       if (near) {
-        target = { x: hero.x, z: hero.z };
+        const jx = ((u.id * 17) % 10) * 0.4 - 1.8;
+        const jz = ((u.id * 11) % 10) * 0.4 - 1.8;
+        target = { x: hero.x + jx, z: hero.z + jz };
       } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
         target = { x: st.rallyX, z: st.rallyZ };
       } else {

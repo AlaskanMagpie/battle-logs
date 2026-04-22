@@ -13,6 +13,8 @@ import { CardBinderEngine } from "./CardBinderEngine";
 import "./binderPicker.css";
 
 const CATALOG_IDS = CATALOG.map((c) => c.id);
+/** Doctrine binder pages: structures only (commands stay in catalog elsewhere). */
+const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 const validIds = new Set(CATALOG_IDS);
 const MIN_FILLED = Math.ceil(DOCTRINE_SLOT_COUNT * 0.75);
 
@@ -23,11 +25,13 @@ export function DoctrineBinderPicker({
 }): ReactElement {
   const [sortKey, setSortKey] = useState<CatalogSortKey>("catalog");
   const orderedRef = useRef<string[]>([]);
-  const binderPanelIds = useMemo(() => sortCatalogIds(CATALOG_IDS, sortKey), [sortKey]);
+  const binderPanelIds = useMemo(() => sortCatalogIds(STRUCTURE_CATALOG_IDS, sortKey), [sortKey]);
   orderedRef.current = binderPanelIds;
   const [slots, setSlots] = useState<(string | null)[]>(() =>
     loadDoctrineSlots().map((id) => (id && validIds.has(id) ? id : null)),
   );
+  /** Highlights the doctrine slot last filled from the binder (primary outline in 3D). */
+  const [activeDoctrineSlot, setActiveDoctrineSlot] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState({ c: 0, t: 1 });
 
@@ -46,13 +50,6 @@ export function DoctrineBinderPicker({
       const t = (e.target as HTMLElement | null)?.tagName?.toLowerCase() ?? "";
       if (t === "select" || t === "input" || t === "textarea" || t === "button") return;
 
-      if (e.key === "Home" || e.key === "End") {
-        e.preventDefault();
-        if (e.key === "Home") engineRef.current?.jumpToFirstSpread();
-        else engineRef.current?.jumpToLastSpread();
-        return;
-      }
-
       const pageKeys =
         e.key === "ArrowLeft" ||
         e.key === "ArrowRight" ||
@@ -60,6 +57,19 @@ export function DoctrineBinderPicker({
         e.key === "PageDown" ||
         e.key === "," ||
         e.key === ".";
+
+      if (!engineRef.current?.isBinderOpen()) {
+        if (e.key === "Home" || e.key === "End" || pageKeys) e.preventDefault();
+        return;
+      }
+
+      if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        if (e.key === "Home") engineRef.current?.jumpToFirstSpread();
+        else engineRef.current?.jumpToLastSpread();
+        return;
+      }
+
       if (!pageKeys) return;
       e.preventDefault();
       const next =
@@ -100,6 +110,7 @@ export function DoctrineBinderPicker({
       if (cancelled) return;
 
       const next = new CardBinderEngine(canvas, texList);
+      next.snapBinderFullyOpen();
       next.onPageChange = (c, t) => setPage({ c, t });
       next.onPickCatalogIndex = (idx) => {
         if (idx === null || idx < 0) return;
@@ -111,6 +122,7 @@ export function DoctrineBinderPicker({
             showDoctrineCardDetail(id);
             return prev;
           }
+          setActiveDoctrineSlot(empty);
           const copy = [...prev];
           copy[empty] = id;
           return copy;
@@ -145,11 +157,10 @@ export function DoctrineBinderPicker({
 
   useEffect(() => {
     if (loading) return;
-    engineRef.current?.syncDoctrineHighlights(binderPanelIds, slots, null);
-  }, [loading, binderPanelIds, slots]);
+    engineRef.current?.syncDoctrineHighlights(binderPanelIds, slots, activeDoctrineSlot);
+  }, [loading, binderPanelIds, slots, activeDoctrineSlot]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.currentTarget.focus({ preventScroll: true });
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = e.currentTarget.getBoundingClientRect();
     engineRef.current?.pD(e.nativeEvent, rect);
@@ -171,6 +182,8 @@ export function DoctrineBinderPicker({
   }, []);
 
   const onCanvasDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    engineRef.current?.cancelPendingCatalogPick();
     const rect = e.currentTarget.getBoundingClientRect();
     const idx = engineRef.current?.pickAt(e.clientX, e.clientY, rect);
     if (idx == null || idx < 0) return;
@@ -179,6 +192,7 @@ export function DoctrineBinderPicker({
   }, []);
 
   const resetDefaults = useCallback(() => {
+    setActiveDoctrineSlot(null);
     setSlots(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null)));
   }, []);
 
@@ -200,16 +214,23 @@ export function DoctrineBinderPicker({
             Loading…
           </div>
         ) : null}
+        {!loading ? (
+          <div className="binder-picker-tome-hint" role="status">
+            Tap a card to assign it to the next free doctrine slot. Double-click for full rules. Drag page edges or
+            use Prev/Next.
+          </div>
+        ) : null}
         <canvas
           ref={canvasRef}
           className="binder-picker-canvas"
           tabIndex={0}
           role="application"
-          aria-label="Doctrine binder — tap a card to add it to your doctrine; double-click for details."
+          aria-label="Doctrine codex — three-ring binder. Tap a card to add to doctrine; double-click for details."
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
+          onPointerLeave={() => engineRef.current?.clearCardHover()}
           onWheel={onWheel}
           onDoubleClick={onCanvasDoubleClick}
           onContextMenu={(e) => e.preventDefault()}
@@ -220,7 +241,7 @@ export function DoctrineBinderPicker({
               type="button"
               className="binder-picker-btn"
               title="Previous spread"
-              disabled={page.c <= 0}
+              disabled={loading || page.c <= 0}
               onClick={() => engineRef.current?.flipPrev()}
             >
               Prev
@@ -232,7 +253,7 @@ export function DoctrineBinderPicker({
               type="button"
               className="binder-picker-btn"
               title="Next spread"
-              disabled={page.c >= page.t - 1}
+              disabled={loading || page.c >= page.t - 1}
               onClick={() => engineRef.current?.flipNext()}
             >
               Next
@@ -241,6 +262,7 @@ export function DoctrineBinderPicker({
               type="button"
               className="binder-picker-btn"
               title="Reset camera"
+              disabled={loading}
               onClick={() => engineRef.current?.resetCam()}
             >
               View
