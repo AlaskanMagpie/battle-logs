@@ -2,7 +2,12 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DoctrineBinderPicker } from "./binder/DoctrineBinderPicker";
 
-export { loadDoctrineSlots, saveDoctrineSlots } from "./doctrineStorage";
+export {
+  loadDoctrinePickerState,
+  loadDoctrineSlots,
+  saveDoctrinePickerState,
+  saveDoctrineSlots,
+} from "./doctrineStorage";
 export type { CatalogSortKey } from "../game/catalogSort";
 export { sortCatalogIds } from "../game/catalogSort";
 

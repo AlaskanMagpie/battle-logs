@@ -58,6 +58,11 @@ export function combat(s: GameState): void {
         tz: best.z,
         range: u.range,
         wide: !!(u.aoeRadius && u.aoeRadius > 0),
+        team: u.team,
+        sizeClass: u.sizeClass,
+        signal: u.signal,
+        visualSeed: u.visualSeed,
+        trait: u.trait,
       });
     }
     if (u.aoeRadius && u.aoeRadius > 0) {

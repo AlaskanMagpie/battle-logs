@@ -2,19 +2,24 @@
   box-sizing: border-box;
 }
 :root {
-  /* In-match doctrine tray — max cap only; row sizes to cards (no empty slab). */
-  --doctrine-tray-h: clamp(120px, min(32dvh, calc(18vw + 72px)), 320px);
+  /* In-match doctrine tray — taller cap so compact cards read more like previews. */
+  --doctrine-tray-h: clamp(168px, min(52dvh, calc(28vw + 96px)), 460px);
   /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
   --tcg-aspect-w: 5;
   --tcg-aspect-h: 7;
   --tcg-card-aspect: 5 / 7;
   /** Bottom-right embed (e.g. Vibe Jam) — keep doctrine row clear of it. */
   --hud-corner-widget-reserve: 220px;
+  /** Team tint tokens (HUD + readouts). */
+  --hud-team-friendly: #5eb0ff;
+  --hud-team-friendly-dim: #7ec8ff;
+  --hud-team-hostile: #ff6b6b;
+  --hud-team-hostile-dim: #ff9a8a;
 }
 
 @media (pointer: coarse) {
   :root {
-    --doctrine-tray-h: clamp(128px, min(34dvh, calc(19vw + 76px)), 330px);
+    --doctrine-tray-h: clamp(176px, min(54dvh, calc(30vw + 100px)), 470px);
   }
 }
 
@@ -99,6 +104,24 @@ body {
   color: #f0f5ff;
   font-weight: 650;
 }
+.hud-stat--econ {
+  color: #9ebfe0;
+}
+.hud-stat--econ strong {
+  color: var(--hud-team-friendly-dim, #7ec8ff);
+}
+.hud-stat--field {
+  color: #a8c4e8;
+}
+.hud-stat--field strong {
+  color: #b8e0ff;
+}
+.hud-stat--mode {
+  color: #9aa8bc;
+}
+.hud-stat--mode strong {
+  color: #d8e4f8;
+}
 .hud-chrome__phase {
   font-size: 12px;
   opacity: 0.88;
@@ -114,8 +137,29 @@ body {
   color: #a8b8ce;
 }
 .hud-chrome__readout strong {
-  color: #e8f0ff;
   font-weight: 650;
+}
+.hud-readout__hostiles {
+  color: #b4c4dc;
+}
+.hud-ink-hostile {
+  color: var(--hud-team-hostile, #ff6b6b) !important;
+  font-variant-numeric: tabular-nums;
+}
+.hud-readout__sep {
+  opacity: 0.45;
+}
+.hud-readout__camps {
+  color: #9aaab8;
+  font-size: 11.5px;
+}
+.hud-readout__camps-k {
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hud-team-hostile-dim, #ff9a8a);
+  margin-right: 0.35em;
 }
 .hud-chrome__vitals {
   display: flex;
@@ -161,8 +205,14 @@ body {
 #hud-hero-hp .bar-fill {
   background: linear-gradient(90deg, #6ae1ff, #4da3ff);
 }
+#hud-hero-hp .hud-vital__lbl {
+  color: #7ec8ff;
+}
 #hud-keep-hp .bar-fill {
-  background: linear-gradient(90deg, #9ae86a, #5cb85c);
+  background: linear-gradient(90deg, var(--hud-team-friendly-dim, #7ec8ff), var(--hud-team-friendly, #4d9fff));
+}
+#hud-keep-hp .hud-vital__lbl {
+  color: #7eb8e8;
 }
 .hud-vital strong {
   font-weight: 650;
@@ -262,7 +312,7 @@ details.hud-dock__help-drawer {
 .hud-dock--overlay details.hud-dock__help-drawer {
   border-bottom: none;
   align-self: flex-start;
-  margin-left: max(8px, env(safe-area-inset-left, 0px));
+  margin-left: max(calc(118px + env(safe-area-inset-left, 0px)), env(safe-area-inset-left, 0px));
 }
 .hud-dock__help-summary {
   list-style: none;
@@ -305,6 +355,15 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   padding: 4px max(8px, env(safe-area-inset-left, 0px)) 2px max(8px, env(safe-area-inset-right, 0px));
   background: none;
 }
+.hud-dock--overlay .hud-dock__bar--message-only {
+  justify-content: center;
+  padding: 2px max(12px, env(safe-area-inset-left, 0px)) 4px max(calc(12px + var(--hud-corner-widget-reserve, 0px)), env(safe-area-inset-right, 0px));
+}
+.hud-dock--overlay .hud-dock__bar--message-only .hud-dock__msg {
+  flex: 1 1 auto;
+  text-align: center;
+  max-width: min(920px, 100%);
+}
 .hud-dock--overlay .hud-btn--ghost {
   background: rgba(6, 8, 14, 0.48);
   border-color: rgba(255, 255, 255, 0.16);
@@ -324,6 +383,47 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+/** Match controls off the bottom rail — left column so doctrine cards can span the deck edge-to-edge. */
+.hud-match-side-controls {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  top: max(112px, calc(env(safe-area-inset-top, 0px) + 88px));
+  bottom: max(calc(var(--doctrine-tray-h, 160px) + env(safe-area-inset-bottom, 0px) + 8px), 140px);
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  width: min(118px, 22vw);
+  max-width: 132px;
+  pointer-events: auto;
+}
+.hud-match-side-controls .hud-btn {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.hud-match-side-controls .hud-btn--ghost {
+  background: rgba(6, 10, 18, 0.72);
+  border-color: rgba(100, 160, 255, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.hud-match-side-controls .hud-gamelog {
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hud-match-side-controls .hud-gamelog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(22dvh, 200px);
 }
 .hud-dock__msg {
   flex: 1 1 160px;
@@ -559,8 +659,8 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .doctrine-wrap.doctrine-wrap--rail {
   max-height: none;
   width: 100%;
-  padding: 2px max(6px, env(safe-area-inset-left, 0px)) max(10px, env(safe-area-inset-bottom, 0px))
-    max(6px, env(safe-area-inset-right, 0px));
+  padding: 0 max(4px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px))
+    max(4px, env(safe-area-inset-left, 0px));
   background: none;
   overflow-x: visible;
   overflow-y: visible;
@@ -649,7 +749,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   width: 100%;
   min-width: 0;
-  --hand-card-h: clamp(108px, min(28dvh, 20vw), 218px);
+  --hand-card-h: clamp(118px, min(34dvh, 24vw), 248px);
   --hand-reveal: clamp(12px, 2.2vw, 36px);
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
@@ -666,14 +766,14 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   width: 100%;
   overflow: visible;
   --hand-slot-gap: clamp(2px, 0.28vw, 4px);
-  --hand-rail-pl: max(8px, env(safe-area-inset-left, 0px));
-  --hand-rail-pr: max(calc(8px + var(--hud-corner-widget-reserve, 118px)), env(safe-area-inset-right, 0px));
-  padding: 2px var(--hand-rail-pr) max(6px, env(safe-area-inset-bottom, 0px)) var(--hand-rail-pl);
+  --hand-rail-pl: max(4px, env(safe-area-inset-left, 0px));
+  --hand-rail-pr: max(calc(6px + var(--hud-corner-widget-reserve, 118px)), env(safe-area-inset-right, 0px));
+  padding: 0 var(--hand-rail-pr) max(2px, env(safe-area-inset-bottom, 0px)) var(--hand-rail-pl);
   --hand-reveal: 0px;
   --hand-card-w: min(
-    200px,
+    400px,
     max(
-      46px,
+      56px,
       calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)
     )
   );
@@ -687,6 +787,35 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   min-height: calc(var(--hand-card-h) + 14px);
   justify-content: flex-start;
   flex-wrap: nowrap;
+}
+
+/* Signal / spell color strip on filled doctrine slots (see `data-slot-tone` in hud.ts). */
+.doctrine-track--hand .slot[data-slot-tone]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 3px;
+  height: 6px;
+  border-radius: 4px;
+  z-index: 6;
+  pointer-events: none;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+.doctrine-track--hand .slot[data-slot-tone="vanguard"]::before {
+  background: linear-gradient(90deg, #ffd2a8, #e07020);
+}
+.doctrine-track--hand .slot[data-slot-tone="bastion"]::before {
+  background: linear-gradient(90deg, #9fd6ff, #2a7cc4);
+}
+.doctrine-track--hand .slot[data-slot-tone="reclaim"]::before {
+  background: linear-gradient(90deg, #b8ffcf, #2a9c52);
+}
+.doctrine-track--hand .slot[data-slot-tone="neutral"]::before {
+  background: linear-gradient(90deg, #9af0f0, #2a9a9a);
+}
+.doctrine-track--hand .slot[data-slot-tone="command"]::before {
+  background: linear-gradient(90deg, #e8c4ff, #8b42c9);
 }
 
 .slot-hotkey {
@@ -729,6 +858,11 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .doctrine-track--rail .doctrine-hand--match .slot {
   position: relative;
   flex: 0 0 auto;
+}
+
+.doctrine-track--rail .slot-hotkey {
+  font-size: 11px;
+  padding: 2px 6px;
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match {
@@ -1142,8 +1276,12 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   font-weight: 600;
 }
 .slot.active {
-  outline: 2px solid #6aa6ff;
-  border-color: #6aa6ff;
+  outline: 3px solid #5cff9a;
+  outline-offset: 1px;
+  border-color: rgba(92, 255, 154, 0.75);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 18px rgba(92, 255, 154, 0.42);
 }
 .slot.slot-await-infra:not(.slot-locked) {
   border-color: #3a4a63;
@@ -1918,8 +2056,8 @@ button.hud-btn--ghost:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 button.hud-btn--stance-defense {
-  border-color: rgba(110, 200, 140, 0.45);
-  color: #d6f6e4;
+  border-color: rgba(120, 190, 255, 0.5);
+  color: #dcecff;
 }
 button.hud-btn:hover {
   border-color: #4b5b73;
@@ -2590,7 +2728,7 @@ button.hud-btn--armed::after {
 .card-detail-pop.card-detail-pop--hover-dock {
   align-items: flex-end;
   justify-content: center;
-  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 8px)
+  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 12px)
     max(10px, env(safe-area-inset-left, 0px));
   pointer-events: none;
 }
@@ -2603,8 +2741,8 @@ button.hud-btn--armed::after {
   max-height: min(72dvh, 640px);
 }
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-fit {
-  width: min(420px, calc(100vw - 24px));
-  height: min(630px, 72dvh);
+  width: min(480px, calc(100vw - 32px));
+  height: min(720px, 78dvh);
 }
 .card-detail-pop-backdrop {
   position: fixed;
@@ -4002,6 +4140,23 @@ button.hud-btn--armed::after {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   font-size: 10px;
   color: #e8eef7;
+}
+/* Full compact card face while dragging (map + match HUD) — overrides the summary strip chrome. */
+.doctrine-drag-ghost.doctrine-drag-ghost--card-face {
+  max-width: none;
+  width: auto;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-size: unset;
+  color: unset;
+  filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.4));
+}
+.doctrine-drag-ghost.doctrine-drag-ghost--card-face .doctrine-drag-ghost-card-face-inner {
+  width: clamp(120px, 18vw, 220px);
+  container-type: inline-size;
 }
 .ghost-compact {
   display: flex;

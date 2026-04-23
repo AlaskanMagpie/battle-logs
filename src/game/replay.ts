@@ -110,6 +110,9 @@ export function stateChecksum(s: GameState): number {
     h = mix(h, t.ownerTeam === "player" ? 1 : t.ownerTeam === "enemy" ? 2 : 0);
     h = mix(h, quant(t.anchorHp ?? 0));
   }
+  const bid = s.enemyAiLastBuildCatalogId;
+  if (bid) for (let i = 0; i < bid.length; i++) h = mix(h, bid.charCodeAt(i) | 0);
+  else h = mix(h, 0);
   return h >>> 0;
 }
 

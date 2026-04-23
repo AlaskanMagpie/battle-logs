@@ -4,8 +4,8 @@ import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
   FORWARD_BUILD_TIME_MULT,
-  HERO_CLAIM_CHANNEL_SEC,
-  HERO_CLAIM_FLUX_FEE,
+  FORWARD_STRUCTURE_HP_MULT,
+  HERO_MOVE_WAYPOINT_CAP,
   SHATTER_TARGET_RADIUS,
   TICK_HZ,
 } from "../../constants";
@@ -26,6 +26,7 @@ import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { findNeutralTapIndexNearHero } from "./hero";
 import { dist2 } from "./helpers";
+import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
 
@@ -83,14 +84,16 @@ function tryPlaceStructure(
   const placementForward = !infra && nearFriendlyForward(s, pos);
   let buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
   if (placementForward) buildTicks = Math.round(buildTicks * FORWARD_BUILD_TIME_MULT);
+  const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
+  const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const st: StructureRuntime = {
     id: s.nextId.structure++,
     team: "player",
     catalogId,
     x: pos.x,
     z: pos.z,
-    hp: def.maxHp,
-    maxHp: def.maxHp,
+    hp: hp0,
+    maxHp: hp0,
     buildTicksRemaining: buildTicks,
     buildTotalTicks: buildTicks,
     complete: false,
@@ -168,8 +171,16 @@ function tryFreeMuster(s: GameState, st: StructureRuntime): boolean {
  * keeps the door open for signal-specific flourishes (Vanguard ground burn,
  * Bastion shield pulse, Reclaim restore glow) by branching on catalogId.
  */
-function emitSummonFx(s: GameState, _catalogId: string, pos: Vec2): void {
+function emitSummonFx(s: GameState, catalogId: string, pos: Vec2): void {
+  const e = getCatalogEntry(catalogId);
+  const sigs = e && isStructureEntry(e) ? e.signalTypes : [];
+  const v = sigs.includes("Vanguard") ? 1 : 0;
+  const b = sigs.includes("Bastion") ? 1 : 0;
+  const r = sigs.includes("Reclaim") ? 1 : 0;
   emitFx(s, "lightning", pos);
+  if (v >= b && v >= r) emitFx(s, "spark_burst", pos);
+  else if (b >= r) emitFx(s, "ground_crack", pos);
+  else emitFx(s, "reclaim_pulse", pos);
 }
 
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
@@ -441,13 +452,33 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
           : "Stance: Offense — army seeks out foes.";
     } else if (it.type === "hero_move") {
       const half = s.map.world.halfExtents;
-      s.hero.targetX = Math.max(-half, Math.min(half, it.x));
-      s.hero.targetZ = Math.max(-half, Math.min(half, it.z));
-      if (s.hero.claimChannelTarget !== null) {
-        s.hero.claimChannelTarget = null;
-        s.hero.claimChannelTicksRemaining = 0;
+      const x = Math.max(-half, Math.min(half, it.x));
+      const z = Math.max(-half, Math.min(half, it.z));
+      const h = s.hero;
+      if (h.claimChannelTarget !== null) {
+        h.claimChannelTarget = null;
+        h.claimChannelTicksRemaining = 0;
       }
-      logGame("move", `Move order → (${it.x.toFixed(1)}, ${it.z.toFixed(1)})`, s.tick);
+      const shift = it.shiftKey === true;
+      if (shift) {
+        if (h.targetX !== null && h.targetZ !== null) {
+          if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
+            s.lastMessage = `Waypoint queue full (max ${HERO_MOVE_WAYPOINT_CAP}).`;
+          } else {
+            h.moveWaypoints.push({ x, z });
+            logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+          }
+        } else {
+          h.targetX = x;
+          h.targetZ = z;
+          logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+        }
+      } else {
+        h.moveWaypoints.length = 0;
+        h.targetX = x;
+        h.targetZ = z;
+        logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+      }
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));
@@ -485,13 +516,18 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "hero_claim") {
       s.hero.targetX = null;
       s.hero.targetZ = null;
+      s.hero.moveWaypoints.length = 0;
       const idx = findNeutralTapIndexNearHero(s);
-      if (idx !== null && s.hero.claimChannelTarget === null && s.flux >= HERO_CLAIM_FLUX_FEE) {
+      if (idx !== null && s.hero.claimChannelTarget === null) {
         const tap = s.taps[idx];
         if (tap && !tap.active) {
-          s.hero.claimChannelTarget = idx;
-          s.hero.claimChannelTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ);
-          s.lastMessage = `Claiming node… stand still for ${HERO_CLAIM_CHANNEL_SEC.toFixed(0)}s (−${HERO_CLAIM_FLUX_FEE} Mana).`;
+          const fee = claimFluxFeeForTap(s, "player", tap);
+          const chSec = claimChannelSecForTap(s, "player", tap);
+          if (s.flux >= fee) {
+            s.hero.claimChannelTarget = idx;
+            s.hero.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+            s.lastMessage = `Claiming node… stand still for ${chSec.toFixed(1)}s (−${fee} Mana).`;
+          }
         }
       }
     } else if (it.type === "start_battle") {

@@ -20,6 +20,7 @@ import {
 } from "./cardDetailPop";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineCardBody } from "./doctrineCard";
+import { doctrineSlotHudTone } from "./doctrineSlotHudTone";
 
 const HAND_ACTIVE_LIFT = 5;
 
@@ -167,13 +168,6 @@ export type HudMountApi = {
   pushIntent: HudIntentSink;
 };
 
-function keepHpSummary(state: GameState): string {
-  const keep = findKeep(state);
-  if (!keep) return "Keep: —";
-  const pct = Math.max(0, Math.round((keep.hp / Math.max(1, keep.maxHp)) * 100));
-  return `Keep HP: ${pct}%`;
-}
-
 function enemyCount(state: GameState): number {
   return state.units.filter((u) => u.team === "enemy" && u.hp > 0).length;
 }
@@ -189,7 +183,7 @@ function computeObjective(state: GameState): string {
 
   if (claimedNodes === 0)
     return "Claim a node — walk to the nearest grey ring and stand still to channel (need Mana for the claim fee).";
-  if (playerTowers.length === 0) return "Drop a tower inside your cyan territory to summon production.";
+  if (playerTowers.length === 0) return "Drop a tower inside your claimed territory (blue ring) to summon production.";
   if (playerUnits.length === 0) {
     const producing = playerStructs.find((st) => st.complete);
     if (producing) {
@@ -209,9 +203,11 @@ function campCoreSummary(state: GameState): string {
     if (!(typeof c.coreMaxHp === "number" && c.coreMaxHp > 0)) continue;
     const hp = state.enemyCampCoreHp[c.id];
     if (hp === undefined) continue;
-    bits.push(`${c.id.slice(0, 6)}… ${Math.max(0, Math.round(hp))}`);
+    const pct =
+      c.coreMaxHp > 0 ? Math.max(0, Math.min(100, Math.round((hp / c.coreMaxHp) * 100))) : Math.round(hp);
+    bits.push(`${c.id.slice(0, 5)}… ${pct}%`);
   }
-  return bits.length ? `Camp cores: ${bits.join(" · ")}` : "";
+  return bits.length ? bits.join(" · ") : "";
 }
 
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
@@ -220,17 +216,17 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     <header class="hud-chrome" aria-label="Match status">
       <div class="hud-chrome__row hud-chrome__row--primary">
         <div class="hud-chrome__stats">
-          <span class="hud-stat">Mana <strong id="flux">0</strong></span>
-          <span class="hud-stat">Salvage <strong id="salvage">0</strong></span>
-          <span class="hud-stat">Pop <strong id="pop">0</strong> / ${GLOBAL_POP_CAP}</span>
-          <span class="hud-stat">Tier <strong id="tier">1</strong></span>
-          <span class="hud-stat">Nodes <strong id="nodes">0</strong></span>
-          <span class="hud-stat">Mode <strong id="mode">idle</strong></span>
+          <span class="hud-stat hud-stat--econ">Mana <strong id="flux">0</strong></span>
+          <span class="hud-stat hud-stat--econ">Salvage <strong id="salvage">0</strong></span>
+          <span class="hud-stat hud-stat--econ">Pop <strong id="pop">0</strong> / ${GLOBAL_POP_CAP}</span>
+          <span class="hud-stat hud-stat--econ">Tier <strong id="tier">1</strong></span>
+          <span class="hud-stat hud-stat--field">Nodes <strong id="nodes">0</strong></span>
+          <span class="hud-stat hud-stat--mode">Mode <strong id="mode">idle</strong></span>
         </div>
         <div class="hud-chrome__phase" id="phase">playing · tick 0</div>
       </div>
       <div class="hud-chrome__row hud-chrome__row--secondary">
-        <div class="hud-chrome__readout" id="hud-readout"></div>
+        <div class="hud-chrome__readout" id="hud-readout" aria-label="Enemy intelligence"></div>
         <div class="hud-chrome__vitals">
           <div class="hud-vital" id="hud-hero-hp"><span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
           <div class="hud-vital" id="hud-keep-hp"><span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
@@ -253,38 +249,38 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       </div>
     </div>
     <footer class="hud-dock hud-dock--overlay" id="hud-dock">
+      <aside class="hud-match-side-controls" aria-label="Rally, stance, camera, and log">
+        <button class="hud-btn hud-btn--ghost" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
+          Rally…
+        </button>
+        <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
+          Stance: Offense
+        </button>
+        <button
+          class="hud-btn hud-btn--ghost"
+          id="btn-camera-follow"
+          type="button"
+          aria-pressed="true"
+          title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
+        >
+          Camera: lock
+        </button>
+        <details class="hud-gamelog" id="hud-gamelog">
+          <summary>Log</summary>
+          <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
+        </details>
+      </aside>
       <details class="hud-dock__help-drawer">
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> move (camera-relative) · <kbd>RMB</kbd> move to point</div>
+          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> move (camera-relative) · <kbd>RMB</kbd> move · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue waypoints</div>
           <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> / Camera = follow wizard on/off</div>
           <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
           <div class="hud-help-item"><kbd>R</kbd> rally then click map · <kbd>G</kbd> offense / defense</div>
           <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
         </div>
       </details>
-      <div class="hud-dock__bar">
-        <div class="hud-dock__actions">
-          <button class="hud-btn hud-btn--ghost" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
-            Rally…
-          </button>
-          <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
-            Stance: Offense
-          </button>
-          <button
-            class="hud-btn hud-btn--ghost"
-            id="btn-camera-follow"
-            type="button"
-            aria-pressed="true"
-            title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
-          >
-            Camera: lock
-          </button>
-          <details class="hud-gamelog" id="hud-gamelog">
-            <summary>Log</summary>
-            <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
-          </details>
-        </div>
+      <div class="hud-dock__bar hud-dock__bar--message-only">
         <p class="hud-dock__msg" id="msg"></p>
       </div>
       <div class="doctrine-wrap doctrine-wrap--rail" id="doctrine-wrap">
@@ -458,8 +454,11 @@ export function updateHud(state: GameState): void {
   const readout = document.querySelector("#hud-readout");
   if (readout) {
     const coreLine = campCoreSummary(state);
-    readout.innerHTML = `${keepHpSummary(state)} · Hostiles: <strong>${enemyCount(state)}</strong>${
-      coreLine ? ` · ${coreLine}` : ""
+    const n = enemyCount(state);
+    readout.innerHTML = `<span class="hud-readout__hostiles">Hostiles <strong class="hud-ink-hostile">${n}</strong> alive</span>${
+      coreLine
+        ? ` <span class="hud-readout__sep" aria-hidden="true">·</span> <span class="hud-readout__camps"><span class="hud-readout__camps-k">Enemy camps</span> ${coreLine}</span>`
+        : ""
     }`;
   }
 
@@ -558,6 +557,7 @@ export function updateHud(state: GameState): void {
       "slot--hand-collapsed",
       "slot--hand-pull",
     );
+    b.removeAttribute("data-slot-tone");
     const id = state.doctrineSlotCatalogIds[i] ?? null;
     const live = b.querySelector(`#slot-live-${i}`) ?? document.querySelector(`#slot-live-${i}`);
 
@@ -625,6 +625,7 @@ export function updateHud(state: GameState): void {
     const reason = placementFailureReason(state, id, null, i);
     const hk = i === 9 ? "0" : String(i + 1);
     b.title = `${reason ?? "Drag onto the map to place."} (key ${hk})`;
+    b.dataset.slotTone = doctrineSlotHudTone(e);
   });
 
   if (!isDeck2x8 && !isDeck10 && !isRail) {

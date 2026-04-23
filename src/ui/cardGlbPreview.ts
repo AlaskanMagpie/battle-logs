@@ -13,7 +13,8 @@ let studio: {
   pivot: THREE.Group;
 } | null = null;
 
-const PREVIEW_PX = 256;
+/** GLB→PNG raster size (binder + inline previews). 512 keeps doctrine text readable in sleeves. */
+const PREVIEW_PX = 512;
 
 function ensureStudio(): void {
   if (studio) return;

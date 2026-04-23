@@ -136,18 +136,41 @@ export const ENEMY_WAVE_GLOBAL_CAP = 22;
 
 /** Player-controlled hero. */
 export const HERO_SPEED = 11;
+/** Max queued RMB destinations after the current move (Shift+right-click). */
+export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
 /** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
 export const HERO_CLAIM_RADIUS = 12;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
+
+/** Home distance (world units): no extra claim time / flux below this radius from Keep + relays (player) or relays + enemy start (enemy). */
+export const HOME_CLAIM_DISTANCE_NEAR = 42;
+/** At or beyond this distance from home, claim scaling reaches its maximum. */
+export const HOME_CLAIM_DISTANCE_FAR = 130;
+/** Far from home: channel length multiplier (1 = unchanged at home, this value at max distance). */
+export const HOME_CLAIM_CHANNEL_MULT_MAX = 2.15;
+/** Far from home: Mana fee multiplier vs `HERO_CLAIM_FLUX_FEE` (1 at home). */
+export const HOME_CLAIM_FLUX_MULT_MAX = 1.72;
+/** Far from home: tap Mana/sec yield scales down to this fraction (1 at home). */
+export const HOME_TAP_YIELD_MULT_MIN = 0.52;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
 export const HERO_WASD_SPEED = 11;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
-export const HERO_ATTACK_RANGE = 5.5;
-export const HERO_ATTACK_DAMAGE = 42;
-export const HERO_ATTACK_COOLDOWN_TICKS = 16;
+export const HERO_ATTACK_RANGE = 9.25;
+export const HERO_ATTACK_DAMAGE = 54;
+export const HERO_ATTACK_COOLDOWN_TICKS = 14;
+/** Extra damage multiplier when the strike hits a Swarm-class unit. */
+export const HERO_ATTACK_SWARM_MULT = 1.7;
+/** Rival strike vs Swarm (below player Swarm mult for parity). */
+export const ENEMY_HERO_STRIKE_SWARM_MULT = 1.45;
+
+/** Forward-placed structures use this fraction of catalog maxHp (snowball: faster to kill than claiming deep nodes). */
+export const FORWARD_STRUCTURE_HP_MULT = 0.58;
+/** Hero strike damage vs enemy structures within this radius of an enemy-owned tap anchor (tower-on-node). */
+export const HERO_STRIKE_NEAR_ENEMY_TAP_RADIUS = 22;
+export const HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT = 1.42;
 
 /** Procedural Mana nodes per match (each side). */
 export const TAP_NODES_PER_SIDE = 10;

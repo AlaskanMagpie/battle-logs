@@ -6,13 +6,15 @@ import { catalogPreviewTypeHue } from "../doctrineCard";
 import { getCardPreviewDataUrl } from "../cardGlbPreview";
 import { binderPanelPixelSize } from "./CardBinderEngine";
 import { binderSleevePixelSize, composeCardIntoBinderSleeve } from "./binderSleeveComposite";
+import { drawSpellBinderHero } from "./binderSpellHeroCanvas";
 
 const cache = new Map<string, Promise<THREE.CanvasTexture>>();
+/** GLB hero snapshot per structure id (reused for animated spell repaints). */
+const structureHeroImageByCatalogId = new Map<string, HTMLImageElement>();
 
 function binderTextureCacheKey(catalogId: string): string {
   const { w, h } = binderSleevePixelSize();
-  /* Sleeve composite output size; bump token when raster pipeline changes. */
-  return `${catalogId}@${w}x${h}sleeve_v3`;
+  return `${catalogId}@${w}x${h}sleeve_v5`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -66,11 +68,13 @@ function dominantSignalLabel(e: CatalogEntry): string {
   return "Mixed";
 }
 
+const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
+const SPELL_TEX_USERDATA_DEAD = "binderSpellDead";
+
 /**
- * Paints a readable “full card” facsimile with 2D canvas + the same GLB→PNG previews as the HUD.
- * Avoids html-to-image / DOM / container-query capture entirely (those were snapping black).
+ * Synchronous full panel paint. For structures, `structureHeroImageByCatalogId` must already contain the GLB snapshot.
  */
-async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElement> {
+function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HTMLCanvasElement {
   const { w, h } = binderPanelPixelSize();
   const c = document.createElement("canvas");
   c.width = w;
@@ -87,7 +91,7 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
 
   const hue = catalogPreviewTypeHue(e);
   const pad = Math.max(6, Math.round(w * 0.032));
-  const heroH = Math.round(h * 0.40);
+  const heroH = Math.round(h * 0.48);
 
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, "#1c2430");
@@ -106,37 +110,22 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
   roundRectPath(ctx, pad, pad, w - pad * 2, heroH - pad, 6);
   ctx.fill();
 
+  const hx = pad + 2;
+  const hy = pad + 2;
+  const hw = w - (pad + 2) * 2;
+  const hh = heroH - pad - 4;
+
   if (isStructureEntry(e)) {
-    try {
-      const url = await getCardPreviewDataUrl(catalogId);
-      if (url) {
-        const img = await loadImage(url);
-        ctx.save();
-        roundRectPath(ctx, pad + 2, pad + 2, w - (pad + 2) * 2, heroH - pad - 4, 4);
-        ctx.clip();
-        drawImageCover(ctx, img, pad + 2, pad + 2, w - (pad + 2) * 2, heroH - pad - 4);
-        ctx.restore();
-      }
-    } catch {
-      /* keep dark hero */
+    const img = structureHeroImageByCatalogId.get(catalogId);
+    if (img) {
+      ctx.save();
+      roundRectPath(ctx, hx, hy, hw, hh, 4);
+      ctx.clip();
+      drawImageCover(ctx, img, hx, hy, hw, hh);
+      ctx.restore();
     }
   } else {
-    const cmd = e as CommandCatalogEntry;
-    const g2 = ctx.createLinearGradient(pad, pad, w - pad, heroH);
-    g2.addColorStop(0, `hsla(${hue}, 48%, 26%, 0.96)`);
-    g2.addColorStop(1, `hsla(${hue + 35}, 38%, 14%, 0.96)`);
-    ctx.fillStyle = g2;
-    roundRectPath(ctx, pad + 2, pad + 2, w - (pad + 2) * 2, heroH - pad - 4, 4);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.96)";
-    ctx.textAlign = "center";
-    const fs = Math.max(12, Math.round(w * 0.038));
-    ctx.font = `bold ${fs}px system-ui, Segoe UI, sans-serif`;
-    ctx.fillText("SPELL", w / 2, pad + (heroH - pad) * 0.42);
-    const eff = cmd.effect.type.replace(/_/g, " ");
-    ctx.font = `${Math.max(10, Math.round(w * 0.03))}px system-ui, Segoe UI, sans-serif`;
-    ctx.fillStyle = "rgba(228,236,248,0.92)";
-    ctx.fillText(eff.toUpperCase(), w / 2, pad + (heroH - pad) * 0.62);
+    drawSpellBinderHero(ctx, e as CommandCatalogEntry, hx, hy, hw, hh, hue, spellTimeSec);
   }
 
   let y = heroH + 8;
@@ -218,6 +207,64 @@ async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElem
   return c;
 }
 
+async function ensureStructureHeroLoaded(catalogId: string): Promise<void> {
+  const e = getCatalogEntry(catalogId);
+  if (!e || !isStructureEntry(e)) return;
+  if (structureHeroImageByCatalogId.has(catalogId)) return;
+  try {
+    const url = await getCardPreviewDataUrl(catalogId);
+    if (url) structureHeroImageByCatalogId.set(catalogId, await loadImage(url));
+  } catch {
+    /* keep map empty — hero stays dark */
+  }
+}
+
+async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElement> {
+  await ensureStructureHeroLoaded(catalogId);
+  return paintBinderPanelOntoCanvas(catalogId, 0);
+}
+
+function prefersReducedMotion(): boolean {
+  try {
+    return globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  } catch {
+    return false;
+  }
+}
+
+function startSpellBinderTextureLoop(catalogId: string, tex: THREE.CanvasTexture): void {
+  if (prefersReducedMotion()) return;
+  const dest = tex.image as HTMLCanvasElement | undefined;
+  if (!dest || !(dest instanceof HTMLCanvasElement)) return;
+
+  tex.userData[SPELL_TEX_USERDATA_DEAD] = false;
+  const step = (): void => {
+    if (tex.userData[SPELL_TEX_USERDATA_DEAD] === true) return;
+    const inner = paintBinderPanelOntoCanvas(catalogId, performance.now() / 1000);
+    const composed = composeCardIntoBinderSleeve(inner);
+    const dctx = dest.getContext("2d");
+    if (dctx) {
+      dctx.clearRect(0, 0, dest.width, dest.height);
+      dctx.drawImage(composed, 0, 0);
+    }
+    tex.needsUpdate = true;
+    if (tex.userData[SPELL_TEX_USERDATA_DEAD] === true) return;
+    tex.userData[SPELL_TEX_USERDATA_RAF] = requestAnimationFrame(step);
+  };
+  tex.userData[SPELL_TEX_USERDATA_RAF] = requestAnimationFrame(step);
+}
+
+function wrapSpellTextureDispose(tex: THREE.CanvasTexture): void {
+  const base = tex.dispose.bind(tex);
+  tex.dispose = (): void => {
+    tex.userData[SPELL_TEX_USERDATA_DEAD] = true;
+    const rafId = tex.userData[SPELL_TEX_USERDATA_RAF] as number | undefined;
+    if (typeof rafId === "number") cancelAnimationFrame(rafId);
+    delete tex.userData[SPELL_TEX_USERDATA_RAF];
+    base();
+  };
+}
+
 async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
   const inner = await paintBinderPanelCanvas(catalogId);
   const cvs = composeCardIntoBinderSleeve(inner);
@@ -225,6 +272,13 @@ async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTextur
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   tex.needsUpdate = true;
+
+  const entry = getCatalogEntry(catalogId);
+  if (entry && isCommandEntry(entry)) {
+    wrapSpellTextureDispose(tex);
+    startSpellBinderTextureLoop(catalogId, tex);
+  }
+
   return tex;
 }
 
@@ -252,8 +306,14 @@ export async function preloadBinderTextures(ids: readonly string[]): Promise<voi
 export function disposeBinderTextureCache(): void {
   for (const p of cache.values()) {
     void p.then((t) => {
+      t.userData[SPELL_TEX_USERDATA_DEAD] = true;
+      const rafId = t.userData[SPELL_TEX_USERDATA_RAF] as number | undefined;
+      if (typeof rafId === "number") cancelAnimationFrame(rafId);
+      delete t.userData[SPELL_TEX_USERDATA_RAF];
+      delete t.userData[SPELL_TEX_USERDATA_DEAD];
       t.dispose();
     });
   }
   cache.clear();
+  structureHeroImageByCatalogId.clear();
 }

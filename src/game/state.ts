@@ -42,7 +42,10 @@ export type CastFxKind =
   | "recycle"
   | "claim"
   | "lightning"
-  | "hero_strike";
+  | "hero_strike"
+  | "spark_burst"
+  | "ground_crack"
+  | "reclaim_pulse";
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
@@ -54,7 +57,26 @@ export interface CombatHitMark {
   range: number;
   /** Wider cone for breath-style AoE attackers. */
   wide: boolean;
+  team: TeamId;
+  sizeClass: UnitSizeClass;
+  /** Inherited from producer structure — drives elemental hue. */
+  signal?: SignalType;
+  /** Stable per-unit hash for FX variety (spark seeds, fork count). */
+  visualSeed: number;
+  trait?: UnitTrait;
 }
+
+/** Wizard melee burst palette (both heroes). */
+export type HeroStrikeFxVariant =
+  | "player_vs_unit"
+  | "player_vs_rival"
+  | "player_vs_fortress"
+  | "player_vs_structure"
+  | "player_vs_anchor"
+  | "rival_vs_hero"
+  | "rival_vs_unit"
+  | "rival_vs_anchor"
+  | "rival_vs_keep";
 
 export interface CastFxEvent {
   kind: CastFxKind;
@@ -64,10 +86,17 @@ export interface CastFxEvent {
   /** Strike origin (wizard xz) — when set, renderer draws a bolt from here to (x,z). */
   fromX?: number;
   fromZ?: number;
+  /** When `kind === "hero_strike"`, picks elemental cone + bolt colors. */
+  strikeVariant?: HeroStrikeFxVariant;
 }
 
 /** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */
-export function emitHeroStrikeFx(s: GameState, target: Vec2, from: Vec2): void {
+export function emitHeroStrikeFx(
+  s: GameState,
+  target: Vec2,
+  from: Vec2,
+  strikeVariant: HeroStrikeFxVariant,
+): void {
   s.lastFx = {
     kind: "hero_strike",
     x: target.x,
@@ -75,6 +104,7 @@ export function emitHeroStrikeFx(s: GameState, target: Vec2, from: Vec2): void {
     tick: s.tick,
     fromX: from.x,
     fromZ: from.z,
+    strikeVariant,
   };
 }
 
@@ -122,6 +152,8 @@ export interface HeroRuntime {
   /** Move target in world; null when idle. */
   targetX: number | null;
   targetZ: number | null;
+  /** After the current `targetX/Z`, visit these in order (player hero only; cleared on replace / WASD / claim). */
+  moveWaypoints: Vec2[];
   speedPerSec: number;
   /** Follow-aura pickup radius. */
   radius: number;
@@ -261,6 +293,8 @@ export interface GameState {
   enemyHero: HeroRuntime;
   /** Enemy team's Mana (from enemy-owned taps). */
   enemyFlux: number;
+  /** Enemy auto-build: last placed catalog id (soft diversity so AI does not spam one tower). */
+  enemyAiLastBuildCatalogId: string | null;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -367,8 +401,8 @@ function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd
 }
 
 /**
- * One-time match init: optionally strip command cards, then sort remaining structure
- * ids by ascending flux cost (stable tie-break by id). Packs to `DOCTRINE_SLOT_COUNT` slots, nulls last.
+ * One-time match init / binder: when commands are disabled, strip invalid/command entries per slot
+ * and preserve slot order (nulls stay in place). With commands enabled, pad and validate only.
  */
 export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
   const catalogOk = (id: string | null): string | null => {
@@ -380,18 +414,15 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
     while (copy.length < DOCTRINE_SLOT_COUNT) copy.push(null);
     return copy.slice(0, DOCTRINE_SLOT_COUNT).map(catalogOk);
   }
-  const structs: { id: string; cost: number }[] = [];
-  for (const id of slots) {
-    if (!id) continue;
-    const e = getCatalogEntry(id);
-    if (!e) continue;
-    if (isCommandEntry(e)) continue;
-    if (isStructureEntry(e)) structs.push({ id, cost: e.fluxCost });
-  }
-  structs.sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id));
-  const out: (string | null)[] = structs.map((s) => s.id);
-  while (out.length < DOCTRINE_SLOT_COUNT) out.push(null);
-  return out.slice(0, DOCTRINE_SLOT_COUNT);
+  const row = [...slots];
+  while (row.length < DOCTRINE_SLOT_COUNT) row.push(null);
+  return row.slice(0, DOCTRINE_SLOT_COUNT).map((id) => {
+    const ok = catalogOk(id);
+    if (!ok) return null;
+    const e = getCatalogEntry(ok);
+    if (!e || isCommandEntry(e) || !isStructureEntry(e)) return null;
+    return ok;
+  });
 }
 
 /** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
@@ -536,6 +567,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: heroSpawn.z,
     targetX: null,
     targetZ: null,
+    moveWaypoints: [],
     speedPerSec: HERO_SPEED,
     radius: HERO_FOLLOW_RADIUS,
     claimChannelTarget: null,
@@ -556,6 +588,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: enemySpawn.z,
     targetX: null,
     targetZ: null,
+    moveWaypoints: [],
     speedPerSec: HERO_SPEED * 1.02,
     radius: HERO_FOLLOW_RADIUS,
     claimChannelTarget: null,
@@ -611,6 +644,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     lastSiegeHit: null,
     hero,
     enemyHero,
+    enemyAiLastBuildCatalogId: null,
   };
 
   spawnKeep(state);

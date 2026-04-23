@@ -719,7 +719,7 @@ export function doctrineCardLibraryHtml(catalogId: string, deckSlotIndex?: numbe
   return tcgCardCompactHtml(catalogId, "picker", deckSlotIndex);
 }
 
-/** Compact floating label while dragging to the map. */
+/** Legacy one-line drag chip; prefer `tcgCardCompactHtml` + `.doctrine-drag-ghost--card-face` for a full face. */
 export function doctrineCardGhostSummary(catalogId: string): string {
   const e = getCatalogEntry(catalogId);
   if (!e) return `<span class="ghost-title">?</span>`;

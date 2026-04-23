@@ -37,7 +37,12 @@ export function deriveBinderUiMode(input: BinderUiModeInput): BinderUiMode {
 }
 
 export function interactionMayPickCatalog(mode: BinderUiMode): boolean {
-  return mode === "open_idle";
+  return mode === "open_idle" || mode === "page_spring";
+}
+
+/** Raycast-only: allows reading which catalog cell is under the cursor while the leaf is still springing. */
+export function mayRaycastCatalog(mode: BinderUiMode): boolean {
+  return mode === "open_idle" || mode === "page_spring";
 }
 
 export function interactionMayArmPageTurn(mode: BinderUiMode): boolean {

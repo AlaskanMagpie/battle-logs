@@ -1,41 +1,90 @@
 import * as THREE from "three";
 import type { ReactElement } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { CATALOG, DEFAULT_DOCTRINE_SLOTS } from "../../game/catalog";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CATALOG, DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "../../game/catalog";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
+import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
-import { sortCatalogIds, type CatalogSortKey } from "../../game/catalogSort";
-import { isCommandEntry } from "../../game/types";
-import { preloadCardPreviewDataUrls } from "../cardGlbPreview";
-import { showDoctrineCardDetail } from "../cardDetailPop";
-import { loadDoctrineSlots, saveDoctrineSlots } from "../doctrineStorage";
+import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
+import {
+  CARD_PREVIEW_HOVER_MS,
+  onDoctrineCardPreviewHoverLeave,
+  showDoctrineCardDetail,
+} from "../cardDetailPop";
+import { doctrineCardBody, tcgCardCompactHtml } from "../doctrineCard";
+import { attachDoctrineHandPeek } from "../hud";
+import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
+import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
 import { getBinderTextureForCatalogId } from "./binderCardTexture";
-import { CardBinderEngine } from "./CardBinderEngine";
+import { BINDER_CODEX_TOTAL_CELLS, CardBinderEngine, type CodexPointerDragEvent } from "./CardBinderEngine";
+import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
 import "./binderPicker.css";
 
 const CATALOG_IDS = CATALOG.map((c) => c.id);
-/** Doctrine binder pages: structures only (commands stay in catalog elsewhere). */
-const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
-/**
- * 3D binder textures and raycast pick indices always follow **catalog order**.
- * The Sort control does not remap the codex (avoids “shuffled” cards when sort changes).
- */
-const BINDER_GRID_CATALOG_IDS: readonly string[] = sortCatalogIds(STRUCTURE_CATALOG_IDS, "catalog");
+/** Codex panel order: full catalog (structures + spells/commands), shuffled into binder cells. */
+const BINDER_GRID_CATALOG_IDS: readonly string[] = CATALOG_IDS;
 const validIds = new Set(CATALOG_IDS);
-const MIN_FILLED = Math.ceil(DOCTRINE_SLOT_COUNT * 0.75);
+const MIN_FILLED = 4;
+
+function padDoctrineSlotsLocal(row: (string | null)[]): (string | null)[] {
+  const a = row.length > DOCTRINE_SLOT_COUNT ? row.slice(0, DOCTRINE_SLOT_COUNT) : [...row];
+  while (a.length < DOCTRINE_SLOT_COUNT) a.push(null);
+  return a;
+}
+
+function pointInRect(clientX: number, clientY: number, r: DOMRect): boolean {
+  return clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+}
+
+function slotUnderPointerInTrack(clientX: number, clientY: number, track: HTMLElement): number | null {
+  const stack = document.elementsFromPoint(clientX, clientY);
+  for (const el of stack) {
+    if (!(el instanceof Element)) continue;
+    const slot = el.closest("[data-slot-index]");
+    if (!(slot instanceof HTMLElement) || !track.contains(slot)) continue;
+    const si = Number(slot.dataset.slotIndex);
+    if (Number.isFinite(si) && si >= 0 && si < DOCTRINE_SLOT_COUNT) return si;
+  }
+  return null;
+}
+
+/** One texture index per duplex slot (`BINDER_CODEX_TOTAL_CELLS`); repeats when the catalog is smaller than the grid. */
+function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
+  if (baseIds.length === 0) return [];
+  const rotated = [...baseIds];
+  for (let i = rotated.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rotated[i], rotated[j]] = [rotated[j]!, rotated[i]!];
+  }
+  const out: string[] = [];
+  for (let i = 0; i < BINDER_CODEX_TOTAL_CELLS; i++) {
+    out.push(rotated[i % rotated.length]!);
+  }
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
 
 export function DoctrineBinderPicker({
   onStart,
 }: {
   onStart: (slots: (string | null)[], mapUrl: string) => void;
 }): ReactElement {
-  const [sortKey, setSortKey] = useState<CatalogSortKey>("catalog");
   const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
+  const initialPicker = useMemo(() => loadDoctrinePickerState(), []);
   const [slots, setSlots] = useState<(string | null)[]>(() =>
-    loadDoctrineSlots().map((id) => (id && validIds.has(id) ? id : null)),
+    normalizeDoctrineSlotsForMatch(
+      padDoctrineSlotsLocal(initialPicker.slots.map((id) => (id && validIds.has(id) ? id : null))),
+    ),
   );
-  /** Highlights the doctrine slot last filled from the binder (primary outline in 3D). */
+  const [binderSlotPick, setBinderSlotPick] = useState<(number | null)[]>(() => [
+    ...initialPicker.binderSlotPickIndex,
+  ]);
   const [activeDoctrineSlot, setActiveDoctrineSlot] = useState<number | null>(null);
+  const activeDoctrineSlotRef = useRef<number | null>(null);
+  activeDoctrineSlotRef.current = activeDoctrineSlot;
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState({ c: 0, t: 1 });
   const [mapUrl, setMapUrl] = useState<string>(() => {
@@ -45,13 +94,28 @@ export function DoctrineBinderPicker({
       return DEFAULT_MAP_URL;
     }
   });
-
+  /** Map / page nav / start — floating panel so the binder stays full-bleed. */
+  const [prematchSetupOpen, setPrematchSetupOpen] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  /** Full doctrine strip (wrap + padding) — generous `getBoundingClientRect` for codex drop hit-testing. */
+  const doctrineStripHitRef = useRef<HTMLDivElement>(null);
+  const handTrackRef = useRef<HTMLDivElement>(null);
+  const handRowRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CardBinderEngine | null>(null);
+  /** Two quick taps on the same catalog cell open full rules (pointer-first; complements dblclick). */
+  const detailTapRef = useRef<{ t: number; idx: number | null }>({ t: 0, idx: null });
+  const codexDragBusyRef = useRef(false);
+
+  const [codexDrag, setCodexDrag] = useState<{ catalogId: string; x: number; y: number } | null>(null);
+  const codexGhostRef = useRef<HTMLDivElement | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
+  const [dragOverHandZone, setDragOverHandZone] = useState(false);
 
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
+  const binderSlotPickRef = useRef(binderSlotPick);
+  binderSlotPickRef.current = binderSlotPick;
 
   const filledCount = slots.filter(Boolean).length;
   const canStart = filledCount >= MIN_FILLED;
@@ -59,6 +123,7 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
+        engineRef.current?.clearCodexCatalogSelection();
         setActiveDoctrineSlot(null);
         return;
       }
@@ -75,13 +140,6 @@ export function DoctrineBinderPicker({
 
       if (!engineRef.current?.isBinderOpen()) {
         if (e.key === "Home" || e.key === "End" || pageKeys) e.preventDefault();
-        return;
-      }
-
-      if (e.key === "Home" || e.key === "End") {
-        e.preventDefault();
-        if (e.key === "Home") engineRef.current?.jumpToFirstSpread();
-        else engineRef.current?.jumpToLastSpread();
         return;
       }
 
@@ -109,39 +167,112 @@ export function DoctrineBinderPicker({
 
     void (async () => {
       try {
-        const structs = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
-        await preloadCardPreviewDataUrls(structs);
+        await preloadCardPreviewDataUrls([...CATALOG_IDS]);
       } catch {
         /* best-effort */
       }
       if (cancelled) return;
 
-      const ids = BINDER_GRID_CATALOG_IDS;
+      const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
+      orderedRef.current = panelIds;
       const texList: THREE.Texture[] = [];
-      for (let i = 0; i < ids.length; i++) {
+      for (let i = 0; i < panelIds.length; i++) {
         if (cancelled) return;
-        texList.push(await getBinderTextureForCatalogId(ids[i]!));
+        texList.push(await getBinderTextureForCatalogId(panelIds[i]!));
       }
       if (cancelled) return;
 
-      const next = new CardBinderEngine(canvas, texList);
+      const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true });
       next.snapBinderFullyOpen();
+      next.onClearDoctrineSelection = () => setActiveDoctrineSlot(null);
       next.onPageChange = (c, t) => setPage({ c, t });
-      next.onPickCatalogIndex = (idx) => {
-        if (idx === null || idx < 0) return;
-        const id = orderedRef.current[idx];
-        if (!id || !validIds.has(id)) return;
-        setSlots((prev) => {
-          const empty = prev.findIndex((s) => !s);
-          if (empty < 0) {
-            showDoctrineCardDetail(id);
-            return prev;
+      next.onCodexPointerDrag = (ev: CodexPointerDragEvent) => {
+        if (ev.phase === "start") {
+          const id = orderedRef.current[ev.pickIndex];
+          if (!id || !validIds.has(id)) return;
+          codexDragBusyRef.current = true;
+          setDragOverSlot(null);
+          setDragOverHandZone(false);
+          setCodexDrag({ catalogId: id, x: ev.clientX, y: ev.clientY });
+          return;
+        }
+        if (ev.phase === "move") {
+          setCodexDrag((d) => (d ? { ...d, x: ev.clientX, y: ev.clientY } : d));
+          const track = handTrackRef.current;
+          const strip = doctrineStripHitRef.current;
+          if (!track) {
+            setDragOverSlot(null);
+            setDragOverHandZone(false);
+            return;
           }
-          setActiveDoctrineSlot(empty);
-          const copy = [...prev];
-          copy[empty] = id;
-          return copy;
-        });
+          const zr = strip?.getBoundingClientRect();
+          const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
+          setDragOverHandZone(inZone);
+          const over = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
+          setDragOverSlot(over);
+          return;
+        }
+        if (ev.phase === "end") {
+          const id = orderedRef.current[ev.pickIndex];
+          codexDragBusyRef.current = false;
+          setCodexDrag(null);
+          const track = handTrackRef.current;
+          const strip = doctrineStripHitRef.current;
+          const zr = strip?.getBoundingClientRect();
+          const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
+          let dropSlot: number | null = null;
+          let explicitHandSlot = false;
+          if (track && id && validIds.has(id)) {
+            const pointed = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
+            if (pointed !== null) {
+              dropSlot = pointed;
+              explicitHandSlot = true;
+            } else if (inZone) {
+              const s = slotsRef.current;
+              const firstEmpty = s.findIndex((x) => x == null);
+              if (firstEmpty >= 0) dropSlot = firstEmpty;
+              else {
+                const handRow = track.querySelector(".doctrine-hand--match") as HTMLElement | null;
+                const r = handRow?.getBoundingClientRect() ?? zr;
+                if (r) {
+                  const t = (ev.clientX - r.left) / Math.max(1e-6, r.width);
+                  dropSlot = Math.min(
+                    DOCTRINE_SLOT_COUNT - 1,
+                    Math.max(0, Math.floor(t * DOCTRINE_SLOT_COUNT)),
+                  );
+                }
+              }
+            }
+            if (dropSlot !== null) {
+              const bp = [...binderSlotPickRef.current];
+              while (bp.length < DOCTRINE_SLOT_COUNT) bp.push(null);
+              const b = bp.slice(0, DOCTRINE_SLOT_COUNT);
+              const nextSlots = [...slotsRef.current];
+              nextSlots[dropSlot] = id;
+              b[dropSlot] = ev.pickIndex;
+              if (explicitHandSlot) {
+                setActiveDoctrineSlot(dropSlot);
+                setBinderSlotPick(b);
+                setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(nextSlots)));
+              } else {
+                const sorted = sortPickerHandByFluxCost(nextSlots, b);
+                const landed = sorted.binderPick.findIndex((p, i) => p === ev.pickIndex && sorted.slots[i] === id);
+                setActiveDoctrineSlot(landed >= 0 ? landed : null);
+                setBinderSlotPick(sorted.binderPick);
+                setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots)));
+              }
+            }
+          }
+          setDragOverSlot(null);
+          setDragOverHandZone(false);
+          return;
+        }
+        if (ev.phase === "cancel") {
+          codexDragBusyRef.current = false;
+          setCodexDrag(null);
+          setDragOverSlot(null);
+          setDragOverHandZone(false);
+        }
       };
       const rc = wrap.getBoundingClientRect();
       next.resize(rc.width, rc.height);
@@ -154,7 +285,6 @@ export function DoctrineBinderPicker({
 
       eng = next;
       engineRef.current = next;
-      next.syncDoctrineHighlights([...BINDER_GRID_CATALOG_IDS], slotsRef.current, null);
       ro = new ResizeObserver((es) => {
         for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
       });
@@ -170,10 +300,185 @@ export function DoctrineBinderPicker({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    if (loading) return;
+    const track = handTrackRef.current;
+    const hand = handRowRef.current;
+    if (!track || !hand) return;
+
+    let buttons = [...hand.querySelectorAll<HTMLButtonElement>("button.slot")];
+    if (buttons.length !== DOCTRINE_SLOT_COUNT) {
+      hand.replaceChildren();
+      buttons = [];
+      for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "slot";
+        b.dataset.slotIndex = String(i);
+        b.setAttribute("role", "gridcell");
+        b.setAttribute("aria-rowindex", "1");
+        b.setAttribute("aria-colindex", String(i + 1));
+        const hotkey = i === 9 ? "0" : String(i + 1);
+        b.setAttribute("aria-label", `Doctrine slot ${i + 1}, key ${hotkey}`);
+        hand.appendChild(b);
+        buttons.push(b);
+      }
+    }
+
+    const idTotalCount = new Map<string, number>();
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      const id = slots[i] ?? null;
+      if (!id || !getCatalogEntry(id)) continue;
+      idTotalCount.set(id, (idTotalCount.get(id) ?? 0) + 1);
+    }
+
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      const b = buttons[i]!;
+      const id = slots[i] ?? null;
+      b.classList.remove(
+        "slot-empty",
+        "slot-ready",
+        "slot-locked",
+        "slot-sigwarn",
+        "slot-await-infra",
+        "disabled",
+        "slot--hand-collapsed",
+        "slot--hand-pull",
+      );
+      b.removeAttribute("data-slot-tone");
+      b.querySelector(".slot-dup-count")?.remove();
+
+      const hotkey = i === 9 ? "0" : String(i + 1);
+      b.innerHTML = `<span class="slot-hotkey">${hotkey}</span>${doctrineCardBody(i, id)}<div class="slot-live" id="picker-slot-live-${i}"></div>`;
+
+      if (!id) {
+        b.classList.add("slot-empty");
+        b.title = `Empty doctrine slot — drag a codex card here. (key ${hotkey})`;
+      } else {
+        const e = getCatalogEntry(id);
+        if (!e) {
+          b.classList.add("slot-empty");
+          b.title = `Unknown card in slot. (key ${hotkey})`;
+        } else {
+          const total = idTotalCount.get(id) ?? 1;
+          if (total > 1) {
+            const dup = document.createElement("span");
+            dup.className = "slot-dup-count";
+            dup.textContent = `x${total}`;
+            b.appendChild(dup);
+          }
+          b.classList.add("slot-ready");
+          b.dataset.slotTone = doctrineSlotHudTone(e);
+          b.title = `${e.name} — codex drag to replace. Sorted by cost when you add cards. (key ${hotkey})`;
+        }
+      }
+    }
+
+    hydrateCardPreviewImages(track);
+  }, [loading, slots]);
+
+  useLayoutEffect(() => {
+    if (loading) return;
+    const hand = handRowRef.current;
+    if (!hand) return;
+    const buttons = [...hand.querySelectorAll<HTMLButtonElement>("button.slot")];
+    if (buttons.length !== DOCTRINE_SLOT_COUNT) return;
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      const b = buttons[i]!;
+      b.classList.toggle("binder-picker-slot--drag-over", dragOverSlot === i);
+      b.classList.toggle("active", activeDoctrineSlot === i);
+    }
+  }, [loading, slots, dragOverSlot, activeDoctrineSlot]);
+
+  useLayoutEffect(() => {
+    if (!codexDrag) return;
+    const root = codexGhostRef.current;
+    if (!root) return;
+    hydrateCardPreviewImages(root);
+  }, [codexDrag?.catalogId]);
+
   useEffect(() => {
     if (loading) return;
-    engineRef.current?.syncDoctrineHighlights([...BINDER_GRID_CATALOG_IDS], slots, activeDoctrineSlot);
-  }, [loading, slots, activeDoctrineSlot]);
+    const track = handTrackRef.current;
+    if (!track) return;
+    attachDoctrineHandPeek(track, () => codexDragBusyRef.current);
+  }, [loading]);
+
+  useEffect(() => {
+    if (loading) return;
+    const track = handTrackRef.current;
+    if (!track) return;
+
+    let doctrineHoverTimer: ReturnType<typeof setTimeout> | null = null;
+    let doctrineHoverId: string | null = null;
+    const clearDoctrineHover = (): void => {
+      if (doctrineHoverTimer) clearTimeout(doctrineHoverTimer);
+      doctrineHoverTimer = null;
+      doctrineHoverId = null;
+    };
+
+    const onOver = (ev: MouseEvent): void => {
+      if (!(ev.target instanceof Element)) return;
+      const slot = ev.target.closest(".slot");
+      if (!(slot instanceof HTMLElement) || !track.contains(slot)) return;
+      if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
+      const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
+      const id = card?.getAttribute("data-catalog-id");
+      if (!id) return;
+      if (doctrineHoverId === id) return;
+      clearDoctrineHover();
+      doctrineHoverId = id;
+      doctrineHoverTimer = setTimeout(() => {
+        doctrineHoverTimer = null;
+        showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
+      }, CARD_PREVIEW_HOVER_MS);
+    };
+    const onOut = (ev: MouseEvent): void => {
+      if (!(ev.target instanceof Element)) return;
+      const slot = ev.target.closest(".slot");
+      if (!(slot instanceof HTMLElement) || !track.contains(slot)) return;
+      const rel = ev.relatedTarget;
+      if (rel instanceof Node && slot.contains(rel)) return;
+      clearDoctrineHover();
+      onDoctrineCardPreviewHoverLeave(ev);
+    };
+
+    track.addEventListener("mouseover", onOver);
+    track.addEventListener("mouseout", onOut);
+    return () => {
+      clearDoctrineHover();
+      track.removeEventListener("mouseover", onOver);
+      track.removeEventListener("mouseout", onOut);
+    };
+  }, [loading, slots]);
+
+  useEffect(() => {
+    const track = handTrackRef.current;
+    if (!track || loading) return;
+    const onDbl = (ev: MouseEvent): void => {
+      if (!(ev.target instanceof Element)) return;
+      const slot = ev.target.closest(".slot");
+      if (!(slot instanceof HTMLElement) || !track.contains(slot)) return;
+      if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
+      const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
+      const id = card?.getAttribute("data-catalog-id");
+      if (!id) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      showDoctrineCardDetail(id);
+    };
+    track.addEventListener("dblclick", onDbl);
+    return () => track.removeEventListener("dblclick", onDbl);
+  }, [loading, slots]);
+
+  useEffect(() => {
+    if (!prematchSetupOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setPrematchSetupOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prematchSetupOpen]);
 
   useEffect(() => {
     if (loading) return;
@@ -189,6 +494,27 @@ export function DoctrineBinderPicker({
     };
   }, [loading]);
 
+  /**
+   * `pointerup`/`pointercancel` often target the element under the cursor (hand strip), not the canvas.
+   * While a codex card is lifted, finalize the gesture from a window-level capture listener so drops always commit.
+   */
+  useEffect(() => {
+    if (loading) return;
+    const onGlobalPointerEnd = (e: PointerEvent): void => {
+      const eng = engineRef.current;
+      const canvas = canvasRef.current;
+      if (!eng?.isCodexBinderPullDragActive() || !canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      eng.pU(e, rect);
+    };
+    window.addEventListener("pointerup", onGlobalPointerEnd, true);
+    window.addEventListener("pointercancel", onGlobalPointerEnd, true);
+    return () => {
+      window.removeEventListener("pointerup", onGlobalPointerEnd, true);
+      window.removeEventListener("pointercancel", onGlobalPointerEnd, true);
+    };
+  }, [loading]);
+
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -196,8 +522,34 @@ export function DoctrineBinderPicker({
       /* setPointerCapture can fail in edge pointer states */
     }
     const rect = e.currentTarget.getBoundingClientRect();
-    engineRef.current?.pD(e.nativeEvent, rect);
-  }, []);
+    const eng = engineRef.current;
+    if (!eng) return;
+    if (!loading) {
+      const idxPre = eng.pickAt(e.clientX, e.clientY, rect);
+      if (idxPre !== null && idxPre >= 0) {
+        const idPre = orderedRef.current[idxPre];
+        if (idPre && validIds.has(idPre)) {
+          const now = performance.now();
+          const pr = detailTapRef.current;
+          if (pr.idx === idxPre && now - pr.t < 480) {
+            eng.clearCatalogTapIntent();
+            detailTapRef.current = { t: 0, idx: null };
+            eng.pD(e.nativeEvent, rect);
+            eng.clearCatalogTapIntent();
+            eng.resetCatalogPickArmAfterUiConsume();
+            showDoctrineCardDetail(idPre);
+            return;
+          }
+          detailTapRef.current = { t: now, idx: idxPre };
+        } else {
+          detailTapRef.current = { t: 0, idx: null };
+        }
+      } else {
+        detailTapRef.current = { t: 0, idx: null };
+      }
+    }
+    eng.pD(e.nativeEvent, rect);
+  }, [loading]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -205,6 +557,8 @@ export function DoctrineBinderPicker({
   }, []);
 
   const onPointerReleased = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    engineRef.current?.pU(e.nativeEvent, rect);
     try {
       if (e.currentTarget.hasPointerCapture(e.pointerId)) {
         e.currentTarget.releasePointerCapture(e.pointerId);
@@ -212,8 +566,6 @@ export function DoctrineBinderPicker({
     } catch {
       /* ignore */
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    engineRef.current?.pU(e.nativeEvent, rect);
   }, []);
 
   const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -221,151 +573,249 @@ export function DoctrineBinderPicker({
     engineRef.current?.wheel(e.deltaY);
   }, []);
 
-  const onCanvasDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    engineRef.current?.cancelPendingCatalogPick();
-    const rect = e.currentTarget.getBoundingClientRect();
-    const idx = engineRef.current?.pickAt(e.clientX, e.clientY, rect);
+  const openDetailAtClient = useCallback((clientX: number, clientY: number, el: HTMLCanvasElement) => {
+    const eng = engineRef.current;
+    if (!eng || loading) return;
+    eng.clearCatalogTapIntent();
+    const rect = el.getBoundingClientRect();
+    const idx = eng.pickAt(clientX, clientY, rect);
     if (idx == null || idx < 0) return;
     const id = orderedRef.current[idx];
     if (id && validIds.has(id)) showDoctrineCardDetail(id);
-  }, []);
+  }, [loading]);
+
+  const onCanvasDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    engineRef.current?.clearCatalogTapIntent();
+    openDetailAtClient(e.clientX, e.clientY, e.currentTarget);
+  }, [openDetailAtClient]);
 
   const resetDefaults = useCallback(() => {
     setActiveDoctrineSlot(null);
-    setSlots(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null)));
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+    setSlots(
+      normalizeDoctrineSlotsForMatch(
+        padDoctrineSlotsLocal(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null))),
+      ),
+    );
   }, []);
 
   const saveDoctrine = useCallback(() => {
-    saveDoctrineSlots(slots);
-  }, [slots]);
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
+    saveDoctrinePickerState(norm, binderSlotPick);
+    setSlots(norm);
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+  }, [slots, binderSlotPick]);
 
   const startMatch = useCallback(() => {
     if (slots.filter(Boolean).length < MIN_FILLED) return;
-    saveDoctrineSlots(slots);
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
+    saveDoctrinePickerState(norm, binderSlotPick);
     try {
       localStorage.setItem("signalWarsMapUrl", mapUrl);
     } catch {
       /* ignore */
     }
-    onStart(slots, mapUrl);
-  }, [slots, onStart, mapUrl]);
+    onStart(norm, mapUrl);
+  }, [slots, binderSlotPick, onStart, mapUrl]);
 
   return (
     <div className="binder-picker-root">
-      <div className="binder-picker-binder-wrap" ref={wrapRef}>
-        {loading ? (
-          <div className="binder-picker-loading" role="status" aria-live="polite" aria-busy="true">
-            Loading…
-          </div>
-        ) : null}
-        {!loading ? (
-          <div className="binder-picker-tome-hint" role="status">
-            Tap a card to assign it to the next free doctrine slot. Double-click for full rules. Drag page edges or
-            use Prev/Next.
-          </div>
-        ) : null}
-        <canvas
-          ref={canvasRef}
-          className="binder-picker-canvas"
-          tabIndex={0}
-          role="application"
-          aria-label="Doctrine codex — three-ring binder. Tap a card to add to doctrine; double-click for details."
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerReleased}
-          onPointerCancel={onPointerReleased}
-          onPointerLeave={() => engineRef.current?.clearCardHover()}
-          onWheel={onWheel}
-          onDoubleClick={onCanvasDoubleClick}
-          onContextMenu={(e) => e.preventDefault()}
-        />
-      </div>
-
-      <footer className="binder-picker-toolbar">
-        <div className="binder-picker-toolbar-inner">
-          {!loading ? (
-            <div className="binder-picker-nav">
-              <button
-                type="button"
-                className="binder-picker-btn"
-                title={page.t > 1 ? "Previous spread (wraps from first)" : "Previous spread"}
-                disabled={page.t <= 1}
-                onClick={() => engineRef.current?.flipPrev()}
-              >
-                Prev
-              </button>
-              <span className="binder-picker-nav-page">
-                {page.c + 1} / {page.t}
-              </span>
-              <button
-                type="button"
-                className="binder-picker-btn"
-                title={page.t > 1 ? "Next spread (wraps from last)" : "Next spread"}
-                disabled={page.t <= 1}
-                onClick={() => engineRef.current?.flipNext()}
-              >
-                Next
-              </button>
-              <button type="button" className="binder-picker-btn" title="Reset camera" onClick={() => engineRef.current?.resetCam()}>
-                View
-              </button>
+      <div className="binder-picker-main">
+        <div className="binder-picker-binder-wrap" ref={wrapRef}>
+          {loading ? (
+            <div className="binder-picker-loading" role="status" aria-live="polite" aria-busy="true">
+              Loading…
             </div>
           ) : null}
-          <div className="binder-picker-toolbar-map">
-            <label htmlFor="binder-map">Battlefield</label>
-            <select
-              id="binder-map"
-              disabled={loading}
-              value={mapUrl}
-              onChange={(ev) => setMapUrl(ev.target.value)}
+          {!loading ? (
+            <div
+              className="binder-picker-tome-hint"
+              role="status"
+              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB orbit. Double-click for full rules. Setup: Prev/Next. Orbit behind the tome to read the rear leather."
             >
-              {MAP_REGISTRY.map((m) => (
-                <option key={m.id} value={m.url}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="binder-picker-toolbar-main">
-            <div className="binder-picker-toolbar-left">
-              <label htmlFor="binder-sort" title="Does not reorder the 3D codex; binder grid is fixed catalog order.">
-                Sort
-              </label>
-              <select
-                id="binder-sort"
-                disabled={loading}
-                value={sortKey}
-                title="Reserved for future list UI; the 3D binder stays catalog order."
-                onChange={(ev) => setSortKey(ev.target.value as CatalogSortKey)}
-              >
-                <option value="catalog">Catalog</option>
-                <option value="name">Name</option>
-                <option value="cost">Cost</option>
-                <option value="cooldown">Cooldown</option>
-                <option value="kind">Kind</option>
-                <option value="class">Class</option>
-              </select>
+              <strong>Tap</strong> card · <strong>Esc</strong> / empty page clears · <strong>Drag</strong> to the{" "}
+              <strong>bottom hand strip</strong> (auto-sorts by cost) or <strong>hold</strong> ~0.4s · thin{" "}
+              <strong>edge</strong> peels pages · <strong>RMB</strong> orbit · <strong>dbl-click</strong> rules
             </div>
-            <div className="binder-picker-toolbar-actions">
-              <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
-                Reset
-              </button>
-              <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
-                Save
-              </button>
-              <button
-                type="button"
-                className="binder-picker-btn binder-picker-btn--primary"
-                disabled={loading || !canStart}
-                onClick={startMatch}
-              >
-                Start
-              </button>
-            </div>
-          </div>
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            className="binder-picker-canvas"
+            tabIndex={0}
+            role="application"
+            aria-label="Doctrine codex. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. RMB orbit. Double-click details."
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerReleased}
+            onPointerCancel={onPointerReleased}
+            onPointerLeave={() => engineRef.current?.clearCardHover()}
+            onWheel={onWheel}
+            onDoubleClick={onCanvasDoubleClick}
+            onAuxClick={(e) => {
+              if (e.button === 1) e.preventDefault();
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+          />
         </div>
-      </footer>
+
+        {!loading ? (
+          <div
+            ref={doctrineStripHitRef}
+            className={[
+              "doctrine-wrap doctrine-wrap--rail binder-picker-doctrine-wrap",
+              dragOverHandZone ? "binder-picker-doctrine-hand--drag-over" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <div className="binder-picker-hand-zone">
+              <div className="doctrine-view">
+                <div
+                  ref={handTrackRef}
+                  className="doctrine-track doctrine-track--hand doctrine-track--deck10 doctrine-track--rail"
+                  id="doctrine-picker-hand-track"
+                  role="grid"
+                  aria-label="Doctrine hand — drop codex cards anywhere in this bottom strip; cards sort by cost"
+                  aria-rowcount={1}
+                >
+                  <div
+                    ref={handRowRef}
+                    className="doctrine-hand doctrine-hand--match"
+                    role="row"
+                    aria-rowindex={1}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {codexDrag ? (
+        <div
+          ref={codexGhostRef}
+          className="binder-picker-codex-ghost"
+          style={{ left: codexDrag.x + 14, top: codexDrag.y + 14 }}
+          aria-hidden
+        >
+          <div
+            className="binder-picker-codex-ghost__inner"
+            dangerouslySetInnerHTML={{ __html: tcgCardCompactHtml(codexDrag.catalogId, "picker") }}
+          />
+        </div>
+      ) : null}
+
+      {prematchSetupOpen ? (
+        <button
+          type="button"
+          className="binder-picker-setup-backdrop"
+          aria-label="Close setup"
+          tabIndex={-1}
+          onClick={() => setPrematchSetupOpen(false)}
+        />
+      ) : null}
+
+      <div className="binder-picker-setup-fab">
+        <button
+          type="button"
+          className="binder-picker-setup-toggle"
+          aria-expanded={prematchSetupOpen}
+          aria-controls="binder-prematch-setup-panel"
+          id="binder-prematch-setup-trigger"
+          title="Setup: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
+          onClick={() => setPrematchSetupOpen((o) => !o)}
+        >
+          Setup
+        </button>
+        {prematchSetupOpen ? (
+          <aside
+            className="binder-picker-setup-panel"
+            id="binder-prematch-setup-panel"
+            role="dialog"
+            aria-labelledby="binder-prematch-setup-trigger"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="binder-picker-setup-panel__inner">
+              <p className="binder-picker-setup-catalog-hint">
+                Codex mixes <strong>structures</strong> (towers, production you place on the map) and{" "}
+                <strong>spells / commands</strong> (one-shot effects, Mana, and per-slot cooldown after casting).
+              </p>
+              {!loading ? (
+                <div className="binder-picker-nav">
+                  <button
+                    type="button"
+                    className="binder-picker-btn"
+                    title={page.c > 0 ? "Previous spread" : "First spread"}
+                    disabled={page.c <= 0}
+                    onClick={() => engineRef.current?.flipPrev()}
+                  >
+                    Prev
+                  </button>
+                  <span className="binder-picker-nav-page">
+                    {page.c + 1} / {page.t}
+                  </span>
+                  <button
+                    type="button"
+                    className="binder-picker-btn"
+                    title={page.c < page.t - 1 ? "Next spread" : "Last spread"}
+                    disabled={page.c >= page.t - 1}
+                    onClick={() => engineRef.current?.flipNext()}
+                  >
+                    Next
+                  </button>
+                  <button
+                    type="button"
+                    className="binder-picker-btn"
+                    title="Reset camera"
+                    onClick={() => engineRef.current?.resetCam()}
+                  >
+                    View
+                  </button>
+                </div>
+              ) : null}
+              <div className="binder-picker-toolbar-map">
+                <label htmlFor="binder-map">Battlefield</label>
+                <select
+                  id="binder-map"
+                  disabled={loading}
+                  value={mapUrl}
+                  onChange={(ev) => setMapUrl(ev.target.value)}
+                >
+                  {MAP_REGISTRY.map((m) => (
+                    <option key={m.id} value={m.url}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="binder-picker-toolbar-main">
+                <div className="binder-picker-toolbar-actions">
+                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
+                    Reset
+                  </button>
+                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="binder-picker-btn binder-picker-btn--primary"
+                    disabled={loading || !canStart}
+                    onClick={() => {
+                      setPrematchSetupOpen(false);
+                      startMatch();
+                    }}
+                  >
+                    Start
+                  </button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }

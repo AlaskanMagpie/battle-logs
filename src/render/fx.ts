@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { FX_ABSOLUTE_MAX_LIFETIME_SEC } from "../game/constants";
-import type { CastFxKind, CombatHitMark } from "../game/state";
+import type { CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
 
 /**
  * Rudimentary, procedural cast/damage FX. One shared group registered on the scene;
@@ -101,7 +101,7 @@ export function spawnCastFx(
   host: FxHost,
   kind: CastFxKind,
   pos: { x: number; z: number },
-  opts?: { from?: { x: number; z: number } },
+  opts?: { from?: { x: number; z: number }; strikeVariant?: HeroStrikeFxVariant },
 ): void {
   switch (kind) {
     case "firestorm":
@@ -119,44 +119,245 @@ export function spawnCastFx(
     case "lightning":
       return spawnLightning(host, pos);
     case "hero_strike":
-      return spawnHeroStrike(host, pos, opts?.from);
+      return spawnHeroStrike(host, pos, opts?.from, opts?.strikeVariant);
+    case "spark_burst":
+      return spawnSparkBurst(host, pos);
+    case "ground_crack":
+      return spawnGroundCrack(host, pos);
+    case "reclaim_pulse":
+      return spawnReclaimPulse(host, pos);
   }
 }
 
+function mulHex(c: number, r: number, g: number, b: number): number {
+  const col = new THREE.Color(c);
+  col.r *= r;
+  col.g *= g;
+  col.b *= b;
+  return col.getHex();
+}
+
+/** Elemental identity: signal school first, then unit class, then team bias. */
+function elementalCombatPalette(m: CombatHitMark): {
+  core: number;
+  glow: number;
+  rim: number;
+  spark: number;
+} {
+  const enemy = m.team === "enemy";
+  const biasR = enemy ? 1.08 : 0.92;
+  const biasB = enemy ? 0.88 : 1.08;
+  const sig = m.signal;
+  let core = 0x66ccff;
+  let glow = 0xffffff;
+  let rim = 0xaaddff;
+  let spark = 0xe8f6ff;
+  if (sig === "Vanguard") {
+    core = 0xff5a38;
+    glow = 0xffcc88;
+    rim = 0xff2200;
+    spark = 0xffeeaa;
+  } else if (sig === "Bastion") {
+    core = 0x7eb8ff;
+    glow = 0xffffff;
+    rim = 0x4466aa;
+    spark = 0xc8e8ff;
+  } else if (sig === "Reclaim") {
+    core = 0xc86bff;
+    glow = 0x7dffc8;
+    rim = 0xff66dd;
+    spark = 0xf0ddff;
+  } else {
+    switch (m.sizeClass) {
+      case "Swarm":
+        core = 0xe8ff44;
+        glow = 0xffffcc;
+        rim = 0x88ffaa;
+        spark = 0xffffff;
+        break;
+      case "Line":
+        core = 0x44ddff;
+        glow = 0xccffff;
+        rim = 0x2288cc;
+        spark = 0xe0ffff;
+        break;
+      case "Heavy":
+        core = 0xff8833;
+        glow = 0xffdd88;
+        rim = 0xaa2200;
+        spark = 0xffccaa;
+        break;
+      case "Titan":
+        core = 0xdda8ff;
+        glow = 0xffffff;
+        rim = 0x8844cc;
+        spark = 0xf8e8ff;
+        break;
+      default:
+        break;
+    }
+  }
+  if (m.trait === "lifesteal") {
+    rim = mulHex(rim, 0.85, 1.12, 0.95);
+    spark = mulHex(spark, 0.7, 1.05, 0.85);
+  }
+  core = mulHex(core, biasR, 1, biasB);
+  rim = mulHex(rim, biasR, 1, biasB);
+  spark = mulHex(spark, biasR, 1, biasB);
+  return { core, glow, rim, spark };
+}
+
+/** Fan of triangles: apex at origin, opening toward +Z, lying near y. */
+function createGroundConeGeometry(halfAngle: number, reach: number, y: number, segments: number): THREE.BufferGeometry {
+  const positions: number[] = [0, y, 0];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const ang = -halfAngle + t * (2 * halfAngle);
+    positions.push(Math.sin(ang) * reach, y * 0.92, Math.cos(ang) * reach);
+  }
+  const indices: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    indices.push(0, 1 + i, 2 + i);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(positions), 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function rnd(seed: number, i: number): number {
+  const u = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
+  return u - Math.floor(u);
+}
+
 /**
- * Ground wedge rooted on the attacker, opening toward the target — telegraphs strike direction
- * (narrow melee vs wider breath-style when `wide`).
+ * Ground **cone** of elemental energy rooted on the attacker, opening toward the target.
+ * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
  */
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   const dx = m.tx - m.ax;
   const dz = m.tz - m.az;
   const dist = Math.hypot(dx, dz);
-  const outer = Math.max(0.35, Math.min(m.range, dist + 0.5));
-  const inner = 0.08;
-  const arc = m.wide ? Math.PI * 0.38 : Math.PI * 0.2;
-  const thetaStart = -arc / 2;
-  const life = 0.34;
+  const reach = Math.max(0.45, Math.min(m.range, dist + 0.35) * (m.wide ? 1.08 : 1));
+  let classAngle = 1;
+  let classSpark = 1;
+  let classLife = 1;
+  switch (m.sizeClass) {
+    case "Swarm":
+      classAngle = 1.12;
+      classSpark = 1.38;
+      classLife = 0.92;
+      break;
+    case "Line":
+      classAngle = 1.04;
+      classSpark = 1.08;
+      break;
+    case "Heavy":
+      classAngle = 1.18;
+      classSpark = 0.92;
+      classLife = 1.08;
+      break;
+    case "Titan":
+      classAngle = 1.28;
+      classSpark = 0.78;
+      classLife = 1.15;
+      break;
+    default:
+      break;
+  }
+  const halfAngle = (m.wide ? 0.42 : 0.19) * Math.PI * classAngle;
+  const seg = Math.max(12, Math.round((m.wide ? 28 : 22) * Math.min(1.15, classAngle)));
+  const life = 0.44 * classLife;
+  const pal = elementalCombatPalette(m);
   const group = new THREE.Group();
-  group.position.set(m.ax, 0.11, m.az);
-  group.rotation.y = Math.atan2(dx, dz) + Math.PI / 2;
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(inner, outer, 28, 1, thetaStart, arc),
-    new THREE.MeshBasicMaterial({
-      color: m.wide ? 0xff7722 : 0xffcc55,
+  group.position.set(m.ax, 0.08, m.az);
+  group.rotation.y = Math.atan2(dx, dz);
+
+  const mkCone = (scale: number, op: number, hueShift: number): THREE.Mesh => {
+    const g = createGroundConeGeometry(halfAngle * scale, reach * (0.85 + (1 - scale) * 0.25), 0.12, seg);
+    const c = new THREE.Color(pal.core);
+    if (hueShift !== 0) c.offsetHSL(hueShift, 0, 0);
+    const mat = new THREE.MeshBasicMaterial({
+      color: c.getHex(),
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.62,
+      opacity: op,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.rotation.x = 0;
+    return mesh;
+  };
+
+  const outer = mkCone(1.18, 0.22, 0.02);
+  const mid = mkCone(1, 0.38, 0);
+  const core = mkCone(0.52, 0.55, -0.03);
+  group.add(outer);
+  group.add(mid);
+  group.add(core);
+
+  const rimGeo = new THREE.RingGeometry(reach * 0.88, reach * 1.02, seg, 1, -halfAngle, halfAngle * 2);
+  const rim = new THREE.Mesh(
+    rimGeo,
+    new THREE.MeshBasicMaterial({
+      color: pal.rim,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.55,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
   );
-  ring.rotation.x = -Math.PI / 2;
-  group.add(ring);
-  spawn(host, group, life, (t) => {
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.125;
+  group.add(rim);
+
+  const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
+  const nSpark = Math.max(6, Math.round((m.wide ? 22 : 12) * classSpark));
+  for (let i = 0; i < nSpark; i++) {
+    const u = rnd(m.visualSeed, i + 3);
+    const v = rnd(m.visualSeed, i + 19);
+    const ang = -halfAngle + u * (2 * halfAngle);
+    const rad = reach * (0.15 + v * 0.82);
+    const g = new THREE.SphereGeometry(0.06 + (m.wide ? 0.04 : 0), 5, 5);
+    const mat = new THREE.MeshBasicMaterial({
+      color: i % 3 === 0 ? pal.spark : pal.glow,
+      transparent: true,
+      opacity: 0.95,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.position.set(Math.sin(ang) * rad * 0.35, 0.2 + v * 0.35, Math.cos(ang) * rad * 0.35);
+    const burst = 2.2 + rnd(m.visualSeed, i + 40) * 3.5;
+    sparks.push({
+      mesh,
+      vx: Math.sin(ang) * burst,
+      vz: Math.cos(ang) * burst,
+      vy: 1.8 + rnd(m.visualSeed, i + 60) * 2.2,
+      mat,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const s = 1 + p * 0.35;
-    group.scale.set(s, 1, s);
-    (ring.material as THREE.MeshBasicMaterial).opacity = 0.62 * (1 - p);
+    const breathe = 1 + Math.sin(t * 28) * 0.04 * (1 - p);
+    group.scale.setScalar(breathe);
+    (outer.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
+    (mid.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p * 0.92);
+    (core.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p * 0.85);
+    (rim.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p);
+    for (const s of sparks) {
+      s.mesh.position.x += s.vx * dt;
+      s.mesh.position.z += s.vz * dt;
+      s.mesh.position.y += s.vy * dt;
+      s.vy -= 7 * dt;
+      s.mat.opacity = 0.95 * (1 - p);
+    }
   });
 }
 
@@ -192,23 +393,56 @@ function heroStrikeBoltPoints(
   return arr;
 }
 
-/** Short radial burst for wizard melee + optional bolt from caster. */
+function heroStrikeElementalPalette(v: HeroStrikeFxVariant | undefined): {
+  core: number;
+  rim: number;
+  bolt: number;
+  fork: number;
+  cone: number;
+} {
+  switch (v) {
+    case "player_vs_unit":
+      return { core: 0xb8a0ff, rim: 0xffffff, bolt: 0xf0e8ff, fork: 0xaaddff, cone: 0x8866ff };
+    case "player_vs_rival":
+      return { core: 0xffaac8, rim: 0xffffff, bolt: 0xffeef8, fork: 0xff88cc, cone: 0xff4488 };
+    case "player_vs_fortress":
+      return { core: 0xffcc66, rim: 0xffffff, bolt: 0xffeecc, fork: 0xff9944, cone: 0xff6622 };
+    case "player_vs_structure":
+      return { core: 0x88ddff, rim: 0xffffff, bolt: 0xddffff, fork: 0x66bbff, cone: 0x3399ff };
+    case "player_vs_anchor":
+      return { core: 0x66eeff, rim: 0xffffff, bolt: 0xe8ffff, fork: 0x44ccff, cone: 0x22aadd };
+    case "rival_vs_hero":
+      return { core: 0xff4466, rim: 0xffccaa, bolt: 0xffaa88, fork: 0xff2200, cone: 0xaa0022 };
+    case "rival_vs_unit":
+      return { core: 0xff8866, rim: 0xffddaa, bolt: 0xffcc99, fork: 0xff5533, cone: 0xcc3311 };
+    case "rival_vs_anchor":
+      return { core: 0xff66aa, rim: 0xffeeff, bolt: 0xffaadd, fork: 0xff3399, cone: 0xaa2266 };
+    case "rival_vs_keep":
+      return { core: 0xffaa44, rim: 0xffffcc, bolt: 0xffdd99, fork: 0xff7722, cone: 0xcc4400 };
+    default:
+      return { core: 0xc9a8ff, rim: 0xffffff, bolt: 0xe8ddff, fork: 0xaaccff, cone: 0x8866cc };
+  }
+}
+
+/** Short radial burst + **elemental cone** along the strike line + optional ion bolt. */
 function spawnHeroStrike(
   host: FxHost,
   pos: { x: number; z: number },
   from?: { x: number; z: number },
+  strikeVariant?: HeroStrikeFxVariant,
 ): void {
-  const life = 0.35;
+  const life = 0.42;
+  const pal = heroStrikeElementalPalette(strikeVariant);
   const root = new THREE.Group();
   const ringWrap = new THREE.Group();
   ringWrap.position.set(pos.x, 0.15, pos.z);
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.4, 1.2, 32),
+    new THREE.RingGeometry(0.35, 1.35, 36),
     new THREE.MeshBasicMaterial({
-      color: 0xc9a8ff,
+      color: pal.core,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.88,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
@@ -217,45 +451,87 @@ function spawnHeroStrike(
   ringWrap.add(ring);
   root.add(ringWrap);
 
+  let coneGroup: THREE.Group | null = null;
+  let outerCone: THREE.Mesh | null = null;
+  let innerCone: THREE.Mesh | null = null;
   let boltMat: THREE.LineBasicMaterial | null = null;
   let forkMat: THREE.LineBasicMaterial | null = null;
+
   if (from) {
     const ax = from.x;
     const az = from.z;
-    const dist = Math.hypot(pos.x - ax, pos.z - az);
-    const segs = Math.max(6, Math.min(14, Math.round(dist * 1.2)));
-    const jitter = Math.min(1.4, 0.25 + dist * 0.08);
+    const dx = pos.x - ax;
+    const dz = pos.z - az;
+    const dist = Math.hypot(dx, dz);
+    const halfAngle = Math.PI * 0.11;
+    const reach = Math.max(0.6, dist * 1.02);
+    coneGroup = new THREE.Group();
+    coneGroup.position.set(ax, 0.1, az);
+    coneGroup.rotation.y = Math.atan2(dx, dz);
+    const gOut = createGroundConeGeometry(halfAngle * 1.25, reach, 0.11, 20);
+    outerCone = new THREE.Mesh(
+      gOut,
+      new THREE.MeshBasicMaterial({
+        color: pal.cone,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const gIn = createGroundConeGeometry(halfAngle * 0.72, reach * 0.92, 0.13, 18);
+    innerCone = new THREE.Mesh(
+      gIn,
+      new THREE.MeshBasicMaterial({
+        color: pal.rim,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    coneGroup.add(outerCone);
+    coneGroup.add(innerCone);
+    root.add(coneGroup);
+
+    const segs = Math.max(6, Math.min(16, Math.round(dist * 1.25)));
+    const jitter = Math.min(1.6, 0.28 + dist * 0.09);
     const seed = (ax + pos.z) * 0.413 + dist * 0.17;
     const positions = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter, seed);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     boltMat = new THREE.LineBasicMaterial({
-      color: 0xe8ddff,
+      color: pal.bolt,
       transparent: true,
-      opacity: 0.92,
+      opacity: 0.95,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     root.add(new THREE.Line(geo, boltMat));
     const forkGeo = new THREE.BufferGeometry();
-    const forkPos = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.85, seed + 19.1);
+    const forkPos = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.82, seed + 19.1);
     forkGeo.setAttribute("position", new THREE.BufferAttribute(forkPos, 3));
     forkMat = new THREE.LineBasicMaterial({
-      color: 0xaaccff,
+      color: pal.fork,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.58,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     root.add(new THREE.Line(forkGeo, forkMat));
   }
 
-  spawn(host, root, life, (t) => {
+  spawn(host, root, life, (t, _dt) => {
     const p = Math.min(1, t / life);
-    ring.scale.setScalar(1 + p * 2.2);
-    (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
-    if (boltMat) boltMat.opacity = 0.92 * (1 - p);
-    if (forkMat) forkMat.opacity = 0.55 * (1 - p);
+    ring.scale.setScalar(1 + p * 2.4);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
+    if (coneGroup) coneGroup.scale.setScalar(1 + p * 0.25);
+    if (outerCone) (outerCone.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.9);
+    if (innerCone) (innerCone.material as THREE.MeshBasicMaterial).opacity = 0.42 * (1 - p * 0.85);
+    if (boltMat) boltMat.opacity = 0.95 * (1 - p);
+    if (forkMat) forkMat.opacity = 0.58 * (1 - p);
   });
 }
 
@@ -529,6 +805,77 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
       st.vy -= 5 * dt;
       (st.mesh.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
     }
+  });
+}
+
+/** Vanguard-style summon accent: fast outward sparks. */
+function spawnSparkBurst(host: FxHost, pos: { x: number; z: number }): void {
+  const life = 0.34;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.05, pos.z);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.25, 0.48, 22),
+    new THREE.MeshBasicMaterial({
+      color: 0xff5522,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    ring.scale.setScalar(1 + p * 7);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
+  });
+}
+
+/** Bastion-style summon accent: dusty radial crack. */
+function spawnGroundCrack(host: FxHost, pos: { x: number; z: number }): void {
+  const life = 0.4;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.04, pos.z);
+  const crack = new THREE.Mesh(
+    new THREE.RingGeometry(0.15, 2.1, 32, 1, 0, Math.PI * 1.65),
+    new THREE.MeshBasicMaterial({
+      color: 0x8899aa,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+    }),
+  );
+  crack.rotation.x = -Math.PI / 2;
+  crack.rotation.z = Math.random() * Math.PI * 2;
+  group.add(crack);
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    (crack.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p);
+  });
+}
+
+/** Reclaim-style summon accent: violet pulse ring. */
+function spawnReclaimPulse(host: FxHost, pos: { x: number; z: number }): void {
+  const life = 0.38;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.06, pos.z);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, 0.62, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xcc66ff,
+      transparent: true,
+      opacity: 0.75,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    ring.scale.setScalar(1 + p * 4.5);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - p);
   });
 }
 

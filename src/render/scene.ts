@@ -333,6 +333,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   plinth.position.y = 0.09;
   plinth.receiveShadow = true;
   g.add(plinth);
+  (g.userData as Record<string, unknown>)["plinthMesh"] = plinth;
 
   g.traverse((c) => {
     if (c instanceof THREE.Mesh) {
@@ -393,6 +394,7 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
       opacity: 0.72,
       depthWrite: false,
       depthTest: false,
+      blending: THREE.AdditiveBlending,
     }),
   );
   ring.rotation.x = -Math.PI / 2;
@@ -780,7 +782,10 @@ export class GameRenderer {
         fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
           ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
           : undefined;
-      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, boltFrom);
+      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, {
+        ...boltFrom,
+        strikeVariant: fxEvt.strikeVariant,
+      });
       if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
       this.lastFxTick = fxEvt.tick;
     }
@@ -811,6 +816,8 @@ export class GameRenderer {
         metalness: 0.05,
         transparent: true,
         opacity: 0.35,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
       this.ghost = new THREE.Mesh(geo, mat);
       this.ghost.position.y = 0.2;
@@ -860,6 +867,7 @@ export class GameRenderer {
         opacity: 0.75,
         depthWrite: false,
         depthTest: false,
+        blending: THREE.AdditiveBlending,
       });
       this.cmdGhostCore = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.65, 32), coreMat);
       this.cmdGhostCore.rotation.x = -Math.PI / 2;
@@ -925,6 +933,7 @@ export class GameRenderer {
           opacity: 0.9,
           depthWrite: false,
           depthTest: false,
+          blending: THREE.AdditiveBlending,
         });
         m = new THREE.Mesh(geo, mat);
         m.rotation.x = -Math.PI / 2;
@@ -934,10 +943,10 @@ export class GameRenderer {
       }
       m.position.set(t.x, 0.05, t.z);
       const mat = m.material as THREE.MeshBasicMaterial;
-      if (t.active && t.ownerTeam === "player") mat.color.set(0x5fc48a);
+      if (t.active && t.ownerTeam === "player") mat.color.set(0x4da3ff);
       else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xd06060);
       else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x888888);
-      else if (t.active) mat.color.set(0x3ecf8e);
+      else if (t.active) mat.color.set(0x52b0ff);
       else mat.color.set(0x8a96a6);
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
@@ -959,6 +968,7 @@ export class GameRenderer {
               opacity: 0.95,
               depthWrite: false,
               depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           claimArc.rotation.x = -Math.PI / 2;
@@ -1031,12 +1041,13 @@ export class GameRenderer {
           arc = new THREE.Mesh(
             new THREE.RingGeometry(yIn, yOut, 48, 1, 0, Math.PI * 2),
             new THREE.MeshBasicMaterial({
-              color: 0x7cf0b4,
+              color: 0x6ab8ff,
               side: THREE.DoubleSide,
               transparent: true,
               opacity: 0.9,
               depthWrite: false,
               depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           arc.rotation.x = -Math.PI / 2;
@@ -1060,7 +1071,7 @@ export class GameRenderer {
           );
         }
         (arc.material as THREE.MeshBasicMaterial).color.set(
-          t.ownerTeam === "enemy" ? 0xff7070 : 0x7cf0b4,
+          t.ownerTeam === "enemy" ? 0xff7070 : 0x6ab8ff,
         );
         arc.visible = true;
       } else if (arc) {
@@ -1132,6 +1143,7 @@ export class GameRenderer {
             opacity: 0.85,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.nearestTapRing.rotation.x = -Math.PI / 2;
@@ -1229,6 +1241,7 @@ export class GameRenderer {
             opacity: 0.22,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         aggro.rotation.x = -Math.PI / 2;
@@ -1249,6 +1262,7 @@ export class GameRenderer {
             opacity: 0.1,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         wake.rotation.x = -Math.PI / 2;
@@ -1305,6 +1319,7 @@ export class GameRenderer {
           opacity: 0.9,
           depthWrite: false,
           depthTest: false,
+          blending: THREE.AdditiveBlending,
         }),
       );
       arc.rotation.x = -Math.PI / 2;
@@ -1388,6 +1403,20 @@ export class GameRenderer {
         (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
       }
       this.structurePrevHp.set(st.id, st.hp);
+
+      const plinthMesh = g.userData["plinthMesh"] as THREE.Mesh | undefined;
+      if (plinthMesh) {
+        const cam = this.camera.position;
+        const dx = st.x - cam.x;
+        const dz = st.z - cam.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        const t = Math.min(1, Math.max(0, (dist - 38) / 220));
+        const mat = plinthMesh.material as THREE.MeshStandardMaterial;
+        const base = st.team === "player" ? new THREE.Color(0x0a2844) : new THREE.Color(0x440808);
+        const peak = st.team === "player" ? new THREE.Color(0x55aaff) : new THREE.Color(0xff5555);
+        mat.emissive.copy(base).lerp(peak, t);
+        mat.emissiveIntensity = 0.35 + t * 0.95;
+      }
     }
   }
 
@@ -1462,6 +1491,7 @@ export class GameRenderer {
             opacity: 0.72,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.unitSelHalo.rotation.x = -Math.PI / 2;
@@ -1479,6 +1509,7 @@ export class GameRenderer {
             opacity: 0.26,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.unitMeleeRing.rotation.x = -Math.PI / 2;
@@ -1511,6 +1542,7 @@ export class GameRenderer {
             opacity: 0.75,
             depthWrite: false,
             depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.selectHalo.rotation.x = -Math.PI / 2;
@@ -1532,6 +1564,7 @@ export class GameRenderer {
               opacity: 0.28,
               depthWrite: false,
               depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           this.attackRangeRing.rotation.x = -Math.PI / 2;
@@ -1551,12 +1584,13 @@ export class GameRenderer {
             this.auraRangeRing = new THREE.Mesh(
               new THREE.RingGeometry(1.5, 1.8, 56),
               new THREE.MeshBasicMaterial({
-                color: 0x6affc7,
+                color: 0x6ab8ff,
                 side: THREE.DoubleSide,
                 transparent: true,
                 opacity: 0.24,
                 depthWrite: false,
                 depthTest: false,
+                blending: THREE.AdditiveBlending,
               }),
             );
             this.auraRangeRing.rotation.x = -Math.PI / 2;
@@ -1593,6 +1627,7 @@ export class GameRenderer {
               opacity: 0.85,
               depthWrite: false,
               depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           this.markers.add(this.rallyLine);
@@ -1907,6 +1942,7 @@ export class GameRenderer {
         opacity: 0.85,
         depthWrite: false,
         depthTest: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
@@ -1956,6 +1992,7 @@ export class GameRenderer {
         opacity: 0.85,
         depthWrite: false,
         depthTest: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     ring.rotation.x = -Math.PI / 2;

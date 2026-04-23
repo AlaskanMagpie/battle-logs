@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { BINDER_CELLS_PER_PAGE, BINDER_CODEX_SPREAD_COUNT } from "../ui/binder/CardBinderEngine";
+import {
+  BINDER_CELLS_PER_PAGE,
+  BINDER_CELLS_PER_SHEET,
+  BINDER_CODEX_SPREAD_COUNT,
+} from "../ui/binder/CardBinderEngine";
 import { CATALOG } from "./catalog";
 import { sortCatalogIds } from "./catalogSort";
 import { isCommandEntry } from "./types";
@@ -7,10 +11,11 @@ import { isCommandEntry } from "./types";
 const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 
 describe("Doctrine binder catalog", () => {
-  it("pads the doctrine codex to nine spreads of nine cells", () => {
-    expect(BINDER_CODEX_SPREAD_COUNT).toBe(9);
+  it("pads the doctrine codex to ten sheets (18 catalog slots per sheet, 9 per face)", () => {
+    expect(BINDER_CODEX_SPREAD_COUNT).toBe(10);
     expect(BINDER_CELLS_PER_PAGE).toBe(9);
-    expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_PAGE).toBe(81);
+    expect(BINDER_CELLS_PER_SHEET).toBe(18);
+    expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET).toBe(180);
   });
 
   it("includes enough structures to fill more than one 3×3 page", () => {

@@ -17,7 +17,8 @@ import {
 import { clearGameLog, logGame } from "./game/gameLog";
 import { advanceTick } from "./game/sim/tick";
 import { GameRenderer } from "./render/scene";
-import { doctrineCardGhostSummary } from "./ui/doctrineCard";
+import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
+import { tcgCardCompactHtml } from "./ui/doctrineCard";
 import {
   destroyDragGhost,
   DRAG_THRESHOLD_PX,
@@ -198,8 +199,10 @@ function wireDoctrineDragToMap(
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       renderer.setControlsEnabled(false);
       session.ghost = makeDragGhost(
-        `<div class="ghost-compact">${doctrineCardGhostSummary(session.catalogId)}</div>`,
+        `<div class="doctrine-drag-ghost-card-face-inner">${tcgCardCompactHtml(session.catalogId, "picker")}</div>`,
       );
+      session.ghost.classList.add("doctrine-drag-ghost--card-face");
+      hydrateCardPreviewImages(session.ghost);
     }
     if (!session.dragging || !session.ghost) return;
     moveDragGhost(session.ghost, ev.clientX, ev.clientY);
@@ -538,7 +541,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       // Right-click only moves the hero (middle mouse is camera orbit).
       if (ev.button === 2) {
         ev.preventDefault();
-        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z });
+        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z, shiftKey: ev.shiftKey });
         logGame("move", `RMB move → (${hit.x.toFixed(1)}, ${hit.z.toFixed(1)})`, state.tick);
         rightHold = { pointerId: ev.pointerId, lastMs: performance.now() };
         try {
@@ -580,7 +583,8 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
           rightHold.lastMs = now;
           const rectM = canvas.getBoundingClientRect();
           const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
-          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z });
+          /** Drag-update follows cursor only (no queue append each tick). */
+          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
         }
         return;
       }

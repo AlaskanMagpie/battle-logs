@@ -17,7 +17,7 @@ export type PlayerIntent =
   | { type: "toggle_structure_orders"; structureId: number }
   | { type: "set_army_stance"; stance: ArmyStance }
   | { type: "toggle_army_stance" }
-  | { type: "hero_move"; x: number; z: number }
+  | { type: "hero_move"; x: number; z: number; shiftKey?: boolean }
   /**
    * Strafe / forward from keyboard (-1, 0, 1) in **camera** space when `camFx`…`camRz` are set
    * (W/S along view on the ground, A/D strafe). Otherwise legacy axis: A/D = world ±X, W/S = world ∓Z.
