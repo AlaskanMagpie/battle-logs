@@ -43,6 +43,9 @@ export type CastFxKind =
   | "lightning"
   | "hero_strike";
 
+export type AttackRangeBand = "close" | "medium" | "long";
+export type AttackWeight = "light" | "medium" | "heavy";
+
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
   ax: number;
@@ -53,6 +56,10 @@ export interface CombatHitMark {
   range: number;
   /** Wider cone for breath-style AoE attackers. */
   wide: boolean;
+  /** Visual profile bucket based on weapon reach. */
+  rangeBand: AttackRangeBand;
+  /** Visual intensity bucket based on unit damage output. */
+  weight: AttackWeight;
 }
 
 export interface CastFxEvent {

@@ -9,6 +9,19 @@ import {
 import { shatterTapAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
 import { dist2, TRAMPLE } from "./helpers";
 
+function classifyRangeBand(range: number): "close" | "medium" | "long" {
+  if (range <= 2.6) return "close";
+  if (range <= 5.2) return "medium";
+  return "long";
+}
+
+function classifyAttackWeight(u: UnitRuntime): "light" | "medium" | "heavy" {
+  const weighted = u.dmgPerTick * (u.aoeRadius && u.aoeRadius > 0 ? 1.2 : 1);
+  if (weighted < 0.24) return "light";
+  if (weighted < 0.6) return "medium";
+  return "heavy";
+}
+
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   let d = attacker.dmgPerTick;
   if (attacker.antiClass && defender.sizeClass === attacker.antiClass) d *= ANTI_CLASS_DAMAGE_MULT;
@@ -58,6 +71,8 @@ export function combat(s: GameState): void {
         tz: best.z,
         range: u.range,
         wide: !!(u.aoeRadius && u.aoeRadius > 0),
+        rangeBand: classifyRangeBand(u.range),
+        weight: classifyAttackWeight(u),
       });
     }
     if (u.aoeRadius && u.aoeRadius > 0) {

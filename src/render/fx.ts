@@ -134,28 +134,123 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   const inner = 0.08;
   const arc = m.wide ? Math.PI * 0.38 : Math.PI * 0.2;
   const thetaStart = -arc / 2;
-  const life = 0.34;
+  const lifeByWeight: Record<CombatHitMark["weight"], number> = {
+    light: 0.32,
+    medium: 0.4,
+    heavy: 0.5,
+  };
+  const life = lifeByWeight[m.weight];
+  const profileByRange: Record<
+    CombatHitMark["rangeBand"],
+    { primary: number; secondary: number; air: number }
+  > = {
+    close: { primary: 0x9f7b4f, secondary: 0x7bd470, air: 0xd8f3e8 }, // earth
+    medium: { primary: 0x40b9ff, secondary: 0x9be8ff, air: 0xe7f9ff }, // water
+    long: { primary: 0xff6a2a, secondary: 0xffc35f, air: 0xfff5dd }, // fire
+  };
+  const profile = profileByRange[m.rangeBand];
+  const weightScale: Record<CombatHitMark["weight"], number> = {
+    light: 0.85,
+    medium: 1,
+    heavy: 1.2,
+  };
+  const wScale = weightScale[m.weight];
   const group = new THREE.Group();
   group.position.set(m.ax, 0.11, m.az);
   group.rotation.y = Math.atan2(dx, dz) + Math.PI / 2;
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(inner, outer, 28, 1, thetaStart, arc),
     new THREE.MeshBasicMaterial({
-      color: m.wide ? 0xff7722 : 0xffcc55,
+      color: profile.primary,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0.62 * wScale,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
   );
   ring.rotation.x = -Math.PI / 2;
   group.add(ring);
+
+  const band = new THREE.Mesh(
+    new THREE.BoxGeometry(outer, 0.08 * wScale, 0.22 * wScale),
+    new THREE.MeshBasicMaterial({
+      color: profile.secondary,
+      transparent: true,
+      opacity: 0.45 * wScale,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  band.position.set(outer * 0.5, 0.08, 0);
+  group.add(band);
+
+  const projectile = new THREE.Mesh(
+    new THREE.SphereGeometry(0.11 * wScale, 10, 10),
+    new THREE.MeshBasicMaterial({
+      color: profile.primary,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  projectile.position.set(0.12, 0.2, 0);
+  group.add(projectile);
+
+  const airRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.2 * wScale, 0.03 * wScale, 8, 20),
+    new THREE.MeshBasicMaterial({
+      color: profile.air,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  airRing.rotation.y = Math.PI / 2;
+  airRing.position.set(0.14, 0.2, 0);
+  group.add(airRing);
+
+  const burstCount = m.weight === "heavy" ? 3 : m.weight === "medium" ? 2 : 1;
+  const bursts: THREE.Mesh[] = [];
+  for (let i = 0; i < burstCount; i++) {
+    const p = new THREE.Mesh(
+      new THREE.SphereGeometry(0.06 * wScale, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: profile.secondary,
+        transparent: true,
+        opacity: 0.8,
+        depthWrite: false,
+      }),
+    );
+    p.position.set(outer * (0.5 + i * 0.15), 0.14, (i - (burstCount - 1) / 2) * 0.18);
+    group.add(p);
+    bursts.push(p);
+  }
+
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
     const s = 1 + p * 0.35;
     group.scale.set(s, 1, s);
-    (ring.material as THREE.MeshBasicMaterial).opacity = 0.62 * (1 - p);
+    const fade = 1 - p;
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.62 * wScale * fade;
+    (band.material as THREE.MeshBasicMaterial).opacity = 0.45 * wScale * fade;
+    const travel = 0.12 + outer * (0.9 * p);
+    projectile.position.x = travel;
+    airRing.position.x = travel - 0.04;
+    airRing.rotation.z = t * 13;
+    const projMat = projectile.material as THREE.MeshBasicMaterial;
+    projMat.opacity = 0.9 * fade;
+    const airMat = airRing.material as THREE.MeshBasicMaterial;
+    airMat.opacity = 0.8 * fade;
+    for (let i = 0; i < bursts.length; i++) {
+      const b = bursts[i]!;
+      b.position.x += 0.03 + i * 0.008;
+      b.position.y += 0.015;
+      const bm = b.material as THREE.MeshBasicMaterial;
+      bm.opacity = Math.max(0, 0.75 * (1 - p * (1.1 + i * 0.1)));
+    }
   });
 }
 
