@@ -7,12 +7,14 @@ import {
   ENEMY_AI_MIN_BUILD_SEP,
   ENEMY_HERO_STRIKE_COOLDOWN_TICKS,
   ENEMY_HERO_STRIKE_DAMAGE,
+  ENEMY_HERO_STRIKE_SWARM_MULT,
   ENEMY_TAP_WEDGE_MARGIN_X,
   FORWARD_BUILD_TIME_MULT,
+  FORWARD_STRUCTURE_HP_MULT,
   HERO_ATTACK_RANGE,
-  HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_FLUX_FEE,
   HERO_CLAIM_RADIUS,
+  HOME_CLAIM_FLUX_MULT_MAX,
   TAP_YIELD_MAX,
   TICK_HZ,
 } from "../../constants";
@@ -21,6 +23,7 @@ import {
   armTapClaimAnchor,
   canPlaceEnemyStructureAt,
   claimedEnemyTapCount,
+  emitHeroStrikeFx,
   enemyTerritorySources,
   findKeep,
   inEnemyTerritory,
@@ -34,6 +37,7 @@ import {
 } from "../../state";
 import { isStructureEntry } from "../../types";
 import { dist2 } from "./helpers";
+import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
 function emitFx(s: GameState, kind: CastFxKind, pos: { x: number; z: number }): void {
   s.lastFx = { kind, x: pos.x, z: pos.z, tick: s.tick };
@@ -158,6 +162,8 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
   const placementForward = !nearEnemyInfra(s, pos) && inEnemyTerritory(s, pos);
   let buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
   if (placementForward) buildTicks = Math.round(buildTicks * FORWARD_BUILD_TIME_MULT);
+  const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
+  const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const keep = findKeep(s);
   const towardX = keep ? keep.x : -s.map.world.halfExtents * 0.55;
   const towardZ = keep ? keep.z : 0;
@@ -173,8 +179,8 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
     catalogId,
     x: pos.x,
     z: pos.z,
-    hp: def.maxHp,
-    maxHp: def.maxHp,
+    hp: hp0,
+    maxHp: hp0,
     buildTicksRemaining: buildTicks,
     buildTotalTicks: buildTicks,
     complete: false,
@@ -189,6 +195,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
   };
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
+  s.enemyAiLastBuildCatalogId = catalogId;
   emitFx(s, "lightning", pos);
   logGame("combat", `Enemy wizard built ${def.name} at (${pos.x.toFixed(0)}, ${pos.z.toFixed(0)})`, s.tick);
   return true;
@@ -207,7 +214,7 @@ function enemyBuildFluxReserve(s: GameState): number {
   const taps = claimedEnemyTapCount(s);
   if (taps >= ENEMY_AI_CLAIM_RESERVE_TAP_GOAL) return 8;
   if (unclaimedTapCount(s) === 0) return 0;
-  return HERO_CLAIM_FLUX_FEE + ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE;
+  return Math.ceil(HERO_CLAIM_FLUX_FEE * HOME_CLAIM_FLUX_MULT_MAX) + ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE;
 }
 
 function minDist2ToEnemyStructures(s: GameState, pos: { x: number; z: number }): number {
@@ -244,13 +251,24 @@ function attemptEnemyAiBuild(s: GameState): void {
     return e && isStructureEntry(e) && meetsEnemyStructureRequirements(s, e);
   });
   if (legalIds.length === 0) return;
-  const sortedIds = legalIds.sort((a, b) => {
-    const ea = getCatalogEntry(a);
-    const eb = getCatalogEntry(b);
-    const ca = ea && isStructureEntry(ea) ? ea.fluxCost : 9999;
-    const cb = eb && isStructureEntry(eb) ? eb.fluxCost : 9999;
-    return ca - cb || a.localeCompare(b);
+  const weights = legalIds.map((id) => {
+    const e = getCatalogEntry(id);
+    const cost = e && isStructureEntry(e) ? e.fluxCost : 999;
+    const w = 1 / Math.sqrt(Math.max(28, cost));
+    const last = s.enemyAiLastBuildCatalogId;
+    const diversity = id === last ? 0.22 : 1;
+    const early = claimedEnemyTapCount(s) < 2 && cost > 95 ? 0.55 : 1;
+    return w * diversity * early;
   });
+  const sumW = weights.reduce((a, b) => a + b, 0) || 1;
+  function pickWeightedCatalogId(): string {
+    let r = rand(s) * sumW;
+    for (let i = 0; i < legalIds.length; i++) {
+      r -= weights[i]!;
+      if (r <= 0) return legalIds[i]!;
+    }
+    return legalIds[legalIds.length - 1]!;
+  }
   for (let attempt = 0; attempt < 22; attempt++) {
     const pick = Math.min(n - 1, Math.max(0, Math.floor(rand(s) * n)));
     const base = sources[pick];
@@ -260,7 +278,8 @@ function attemptEnemyAiBuild(s: GameState): void {
     if (Math.abs(x) > half - 8 || Math.abs(z) > half - 8) continue;
     if (!inEnemyTerritory(s, { x, z })) continue;
     if (minDist2ToEnemyStructures(s, { x, z }) < sep2) continue;
-    for (const catalogId of sortedIds) {
+    for (let k = 0; k < 8; k++) {
+      const catalogId = pickWeightedCatalogId();
       const def = getCatalogEntry(catalogId);
       if (!def || !isStructureEntry(def)) continue;
       if (s.enemyFlux < def.fluxCost + reserve) continue;
@@ -294,11 +313,13 @@ export function enemyHeroSystem(s: GameState): void {
   if (!moving && h.claimChannelTarget === null) {
     const idx = findClaimableTapIndexNearEnemy(s, h);
     if (idx !== null) {
-      if (s.enemyFlux < HERO_CLAIM_FLUX_FEE) {
+      const tap0 = s.taps[idx]!;
+      const fee0 = claimFluxFeeForTap(s, "enemy", tap0);
+      if (s.enemyFlux < fee0) {
         /* wait for tap income */
       } else {
         h.claimChannelTarget = idx;
-        h.claimChannelTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ);
+        h.claimChannelTicksRemaining = Math.round(claimChannelSecForTap(s, "enemy", tap0) * TICK_HZ);
       }
     }
   }
@@ -309,10 +330,11 @@ export function enemyHeroSystem(s: GameState): void {
       const idx = h.claimChannelTarget;
       const tap = idx !== null ? s.taps[idx] : undefined;
       if (tap && !tap.active) {
-        if (s.enemyFlux < HERO_CLAIM_FLUX_FEE) {
+        const fee = claimFluxFeeForTap(s, "enemy", tap);
+        if (s.enemyFlux < fee) {
           /* skip */
         } else {
-          s.enemyFlux -= HERO_CLAIM_FLUX_FEE;
+          s.enemyFlux -= fee;
           tap.active = true;
           tap.ownerTeam = "enemy";
           armTapClaimAnchor(tap);
@@ -340,10 +362,11 @@ function enemyHeroTryStrike(s: GameState): void {
   if (h.hp <= 0 || h.attackCooldownTicksRemaining > 0) return;
   const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
 
+  const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
     s.hero.hp = Math.max(0, s.hero.hp - ENEMY_HERO_STRIKE_DAMAGE);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: s.hero.x, z: s.hero.z });
+    emitHeroStrikeFx(s, { x: s.hero.x, z: s.hero.z }, from, "rival_vs_hero");
     return;
   }
 
@@ -358,9 +381,10 @@ function enemyHeroTryStrike(s: GameState): void {
     }
   }
   if (bestU) {
-    bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE;
+    const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
+    bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE * swarmMult;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestU.x, z: bestU.z });
+    emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "rival_vs_unit");
     return;
   }
 
@@ -379,7 +403,7 @@ function enemyHeroTryStrike(s: GameState): void {
     const cur = bestTap.anchorHp ?? 0;
     bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * 0.42);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestTap.x, z: bestTap.z });
+    emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "rival_vs_anchor");
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return;
   }
@@ -388,6 +412,6 @@ function enemyHeroTryStrike(s: GameState): void {
   if (keep && dist2(h, keep) <= r2) {
     keep.hp -= ENEMY_HERO_STRIKE_DAMAGE * 0.45;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: keep.x, z: keep.z });
+    emitHeroStrikeFx(s, { x: keep.x, z: keep.z }, from, "rival_vs_keep");
   }
 }

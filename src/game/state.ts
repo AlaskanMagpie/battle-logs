@@ -2,6 +2,7 @@ import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
+  DOCTRINE_SLOT_COUNT,
   ENEMY_RELAY_MAX_HP,
   ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
@@ -41,10 +42,10 @@ export type CastFxKind =
   | "recycle"
   | "claim"
   | "lightning"
-  | "hero_strike";
-
-export type AttackRangeBand = "close" | "medium" | "long";
-export type AttackWeight = "light" | "medium" | "heavy";
+  | "hero_strike"
+  | "spark_burst"
+  | "ground_crack"
+  | "reclaim_pulse";
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
@@ -56,17 +57,55 @@ export interface CombatHitMark {
   range: number;
   /** Wider cone for breath-style AoE attackers. */
   wide: boolean;
-  /** Visual profile bucket based on weapon reach. */
-  rangeBand: AttackRangeBand;
-  /** Visual intensity bucket based on unit damage output. */
-  weight: AttackWeight;
+  team: TeamId;
+  sizeClass: UnitSizeClass;
+  /** Inherited from producer structure — drives elemental hue. */
+  signal?: SignalType;
+  /** Stable per-unit hash for FX variety (spark seeds, fork count). */
+  visualSeed: number;
+  trait?: UnitTrait;
 }
+
+/** Wizard melee burst palette (both heroes). */
+export type HeroStrikeFxVariant =
+  | "player_vs_unit"
+  | "player_vs_rival"
+  | "player_vs_fortress"
+  | "player_vs_structure"
+  | "player_vs_anchor"
+  | "rival_vs_hero"
+  | "rival_vs_unit"
+  | "rival_vs_anchor"
+  | "rival_vs_keep";
 
 export interface CastFxEvent {
   kind: CastFxKind;
   x: number;
   z: number;
   tick: number;
+  /** Strike origin (wizard xz) — when set, renderer draws a bolt from here to (x,z). */
+  fromX?: number;
+  fromZ?: number;
+  /** When `kind === "hero_strike"`, picks elemental cone + bolt colors. */
+  strikeVariant?: HeroStrikeFxVariant;
+}
+
+/** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */
+export function emitHeroStrikeFx(
+  s: GameState,
+  target: Vec2,
+  from: Vec2,
+  strikeVariant: HeroStrikeFxVariant,
+): void {
+  s.lastFx = {
+    kind: "hero_strike",
+    x: target.x,
+    z: target.z,
+    tick: s.tick,
+    fromX: from.x,
+    fromZ: from.z,
+    strikeVariant,
+  };
 }
 
 export type ArmyStance = "offense" | "defense";
@@ -113,6 +152,8 @@ export interface HeroRuntime {
   /** Move target in world; null when idle. */
   targetX: number | null;
   targetZ: number | null;
+  /** After the current `targetX/Z`, visit these in order (player hero only; cleared on replace / WASD / claim). */
+  moveWaypoints: Vec2[];
   speedPerSec: number;
   /** Follow-aura pickup radius. */
   radius: number;
@@ -122,9 +163,9 @@ export interface HeroRuntime {
   hp: number;
   maxHp: number;
   facing: number;
-  /** -1 / 0 / 1 strafe (world X) from WASD; cleared after each sim tick. */
+  /** World X impulse from WASD this tick (camera-relative or legacy axis); cleared after sim. */
   wasdStrafe: number;
-  /** -1 / 0 / 1 forward (world -Z as "up" in key W) from WASD; cleared after each sim tick. */
+  /** World Z impulse from WASD this tick; cleared after sim. */
   wasdForward: number;
   attackCooldownTicksRemaining: number;
 }
@@ -252,6 +293,8 @@ export interface GameState {
   enemyHero: HeroRuntime;
   /** Enemy team's Mana (from enemy-owned taps). */
   enemyFlux: number;
+  /** Enemy auto-build: last placed catalog id (soft diversity so AI does not spam one tower). */
+  enemyAiLastBuildCatalogId: string | null;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -349,7 +392,7 @@ export function isKeep(st: StructureRuntime): boolean {
 function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
   const charges: number[] = [];
   const cd: number[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     /** Unused for locking — doctrine uses per-cast cooldown only. */
     charges.push(1);
     cd.push(0);
@@ -358,8 +401,8 @@ function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd
 }
 
 /**
- * One-time match init: optionally strip command cards, then sort remaining structure
- * ids by ascending flux cost (stable tie-break by id). Packs to 16 slots, nulls last.
+ * One-time match init / binder: when commands are disabled, strip invalid/command entries per slot
+ * and preserve slot order (nulls stay in place). With commands enabled, pad and validate only.
  */
 export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (string | null)[] {
   const catalogOk = (id: string | null): string | null => {
@@ -368,21 +411,18 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   };
   if (DOCTRINE_COMMANDS_ENABLED) {
     const copy = [...slots];
-    while (copy.length < 16) copy.push(null);
-    return copy.slice(0, 16).map(catalogOk);
+    while (copy.length < DOCTRINE_SLOT_COUNT) copy.push(null);
+    return copy.slice(0, DOCTRINE_SLOT_COUNT).map(catalogOk);
   }
-  const structs: { id: string; cost: number }[] = [];
-  for (const id of slots) {
-    if (!id) continue;
-    const e = getCatalogEntry(id);
-    if (!e) continue;
-    if (isCommandEntry(e)) continue;
-    if (isStructureEntry(e)) structs.push({ id, cost: e.fluxCost });
-  }
-  structs.sort((a, b) => a.cost - b.cost || a.id.localeCompare(b.id));
-  const out: (string | null)[] = structs.map((s) => s.id);
-  while (out.length < 16) out.push(null);
-  return out.slice(0, 16);
+  const row = [...slots];
+  while (row.length < DOCTRINE_SLOT_COUNT) row.push(null);
+  return row.slice(0, DOCTRINE_SLOT_COUNT).map((id) => {
+    const ok = catalogOk(id);
+    if (!ok) return null;
+    const e = getCatalogEntry(ok);
+    if (!e || isCommandEntry(e) || !isStructureEntry(e)) return null;
+    return ok;
+  });
 }
 
 /** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
@@ -398,20 +438,23 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
     return (rngScratch.v & 0xffffffff) / 0x100000000;
   }
   const half = map.world.halfExtents;
-  const margin = 32;
+  const margin = Math.min(140, Math.max(44, half * 0.2));
   const minSep2 = TAP_GENERATION_MIN_SEP * TAP_GENERATION_MIN_SEP;
   const sx = map.playerStart?.x ?? 0;
   const sz = map.playerStart?.z ?? 0;
   const placed: { x: number; z: number }[] = [];
+  const edgePad = Math.max(18, half * 0.04);
+  const keepClear = Math.max(36, half * 0.11);
+  const keepClear2 = keepClear * keepClear;
 
   function okPos(x: number, z: number, playerSide: boolean): boolean {
-    if (Math.abs(x) > half - 12 || Math.abs(z) > half - 12) return false;
+    if (Math.abs(x) > half - edgePad || Math.abs(z) > half - edgePad) return false;
     if (playerSide) {
       if (x > -margin) return false;
     } else if (x < margin) {
       return false;
     }
-    const kd2 = 26 * 26;
+    const kd2 = keepClear2;
     if ((x - sx) * (x - sx) + (z - sz) * (z - sz) < kd2) return false;
     for (const p of placed) {
       const dx = p.x - x;
@@ -429,9 +472,9 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
     while (n < TAP_NODES_PER_SIDE && attempts < 1200) {
       attempts++;
       const x = playerSide
-        ? -margin - rnd() * Math.max(8, half - margin * 2)
-        : margin + rnd() * Math.max(8, half - margin * 2);
-      const z = (rnd() * 2 - 1) * (half - 24);
+        ? -margin - rnd() * Math.max(16, half - margin * 2)
+        : margin + rnd() * Math.max(16, half - margin * 2);
+      const z = (rnd() * 2 - 1) * (half - margin - edgePad);
       if (!okPos(x, z, playerSide)) continue;
       placed.push({ x, z });
       taps.push({
@@ -482,7 +525,11 @@ function spawnKeep(state: GameState): void {
 }
 
 export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
-  const rawSlots = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const rawIn = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
+  const rawSlots =
+    rawIn.length >= DOCTRINE_SLOT_COUNT
+      ? rawIn.slice(0, DOCTRINE_SLOT_COUNT)
+      : [...rawIn, ...Array.from({ length: DOCTRINE_SLOT_COUNT - rawIn.length }, () => null)];
   const slots = normalizeDoctrineSlotsForMatch(rawSlots);
   const rt = initDoctrineRuntime(slots);
 
@@ -512,12 +559,15 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const hpMult = map.difficulty?.enemyHpMult ?? 1;
   const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
 
-  const heroSpawn = mapResolved.playerStart ?? { x: 0, z: 0 };
+  /** Plan: spawn at first player relay slot when the map defines one; else `playerStart` (with Keep). */
+  const relay0 = mapResolved.playerRelaySlots[0];
+  const heroSpawn = relay0 != null ? { x: relay0.x, z: relay0.z } : (mapResolved.playerStart ?? { x: 0, z: 0 });
   const hero: HeroRuntime = {
     x: heroSpawn.x,
     z: heroSpawn.z,
     targetX: null,
     targetZ: null,
+    moveWaypoints: [],
     speedPerSec: HERO_SPEED,
     radius: HERO_FOLLOW_RADIUS,
     claimChannelTarget: null,
@@ -538,6 +588,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     z: enemySpawn.z,
     targetX: null,
     targetZ: null,
+    moveWaypoints: [],
     speedPerSec: HERO_SPEED * 1.02,
     radius: HERO_FOLLOW_RADIUS,
     claimChannelTarget: null,
@@ -593,6 +644,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     lastSiegeHit: null,
     hero,
     enemyHero,
+    enemyAiLastBuildCatalogId: null,
   };
 
   spawnKeep(state);
@@ -703,9 +755,10 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
-/** Territory = union of `TERRITORY_RADIUS` around the Keep and claimed taps. */
+/** Territory = union of `TERRITORY_RADIUS` around the Keep, the Wizard, and claimed taps. */
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
+  if (s.hero.hp > 0 && dist2(pos, s.hero) <= r2) return true;
   const keep = findKeep(s);
   if (keep && dist2(pos, keep) <= r2) return true;
   for (const t of s.taps) {
@@ -747,9 +800,10 @@ export function enemyTerritorySources(s: GameState): Vec2[] {
   return out;
 }
 
-/** Current list of positions feeding the territory union (Keep + claimed taps). */
+/** Current list of positions feeding the territory union (Wizard + Keep + claimed taps). */
 export function territorySources(s: GameState): Vec2[] {
   const out: Vec2[] = [];
+  if (s.hero.hp > 0) out.push({ x: s.hero.x, z: s.hero.z });
   const keep = findKeep(s);
   if (keep) out.push({ x: keep.x, z: keep.z });
   for (const t of s.taps) {
@@ -790,6 +844,7 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
 }
 
 export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | null {
+  if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return "Invalid doctrine slot.";
   const id = s.doctrineSlotCatalogIds[slotIndex] ?? null;
   if (!id) return "Empty doctrine slot.";
   const e = getCatalogEntry(id);

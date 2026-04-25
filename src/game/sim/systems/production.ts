@@ -10,6 +10,7 @@ import {
   randU32,
   totalEnemyPop,
   totalPlayerPop,
+  type CastFxKind,
   type GameState,
   type StructureRuntime,
   type UnitRuntime,
@@ -19,6 +20,19 @@ import { unitStatsForCatalog } from "./helpers";
 
 /** Slightly wider ring than ±1 so units clear the tower footprint / GLB hull. */
 const SPAWN_JITTER = 3.5;
+
+function spawnFxKindForUnit(sizeClass: UnitRuntime["sizeClass"]): CastFxKind {
+  switch (sizeClass) {
+    case "Swarm":
+      return "spark_burst";
+    case "Heavy":
+    case "Titan":
+      return "ground_crack";
+    case "Line":
+    default:
+      return "reclaim_pulse";
+  }
+}
 
 function pushSpawnedUnit(s: GameState, st: StructureRuntime, team: "player" | "enemy"): void {
   const def = getCatalogEntry(st.catalogId);
@@ -47,6 +61,7 @@ function pushSpawnedUnit(s: GameState, st: StructureRuntime, team: "player" | "e
   };
   s.units.push(u);
   if (team === "player") s.stats.unitsProduced += 1;
+  s.lastFx = { kind: spawnFxKindForUnit(def.producedSizeClass), x: u.x, z: u.z, tick: s.tick };
 }
 
 export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {

@@ -4,140 +4,298 @@
   inset: 0;
   z-index: 50000;
   overflow: hidden;
-  background: #0a0a0f;
+  background: #ebe4d8;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  pointer-events: auto;
 }
 
 .binder-picker-root {
+  box-sizing: border-box;
   width: 100%;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #0a0a0f;
-  color: #c8ccd8;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) 0
+    max(8px, env(safe-area-inset-left, 0px));
+  background: transparent;
+  color: #2c2820;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
   overflow: hidden;
+}
+
+.binder-picker-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.binder-picker-doctrine-wrap {
+  flex-shrink: 0;
+  /* Extra bottom inset so the hand strip stays clear of the fixed match select + Vibe Jam stack. */
+  padding: 0 max(12px, env(safe-area-inset-right, 0px))
+    max(12px, calc(env(safe-area-inset-bottom, 0px) + 96px)) max(12px, env(safe-area-inset-left, 0px));
+  /* Keep the curved hand clear of the bottom-right rail. */
+  padding-right: max(12px, calc(env(safe-area-inset-right, 0px) + 112px));
+}
+
+/* Same chip as vibejam.cc/2026/widget.js — sits under match select in `.binder-picker-setup-fab`. */
+.binder-picker-vibejam-link {
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 14px;
+  font-weight: bold;
+  background: #fff;
+  color: #000;
+  text-decoration: none;
+  padding: 7px 14px;
+  border-top-left-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 10px rgba(45, 38, 28, 0.12);
+  white-space: nowrap;
+}
+
+.binder-picker-vibejam-link:hover {
+  filter: brightness(1.03);
+}
+
+/* Bottom strip layout; hit-testing uses outer `.binder-picker-doctrine-wrap` (full padding). */
+.binder-picker-hand-zone {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  /* Let `.doctrine-hand--match` / rail `--hand-card-h` define height (same as match HUD). */
+  min-height: 0;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  border-radius: 18px 18px 0 0;
+  transition: box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+.binder-picker-doctrine-hand--drag-over {
+  box-shadow: inset 0 0 0 2px rgba(74, 122, 184, 0.55);
+  background: linear-gradient(to top, rgba(74, 122, 184, 0.1), rgba(74, 122, 184, 0.02));
+  border-radius: 18px 18px 0 0;
+}
+
+#doctrine-picker .slot.slot-empty {
+  pointer-events: auto;
+  cursor: default;
+}
+
+.binder-picker-slot--drag-over {
+  outline: 2px solid rgba(74, 122, 184, 0.95);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.binder-picker-codex-ghost {
+  position: fixed;
+  z-index: 50020;
+  pointer-events: none;
+  filter: drop-shadow(0 14px 32px rgba(0, 0, 0, 0.42));
+}
+
+/* Same compact face as doctrine slots (art, title, stat rail) — not the tiny summary strip. */
+.binder-picker-codex-ghost__inner {
+  width: min(
+    260px,
+    max(
+      112px,
+      calc((100vw - max(72px, calc(env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px) + 120px))) / 10)
+    )
+  );
+  container-type: inline-size;
+}
+
+.binder-picker-setup-catalog-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #3a342c;
 }
 
 .binder-picker-binder-wrap {
   flex: 1;
   min-height: 0;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  background: #ebe4d8;
 }
 
 .binder-picker-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-  touch-action: none;
-}
-
-.binder-picker-toolbar {
   position: relative;
   z-index: 2;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+  background: #ebe4d8;
+  vertical-align: top;
+}
+
+/* Clicks focus the canvas (tabIndex); don’t paint a viewport-sized ring on mouse use. */
+.binder-picker-canvas:focus {
+  outline: none;
+}
+
+.binder-picker-canvas:focus-visible {
+  outline: 2px solid rgba(120, 165, 255, 0.75);
+  outline-offset: 2px;
+}
+
+.binder-picker-canvas:active {
+  cursor: grabbing;
+}
+
+/* Light dismiss layer — binder stays visible underneath. */
+.binder-picker-setup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: rgba(32, 28, 24, 0.1);
+  cursor: default;
+}
+
+.binder-picker-setup-fab {
+  position: fixed;
+  z-index: 28;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.binder-picker-setup-fab > * {
+  pointer-events: auto;
+}
+
+.binder-picker-setup-toggle {
+  appearance: none;
+  border: 1px solid rgba(60, 48, 36, 0.28);
+  background: linear-gradient(180deg, #f4efe6 0%, #e2d9cc 100%);
+  color: #2a2420;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 11px 20px;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 4px 22px rgba(45, 38, 28, 0.22);
+}
+
+.binder-picker-setup-toggle:hover {
+  filter: brightness(1.03);
+}
+
+.binder-picker-setup-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(400px, calc(100vw - 28px));
+  max-height: min(72dvh, 520px);
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid rgba(60, 48, 36, 0.2);
+  background: linear-gradient(180deg, #e8e1d6 0%, #d4cbbf 100%);
+  box-shadow: 0 14px 44px rgba(45, 38, 28, 0.28);
+}
+
+.binder-picker-setup-panel__inner {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(180deg, rgba(14, 16, 24, 0.95), rgba(8, 9, 14, 0.98));
+  padding: 12px 14px 14px;
 }
 
-.binder-picker-toolbar-top {
+.binder-picker-toolbar-main {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px 16px;
+  gap: 12px 18px;
 }
 
-.binder-picker-toolbar-row {
+.binder-picker-toolbar-map {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-}
-
-.binder-slot-grid {
-  display: grid;
-  grid-template-columns: repeat(8, minmax(28px, 36px));
-  grid-template-rows: repeat(2, auto);
-  gap: 4px 6px;
-  justify-content: flex-end;
-  max-width: 100%;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-
-.binder-slot-ix {
-  appearance: none;
-  margin: 0;
-  min-height: 30px;
-  padding: 4px 0;
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 700;
-  color: #9aa6bc;
-  background: rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.binder-slot-ix:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  color: #d0d8e8;
-}
-
-.binder-slot-ix--filled {
-  border-color: rgba(100, 200, 255, 0.35);
-  color: #c8e0ff;
-}
-
-.binder-slot-ix--active {
-  outline: 2px solid rgba(92, 255, 154, 0.95);
-  outline-offset: 1px;
-  color: #e8fff0;
-}
-
-.binder-picker-toolbar label {
-  font-size: 11px;
-  opacity: 0.85;
-  margin-right: 4px;
-}
-
-.binder-picker-toolbar select {
-  background: rgba(0, 0, 0, 0.45);
-  color: #dde4f0;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.binder-picker-actions {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
+  width: 100%;
+}
+
+.binder-picker-toolbar-map label {
+  font-size: 12px;
+  opacity: 0.82;
+  color: #3a342c;
+}
+
+.binder-picker-toolbar-map select {
+  flex: 1;
+  min-width: 160px;
+  max-width: 100%;
+  background: rgba(255, 255, 255, 0.55);
+  color: #1e1a16;
+  border: 1px solid rgba(60, 48, 36, 0.2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.binder-picker-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  gap: 8px;
+}
+
+.binder-picker-toolbar-left label {
+  font-size: 12px;
+  opacity: 0.82;
+  color: #3a342c;
+}
+
+.binder-picker-toolbar-left select {
+  background: rgba(255, 255, 255, 0.55);
+  color: #1e1a16;
+  border: 1px solid rgba(60, 48, 36, 0.2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.binder-picker-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .binder-picker-btn {
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(0, 0, 0, 0.55);
-  color: #ccc;
+  border: 1px solid rgba(60, 48, 36, 0.22);
+  background: rgba(255, 255, 255, 0.65);
+  color: #2a2420;
   font-family: inherit;
-  font-size: 11px;
-  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
   cursor: pointer;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
 .binder-picker-btn:disabled {
@@ -146,9 +304,10 @@
 }
 
 .binder-picker-btn--primary {
-  border-color: rgba(100, 170, 255, 0.45);
-  color: #dfefff;
-  font-weight: 650;
+  border-color: rgba(42, 92, 138, 0.55);
+  background: linear-gradient(180deg, #4a7ab8 0%, #3a6298 100%);
+  color: #f8fafc;
+  font-weight: 600;
 }
 
 .binder-picker-loading {
@@ -157,27 +316,58 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(8, 10, 16, 0.72);
+  background: rgba(235, 228, 216, 0.72);
   font-size: 13px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
+  color: #3a342c;
   z-index: 2;
 }
 
-.binder-picker-nav {
+.binder-picker-tome-hint {
   position: absolute;
-  bottom: 12px;
+  top: 8px;
   left: 50%;
   transform: translateX(-50%);
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  z-index: 4;
+  z-index: 3;
   pointer-events: auto;
+  cursor: help;
+  max-width: min(560px, calc(100vw - 24px));
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #2c2820;
+  background: rgba(255, 252, 246, 0.82);
+  border: 1px solid rgba(60, 48, 36, 0.1);
+  box-shadow: 0 1px 6px rgba(45, 38, 28, 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.binder-picker-nav span {
-  min-width: 72px;
+/* Page controls (floating setup panel or legacy toolbar). */
+.binder-picker-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0 8px;
+  margin: 0 0 6px;
+  border-bottom: 1px solid rgba(60, 48, 36, 0.1);
+}
+
+.binder-picker-nav .binder-picker-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  text-transform: none;
+}
+
+.binder-picker-nav-page {
+  min-width: 52px;
   text-align: center;
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #2c2820;
 }

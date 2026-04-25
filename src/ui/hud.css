@@ -2,23 +2,32 @@
   box-sizing: border-box;
 }
 :root {
-  /* In-match doctrine tray — compact band; two fanned rows (~32dvh max) */
-  --doctrine-tray-h: clamp(148px, min(32dvh, calc(40dvh - 24px)), 300px);
+  /* In-match doctrine tray — taller cap so compact cards read more like previews. */
+  --doctrine-tray-h: clamp(168px, min(52dvh, calc(28vw + 96px)), 460px);
   /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
   --tcg-aspect-w: 5;
   --tcg-aspect-h: 7;
   --tcg-card-aspect: 5 / 7;
+  /** Bottom-right embed (e.g. Vibe Jam) — keep doctrine row clear of it. */
+  --hud-corner-widget-reserve: 220px;
+  /** Team tint tokens (HUD + readouts). */
+  --hud-team-friendly: #5eb0ff;
+  --hud-team-friendly-dim: #7ec8ff;
+  --hud-team-hostile: #ff6b6b;
+  --hud-team-hostile-dim: #ff9a8a;
 }
 
 @media (pointer: coarse) {
   :root {
-    --doctrine-tray-h: clamp(152px, min(34dvh, calc(42dvh - 28px)), 300px);
+    --doctrine-tray-h: clamp(176px, min(54dvh, calc(30vw + 100px)), 470px);
   }
 }
 
 html,
 body {
   margin: 0;
+  min-height: 100%;
+  min-height: 100dvh;
   height: 100%;
   overflow: hidden;
   font-family: system-ui, Segoe UI, Roboto, sans-serif;
@@ -27,10 +36,16 @@ body {
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
+/* Canvas first in paint order within its layer; HUD root stacks above so chrome/dock stay visible + clickable. */
 #game {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
   display: block;
   width: 100%;
-  height: 100%;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
   touch-action: none;
   user-select: none;
@@ -39,56 +54,442 @@ body {
 #hud-root {
   position: fixed;
   inset: 0;
+  z-index: 5;
   pointer-events: none;
   overflow: hidden;
 }
 #hud-root * {
   pointer-events: auto;
 }
-.hud-top {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left, 0px));
-  top: max(10px, env(safe-area-inset-top, 0px));
+/* —— In-match chrome (top) + dock (bottom): one visual language —— */
+.hud-chrome {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 22;
   display: flex;
-  gap: 14px;
-  align-items: baseline;
-  font-size: 14px;
-  text-shadow: 0 1px 2px #000a;
+  flex-direction: column;
+  align-items: stretch;
+  padding: max(8px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-left, 0px)) 10px
+    max(12px, env(safe-area-inset-right, 0px));
+  color: #dbe7ff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(180deg, rgba(10, 14, 22, 0.94) 0%, rgba(10, 14, 22, 0.72) 72%, rgba(10, 14, 22, 0));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
 }
-.hud-top strong {
+.hud-chrome__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  justify-content: space-between;
+}
+.hud-chrome__row--secondary {
+  margin-top: 6px;
+  align-items: flex-end;
+}
+.hud-chrome__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: baseline;
+  font-size: 13px;
+  color: #9eb0c8;
+}
+.hud-stat strong {
+  color: #f0f5ff;
   font-weight: 650;
 }
-.hud-phase {
-  position: absolute;
-  right: max(12px, env(safe-area-inset-right, 0px));
-  top: max(10px, env(safe-area-inset-top, 0px));
-  font-size: 13px;
-  opacity: 0.9;
+.hud-stat--econ {
+  color: #9ebfe0;
 }
-.hud-readout {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left, 0px));
-  top: calc(36px + env(safe-area-inset-top, 0px));
-  max-width: min(920px, 94vw);
+.hud-stat--econ strong {
+  color: var(--hud-team-friendly-dim, #7ec8ff);
+}
+.hud-stat--field {
+  color: #a8c4e8;
+}
+.hud-stat--field strong {
+  color: #b8e0ff;
+}
+.hud-stat--mode {
+  color: #9aa8bc;
+}
+.hud-stat--mode strong {
+  color: #d8e4f8;
+}
+.hud-chrome__phase {
   font-size: 12px;
-  line-height: 1.35;
   opacity: 0.88;
-  text-shadow: 0 1px 2px #000a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: #b4c4dc;
+}
+.hud-chrome__readout {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #a8b8ce;
+}
+.hud-chrome__readout strong {
+  font-weight: 650;
+}
+.hud-readout__hostiles {
+  color: #b4c4dc;
+}
+.hud-ink-hostile {
+  color: var(--hud-team-hostile, #ff6b6b) !important;
+  font-variant-numeric: tabular-nums;
+}
+.hud-readout__sep {
+  opacity: 0.45;
+}
+.hud-readout__camps {
+  color: #9aaab8;
+  font-size: 11.5px;
+}
+.hud-readout__camps-k {
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hud-team-hostile-dim, #ff9a8a);
+  margin-right: 0.35em;
+}
+.hud-chrome__vitals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.hud-vital {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #c8d6ea;
+  pointer-events: none;
+}
+.hud-vital__lbl {
+  min-width: 2.75em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+  color: #8fa3bd;
+}
+.hud-vital .bar {
+  display: inline-block;
+  width: min(168px, 26vw);
+  height: 9px;
+  border-radius: 5px;
+  background: #141b24;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  vertical-align: middle;
+  overflow: hidden;
+}
+.hud-vital .bar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 4px;
+  transition: width 120ms ease-out;
+}
+#hud-hero-hp .bar-fill {
+  background: linear-gradient(90deg, #6ae1ff, #4da3ff);
+}
+#hud-hero-hp .hud-vital__lbl {
+  color: #7ec8ff;
+}
+#hud-keep-hp .bar-fill {
+  background: linear-gradient(90deg, var(--hud-team-friendly-dim, #7ec8ff), var(--hud-team-friendly, #4d9fff));
+}
+#hud-keep-hp .hud-vital__lbl {
+  color: #7eb8e8;
+}
+.hud-vital strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+  text-align: right;
+  color: #eef4ff;
+}
+
+.hud-chrome__objective {
+  margin-top: 8px;
+  padding: 7px 12px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #dce6f5;
+  pointer-events: none;
+}
+.hud-chrome__objective[hidden] {
+  display: none !important;
+}
+.hud-chrome__objective-k {
+  display: inline-block;
+  margin-right: 8px;
+  color: #6ae1ff;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.hud-chrome__objective-t {
+  vertical-align: middle;
+}
+
+.hud-dock {
+  position: fixed;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: max(6px, env(safe-area-inset-bottom, 0px));
+  z-index: 18;
+  width: auto;
+  max-width: min(1180px, calc(100vw - 16px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  color: #dbe7ff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  border-radius: 14px 14px 12px 12px;
+  overflow: hidden;
+  box-shadow: 0 -6px 36px rgba(0, 0, 0, 0.42);
+}
+.hud-dock::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(0deg, rgba(8, 10, 16, 0.97) 0%, rgba(12, 16, 24, 0.88) 42%, rgba(14, 18, 28, 0.55) 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(14px) saturate(1.06) brightness(0.92);
+  -webkit-backdrop-filter: blur(14px) saturate(1.06) brightness(0.92);
+}
+/* In-match: no dock “window” — controls + doctrine float over the canvas. */
+.hud-dock.hud-dock--overlay {
+  background: none;
+  border-radius: 0;
+  overflow: visible;
+  box-shadow: none;
+  max-width: 100%;
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+.hud-dock.hud-dock--overlay::before {
+  display: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .hud-dock::before {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: linear-gradient(0deg, rgba(10, 12, 18, 0.96), rgba(14, 18, 26, 0.9));
+  }
+}
+.hud-dock > * {
+  position: relative;
+  z-index: 1;
+}
+
+details.hud-dock__help-drawer {
+  flex: 0 0 auto;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.hud-dock--overlay details.hud-dock__help-drawer {
+  border-bottom: none;
+  align-self: flex-start;
+  margin-left: max(calc(118px + env(safe-area-inset-left, 0px)), env(safe-area-inset-left, 0px));
+}
+.hud-dock__help-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 5px 12px 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: #8fa3bd;
+  user-select: none;
+}
+.hud-dock__help-summary::-webkit-details-marker {
+  display: none;
+}
+.hud-dock__help-hint {
+  font-weight: 500;
+  opacity: 0.65;
+  font-size: 10px;
+}
+details.hud-dock__help-drawer[open] .hud-dock__help-hint {
+  display: none;
+}
+details.hud-dock__help-drawer .hud-help-grid {
+  padding: 2px 10px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  pointer-events: none;
+}
+details.hud-dock__help-drawer[open] .hud-help-grid {
+  pointer-events: auto;
+}
+
+.hud-dock__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 10px 5px;
+}
+.hud-dock--overlay .hud-dock__bar {
+  padding: 4px max(8px, env(safe-area-inset-left, 0px)) 2px max(8px, env(safe-area-inset-right, 0px));
+  background: none;
+}
+.hud-dock--overlay .hud-dock__bar--message-only {
+  justify-content: center;
+  padding: 2px max(12px, env(safe-area-inset-left, 0px)) 4px max(calc(12px + var(--hud-corner-widget-reserve, 0px)), env(safe-area-inset-right, 0px));
+}
+.hud-dock--overlay .hud-dock__bar--message-only .hud-dock__msg {
+  flex: 1 1 auto;
+  text-align: center;
+  max-width: min(920px, 100%);
+}
+.hud-dock--overlay .hud-btn--ghost {
+  background: rgba(6, 8, 14, 0.48);
+  border-color: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.hud-dock--overlay .hud-dock__msg {
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+}
+.hud-dock--overlay .hud-dock__help-summary {
+  background: rgba(6, 8, 14, 0.42);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.hud-dock__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/** Match controls off the bottom rail — left column so doctrine cards can span the deck edge-to-edge. */
+.hud-match-side-controls {
+  position: fixed;
+  left: max(10px, env(safe-area-inset-left, 0px));
+  top: max(112px, calc(env(safe-area-inset-top, 0px) + 88px));
+  bottom: max(calc(var(--doctrine-tray-h, 160px) + env(safe-area-inset-bottom, 0px) + 8px), 140px);
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  width: min(118px, 22vw);
+  max-width: 132px;
+  pointer-events: auto;
+}
+.hud-match-side-controls .hud-btn {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.hud-match-side-controls .hud-btn--ghost {
+  background: rgba(6, 10, 18, 0.72);
+  border-color: rgba(100, 160, 255, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.hud-match-side-controls .hud-gamelog {
+  max-width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hud-match-side-controls .hud-gamelog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(22dvh, 200px);
+}
+.hud-dock__msg {
+  flex: 1 1 160px;
+  margin: 0;
+  min-width: 0;
+  max-height: 2.8em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: clamp(11px, 1.05vw, 12.5px);
+  line-height: 1.35;
+  color: #d0def2;
+  opacity: 0.94;
+}
+.hud-help-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 3px 14px;
+  max-width: 100%;
+  margin: 0;
+}
+.hud-help-item {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #8fa0b8;
+}
+.hud-help-muted {
+  opacity: 0.62;
+  font-style: italic;
+}
+.hud-dock kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.35);
+  color: #e8f0ff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.hud-dock .hud-btn--ghost {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 11px;
 }
 
 .hud-gamelog {
-  position: absolute;
-  right: max(12px, env(safe-area-inset-right, 0px));
-  bottom: calc(var(--doctrine-tray-h) + 12px + env(safe-area-inset-bottom, 0px));
-  max-width: min(360px, 42vw);
-  z-index: 12;
+  position: relative;
+  right: auto;
+  bottom: auto;
+  max-width: min(200px, 36vw);
+  z-index: 2;
   font-size: 11px;
   color: #c8d4e8;
-  background: rgba(10, 14, 22, 0.72);
-  border: 1px solid rgba(110, 160, 220, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 4px 8px 6px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.hud-dock .hud-gamelog {
+  margin: 0;
 }
 .hud-gamelog summary {
   cursor: pointer;
@@ -151,28 +552,26 @@ body {
 }
 
 .hud-select-tag {
-  position: absolute;
-  left: 50%;
-  top: calc(46px + env(safe-area-inset-top, 0px));
-  transform: translateX(-50%);
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(14, 20, 28, 0.72);
-  border: 1px solid rgba(98, 182, 255, 0.55);
+  margin-top: 6px;
+  align-self: flex-start;
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: rgba(30, 60, 110, 0.45);
+  border: 1px solid rgba(98, 182, 255, 0.45);
   color: #d9ecff;
   font-size: 12px;
   letter-spacing: 0.01em;
-  z-index: 35;
+  z-index: 2;
 }
 .hud-select-tag[hidden] {
   display: none !important;
 }
 
-.hud-top #pop.cap-warn {
+.hud-chrome #pop.cap-warn {
   color: #ffd37a;
   text-shadow: 0 0 8px rgba(255, 190, 90, 0.55);
 }
-.hud-top #pop.cap-full {
+.hud-chrome #pop.cap-full {
   color: #ff8c8c;
   text-shadow: 0 0 10px rgba(255, 80, 80, 0.7);
   animation: hud-pop-full-pulse 1.1s ease-in-out infinite;
@@ -228,79 +627,64 @@ body {
 .hud-btn--primary {
   font-weight: 650;
 }
-.hud-msg {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left, 0px));
-  bottom: calc(10px + var(--doctrine-tray-h) + 8px + env(safe-area-inset-bottom, 0px));
-  max-width: min(720px, 92vw);
-  max-height: calc(100dvh - var(--doctrine-tray-h) - 120px);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 5;
-  font-size: clamp(11px, 1.1vw, 13px);
-  line-height: 1.35;
-  opacity: 0.92;
-  text-shadow: 0 1px 2px #000a;
-}
 .doctrine-wrap {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: var(--doctrine-tray-h);
-  padding: 4px 6px calc(5px + env(safe-area-inset-bottom, 0px));
+  position: relative;
+  flex-shrink: 0;
+  /* Hug the card row — cap height only so the tray never reserves a huge empty slab. */
+  height: auto;
+  max-height: var(--doctrine-tray-h);
+  padding: 2px 6px calc(4px + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   overflow: hidden;
   isolation: isolate;
-  /* Tavern hearth + vignette; cards read as a floating hand with no “held by” framing */
   background:
-    radial-gradient(130% 100% at 50% 115%, rgba(255, 140, 60, 0.14), transparent 52%),
-    radial-gradient(90% 70% at 50% 0%, rgba(255, 210, 160, 0.06), transparent 42%),
-    linear-gradient(
-      180deg,
-      rgba(28, 18, 12, 0) 0%,
-      rgba(26, 16, 10, 0.55) 32%,
-      rgba(10, 6, 5, 0.94) 100%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(0, 0, 0, 0.42) 0%,
-      transparent 18%,
-      transparent 82%,
-      rgba(0, 0, 0, 0.42) 100%
-    );
+    radial-gradient(120% 90% at 50% 120%, rgba(255, 120, 60, 0.1), transparent 55%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 28%);
 }
 
-/* Blur the 3D view through the tray so the map reads farther away (HS-style DOF at the rail). */
+/* Subtle depth at the card rail (dock shell already blurs the scene). */
 .doctrine-wrap::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  backdrop-filter: blur(12px) saturate(1.1) brightness(0.88);
-  -webkit-backdrop-filter: blur(12px) saturate(1.1) brightness(0.88);
-  mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.35) 22%, #000 58%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.35) 22%, #000 58%);
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 35%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 35%);
+}
+
+.doctrine-wrap.doctrine-wrap--rail {
+  max-height: none;
+  width: 100%;
+  padding: 0 max(4px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px))
+    max(4px, env(safe-area-inset-left, 0px));
+  background: none;
+  overflow-x: visible;
+  overflow-y: visible;
+}
+.doctrine-wrap--rail .doctrine-view {
+  overflow: visible;
+  width: 100%;
+}
+.doctrine-wrap.doctrine-wrap--rail::before {
+  display: none;
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .doctrine-wrap::before {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
     mask-image: none;
     -webkit-mask-image: none;
-    background: linear-gradient(180deg, transparent, rgba(8, 5, 4, 0.55));
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.18));
   }
 }
 
 .doctrine-view {
   position: relative;
   z-index: 1;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
   min-width: 0;
   overflow: hidden;
@@ -336,7 +720,7 @@ body {
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
 
-/* In-match: two hands × 8 — each hand is one smooth arc (JS: 8 equal angles, one radius). */
+/* In-match: two rows × 5 — each row is one smooth arc (JS: five equal angles, one radius). */
 .doctrine-track--hand.doctrine-track--deck2x8 {
   display: flex;
   flex-direction: column;
@@ -347,9 +731,111 @@ body {
   overflow: hidden;
   width: 100%;
   min-width: 0;
-  --hand-card-h: clamp(52px, min(10dvh, 10vw), 92px);
+  --hand-card-h: clamp(56px, min(11dvh, 11vw), 100px);
   --hand-reveal: 22px;
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
+}
+
+/* In-match: ten doctrine cards in one overlapping row at the bottom. */
+.doctrine-track--hand.doctrine-track--deck10 {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  height: auto;
+  min-height: 0;
+  padding: 2px max(4px, env(safe-area-inset-left, 0px)) 0 max(4px, env(safe-area-inset-right, 0px));
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  --hand-card-h: clamp(118px, min(34dvh, 24vw), 248px);
+  --hand-reveal: clamp(12px, 2.2vw, 36px);
+  --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
+}
+
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-hand--match {
+  max-width: min(1720px, 100%);
+  min-height: 0;
+  width: 100%;
+}
+
+/* In-match: one straight row 1–0 — 10 cards, edge-to-edge (minus safe areas + corner widget), tight gaps, 5:7 from width. */
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
+  box-sizing: border-box;
+  width: 100%;
+  overflow: visible;
+  --hand-slot-gap: clamp(2px, 0.28vw, 4px);
+  --hand-rail-pl: max(4px, env(safe-area-inset-left, 0px));
+  --hand-rail-pr: max(calc(6px + var(--hud-corner-widget-reserve, 118px)), env(safe-area-inset-right, 0px));
+  padding: 0 var(--hand-rail-pr) max(2px, env(safe-area-inset-bottom, 0px)) var(--hand-rail-pl);
+  --hand-reveal: 0px;
+  --hand-card-w: min(
+    400px,
+    max(
+      56px,
+      calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)
+    )
+  );
+  --hand-card-h: calc(var(--hand-card-w) * var(--tcg-aspect-h) / var(--tcg-aspect-w));
+}
+
+.doctrine-track--rail .doctrine-hand--match {
+  gap: var(--hand-slot-gap, 3px);
+  max-width: 100%;
+  width: 100%;
+  min-height: calc(var(--hand-card-h) + 14px);
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+/* Signal / spell color strip on filled doctrine slots (see `data-slot-tone` in hud.ts). */
+.doctrine-track--hand .slot[data-slot-tone]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 3px;
+  height: 6px;
+  border-radius: 4px;
+  z-index: 6;
+  pointer-events: none;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+.doctrine-track--hand .slot[data-slot-tone="vanguard"]::before {
+  background: linear-gradient(90deg, #ffd2a8, #e07020);
+}
+.doctrine-track--hand .slot[data-slot-tone="bastion"]::before {
+  background: linear-gradient(90deg, #9fd6ff, #2a7cc4);
+}
+.doctrine-track--hand .slot[data-slot-tone="reclaim"]::before {
+  background: linear-gradient(90deg, #b8ffcf, #2a9c52);
+}
+.doctrine-track--hand .slot[data-slot-tone="neutral"]::before {
+  background: linear-gradient(90deg, #9af0f0, #2a9a9a);
+}
+.doctrine-track--hand .slot[data-slot-tone="command"]::before {
+  background: linear-gradient(90deg, #e8c4ff, #8b42c9);
+}
+
+.slot-hotkey {
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  z-index: 8;
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 1.2em;
+  text-align: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #f2f7ff;
+  background: rgba(4, 6, 10, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+  line-height: 1.2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
 }
 
 .doctrine-hand--match {
@@ -361,8 +847,22 @@ body {
   position: relative;
   width: 100%;
   max-width: min(1280px, 99vw);
-  min-height: calc(var(--hand-card-h) + 26px);
-  padding: 0 4px;
+  min-height: calc(var(--hand-card-h) + 8px);
+  padding: 0 2px;
+}
+
+.doctrine-track--rail .doctrine-hand--match .slot:not(:first-child) {
+  margin-left: 0;
+}
+
+.doctrine-track--rail .doctrine-hand--match .slot {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.doctrine-track--rail .slot-hotkey {
+  font-size: 11px;
+  padding: 2px 6px;
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match {
@@ -420,12 +920,12 @@ body {
     0 0 0 1px rgba(0, 0, 0, 0.3) inset;
 }
 
-/* Second half of the arc (slots 5–8): slightly dimmed / behind first four. */
-.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(n + 5) {
+/* Outer pair of each 5-slot arc: slightly dimmed / behind the center three. */
+.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(n + 4) {
   z-index: 2;
   filter: brightness(0.93);
 }
-.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(-n + 4) {
+.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot:nth-child(-n + 3) {
   z-index: 10;
 }
 
@@ -471,7 +971,9 @@ body {
   box-shadow: 0 0 0 1px rgba(91, 163, 255, 0.35), 0 14px 40px rgba(0, 0, 0, 0.55);
 }
 
-.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot.hand-slot--peek-focus {
+.doctrine-track--hand.doctrine-track--deck2x8 .doctrine-hand--match .slot.hand-slot--peek-focus,
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-hand--match .slot.hand-slot--peek-focus,
+.doctrine-track--hand.doctrine-track--rail .doctrine-hand--match .slot.hand-slot--peek-focus {
   box-shadow:
     0 0 0 1px rgba(91, 163, 255, 0.42),
     0 8px 22px rgba(91, 163, 255, 0.2),
@@ -507,7 +1009,8 @@ body {
   max-height: none;
 }
 
-.doctrine-track--hand.doctrine-track--deck2x8 .slot {
+.doctrine-track--hand.doctrine-track--deck2x8 .slot,
+.doctrine-track--hand.doctrine-track--deck10 .slot {
   flex: 0 0 auto;
   width: var(--hand-card-w);
   min-width: 0;
@@ -521,7 +1024,8 @@ body {
   padding: 2px 2px 3px;
 }
 
-.doctrine-track--hand.doctrine-track--deck2x8 .slot .doctrine-card-compact {
+.doctrine-track--hand.doctrine-track--deck2x8 .slot .doctrine-card-compact,
+.doctrine-track--hand.doctrine-track--deck10 .slot .doctrine-card-compact {
   width: 100%;
   max-width: 100%;
   height: var(--hand-card-h);
@@ -533,6 +1037,16 @@ body {
   container-name: doctrine-cell;
 }
 
+/* Rail 1–0 row: slot width matches computed card column; face height follows 5:7 from width only. */
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot {
+  padding: 2px 0 4px;
+  flex: 0 0 var(--hand-card-w);
+}
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot .doctrine-card-compact {
+  height: auto;
+  max-height: none;
+}
+
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-title,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-name {
   white-space: nowrap;
@@ -540,16 +1054,34 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.12;
-  font-size: clamp(7px, 11cqi, 11px);
+  font-size: clamp(8px, 12cqi, 12px);
+  word-break: normal;
+}
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-title,
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-name {
+  white-space: nowrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.12;
+  font-size: clamp(9px, 14cqi, 15px);
   word-break: normal;
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-subtitle {
-  font-size: clamp(5px, 7cqi, 8px);
+  font-size: clamp(6px, 8cqi, 9px);
+}
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-subtitle {
+  font-size: clamp(7px, 9cqi, 10px);
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-stats,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-spell-fx,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-foot {
-  font-size: clamp(5px, 7cqi, 8px);
+  font-size: clamp(6px, 8cqi, 9px);
+}
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-stats,
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-spell-fx,
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-foot {
+  font-size: clamp(6.5px, 9cqi, 10px);
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-spell-fx-ul {
   display: -webkit-box;
@@ -558,12 +1090,29 @@ body {
   overflow: hidden;
   line-height: 1.2;
 }
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-spell-fx-ul {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.2;
+}
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-meta-row {
-  font-size: clamp(5.5px, 7.5cqi, 9px);
+  font-size: clamp(6px, 8.5cqi, 10px);
+}
+.doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-meta-row {
+  font-size: clamp(7px, 9.5cqi, 11px);
 }
 
 .doctrine-track--hand.doctrine-track--deck2x8 .slot.slot-empty {
   justify-content: center;
+}
+.doctrine-track--hand.doctrine-track--deck10 .slot.slot-empty {
+  justify-content: center;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0.95;
 }
 
 .doctrine-track--hand .slot .doctrine-card-compact .dc-shell,
@@ -574,7 +1123,7 @@ body {
 }
 
 /* Fanned hand only: live strip overlays bottom of tall slot padding. */
-.doctrine-track--hand:not(.doctrine-track--deck2x8) .slot-live {
+.doctrine-track--hand:not(.doctrine-track--deck2x8):not(.doctrine-track--deck10) .slot-live {
   position: absolute;
   z-index: 2;
   left: 2px;
@@ -586,8 +1135,9 @@ body {
   border-top: 1px solid #2f3d52;
 }
 
-/* 2×8: live strip flows under the card so the face can use full slot width/height. */
-.doctrine-track--hand.doctrine-track--deck2x8 .slot-live {
+/* Compact deck rows: live strip flows under the card so the face can use full slot width/height. */
+.doctrine-track--hand.doctrine-track--deck2x8 .slot-live,
+.doctrine-track--hand.doctrine-track--deck10 .slot-live {
   position: relative;
   z-index: 2;
   left: auto;
@@ -602,7 +1152,8 @@ body {
   flex-shrink: 0;
 }
 
-.doctrine-track--hand.doctrine-track--deck2x8 .slot-live:empty {
+.doctrine-track--hand.doctrine-track--deck2x8 .slot-live:empty,
+.doctrine-track--hand.doctrine-track--deck10 .slot-live:empty {
   display: none;
   margin: 0;
   padding: 0;
@@ -725,8 +1276,12 @@ body {
   font-weight: 600;
 }
 .slot.active {
-  outline: 2px solid #6aa6ff;
-  border-color: #6aa6ff;
+  outline: 3px solid #5cff9a;
+  outline-offset: 1px;
+  border-color: rgba(92, 255, 154, 0.75);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 18px rgba(92, 255, 154, 0.42);
 }
 .slot.slot-await-infra:not(.slot-locked) {
   border-color: #3a4a63;
@@ -1475,16 +2030,6 @@ body {
   min-height: 0;
 }
 
-.hud-actions {
-  position: absolute;
-  right: max(12px, env(safe-area-inset-right, 0px));
-  bottom: calc(10px + var(--doctrine-tray-h) + 52px + env(safe-area-inset-bottom, 0px));
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
-}
 button.hud-btn {
   border: 1px solid #2a3545;
   background: #141b24;
@@ -1495,6 +2040,24 @@ button.hud-btn {
   font-size: 12px;
   cursor: pointer;
   touch-action: manipulation;
+}
+button.hud-btn--ghost {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eef7;
+  padding: 8px 12px;
+  min-height: 40px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+button.hud-btn--ghost:hover {
+  border-color: rgba(120, 170, 255, 0.35);
+  background: rgba(255, 255, 255, 0.1);
+}
+button.hud-btn--stance-defense {
+  border-color: rgba(120, 190, 255, 0.5);
+  color: #dcecff;
 }
 button.hud-btn:hover {
   border-color: #4b5b73;
@@ -1574,9 +2137,9 @@ button.hud-btn--armed::after {
   z-index: 50000;
   display: flex;
   flex-direction: column;
-  padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px))
-    max(calc(72px + env(safe-area-inset-bottom, 0px)), 8px) max(8px, env(safe-area-inset-left, 0px));
-  background: rgba(8, 10, 14, 0.94);
+  /* Single shell — no extra padding/gutter (clicks + visuals stay on the binder). */
+  padding: 0;
+  background: #ebe4d8;
   pointer-events: auto;
   overflow: hidden;
   min-height: 0;
@@ -1663,7 +2226,7 @@ button.hud-btn--armed::after {
   flex: 0 0 auto !important;
 }
 
-/* Pre-match doctrine deck: two rows × eight columns (slots 0–7 top, 8–15 bottom). */
+/* Legacy pre-match grid (unused with binder picker): two rows × eight columns. */
 .picker-deck-track.picker-deck-grid-2x8 {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -2159,6 +2722,27 @@ button.hud-btn--armed::after {
 }
 .card-detail-pop[hidden] {
   display: none !important;
+}
+
+/* Hover preview: large card above the doctrine rail — no full-screen dimmer, rail cards stay put. */
+.card-detail-pop.card-detail-pop--hover-dock {
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 12px)
+    max(10px, env(safe-area-inset-left, 0px));
+  pointer-events: none;
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-backdrop {
+  background: rgba(4, 6, 10, 0.25);
+  pointer-events: auto;
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-body {
+  pointer-events: auto;
+  max-height: min(72dvh, 640px);
+}
+.card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-fit {
+  width: min(480px, calc(100vw - 32px));
+  height: min(720px, 78dvh);
 }
 .card-detail-pop-backdrop {
   position: fixed;
@@ -3290,7 +3874,14 @@ button.hud-btn--armed::after {
   align-items: center;
   justify-content: center;
 }
-.tcg--layout-min .dm-art--empty {
+/* Empty / unknown compact faces: same art band as filled cards (no flex-grow slab). */
+.tcg--layout-min .dm-art.dm-art--empty {
+  flex: 0 0 auto;
+  flex-grow: 0;
+  width: 100%;
+  aspect-ratio: 80 / 52;
+  max-height: 46%;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3550,6 +4141,23 @@ button.hud-btn--armed::after {
   font-size: 10px;
   color: #e8eef7;
 }
+/* Full compact card face while dragging (map + match HUD) — overrides the summary strip chrome. */
+.doctrine-drag-ghost.doctrine-drag-ghost--card-face {
+  max-width: none;
+  width: auto;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  font-size: unset;
+  color: unset;
+  filter: drop-shadow(0 12px 26px rgba(0, 0, 0, 0.4));
+}
+.doctrine-drag-ghost.doctrine-drag-ghost--card-face .doctrine-drag-ghost-card-face-inner {
+  width: clamp(120px, 18vw, 220px);
+  container-type: inline-size;
+}
 .ghost-compact {
   display: flex;
   flex-direction: column;
@@ -3597,16 +4205,6 @@ button.hud-btn--armed::after {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.hud-doctrine-hint {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left, 0px));
-  bottom: calc(10px + var(--doctrine-tray-h) + 26px + env(safe-area-inset-bottom, 0px));
-  max-width: min(520px, 90vw);
-  font-size: 11px;
-  opacity: 0.72;
-  pointer-events: none;
-  text-shadow: 0 1px 2px #000a;
-}
 /* Relay signal picker popup (shown when player clicks an unbuilt Relay slot) */
 .relay-signal-pop {
   position: fixed;
@@ -3839,62 +4437,6 @@ button.hud-btn--armed::after {
 }
 .ob-btn--skip {
   opacity: 0.78;
-}
-
-.hud-objective {
-  position: absolute;
-  left: 50%;
-  top: calc(72px + env(safe-area-inset-top, 0px));
-  transform: translateX(-50%);
-  max-width: min(620px, 92vw);
-  padding: 7px 14px;
-  border-radius: 999px;
-  background: rgba(14, 20, 28, 0.82);
-  border: 1px solid #3a4a63;
-  color: #dbeaff;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  text-shadow: 0 1px 2px #000a;
-  z-index: 36;
-  pointer-events: none;
-}
-.hud-objective[hidden] {
-  display: none !important;
-}
-.hud-objective b {
-  color: #6ae1ff;
-  margin-right: 4px;
-  text-transform: uppercase;
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-}
-
-.hud-hero-hp {
-  position: absolute;
-  left: max(12px, env(safe-area-inset-left, 0px));
-  top: calc(56px + env(safe-area-inset-top, 0px));
-  font-size: 11.5px;
-  opacity: 0.9;
-  text-shadow: 0 1px 2px #000a;
-  pointer-events: none;
-}
-.hud-hero-hp .bar {
-  display: inline-block;
-  width: 140px;
-  height: 8px;
-  border-radius: 4px;
-  background: #1a2230;
-  border: 1px solid #2a3545;
-  vertical-align: middle;
-  margin: 0 6px;
-  overflow: hidden;
-}
-.hud-hero-hp .bar-fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #6ae1ff, #4da3ff);
-  width: 100%;
 }
 
 .rules-toast {

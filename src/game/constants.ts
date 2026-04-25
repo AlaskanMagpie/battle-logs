@@ -7,11 +7,17 @@ export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 /** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
 export const DOCTRINE_COMMANDS_ENABLED = false;
 
+/** Player doctrine size everywhere (binder picker, match HUD, sim). */
+export const DOCTRINE_SLOT_COUNT = 10;
+
+/** In-match HUD: two fanned rows of this many slots each. */
+export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
+
 /** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
 
-/** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2.8s at default TICK_HZ. */
-export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 56;
+/** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2s at default TICK_HZ. */
+export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 40;
 
 /** Baseline Mana/sec for the rival wizard (scaled slightly by `map.difficulty`). */
 export const ENEMY_AI_PASSIVE_FLUX_PER_SEC = 2.5;
@@ -34,14 +40,26 @@ export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
 ];
 
 /** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */
-export const ENEMY_UNIT_HUNT_DETECT = 95;
+export const ENEMY_UNIT_HUNT_DETECT = 118;
 
 /** Player units (offense): larger than old `max(10, range*3)` so armies actually contest space. */
 export const PLAYER_UNIT_HUNT_DETECT_MULT = 6;
 export const PLAYER_UNIT_HUNT_DETECT_MIN = 28;
 
+/** Spatial hash cell size (world XZ) for unit–unit separation. */
+export const UNIT_SEPARATION_GRID = 3.5;
+
+/** Portion of pairwise overlap to resolve per separation pass (0..1). */
+export const UNIT_SEPARATION_STRENGTH = 0.62;
+
+/** Extra separation passes per tick (rebuilds grid each pass) for dense armies. */
+export const UNIT_SEPARATION_PASSES = 2;
+
+/** Max XZ displacement from separation in one pass (world units). */
+export const UNIT_SEPARATION_MAX_STEP = 1.6;
+
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
-export const ENEMY_TAP_WEDGE_MARGIN_X = 28;
+export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
 
 /** Rival wizard melee — tuned slightly below player strike. */
 export const ENEMY_HERO_STRIKE_DAMAGE = 32;
@@ -53,7 +71,7 @@ export const TAP_YIELD_MAX = 250;
 /** Physical claim pillar on a Mana node — HP pool; when destroyed the node returns to neutral. */
 export const TAP_ANCHOR_MAX_HP = 200;
 /** Melee / strike range from unit or wizard to tap (x,z) to damage the anchor. */
-export const TAP_ANCHOR_STRIKE_RADIUS = 2.75;
+export const TAP_ANCHOR_STRIKE_RADIUS = 3.2;
 
 /** Build / place proximity to Tap or Keep (world units). */
 export const INFRA_PLACE_RADIUS = 16;
@@ -113,26 +131,51 @@ export const CAMP_CORE_ATTACK_RADIUS = 7;
 export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
-export const ENEMY_WAVE_EVERY_TICKS = 18 * TICK_HZ;
+export const ENEMY_WAVE_EVERY_TICKS = 12 * TICK_HZ;
 export const ENEMY_WAVE_GLOBAL_CAP = 22;
 
 /** Player-controlled hero. */
 export const HERO_SPEED = 11;
+/** Max queued RMB destinations after the current move (Shift+right-click). */
+export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
-export const HERO_CLAIM_RADIUS = 4;
+/** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
+export const HERO_CLAIM_RADIUS = 12;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
+
+/** Home distance (world units): no extra claim time / flux below this radius from Keep + relays (player) or relays + enemy start (enemy). */
+export const HOME_CLAIM_DISTANCE_NEAR = 42;
+/** At or beyond this distance from home, claim scaling reaches its maximum. */
+export const HOME_CLAIM_DISTANCE_FAR = 130;
+/** Far from home: channel length multiplier (1 = unchanged at home, this value at max distance). */
+export const HOME_CLAIM_CHANNEL_MULT_MAX = 2.15;
+/** Far from home: Mana fee multiplier vs `HERO_CLAIM_FLUX_FEE` (1 at home). */
+export const HOME_CLAIM_FLUX_MULT_MAX = 1.72;
+/** Far from home: tap Mana/sec yield scales down to this fraction (1 at home). */
+export const HOME_TAP_YIELD_MULT_MIN = 0.52;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
 export const HERO_WASD_SPEED = 11;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
-export const HERO_ATTACK_RANGE = 5.5;
-export const HERO_ATTACK_DAMAGE = 42;
-export const HERO_ATTACK_COOLDOWN_TICKS = 16;
+export const HERO_ATTACK_RANGE = 9.25;
+export const HERO_ATTACK_DAMAGE = 54;
+export const HERO_ATTACK_COOLDOWN_TICKS = 14;
+/** Extra damage multiplier when the strike hits a Swarm-class unit. */
+export const HERO_ATTACK_SWARM_MULT = 1.7;
+/** Rival strike vs Swarm (below player Swarm mult for parity). */
+export const ENEMY_HERO_STRIKE_SWARM_MULT = 1.45;
+
+/** Forward-placed structures use this fraction of catalog maxHp (snowball: faster to kill than claiming deep nodes). */
+export const FORWARD_STRUCTURE_HP_MULT = 0.58;
+/** Hero strike damage vs enemy structures within this radius of an enemy-owned tap anchor (tower-on-node). */
+export const HERO_STRIKE_NEAR_ENEMY_TAP_RADIUS = 22;
+export const HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT = 1.42;
 
 /** Procedural Mana nodes per match (each side). */
 export const TAP_NODES_PER_SIDE = 10;
-export const TAP_GENERATION_MIN_SEP = 20;
+/** Minimum spacing between procedurally placed Mana nodes (world units). */
+export const TAP_GENERATION_MIN_SEP = 36;
 
-/** Territory: union of radii around the Keep + claimed player taps. */
-export const TERRITORY_RADIUS = 48;
+/** Territory: union of radii around the Keep, the Wizard, and claimed player taps (world units). */
+export const TERRITORY_RADIUS = 72;

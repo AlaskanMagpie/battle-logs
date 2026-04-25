@@ -9,19 +9,6 @@ import {
 import { shatterTapAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
 import { dist2, TRAMPLE } from "./helpers";
 
-function classifyRangeBand(range: number): "close" | "medium" | "long" {
-  if (range <= 2.6) return "close";
-  if (range <= 5.2) return "medium";
-  return "long";
-}
-
-function classifyAttackWeight(u: UnitRuntime): "light" | "medium" | "heavy" {
-  const weighted = u.dmgPerTick * (u.aoeRadius && u.aoeRadius > 0 ? 1.2 : 1);
-  if (weighted < 0.24) return "light";
-  if (weighted < 0.6) return "medium";
-  return "heavy";
-}
-
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   let d = attacker.dmgPerTick;
   if (attacker.antiClass && defender.sizeClass === attacker.antiClass) d *= ANTI_CLASS_DAMAGE_MULT;
@@ -71,8 +58,11 @@ export function combat(s: GameState): void {
         tz: best.z,
         range: u.range,
         wide: !!(u.aoeRadius && u.aoeRadius > 0),
-        rangeBand: classifyRangeBand(u.range),
-        weight: classifyAttackWeight(u),
+        team: u.team,
+        sizeClass: u.sizeClass,
+        signal: u.signal,
+        visualSeed: u.visualSeed,
+        trait: u.trait,
       });
     }
     if (u.aoeRadius && u.aoeRadius > 0) {
@@ -89,8 +79,9 @@ export function combat(s: GameState): void {
   // Enemy → player structures (Keep is just another player structure).
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
+    const ur2 = u.range * u.range;
     let best: StructureRuntime | null = null;
-    let bestD = 2.5 * 2.5;
+    let bestD = ur2;
     for (const st of s.structures) {
       if (st.team !== "player") continue;
       const d = dist2(u, st);
@@ -107,13 +98,11 @@ export function combat(s: GameState): void {
     }
   }
 
-  // Enemy units ↦ Wizard hero (melee-range chip damage).
+  // Enemy units ↦ Wizard hero (automatic melee at unit weapon range).
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (s.hero.hp <= 0) break;
-    const dx = u.x - s.hero.x;
-    const dz = u.z - s.hero.z;
-    if (dx * dx + dz * dz <= 2.2 * 2.2) {
+    if (dist2(u, s.hero) <= u.range * u.range) {
       s.hero.hp = Math.max(0, s.hero.hp - u.dmgPerTick * 0.4);
     }
   }

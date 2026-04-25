@@ -1,9 +1,11 @@
 import * as THREE from "three";
+import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_CHANNEL_SEC,
+  HERO_CLAIM_RADIUS,
   TAP_YIELD_MAX,
   TERRITORY_RADIUS,
   TICK_HZ,
@@ -27,23 +29,24 @@ import {
   stepFx,
   type FxHost,
 } from "./fx";
+import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbPool";
 
-/** Exponential follow (1/s); orbit pivot eases toward the wizard. */
-const CAMERA_HERO_FOLLOW_LAMBDA = 5.2;
-/** Orbit pivot height — slightly above the feet so framing feels natural. */
-const CAMERA_HERO_PIVOT_Y = 1.25;
+/** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
+const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
+/** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
+const CAMERA_HERO_PIVOT_Y = 1.38;
 
 function unitScale(size: UnitSizeClass): number {
   switch (size) {
     case "Swarm":
-      return 0.55;
+      return 0.72;
     case "Line":
-      return 0.75;
+      return 0.98;
     case "Heavy":
-      return 1.15;
+      return 1.48;
     case "Titan":
-      return 1.7;
+      return 2.15;
   }
 }
 
@@ -330,6 +333,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   plinth.position.y = 0.09;
   plinth.receiveShadow = true;
   g.add(plinth);
+  (g.userData as Record<string, unknown>)["plinthMesh"] = plinth;
 
   g.traverse((c) => {
     if (c instanceof THREE.Mesh) {
@@ -388,6 +392,9 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.72,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
     }),
   );
   ring.rotation.x = -Math.PI / 2;
@@ -402,7 +409,9 @@ export class GameRenderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   private readonly ground: THREE.Mesh;
-  private grid: THREE.GridHelper;
+  private readonly hemiLight: THREE.HemisphereLight;
+  private readonly sunLight: THREE.DirectionalLight;
+  private groundVisualKey = "";
   private readonly root = new THREE.Group();
   private readonly markers = new THREE.Group();
   private readonly entities = new THREE.Group();
@@ -458,6 +467,9 @@ export class GameRenderer {
   private cmdGhostCore: THREE.Mesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
+  /** Scratch: camera-relative WASD on the XZ plane (world up). */
+  private readonly camGroundFwd = new THREE.Vector3();
+  private readonly camGroundRight = new THREE.Vector3();
   private readonly fx: FxHost;
   private lastFxTick = -1;
   private lastSiegeTick = -1;
@@ -472,45 +484,63 @@ export class GameRenderer {
   private readonly relayPrevHp = new Map<string, number>();
   /** Seconds of forward lunge after a wizard strike FX. */
   private heroLungeTimer = 0;
+  /** When true, orbit pivot eases toward the player wizard each frame; when false, MMB orbit stays put. */
+  private cameraFollowHero = true;
+  private lastCameraLimitsHalf = 0;
+
+  /** Rigid translate: preserves camera↔target offset (OrbitControls distance = zoom). */
+  private nudgeCameraRigTowardHeroPivot(dt: number): void {
+    const state = this.currentState;
+    if (!state || state.phase !== "playing") return;
+    const h = state.hero;
+    const t = this.controls.target;
+    const desiredX = h.x;
+    const desiredY = CAMERA_HERO_PIVOT_Y;
+    const desiredZ = h.z;
+    const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
+    const dx = (desiredX - t.x) * alpha;
+    const dy = (desiredY - t.y) * alpha;
+    const dz = (desiredZ - t.z) * alpha;
+    if (dx * dx + dy * dy + dz * dz < 1e-14) return;
+    t.x += dx;
+    t.y += dy;
+    t.z += dz;
+    this.camera.position.x += dx;
+    this.camera.position.y += dy;
+    this.camera.position.z += dz;
+  }
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: false,
+      powerPreference: "high-performance",
+      stencil: false,
+      depth: true,
+    });
+    /** Cap DPR for 120Hz — full retina is often fill-rate bound. */
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    this.renderer.shadowMap.enabled = false;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0e1116);
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 650);
+    this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
     this.camera.lookAt(0, 4, 0);
 
     this.scene.add(new THREE.AmbientLight(0xcfd9ff, 0.38));
-    this.scene.add(new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.35));
-    const sun = new THREE.DirectionalLight(0xfff4e6, 1.05);
-    sun.position.set(-55, 110, 40);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.00025;
-    const sc = sun.shadow.camera as THREE.OrthographicCamera;
-    sc.left = -220;
-    sc.right = 220;
-    sc.top = 220;
-    sc.bottom = -220;
-    sc.near = 10;
-    sc.far = 520;
-    sc.updateProjectionMatrix();
-    this.scene.add(sun);
+    this.hemiLight = new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.35);
+    this.scene.add(this.hemiLight);
+    this.sunLight = new THREE.DirectionalLight(0xfff4e6, 1.05);
+    this.sunLight.position.set(-55, 110, 40);
+    this.sunLight.castShadow = false;
+    this.scene.add(this.sunLight);
 
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.92, metalness: 0.04 });
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), groundMat);
     this.ground.rotation.x = -Math.PI / 2;
-    this.ground.receiveShadow = true;
+    this.ground.receiveShadow = false;
     this.scene.add(this.ground);
-
-    this.grid = new THREE.GridHelper(220, 44, 0x2a3545, 0x1f2937);
-    this.grid.position.y = 0.02;
-    this.scene.add(this.grid);
 
     this.territoryGroup.name = "territory";
     this.root.add(this.decor, this.markers, this.entities, this.territoryGroup);
@@ -520,22 +550,22 @@ export class GameRenderer {
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 0, 0);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.07;
+    this.controls.enableDamping = false;
     this.controls.screenSpacePanning = true;
-    this.controls.minDistance = 48;
+    this.controls.minDistance = 34;
     this.controls.maxDistance = 280;
-    this.controls.maxPolarAngle = Math.PI / 2 - 0.08;
-    this.controls.minPolarAngle = 0.36;
+    /** Keep the lens low — more horizon, less RTS “map cam”. */
+    this.controls.maxPolarAngle = Math.PI / 2 - 0.06;
+    this.controls.minPolarAngle = 0.82;
     this.controls.zoomSpeed = 0.82;
-    this.controls.rotateSpeed = 0.42;
-    this.controls.panSpeed = 0.58;
+    this.controls.rotateSpeed = 0.36;
+    this.controls.panSpeed = 0.92;
     this.controls.enableRotate = true;
-    this.controls.enablePan = false;
-    // Middle = orbit; left/right disabled so LMB/RMB go to the game (RMB move on canvas).
+    this.controls.enablePan = true;
+    // LMB/RMB stay with the game; middle = pan the rig. Shift+MMB = orbit (OrbitControls default for PAN+modifier).
     (this.controls as unknown as { mouseButtons: { LEFT: number; MIDDLE: number; RIGHT: number } }).mouseButtons = {
       LEFT: -1,
-      MIDDLE: 0,
+      MIDDLE: MOUSE.PAN,
       RIGHT: -1,
     };
   }
@@ -554,6 +584,84 @@ export class GameRenderer {
 
   setControlsEnabled(enabled: boolean): void {
     this.controls.enabled = enabled;
+  }
+
+  /**
+   * Normalized XZ basis for camera-relative WASD: **W/S** = along the camera view direction flattened
+   * onto the ground; **A/D** = strafe (right-hand rule with world +Y). Matches typical third-person controls.
+   */
+  getCameraGroundMoveBasis(): { fx: number; fz: number; rx: number; rz: number } {
+    this.camera.updateMatrixWorld(true);
+    this.camera.getWorldDirection(this.camGroundFwd);
+    this.camGroundFwd.y = 0;
+    let len = this.camGroundFwd.length();
+    if (len < 1e-5) {
+      const st = this.currentState;
+      if (st?.phase === "playing") {
+        const face = st.hero.facing;
+        this.camGroundFwd.set(Math.sin(face), 0, Math.cos(face));
+      } else {
+        this.camGroundFwd.set(0, 0, 1);
+      }
+      len = 1;
+    } else {
+      this.camGroundFwd.multiplyScalar(1 / len);
+    }
+    const fx = this.camGroundFwd.x;
+    const fz = this.camGroundFwd.z;
+    this.camGroundRight.crossVectors(this.camera.up, this.camGroundFwd).normalize();
+    this.camGroundRight.y = 0;
+    if (this.camGroundRight.lengthSq() < 1e-8) {
+      this.camGroundRight.set(fz, 0, -fx);
+    } else {
+      this.camGroundRight.normalize();
+    }
+    return { fx, fz, rx: this.camGroundRight.x, rz: this.camGroundRight.z };
+  }
+
+  getCameraFollowHero(): boolean {
+    return this.cameraFollowHero;
+  }
+
+  /** Snap orbit pivot to the player wizard (used when re-enabling follow mode). */
+  setCameraFollowHero(follow: boolean): void {
+    this.cameraFollowHero = follow;
+    if (follow) this.snapCameraPivotToPlayerHero();
+  }
+
+  /** @returns new follow state */
+  toggleCameraFollowHero(): boolean {
+    this.cameraFollowHero = !this.cameraFollowHero;
+    if (this.cameraFollowHero) this.snapCameraPivotToPlayerHero();
+    return this.cameraFollowHero;
+  }
+
+  /** Snap pivot to hero in one frame without changing camera–target distance (zoom unchanged). */
+  private snapCameraPivotToPlayerHero(): void {
+    const st = this.currentState;
+    if (!st || st.phase !== "playing") return;
+    const h = st.hero;
+    const t = this.controls.target;
+    const nx = h.x;
+    const ny = CAMERA_HERO_PIVOT_Y;
+    const nz = h.z;
+    const dx = nx - t.x;
+    const dy = ny - t.y;
+    const dz = nz - t.z;
+    t.set(nx, ny, nz);
+    this.camera.position.x += dx;
+    this.camera.position.y += dy;
+    this.camera.position.z += dz;
+    this.controls.update();
+  }
+
+  private syncCameraLimits(half: number): void {
+    if (half === this.lastCameraLimitsHalf) return;
+    this.lastCameraLimitsHalf = half;
+    this.controls.minDistance = Math.max(28, half * 0.055);
+    this.controls.maxDistance = Math.min(1500, Math.max(260, half * 2.35));
+    this.camera.far = Math.max(2200, half * 6.2);
+    this.camera.updateProjectionMatrix();
   }
 
   pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number } | null {
@@ -649,6 +757,8 @@ export class GameRenderer {
     this.currentState = state;
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
+    this.syncCameraLimits(state.map.world.halfExtents);
+    this.applyMapVisual(state);
     this.syncMapDecor(state);
     this.syncTerritory(state);
     this.syncMarkers(state);
@@ -668,7 +778,14 @@ export class GameRenderer {
   private consumeCastEvents(state: GameState): void {
     const fxEvt = state.lastFx;
     if (fxEvt && fxEvt.tick !== this.lastFxTick) {
-      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z });
+      const boltFrom =
+        fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
+          ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
+          : undefined;
+      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, {
+        ...boltFrom,
+        strikeVariant: fxEvt.strikeVariant,
+      });
       if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
       this.lastFxTick = fxEvt.tick;
     }
@@ -699,6 +816,8 @@ export class GameRenderer {
         metalness: 0.05,
         transparent: true,
         opacity: 0.35,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
       this.ghost = new THREE.Mesh(geo, mat);
       this.ghost.position.y = 0.2;
@@ -732,6 +851,7 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.35,
         depthWrite: false,
+        depthTest: false,
         blending: THREE.AdditiveBlending,
       });
       this.cmdGhost = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.2, 48), mat);
@@ -746,6 +866,8 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.75,
         depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
       });
       this.cmdGhostCore = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.65, 32), coreMat);
       this.cmdGhostCore.rotation.x = -Math.PI / 2;
@@ -772,6 +894,15 @@ export class GameRenderer {
 
   private syncTaps(state: GameState): void {
     const hero = state.hero;
+    const claimR = HERO_CLAIM_RADIUS;
+    const ringIn = claimR * 0.58;
+    const ringOut = claimR * 0.92;
+    const chIn = claimR * 0.76;
+    const chOut = claimR * 0.98;
+    const yIn = claimR * 0.22;
+    const yOut = claimR * 0.36;
+    const nhIn = claimR * 0.88;
+    const nhOut = claimR * 1.08;
 
     // Find the nearest neutral tap to the hero — we highlight it with an
     // extra pulsing ring so the player always has an obvious "go here next".
@@ -794,12 +925,15 @@ export class GameRenderer {
       const t = state.taps[idx]!;
       let m = this.tapMeshes.get(t.defId);
       if (!m) {
-        const geo = new THREE.RingGeometry(2.2, 3.2, 32);
+        const geo = new THREE.RingGeometry(ringIn, ringOut, 32);
         const mat = new THREE.MeshBasicMaterial({
           color: 0x666666,
           side: THREE.DoubleSide,
           transparent: true,
           opacity: 0.9,
+          depthWrite: false,
+          depthTest: false,
+          blending: THREE.AdditiveBlending,
         });
         m = new THREE.Mesh(geo, mat);
         m.rotation.x = -Math.PI / 2;
@@ -809,10 +943,10 @@ export class GameRenderer {
       }
       m.position.set(t.x, 0.05, t.z);
       const mat = m.material as THREE.MeshBasicMaterial;
-      if (t.active && t.ownerTeam === "player") mat.color.set(0x5fc48a);
+      if (t.active && t.ownerTeam === "player") mat.color.set(0x4da3ff);
       else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xd06060);
       else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x888888);
-      else if (t.active) mat.color.set(0x3ecf8e);
+      else if (t.active) mat.color.set(0x52b0ff);
       else mat.color.set(0x8a96a6);
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
@@ -826,13 +960,15 @@ export class GameRenderer {
           : Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
         if (!claimArc) {
           claimArc = new THREE.Mesh(
-            new THREE.RingGeometry(3.4, 3.9, 48, 1, 0, 0.0001),
+            new THREE.RingGeometry(chIn, chOut, 48, 1, 0, 0.0001),
             new THREE.MeshBasicMaterial({
               color: state.enemyHero.claimChannelTarget === idx ? 0xff8a8a : 0x6ae1ff,
               side: THREE.DoubleSide,
               transparent: true,
               opacity: 0.95,
               depthWrite: false,
+              depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           claimArc.rotation.x = -Math.PI / 2;
@@ -849,8 +985,8 @@ export class GameRenderer {
           ud["channelGeomKey"] = channelKey;
           claimArc.geometry.dispose();
           claimArc.geometry = new THREE.RingGeometry(
-            3.4,
-            3.9,
+            chIn,
+            chOut,
             48,
             1,
             -Math.PI / 2,
@@ -880,7 +1016,7 @@ export class GameRenderer {
         const text = depleted ? "Depleted" : "Stand to claim";
         const accent = depleted ? "#8a96a6" : "#6ae1ff";
         drawLabel(label, text, accent);
-        label.sprite.position.set(t.x, 4.2, t.z);
+        label.sprite.position.set(t.x, Math.max(5.2, claimR * 0.45 + 3.8), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = depleted ? 0.55 : 1;
       } else if (claimedByEnemy && anchorUp) {
@@ -890,7 +1026,7 @@ export class GameRenderer {
           this.tapLabels.set(t.defId, label);
         }
         drawLabel(label, "Destroy anchor to uncap", "#ff9a7a");
-        label.sprite.position.set(t.x, 5.1, t.z);
+        label.sprite.position.set(t.x, Math.max(6, claimR * 0.48 + 4.2), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
       } else if (label) {
@@ -903,13 +1039,15 @@ export class GameRenderer {
         const frac = Math.max(0, Math.min(1, t.yieldRemaining / TAP_YIELD_MAX));
         if (!arc) {
           arc = new THREE.Mesh(
-            new THREE.RingGeometry(1.3, 2.0, 48, 1, 0, Math.PI * 2),
+            new THREE.RingGeometry(yIn, yOut, 48, 1, 0, Math.PI * 2),
             new THREE.MeshBasicMaterial({
-              color: 0x7cf0b4,
+              color: 0x6ab8ff,
               side: THREE.DoubleSide,
               transparent: true,
               opacity: 0.9,
               depthWrite: false,
+              depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           arc.rotation.x = -Math.PI / 2;
@@ -924,8 +1062,8 @@ export class GameRenderer {
           arcUd["yieldGeomKey"] = yieldKey;
           arc.geometry.dispose();
           arc.geometry = new THREE.RingGeometry(
-            1.3,
-            2.0,
+            yIn,
+            yOut,
             48,
             1,
             Math.PI / 2 - frac * Math.PI,
@@ -933,7 +1071,7 @@ export class GameRenderer {
           );
         }
         (arc.material as THREE.MeshBasicMaterial).color.set(
-          t.ownerTeam === "enemy" ? 0xff7070 : 0x7cf0b4,
+          t.ownerTeam === "enemy" ? 0xff7070 : 0x6ab8ff,
         );
         arc.visible = true;
       } else if (arc) {
@@ -997,13 +1135,15 @@ export class GameRenderer {
       const t = state.taps.find((x) => x.defId === nearestId)!;
       if (!this.nearestTapRing) {
         this.nearestTapRing = new THREE.Mesh(
-          new THREE.RingGeometry(3.5, 4.1, 48),
+          new THREE.RingGeometry(nhIn, nhOut, 48),
           new THREE.MeshBasicMaterial({
             color: 0x6ae1ff,
             side: THREE.DoubleSide,
             transparent: true,
             opacity: 0.85,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.nearestTapRing.rotation.x = -Math.PI / 2;
@@ -1100,6 +1240,8 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.22,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         aggro.rotation.x = -Math.PI / 2;
@@ -1119,6 +1261,8 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.1,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         wake.rotation.x = -Math.PI / 2;
@@ -1156,6 +1300,7 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.6,
           depthWrite: false,
+          depthTest: false,
           blending: THREE.AdditiveBlending,
         }),
       );
@@ -1173,6 +1318,8 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.9,
           depthWrite: false,
+          depthTest: false,
+          blending: THREE.AdditiveBlending,
         }),
       );
       arc.rotation.x = -Math.PI / 2;
@@ -1256,6 +1403,20 @@ export class GameRenderer {
         (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
       }
       this.structurePrevHp.set(st.id, st.hp);
+
+      const plinthMesh = g.userData["plinthMesh"] as THREE.Mesh | undefined;
+      if (plinthMesh) {
+        const cam = this.camera.position;
+        const dx = st.x - cam.x;
+        const dz = st.z - cam.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        const t = Math.min(1, Math.max(0, (dist - 38) / 220));
+        const mat = plinthMesh.material as THREE.MeshStandardMaterial;
+        const base = st.team === "player" ? new THREE.Color(0x0a2844) : new THREE.Color(0x440808);
+        const peak = st.team === "player" ? new THREE.Color(0x55aaff) : new THREE.Color(0xff5555);
+        mat.emissive.copy(base).lerp(peak, t);
+        mat.emissiveIntensity = 0.35 + t * 0.95;
+      }
     }
   }
 
@@ -1329,6 +1490,8 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.72,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.unitSelHalo.rotation.x = -Math.PI / 2;
@@ -1345,6 +1508,8 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.26,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.unitMeleeRing.rotation.x = -Math.PI / 2;
@@ -1376,6 +1541,8 @@ export class GameRenderer {
             transparent: true,
             opacity: 0.75,
             depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
           }),
         );
         this.selectHalo.rotation.x = -Math.PI / 2;
@@ -1396,6 +1563,8 @@ export class GameRenderer {
               transparent: true,
               opacity: 0.28,
               depthWrite: false,
+              depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           this.attackRangeRing.rotation.x = -Math.PI / 2;
@@ -1415,11 +1584,13 @@ export class GameRenderer {
             this.auraRangeRing = new THREE.Mesh(
               new THREE.RingGeometry(1.5, 1.8, 56),
               new THREE.MeshBasicMaterial({
-                color: 0x6affc7,
+                color: 0x6ab8ff,
                 side: THREE.DoubleSide,
                 transparent: true,
                 opacity: 0.24,
                 depthWrite: false,
+                depthTest: false,
+                blending: THREE.AdditiveBlending,
               }),
             );
             this.auraRangeRing.rotation.x = -Math.PI / 2;
@@ -1454,6 +1625,9 @@ export class GameRenderer {
               color: 0x6ae1ff,
               transparent: true,
               opacity: 0.85,
+              depthWrite: false,
+              depthTest: false,
+              blending: THREE.AdditiveBlending,
             }),
           );
           this.markers.add(this.rallyLine);
@@ -1476,7 +1650,7 @@ export class GameRenderer {
           this.markers.add(this.rallyFlag);
         }
         this.rallyFlag.position.set(st.rallyX, 0.55, st.rallyZ);
-        this.rallyFlag.rotation.y = this.clock.getElapsedTime() * 1.4;
+        this.rallyFlag.rotation.y = Math.atan2(st.rallyX - st.x, st.rallyZ - st.z);
         this.rallyFlag.visible = true;
       } else {
         if (this.rallyLine) this.rallyLine.visible = false;
@@ -1494,12 +1668,46 @@ export class GameRenderer {
     const size = half * 2;
     this.ground.geometry.dispose();
     this.ground.geometry = new THREE.PlaneGeometry(size, size);
-    this.scene.remove(this.grid);
-    this.grid.dispose();
-    const divs = Math.max(24, Math.round(size / 6));
-    this.grid = new THREE.GridHelper(size * 0.96, divs, 0x2a3545, 0x1f2937);
-    this.grid.position.y = 0.02;
-    this.scene.add(this.grid);
+    this.groundVisualKey = "";
+  }
+
+  /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
+  private applyMapVisual(state: GameState): void {
+    if (!this.ground.visible) return;
+    const v = state.map.visual;
+    const preset = v?.groundPreset ?? "solid";
+    const fogH = v?.fogHex;
+    const skyH = v?.skyHex;
+    const sunH = v?.sunHex;
+    const key = `${preset}|${fogH ?? ""}|${skyH ?? ""}|${sunH ?? ""}`;
+    if (key !== this.groundVisualKey) {
+      this.groundVisualKey = key;
+      if (fogH != null) {
+        this.scene.fog = new THREE.Fog(fogH, v?.fogNear ?? 200, v?.fogFar ?? 960);
+      } else {
+        this.scene.fog = null;
+      }
+      if (skyH != null) this.hemiLight.color.setHex(skyH);
+      if (sunH != null) this.sunLight.color.setHex(sunH);
+
+      const disposeGroundMat = (): void => {
+        const m = this.ground.material;
+        if (Array.isArray(m)) m.forEach((x) => x.dispose());
+        else (m as THREE.Material).dispose?.();
+      };
+
+      if (preset === "solid" || !isShaderGroundPreset(preset)) {
+        disposeGroundMat();
+        this.ground.material = new THREE.MeshStandardMaterial({
+          color: 0x1b2430,
+          roughness: 0.92,
+          metalness: 0.04,
+        });
+      } else {
+        disposeGroundMat();
+        this.ground.material = createGroundShaderMaterial(preset);
+      }
+    }
   }
 
   private ensureHpBarPair(
@@ -1575,6 +1783,41 @@ export class GameRenderer {
           }),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
+      } else if (d.kind === "sphere") {
+        const r = d.radius;
+        const cy = d.y ?? r;
+        mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 20, 16),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x5a6270,
+            roughness: 0.78,
+            metalness: 0.12,
+          }),
+        );
+        mesh.position.set(d.x, cy, d.z);
+      } else if (d.kind === "cone") {
+        mesh = new THREE.Mesh(
+          new THREE.ConeGeometry(d.radius, d.h, 14),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x4d5a68,
+            roughness: 0.88,
+            metalness: 0.06,
+          }),
+        );
+        mesh.position.set(d.x, d.h / 2, d.z);
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+      } else if (d.kind === "torus") {
+        mesh = new THREE.Mesh(
+          new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
+          new THREE.MeshStandardMaterial({
+            color: d.color ?? 0x3d4555,
+            roughness: 0.8,
+            metalness: 0.18,
+          }),
+        );
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        mesh.position.set(d.x, d.tube * 0.5 + 0.02, d.z);
       }
       if (!mesh) continue;
       mesh.castShadow = true;
@@ -1647,6 +1890,7 @@ export class GameRenderer {
       transparent: true,
       opacity: 0.08,
       depthWrite: false,
+      depthTest: false,
       blending: THREE.AdditiveBlending,
     });
     for (const p of sources) {
@@ -1662,6 +1906,7 @@ export class GameRenderer {
 
   private buildHeroMesh(): THREE.Group {
     const g = new THREE.Group();
+    g.scale.setScalar(1.2);
     // Team plinth (blue).
     const plinth = new THREE.Mesh(
       new THREE.CylinderGeometry(1.2, 1.3, 0.22, 28),
@@ -1696,6 +1941,8 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
@@ -1707,6 +1954,7 @@ export class GameRenderer {
 
   private buildRivalHeroMesh(): THREE.Group {
     const g = new THREE.Group();
+    g.scale.setScalar(1.2);
     const plinth = new THREE.Mesh(
       new THREE.CylinderGeometry(1.2, 1.3, 0.22, 28),
       new THREE.MeshStandardMaterial({
@@ -1743,6 +1991,8 @@ export class GameRenderer {
         transparent: true,
         opacity: 0.85,
         depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     ring.rotation.x = -Math.PI / 2;
@@ -1857,7 +2107,7 @@ export class GameRenderer {
         if (this.useGlb) {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
-            void requestGlbForUnit(u.sizeClass, placeholder);
+            void requestGlbForUnit(u.sizeClass, placeholder, u.team);
           }
         }
       }
@@ -1901,29 +2151,10 @@ export class GameRenderer {
     }
   }
 
-  /**
-   * Keeps OrbitControls' pivot on the player wizard with exponential smoothing.
-   * Moves camera by the same delta so zoom / orbit offset from the hero is preserved.
-   */
+  /** Lock mode: move orbit pivot with the hero; camera moves by the same delta so zoom (scroll) is unchanged. */
   private applyHeroCameraFollow(dt: number): void {
-    const state = this.currentState;
-    if (!state || state.phase !== "playing") return;
-    const h = state.hero;
-    const desiredX = h.x;
-    const desiredY = CAMERA_HERO_PIVOT_Y;
-    const desiredZ = h.z;
-    const t = this.controls.target;
-    const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
-    const dx = (desiredX - t.x) * alpha;
-    const dy = (desiredY - t.y) * alpha;
-    const dz = (desiredZ - t.z) * alpha;
-    if (dx * dx + dy * dy + dz * dz < 1e-10) return;
-    t.x += dx;
-    t.y += dy;
-    t.z += dz;
-    this.camera.position.x += dx;
-    this.camera.position.y += dy;
-    this.camera.position.z += dz;
+    if (!this.cameraFollowHero) return;
+    this.nudgeCameraRigTowardHeroPivot(dt);
   }
 
   private tickHitPulses(dt: number): void {
@@ -1956,10 +2187,6 @@ export class GameRenderer {
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    // Re-run selection/rally pose updates on the flag so it keeps rotating between sim ticks.
-    if (this.currentState && this.rallyFlag?.visible) {
-      this.rallyFlag.rotation.y = this.clock.getElapsedTime() * 1.4;
-    }
     this.renderer.render(this.scene, this.camera);
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }

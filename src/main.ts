@@ -3,7 +3,7 @@ import {
   commandTargetingHint,
   getCatalogEntry,
 } from "./game/catalog";
-import { TICK_HZ } from "./game/constants";
+import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
 import { loadMapMerged } from "./game/loadMap";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
@@ -17,7 +17,8 @@ import {
 import { clearGameLog, logGame } from "./game/gameLog";
 import { advanceTick } from "./game/sim/tick";
 import { GameRenderer } from "./render/scene";
-import { doctrineCardGhostSummary } from "./ui/doctrineCard";
+import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
+import { tcgCardCompactHtml } from "./ui/doctrineCard";
 import {
   destroyDragGhost,
   DRAG_THRESHOLD_PX,
@@ -33,6 +34,13 @@ import { isStructureEntry } from "./game/types";
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
 const pickerRoot = document.querySelector<HTMLElement>("#doctrine-picker")!;
+
+function syncCameraFollowUi(root: HTMLElement, follow: boolean): void {
+  const btn = root.querySelector("#btn-camera-follow");
+  if (!btn) return;
+  btn.textContent = follow ? "Camera: lock" : "Camera: free";
+  btn.setAttribute("aria-pressed", follow ? "true" : "false");
+}
 
 function bindReplayDebugGlobals(getReplay: () => ReplayCapture): void {
   const w = window as Window & {
@@ -191,8 +199,10 @@ function wireDoctrineDragToMap(
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       renderer.setControlsEnabled(false);
       session.ghost = makeDragGhost(
-        `<div class="ghost-compact">${doctrineCardGhostSummary(session.catalogId)}</div>`,
+        `<div class="doctrine-drag-ghost-card-face-inner">${tcgCardCompactHtml(session.catalogId, "picker")}</div>`,
       );
+      session.ghost.classList.add("doctrine-drag-ghost--card-face");
+      hydrateCardPreviewImages(session.ghost);
     }
     if (!session.dragging || !session.ghost) return;
     moveDragGhost(session.ghost, ev.clientX, ev.clientY);
@@ -307,7 +317,7 @@ function wireDoctrineDragToMap(
     if (!slot || !doctrine.contains(slot)) return;
     if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
     const i = Number(slot.dataset.slotIndex);
-    if (!Number.isFinite(i)) return;
+    if (!Number.isFinite(i) || i < 0 || i >= DOCTRINE_SLOT_COUNT) return;
     const id = getState().doctrineSlotCatalogIds[i];
     if (!id) return;
     ev.preventDefault();
@@ -331,13 +341,15 @@ function wireDoctrineDragToMap(
   });
 }
 
-function runMatch(initialDoctrine: (string | null)[]): void {
+function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
   void (async () => {
-    const map = await loadMapMerged();
+    const map = await loadMapMerged(mapUrl);
     const renderer = new GameRenderer(canvas);
     await renderer.loadTerrainFromMap(map);
     let state: GameState = createInitialState(map, initialDoctrine);
     let replay = createReplayCapture(state, map);
+    renderer.sync(state, USE_GLB);
+    renderer.setCameraFollowHero(true);
     const resize = (): void => {
       const { w, h } = viewportCssSize();
       renderer.setSize(w, h);
@@ -382,11 +394,16 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       const maxTicksThisFrame = 48;
       let ticksThisFrame = 0;
       let first = true;
+      const camBasis =
+        state.phase === "playing" &&
+        (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)
+          ? renderer.getCameraGroundMoveBasis()
+          : null;
       while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
         ticksThisFrame += 1;
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
-        if (state.phase === "playing") {
+        if (state.phase === "playing" && camBasis) {
           let strafe = 0;
           let forward = 0;
           if (keysHeld.a) strafe -= 1;
@@ -394,7 +411,8 @@ function runMatch(initialDoctrine: (string | null)[]): void {
           if (keysHeld.w) forward += 1;
           if (keysHeld.s) forward -= 1;
           if (strafe !== 0 || forward !== 0) {
-            chunk.push({ type: "hero_wasd", strafe, forward });
+            const { fx, fz, rx, rz } = camBasis;
+            chunk.push({ type: "hero_wasd", strafe, forward, camFx: fx, camFz: fz, camRx: rx, camRz: rz });
           }
         }
         const tickBefore = state.tick;
@@ -422,9 +440,20 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       state = createInitialState(map, initialDoctrine);
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
+      renderer.sync(state, USE_GLB);
+      if (renderer.getCameraFollowHero()) renderer.setCameraFollowHero(true);
+      syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
       acc = 0;
       last = performance.now();
       rafId = requestAnimationFrame(tick);
+    };
+
+    const applyCameraToggle = (): void => {
+      const follow = renderer.toggleCameraFollowHero();
+      state.lastMessage = follow
+        ? "Camera locked on wizard — zoom with the mouse wheel only."
+        : "Camera free — MMB orbit; lock on wizard with Camera or C.";
+      syncCameraFollowUi(hudRoot, follow);
     };
 
     mountHud(hudRoot, state, {
@@ -432,23 +461,57 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       onEditDoctrine: () => {
         window.location.reload();
       },
+      onCameraFollowToggle: applyCameraToggle,
       pushIntent: (intent) => pendingIntents.push(intent),
     });
+    syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
     const doctrineTrackEl = hudRoot.querySelector("#doctrine-track");
     if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
     showRulesToast();
 
-    // G = stance; R = arm global rally (next LMB on map sets rally point).
+    const digitKeyToDoctrineSlot: Record<string, number> = {
+      Digit1: 0,
+      Digit2: 1,
+      Digit3: 2,
+      Digit4: 3,
+      Digit5: 4,
+      Digit6: 5,
+      Digit7: 6,
+      Digit8: 7,
+      Digit9: 8,
+      Digit0: 9,
+    };
+
+    const selectDoctrineSlotUi = (index: number): void => {
+      if (state.phase !== "playing") return;
+      if (index < 0 || index >= DOCTRINE_SLOT_COUNT) return;
+      pendingIntents.push({ type: "select_doctrine_slot", index });
+      const d = hudRoot.querySelector("#doctrine-track");
+      if (!d) return;
+      for (const el of d.querySelectorAll(".slot")) el.classList.remove("active");
+      d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
+    };
+
+    // G = stance; R = arm global rally; C = camera; 1–0 = doctrine slots.
     window.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.repeat) return;
       const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
       if (tag === "input" || tag === "textarea") return;
+      const slotIdx = digitKeyToDoctrineSlot[ev.code];
+      if (slotIdx !== undefined) {
+        ev.preventDefault();
+        selectDoctrineSlotUi(slotIdx);
+        return;
+      }
       if (ev.key === "g" || ev.key === "G") {
         ev.preventDefault();
         pendingIntents.push({ type: "toggle_army_stance" });
       } else if (ev.key === "r" || ev.key === "R") {
         ev.preventDefault();
         pendingIntents.push({ type: "begin_rally_click" });
+      } else if (ev.code === "KeyC") {
+        ev.preventDefault();
+        applyCameraToggle();
       }
     });
 
@@ -458,13 +521,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       () => state,
       renderer,
       pendingIntents,
-      (index) => {
-        pendingIntents.push({ type: "select_doctrine_slot", index });
-        const d = hudRoot.querySelector("#doctrine-track");
-        if (!d) return;
-        for (const el of d.querySelectorAll(".slot")) el.classList.remove("active");
-        d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
-      },
+      selectDoctrineSlotUi,
       doctrineDragRef,
     );
 
@@ -475,6 +532,8 @@ function runMatch(initialDoctrine: (string | null)[]): void {
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       if (state.phase !== "playing") return;
+      // Middle = camera pan (OrbitControls); do not treat as a map click.
+      if (ev.button !== 0 && ev.button !== 2) return;
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
@@ -482,7 +541,7 @@ function runMatch(initialDoctrine: (string | null)[]): void {
       // Right-click only moves the hero (middle mouse is camera orbit).
       if (ev.button === 2) {
         ev.preventDefault();
-        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z });
+        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z, shiftKey: ev.shiftKey });
         logGame("move", `RMB move → (${hit.x.toFixed(1)}, ${hit.z.toFixed(1)})`, state.tick);
         rightHold = { pointerId: ev.pointerId, lastMs: performance.now() };
         try {
@@ -524,7 +583,8 @@ function runMatch(initialDoctrine: (string | null)[]): void {
           rightHold.lastMs = now;
           const rectM = canvas.getBoundingClientRect();
           const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
-          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z });
+          /** Drag-update follows cursor only (no queue append each tick). */
+          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
         }
         return;
       }
@@ -573,6 +633,6 @@ function runMatch(initialDoctrine: (string | null)[]): void {
   });
 }
 
-mountDoctrinePicker(pickerRoot, (slots) => {
-  runMatch(slots);
+mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
+  runMatch(slots, chosenMapUrl);
 });

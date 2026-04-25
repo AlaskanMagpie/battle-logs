@@ -1,4 +1,5 @@
 import {
+  DOCTRINE_SLOT_COUNT,
   FIRESTORM_DAMAGE_PER_UNIT,
   FIRESTORM_RADIUS,
   FORTIFY_DURATION_SEC,
@@ -63,7 +64,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     producedSizeClass: "Swarm",
     producedPop: 4,
     localPopCap: 8,
-    maxHp: 220,
+    maxHp: 155,
     damagePerTick: 0,
     producedAntiClass: "Heavy",
     maxCharges: 3,
@@ -384,28 +385,8 @@ export const COMMAND_BY_ID: Record<string, CommandCatalogEntry> = Object.fromEnt
   COMMANDS.map((c) => [c.id, c]),
 );
 
-/** Default 16-slot loadout for first boot / reset.
- *  Ordered so tier-1 cards front-load the hand (slot 0 is the always-playable Outpost);
- *  tier-2/3 cards are collapsed in the HUD until the player reaches that relay count.
- */
-export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = [
-  "outpost",
-  "watchtower",
-  "root_bunker",
-  "menders_hut",
-  null,
-  "recycle",
-  "fortify",
-  "firestorm",
-  "siege_works",
-  "bastion_keep",
-  "salvage_yard",
-  "war_camp",
-  "shatter",
-  "dragon_roost",
-  "ironhold_citadel",
-  "reclamation_spire",
-];
+/** Default doctrine: empty slots until the player fills them (matches in-match structure-only normalization). */
+export const DEFAULT_DOCTRINE_SLOTS: (string | null)[] = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null);
 
 export function getCatalogEntry(id: string | null | undefined): CatalogEntry | null {
   if (!id) return null;

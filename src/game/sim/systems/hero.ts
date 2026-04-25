@@ -1,43 +1,12 @@
-import {
-  HERO_CLAIM_CHANNEL_SEC,
-  HERO_CLAIM_FLUX_FEE,
-  HERO_CLAIM_RADIUS,
-  HERO_WASD_SPEED,
-  TAP_YIELD_MAX,
-  TICK_HZ,
-} from "../../constants";
+import { HERO_CLAIM_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
 import { armTapClaimAnchor, type GameState } from "../../state";
 import { dist2 } from "./helpers";
+import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
+import { tryPlayerHeroStrike } from "./heroStrike";
 
-function moveHeroToward(s: GameState): void {
-  const h = s.hero;
-  if (h.targetX === null || h.targetZ === null) return;
-  const dx = h.targetX - h.x;
-  const dz = h.targetZ - h.z;
-  const len = Math.hypot(dx, dz);
-  if (len <= 0.001) {
-    h.targetX = null;
-    h.targetZ = null;
-    return;
-  }
-  h.facing = Math.atan2(dx, dz);
-  const step = h.speedPerSec / TICK_HZ;
-  if (len <= step) {
-    h.x = h.targetX;
-    h.z = h.targetZ;
-    h.targetX = null;
-    h.targetZ = null;
-  } else {
-    h.x += (dx / len) * step;
-    h.z += (dz / len) * step;
-  }
-  const half = s.map.world.halfExtents;
-  h.x = Math.max(-half, Math.min(half, h.x));
-  h.z = Math.max(-half, Math.min(half, h.z));
-}
-
-function findClaimableTapIndex(s: GameState): number | null {
+/** Neutral tap index within `HERO_CLAIM_RADIUS` of the Wizard (closest wins). */
+export function findNeutralTapIndexNearHero(s: GameState): number | null {
   const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
   let best: number | null = null;
   let bestD = r2;
@@ -53,13 +22,49 @@ function findClaimableTapIndex(s: GameState): number | null {
   return best;
 }
 
+function popNextHeroWaypoint(h: GameState["hero"]): void {
+  const next = h.moveWaypoints.shift();
+  if (next) {
+    h.targetX = next.x;
+    h.targetZ = next.z;
+  } else {
+    h.targetX = null;
+    h.targetZ = null;
+  }
+}
+
+function moveHeroToward(s: GameState): void {
+  const h = s.hero;
+  if (h.targetX === null || h.targetZ === null) return;
+  const dx = h.targetX - h.x;
+  const dz = h.targetZ - h.z;
+  const len = Math.hypot(dx, dz);
+  if (len <= 0.001) {
+    popNextHeroWaypoint(h);
+    return;
+  }
+  h.facing = Math.atan2(dx, dz);
+  const step = h.speedPerSec / TICK_HZ;
+  if (len <= step) {
+    h.x = h.targetX;
+    h.z = h.targetZ;
+    popNextHeroWaypoint(h);
+  } else {
+    h.x += (dx / len) * step;
+    h.z += (dz / len) * step;
+  }
+  const half = s.map.world.halfExtents;
+  h.x = Math.max(-half, Math.min(half, h.x));
+  h.z = Math.max(-half, Math.min(half, h.z));
+}
+
 function applyWasd(s: GameState): boolean {
   const h = s.hero;
-  const sx = h.wasdStrafe;
-  const sz = h.wasdForward;
-  if (sx === 0 && sz === 0) return false;
-  let dx = sx;
-  let dz = -sz;
+  const wx = h.wasdStrafe;
+  const wz = h.wasdForward;
+  if (wx === 0 && wz === 0) return false;
+  let dx = wx;
+  let dz = wz;
   const len = Math.hypot(dx, dz);
   if (len < 1e-6) return false;
   dx /= len;
@@ -73,6 +78,7 @@ function applyWasd(s: GameState): boolean {
   h.z = Math.max(-half, Math.min(half, h.z));
   h.targetX = null;
   h.targetZ = null;
+  h.moveWaypoints.length = 0;
   return true;
 }
 
@@ -112,17 +118,20 @@ export function heroSystem(s: GameState): void {
 
   // Auto-start a channel when idle inside range of a neutral tap (and can afford the fee).
   if (!moving && h.claimChannelTarget === null) {
-    const idx = findClaimableTapIndex(s);
+    const idx = findNeutralTapIndexNearHero(s);
     if (idx !== null) {
-      if (s.flux < HERO_CLAIM_FLUX_FEE) {
+      const tap = s.taps[idx]!;
+      const fee = claimFluxFeeForTap(s, "player", tap);
+      const chSec = claimChannelSecForTap(s, "player", tap);
+      if (s.flux < fee) {
         // Only surface the message once per tap-adjacency to avoid tick spam.
         if (s.lastMessage.indexOf("to claim") === -1) {
-          s.lastMessage = `Need ${HERO_CLAIM_FLUX_FEE} Mana to claim this node.`;
+          s.lastMessage = `Need ${fee} Mana to claim this node.`;
         }
       } else {
         h.claimChannelTarget = idx;
-        h.claimChannelTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ);
-        s.lastMessage = `Claiming node… stand still for ${HERO_CLAIM_CHANNEL_SEC.toFixed(0)}s (−${HERO_CLAIM_FLUX_FEE} Mana).`;
+        h.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+        s.lastMessage = `Claiming node… stand still for ${chSec.toFixed(1)}s (−${fee} Mana).`;
       }
     }
   }
@@ -134,10 +143,11 @@ export function heroSystem(s: GameState): void {
       const idx = h.claimChannelTarget;
       const tap = s.taps[idx];
       if (tap && !tap.active) {
-        if (s.flux < HERO_CLAIM_FLUX_FEE) {
-          s.lastMessage = `Not enough Mana to claim (need ${HERO_CLAIM_FLUX_FEE}).`;
+        const fee = claimFluxFeeForTap(s, "player", tap);
+        if (s.flux < fee) {
+          s.lastMessage = `Not enough Mana to claim (need ${fee}).`;
         } else {
-          s.flux -= HERO_CLAIM_FLUX_FEE;
+          s.flux -= fee;
           tap.active = true;
           tap.ownerTeam = "player";
           armTapClaimAnchor(tap);
@@ -150,5 +160,10 @@ export function heroSystem(s: GameState): void {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
     }
+  }
+
+  // Auto arcane strike when in range (no HUD copy; intents still handle manual LMB feedback).
+  if (h.attackCooldownTicksRemaining === 0) {
+    tryPlayerHeroStrike(s);
   }
 }

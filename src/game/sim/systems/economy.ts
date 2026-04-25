@@ -1,4 +1,5 @@
 import {
+  DOCTRINE_SLOT_COUNT,
   ENEMY_AI_PASSIVE_FLUX_PER_SEC,
   SALVAGE_FLUX_CAP_PER_SEC,
   SALVAGE_FLUX_PER_POOL_PER_SEC,
@@ -6,6 +7,8 @@ import {
   TICK_HZ,
 } from "../../constants";
 import type { GameState } from "../../state";
+import type { TeamId } from "../../types";
+import { tapYieldMultForOwner } from "./homeDistance";
 
 export function economy(s: GameState): void {
   if (s.phase === "playing") {
@@ -19,8 +22,9 @@ export function economy(s: GameState): void {
     if (!t.active) continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
     if (t.yieldRemaining <= 0) continue;
-    const take = Math.min(t.yieldRemaining, perTap);
-    const owner = t.ownerTeam ?? "player";
+    const owner: TeamId = t.ownerTeam ?? "player";
+    const yMul = tapYieldMultForOwner(s, owner, t);
+    const take = Math.min(t.yieldRemaining, perTap * yMul);
     if (owner === "enemy") s.enemyFlux += take;
     else s.flux += take;
     t.yieldRemaining -= take;
@@ -37,7 +41,7 @@ export function salvageTrickle(s: GameState): void {
 }
 
 export function tickDoctrineCooldowns(s: GameState): void {
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
     const v = s.doctrineCooldownTicks[i] ?? 0;
     if (v > 0) s.doctrineCooldownTicks[i] = v - 1;
   }

@@ -2,10 +2,10 @@ import { getCatalogEntry } from "../../catalog";
 import {
   COMMAND_FRIENDLY_PRESENCE_RADIUS,
   DOCTRINE_COMMANDS_ENABLED,
+  DOCTRINE_SLOT_COUNT,
   FORWARD_BUILD_TIME_MULT,
-  HERO_ATTACK_COOLDOWN_TICKS,
-  HERO_ATTACK_DAMAGE,
-  HERO_ATTACK_RANGE,
+  FORWARD_STRUCTURE_HP_MULT,
+  HERO_MOVE_WAYPOINT_CAP,
   SHATTER_TARGET_RADIUS,
   TICK_HZ,
 } from "../../constants";
@@ -18,14 +18,15 @@ import {
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
-  shatterTapAnchor,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
 } from "../../state";
 import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
+import { findNeutralTapIndexNearHero } from "./hero";
 import { dist2 } from "./helpers";
+import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
 
@@ -83,14 +84,16 @@ function tryPlaceStructure(
   const placementForward = !infra && nearFriendlyForward(s, pos);
   let buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
   if (placementForward) buildTicks = Math.round(buildTicks * FORWARD_BUILD_TIME_MULT);
+  const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
+  const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const st: StructureRuntime = {
     id: s.nextId.structure++,
     team: "player",
     catalogId,
     x: pos.x,
     z: pos.z,
-    hp: def.maxHp,
-    maxHp: def.maxHp,
+    hp: hp0,
+    maxHp: hp0,
     buildTicksRemaining: buildTicks,
     buildTotalTicks: buildTicks,
     complete: false,
@@ -168,103 +171,16 @@ function tryFreeMuster(s: GameState, st: StructureRuntime): boolean {
  * keeps the door open for signal-specific flourishes (Vanguard ground burn,
  * Bastion shield pulse, Reclaim restore glow) by branching on catalogId.
  */
-function emitSummonFx(s: GameState, _catalogId: string, pos: Vec2): void {
+function emitSummonFx(s: GameState, catalogId: string, pos: Vec2): void {
+  const e = getCatalogEntry(catalogId);
+  const sigs = e && isStructureEntry(e) ? e.signalTypes : [];
+  const v = sigs.includes("Vanguard") ? 1 : 0;
+  const b = sigs.includes("Bastion") ? 1 : 0;
+  const r = sigs.includes("Reclaim") ? 1 : 0;
   emitFx(s, "lightning", pos);
-}
-
-function tryHeroAttack(s: GameState, _click: Vec2): void {
-  if (s.phase !== "playing") return;
-  const h = s.hero;
-  if (h.attackCooldownTicksRemaining > 0) {
-    s.lastMessage = "Attack on cooldown.";
-    return;
-  }
-  const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
-  let bestU: (typeof s.units)[0] | null = null;
-  let bestUd = r2;
-  for (const u of s.units) {
-    if (u.team !== "enemy" || u.hp <= 0) continue;
-    const d = dist2(h, u);
-    if (d <= bestUd) {
-      bestUd = d;
-      bestU = u;
-    }
-  }
-  if (bestU) {
-    bestU.hp -= HERO_ATTACK_DAMAGE;
-    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestU.x, z: bestU.z });
-    logGame("attack", `Wizard strike → unit #${bestU.id} (−${HERO_ATTACK_DAMAGE} HP)`, s.tick);
-    s.lastMessage = "Arcane strike!";
-    return;
-  }
-  const eh = s.enemyHero;
-  if (eh.hp > 0 && dist2(h, eh) <= r2) {
-    eh.hp -= HERO_ATTACK_DAMAGE;
-    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: eh.x, z: eh.z });
-    logGame("attack", `Wizard strike → rival Wizard (−${HERO_ATTACK_DAMAGE} HP)`, s.tick);
-    s.lastMessage = "Strike the rival Wizard!";
-    return;
-  }
-  let bestEr: (typeof s.enemyRelays)[0] | null = null;
-  let bestErd = r2;
-  for (const er of s.enemyRelays) {
-    if (er.hp <= 0) continue;
-    const d = dist2(h, er);
-    if (d <= bestErd) {
-      bestErd = d;
-      bestEr = er;
-    }
-  }
-  if (bestEr) {
-    bestEr.hp -= HERO_ATTACK_DAMAGE * 0.65;
-    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestEr.x, z: bestEr.z });
-    logGame("attack", `Wizard strike → Dark Fortress (−${Math.round(HERO_ATTACK_DAMAGE * 0.65)} HP)`, s.tick);
-    s.lastMessage = "Strike the fortress!";
-    return;
-  }
-  let bestSt: StructureRuntime | null = null;
-  let bestStd = r2;
-  for (const st of s.structures) {
-    if (st.team !== "enemy" || st.hp <= 0) continue;
-    const d = dist2(h, st);
-    if (d <= bestStd) {
-      bestStd = d;
-      bestSt = st;
-    }
-  }
-  if (bestSt) {
-    bestSt.hp -= HERO_ATTACK_DAMAGE * 0.45;
-    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestSt.x, z: bestSt.z });
-    logGame("attack", `Wizard strike → enemy structure #${bestSt.id}`, s.tick);
-    s.lastMessage = "Strike the enemy tower!";
-    return;
-  }
-  let bestTap: (typeof s.taps)[0] | null = null;
-  let bestTapD = r2;
-  for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "enemy") continue;
-    if ((t.anchorHp ?? 0) <= 0) continue;
-    const d = dist2(h, t);
-    if (d <= bestTapD) {
-      bestTapD = d;
-      bestTap = t;
-    }
-  }
-  if (bestTap) {
-    bestTap.anchorHp = Math.max(0, (bestTap.anchorHp ?? 0) - HERO_ATTACK_DAMAGE * 0.42);
-    h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitFx(s, "hero_strike", { x: bestTap.x, z: bestTap.z });
-    logGame("attack", `Wizard strike → enemy Mana anchor (${bestTap.defId})`, s.tick);
-    s.lastMessage = "Strike the enemy Mana anchor!";
-    if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
-    return;
-  }
-  s.lastMessage = "No target in melee range.";
-  logGame("attack", "Wizard swing — no target in range", s.tick);
+  if (v >= b && v >= r) emitFx(s, "spark_burst", pos);
+  else if (b >= r) emitFx(s, "ground_crack", pos);
+  else emitFx(s, "reclaim_pulse", pos);
 }
 
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
@@ -469,7 +385,6 @@ function handleWorldClick(
     }
   }
 
-  tryHeroAttack(s, pos);
 }
 
 function clearGlobalRally(s: GameState): void {
@@ -480,6 +395,7 @@ function clearGlobalRally(s: GameState): void {
 export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void {
   for (const it of intents) {
     if (it.type === "select_doctrine_slot") {
+      if (it.index < 0 || it.index >= DOCTRINE_SLOT_COUNT) continue;
       const id = s.doctrineSlotCatalogIds[it.index] ?? null;
       if (!id) {
         s.lastMessage = "Empty doctrine slot.";
@@ -536,18 +452,61 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
           : "Stance: Offense — army seeks out foes.";
     } else if (it.type === "hero_move") {
       const half = s.map.world.halfExtents;
-      s.hero.targetX = Math.max(-half, Math.min(half, it.x));
-      s.hero.targetZ = Math.max(-half, Math.min(half, it.z));
-      if (s.hero.claimChannelTarget !== null) {
-        s.hero.claimChannelTarget = null;
-        s.hero.claimChannelTicksRemaining = 0;
+      const x = Math.max(-half, Math.min(half, it.x));
+      const z = Math.max(-half, Math.min(half, it.z));
+      const h = s.hero;
+      if (h.claimChannelTarget !== null) {
+        h.claimChannelTarget = null;
+        h.claimChannelTicksRemaining = 0;
       }
-      logGame("move", `Move order → (${it.x.toFixed(1)}, ${it.z.toFixed(1)})`, s.tick);
+      const shift = it.shiftKey === true;
+      if (shift) {
+        if (h.targetX !== null && h.targetZ !== null) {
+          if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
+            s.lastMessage = `Waypoint queue full (max ${HERO_MOVE_WAYPOINT_CAP}).`;
+          } else {
+            h.moveWaypoints.push({ x, z });
+            logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+          }
+        } else {
+          h.targetX = x;
+          h.targetZ = z;
+          logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+        }
+      } else {
+        h.moveWaypoints.length = 0;
+        h.targetX = x;
+        h.targetZ = z;
+        logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+      }
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));
-      s.hero.wasdStrafe = sx;
-      s.hero.wasdForward = sz;
+      const { camFx, camFz, camRx, camRz } = it;
+      if (
+        camFx !== undefined &&
+        camFz !== undefined &&
+        camRx !== undefined &&
+        camRz !== undefined &&
+        (sx !== 0 || sz !== 0)
+      ) {
+        // World XZ move (normalized): W/S along camera forward on ground, A/D along camera right.
+        let wx = sz * camFx + sx * camRx;
+        let wz = sz * camFz + sx * camRz;
+        const len = Math.hypot(wx, wz);
+        if (len > 1e-6) {
+          wx /= len;
+          wz /= len;
+        } else {
+          wx = 0;
+          wz = 0;
+        }
+        s.hero.wasdStrafe = wx;
+        s.hero.wasdForward = wz;
+      } else {
+        s.hero.wasdStrafe = sx;
+        s.hero.wasdForward = -sz;
+      }
     } else if (it.type === "hero_cancel_claim") {
       if (s.hero.claimChannelTarget !== null) {
         s.hero.claimChannelTarget = null;
@@ -557,6 +516,20 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "hero_claim") {
       s.hero.targetX = null;
       s.hero.targetZ = null;
+      s.hero.moveWaypoints.length = 0;
+      const idx = findNeutralTapIndexNearHero(s);
+      if (idx !== null && s.hero.claimChannelTarget === null) {
+        const tap = s.taps[idx];
+        if (tap && !tap.active) {
+          const fee = claimFluxFeeForTap(s, "player", tap);
+          const chSec = claimChannelSecForTap(s, "player", tap);
+          if (s.flux >= fee) {
+            s.hero.claimChannelTarget = idx;
+            s.hero.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+            s.lastMessage = `Claiming node… stand still for ${chSec.toFixed(1)}s (−${fee} Mana).`;
+          }
+        }
+      }
     } else if (it.type === "start_battle") {
       /* No setup phase — match begins in playing. Intent kept for replay compat. */
     }

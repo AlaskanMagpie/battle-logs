@@ -1,0 +1,17 @@
+Map / arena visual upgrade — Pass 1 (2026-04-21)
+
+What changed
+- Procedural mana nodes: mirrored west/east pairs with grid-based placement (see src/game/state.ts generateProceduralTaps).
+- public/map.json: denser, mirrored decor obstacles (visual only).
+- WebGL: additive GLSL floor overlay + fog + tuned lighting (see src/render/arenaGroundOverlay.ts, src/render/scene.ts).
+
+Revert this pass (from repo root, PowerShell-friendly)
+  git checkout -- src/game/state.ts public/map.json src/render/scene.ts
+  git clean -fd -- src/render/arenaGroundOverlay.ts
+  del public\BREADCRUMB_MAP_VISUAL_UPGRADE_PASS1.txt
+
+Next queued idea (for a later pass)
+- Skinned sky gradient or light-shaft pass; optional terrain noise normal map on default plane.
+
+Queued GAMEPLAY pass (do when user next pings from elsewhere)
+- Add a short post-claim invulnerability or tap-anchor regen grace so back-to-back steals feel less coin-flippy (tune in combat / economy systems only).

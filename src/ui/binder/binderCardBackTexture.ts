@@ -1,15 +1,9 @@
 import * as THREE from "three";
+import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
 
-/** Same geometry as `CardBinderEngine` panels (kept local to avoid import cycle). */
+/** Match `binderPanelPixelSize()` / sleeve composite aspect (no import cycle with `CardBinderEngine`). */
 function panelPixelSize(): { w: number; h: number } {
-  const pageWidth = 2.1;
-  const pageHeight = 2.85;
-  const seamGap = 0.04;
-  const panelTexW = 400;
-  const colW = (pageWidth - seamGap * 2) / 3;
-  const rowH = (pageHeight - seamGap * 2) / 3;
-  const h = Math.round((panelTexW * rowH) / colW);
-  return { w: panelTexW, h };
+  return { w: TCG_FULL_CARD_W, h: TCG_FULL_CARD_H };
 }
 
 /**
@@ -28,7 +22,7 @@ export function createBinderCardBackTexture(): THREE.CanvasTexture {
     return t;
   }
 
-  const bg = "#0e1522";
+  const bg = "#121b2a";
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
@@ -48,13 +42,13 @@ export function createBinderCardBackTexture(): THREE.CanvasTexture {
   ctx.lineTo(shL, top + shH * 0.22);
   ctx.lineTo(shL + shW * 0.08, top + shH * 0.12);
   ctx.closePath();
-  ctx.fillStyle = "#2a3d5c";
+  ctx.fillStyle = "#354d72";
   ctx.fill();
-  ctx.strokeStyle = "rgba(120, 170, 230, 0.55)";
+  ctx.strokeStyle = "rgba(150, 195, 255, 0.62)";
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  ctx.fillStyle = "#dce8f8";
+  ctx.fillStyle = "#eef4ff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.font = `700 ${Math.round(H * 0.09)}px system-ui, Segoe UI, sans-serif`;
