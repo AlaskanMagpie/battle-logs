@@ -8,7 +8,9 @@ import {
   FORWARD_PLACE_RADIUS,
   HERO_FOLLOW_RADIUS,
   HERO_MAX_HP,
+  HERO_MAP_OBSTACLE_RADIUS,
   HERO_SPEED,
+  STRUCTURE_MAP_OBSTACLE_RADIUS,
   INFRA_PLACE_RADIUS,
   KEEP_ID,
   KEEP_MAX_HP,
@@ -33,6 +35,7 @@ import type {
   Vec2,
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
+import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
 
 export type CastFxKind =
   | "firestorm"
@@ -601,6 +604,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     attackCooldownTicksRemaining: 0,
   };
 
+  resolveCircleAgainstMapObstacles(mapResolved, hero, HERO_MAP_OBSTACLE_RADIUS);
+  resolveCircleAgainstMapObstacles(mapResolved, enemyHero, HERO_MAP_OBSTACLE_RADIUS);
+
   const state: GameState = {
     map: mapResolved,
     tick: 0,
@@ -869,6 +875,9 @@ export function canPlaceStructureHere(
   if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
     return "Must place inside your territory (cyan area). Claim more nodes to expand.";
   }
+  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+    return "Blocked by terrain — try another spot.";
+  }
   return null;
 }
 
@@ -888,6 +897,9 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
     if (dx * dx + dz * dz < ENEMY_KEEP_EXCLUSION_RADIUS * ENEMY_KEEP_EXCLUSION_RADIUS) {
       return "Too close to Wizard Keep.";
     }
+  }
+  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+    return "Blocked by terrain.";
   }
   return null;
 }
@@ -927,6 +939,9 @@ export function placementFailureReason(
     if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy — can't summon here.";
     if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
       return "Outside your territory — claim more Mana nodes to expand the cyan area.";
+    }
+    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+      return "Blocked by terrain — try another spot.";
     }
   }
 

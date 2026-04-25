@@ -157,6 +157,10 @@ export const HOME_TAP_YIELD_MULT_MIN = 0.52;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
 export const HERO_WASD_SPEED = 11;
+/** Circle radius vs `map.decor` with `blocksMovement` for wizard pathing (world units). */
+export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
+/** Structure ghost center must stay outside blocking decor by at least this radius. */
+export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
 export const HERO_ATTACK_RANGE = 9.25;
 export const HERO_ATTACK_DAMAGE = 54;

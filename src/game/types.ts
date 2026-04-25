@@ -43,54 +43,57 @@ export interface MapDifficulty {
   enemyDmgMult: number;
 }
 
+/** Optional on any decor: when true, ground units / wizards cannot walk through this shape (sim). */
+type MapDecorBlock = { blocksMovement?: boolean };
+
 export type MapDecorDef =
-  | {
-    kind: "box";
-    x: number;
-    z: number;
-    w: number;
-    h: number;
-    d: number;
-    rotYDeg?: number;
-    color?: number;
-  }
-  | {
-    kind: "cylinder";
-    x: number;
-    z: number;
-    radius: number;
-    h: number;
-    color?: number;
-  }
-  | {
-    kind: "sphere";
-    x: number;
-    z: number;
-    radius: number;
-    /** Center Y; defaults to `radius` so the sphere sits on the ground. */
-    y?: number;
-    color?: number;
-  }
-  | {
-    kind: "cone";
-    x: number;
-    z: number;
-    radius: number;
-    h: number;
-    rotYDeg?: number;
-    color?: number;
-  }
-  | {
-    kind: "torus";
-    x: number;
-    z: number;
-    /** Major radius of the ring. */
-    radius: number;
-    /** Tube thickness. */
-    tube: number;
-    rotYDeg?: number;
-    color?: number;
-  };
+  | ({
+      kind: "box";
+      x: number;
+      z: number;
+      w: number;
+      h: number;
+      d: number;
+      rotYDeg?: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "cylinder";
+      x: number;
+      z: number;
+      radius: number;
+      h: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "sphere";
+      x: number;
+      z: number;
+      radius: number;
+      /** Center Y; defaults to `radius` so the sphere sits on the ground. */
+      y?: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "cone";
+      x: number;
+      z: number;
+      radius: number;
+      h: number;
+      rotYDeg?: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "torus";
+      x: number;
+      z: number;
+      /** Major radius of the ring. */
+      radius: number;
+      /** Tube thickness. */
+      tube: number;
+      rotYDeg?: number;
+      color?: number;
+    } & MapDecorBlock);
 
 /** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */
 export type MapGroundPreset = "solid" | "ember_wastes" | "glacier_grid" | "mesa_band";

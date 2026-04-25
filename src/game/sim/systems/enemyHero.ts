@@ -14,6 +14,7 @@ import {
   HERO_ATTACK_RANGE,
   HERO_CLAIM_FLUX_FEE,
   HERO_CLAIM_RADIUS,
+  HERO_MAP_OBSTACLE_RADIUS,
   HOME_CLAIM_FLUX_MULT_MAX,
   TAP_YIELD_MAX,
   TICK_HZ,
@@ -36,6 +37,7 @@ import {
   type StructureRuntime,
 } from "../../state";
 import { isStructureEntry } from "../../types";
+import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
@@ -68,6 +70,7 @@ function moveEnemyHeroToward(s: GameState): void {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
 }
 
 /** In-range inactive tap for channeling; prefers enemy wedge when tied in radius. */

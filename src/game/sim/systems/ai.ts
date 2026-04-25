@@ -9,6 +9,7 @@ import {
   UNIT_SEPARATION_PASSES,
   UNIT_SEPARATION_STRENGTH,
 } from "../../constants";
+import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
 import type { Vec2 } from "../../types";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
@@ -88,6 +89,13 @@ function clampToWorld(s: GameState, u: UnitRuntime): void {
   u.z = Math.max(-h, Math.min(h, u.z));
 }
 
+function clampToWorldAndObstacles(s: GameState, u: UnitRuntime): void {
+  clampToWorld(s, u);
+  if (u.flying) return;
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  resolveCircleAgainstMapObstacles(s.map, u, r);
+}
+
 /** Push overlapping units apart (all teams) so large armies keep readable spacing. */
 function applyUnitSeparation(s: GameState): void {
   const alive = s.units.filter((u) => u.hp > 0);
@@ -159,7 +167,7 @@ function applyUnitSeparation(s: GameState): void {
       }
       u.x += dx;
       u.z += dz;
-      clampToWorld(s, u);
+      clampToWorldAndObstacles(s, u);
     }
   }
 }
@@ -177,7 +185,7 @@ export function movement(s: GameState): void {
       if (!tgt) continue;
       if (dist2(u, tgt) > d2) continue;
       moveToward(u, tgt, u.speedPerSec * stepScale);
-      clampToWorld(s, u);
+      clampToWorldAndObstacles(s, u);
     }
   }
 
@@ -200,11 +208,11 @@ export function movement(s: GameState): void {
 
     if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
       moveToward(u, foe, u.speedPerSec * stepScale);
-      clampToWorld(s, u);
+      clampToWorldAndObstacles(s, u);
       continue;
     }
     if (canEngage) {
-      clampToWorld(s, u);
+      clampToWorldAndObstacles(s, u);
       continue;
     }
     if (hold && !defense) {
@@ -212,9 +220,9 @@ export function movement(s: GameState): void {
         const jx = ((u.id * 13) % 10) * 0.55 - 2.5;
         const jz = ((u.id * 7) % 11) * 0.5 - 2.5;
         moveToward(u, { x: st.x + jx, z: st.z + jz }, u.speedPerSec * stepScale);
-        clampToWorld(s, u);
+        clampToWorldAndObstacles(s, u);
       } else {
-        clampToWorld(s, u);
+        clampToWorldAndObstacles(s, u);
       }
       continue;
     }
@@ -238,7 +246,7 @@ export function movement(s: GameState): void {
       }
     }
     moveToward(u, target, u.speedPerSec * stepScale);
-    clampToWorld(s, u);
+    clampToWorldAndObstacles(s, u);
   }
 
   applyUnitSeparation(s);

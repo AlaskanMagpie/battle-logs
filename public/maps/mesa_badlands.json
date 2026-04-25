@@ -14,34 +14,34 @@
   },
   "tapSlots": [
     { "id": "tap_ms_w0", "x": -116, "z": 50 },
-    { "id": "tap_ms_w1", "x": -130, "z": 16 },
-    { "id": "tap_ms_w2", "x": -102, "z": -24 },
+    { "id": "tap_ms_w1", "x": -126, "z": 16 },
+    { "id": "tap_ms_w2", "x": -100, "z": -24 },
     { "id": "tap_ms_w3", "x": -84, "z": 64 },
     { "id": "tap_ms_w4", "x": -66, "z": -64 },
-    { "id": "tap_ms_w5", "x": -50, "z": 26 },
-    { "id": "tap_ms_w6", "x": -136, "z": -44 },
-    { "id": "tap_ms_w7", "x": -90, "z": -90 },
+    { "id": "tap_ms_w5", "x": -48, "z": 26 },
+    { "id": "tap_ms_w6", "x": -134, "z": -44 },
+    { "id": "tap_ms_w7", "x": -88, "z": -90 },
     { "id": "tap_ms_e0", "x": 100, "z": 46 },
-    { "id": "tap_ms_e1", "x": 126, "z": 10 },
-    { "id": "tap_ms_e2", "x": 104, "z": -30 },
+    { "id": "tap_ms_e1", "x": 124, "z": 10 },
+    { "id": "tap_ms_e2", "x": 102, "z": -30 },
     { "id": "tap_ms_e3", "x": 86, "z": 70 },
     { "id": "tap_ms_e4", "x": 70, "z": -66 },
     { "id": "tap_ms_e5", "x": 50, "z": 20 },
-    { "id": "tap_ms_e6", "x": 134, "z": -50 },
-    { "id": "tap_ms_e7", "x": 94, "z": -94 }
+    { "id": "tap_ms_e6", "x": 132, "z": -50 },
+    { "id": "tap_ms_e7", "x": 92, "z": -94 }
   ],
   "playerRelaySlots": [
-    { "id": "p_relay_1", "x": -56, "z": 60 },
-    { "id": "p_relay_2", "x": -30, "z": 70 },
-    { "id": "p_relay_3", "x": -74, "z": 26 },
-    { "id": "p_relay_4", "x": -40, "z": 6 }
+    { "id": "p_relay_1", "x": -156, "z": 0 },
+    { "id": "p_relay_2", "x": -148, "z": 58 },
+    { "id": "p_relay_3", "x": -150, "z": -52 },
+    { "id": "p_relay_4", "x": -140, "z": 28 }
   ],
   "enemyRelaySlots": [
-    { "id": "e_relay_1", "x": 110, "z": -20 },
-    { "id": "e_relay_2", "x": 122, "z": 40 }
+    { "id": "e_relay_1", "x": 156, "z": 0 },
+    { "id": "e_relay_2", "x": 148, "z": 56 }
   ],
-  "playerStart": { "x": -46, "z": 40 },
-  "enemyStart": { "x": 96, "z": -26 },
+  "playerStart": { "x": -152, "z": 10 },
+  "enemyStart": { "x": 150, "z": -10 },
   "enemyCamps": [
     {
       "id": "camp_butte",
@@ -92,18 +92,62 @@
   ],
   "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
   "decor": [
+    {
+      "kind": "box",
+      "x": 0,
+      "z": 118,
+      "w": 244,
+      "h": 24,
+      "d": 12,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 6301952
+    },
+    {
+      "kind": "box",
+      "x": 0,
+      "z": -118,
+      "w": 244,
+      "h": 24,
+      "d": 12,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 6301952
+    },
+    {
+      "kind": "box",
+      "x": -74,
+      "z": 0,
+      "w": 11,
+      "h": 26,
+      "d": 50,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 5592405
+    },
+    {
+      "kind": "box",
+      "x": 74,
+      "z": 0,
+      "w": 11,
+      "h": 26,
+      "d": 50,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 5592405
+    },
+    {
+      "kind": "cylinder",
+      "x": 0,
+      "z": 0,
+      "radius": 11,
+      "h": 20,
+      "blocksMovement": true,
+      "color": 7040512
+    },
+    { "kind": "box", "x": 108, "z": 26, "w": 26, "h": 16, "d": 26, "rotYDeg": 28, "color": 7040512 },
+    { "kind": "box", "x": -108, "z": -38, "w": 26, "h": 16, "d": 26, "rotYDeg": -22, "color": 5260324 },
     { "kind": "box", "x": -18, "z": 8, "w": 20, "h": 6, "d": 12, "rotYDeg": 12, "color": 7040512 },
-    { "kind": "box", "x": 26, "z": -12, "w": 16, "h": 4.5, "d": 14, "rotYDeg": -22, "color": 6301952 },
-    { "kind": "box", "x": 52, "z": 58, "w": 10, "h": 8, "d": 10, "rotYDeg": 8, "color": 7562355 },
-    { "kind": "cylinder", "x": -36, "z": -42, "radius": 2.8, "h": 5.5, "color": 5592405 },
-    { "kind": "cylinder", "x": 78, "z": 58, "radius": 3.4, "h": 4.2, "color": 5004644 },
-    { "kind": "sphere", "x": 6, "z": -58, "radius": 3, "y": 3.1, "color": 6834032 },
-    { "kind": "sphere", "x": 98, "z": -68, "radius": 2.5, "color": 6118749 },
-    { "kind": "cone", "x": -62, "z": 72, "radius": 3.5, "h": 5.5, "rotYDeg": 0, "color": 7040512 },
-    { "kind": "cone", "x": 118, "z": -72, "radius": 2.6, "h": 4, "rotYDeg": 55, "color": 5260324 },
-    { "kind": "torus", "x": 14, "z": 38, "radius": 6.5, "tube": 0.48, "rotYDeg": -15, "color": 6517377 },
-    { "kind": "torus", "x": -78, "z": -18, "radius": 4.8, "tube": 0.36, "rotYDeg": 88, "color": 5592405 },
-    { "kind": "cylinder", "x": -108, "z": 24, "radius": 1.6, "h": 3.2, "color": 4473924 },
-    { "kind": "box", "x": -92, "z": -78, "w": 24, "h": 2.4, "d": 14, "rotYDeg": -6, "color": 3616816 }
+    { "kind": "cylinder", "x": -36, "z": -42, "radius": 2.8, "h": 5.5, "color": 5592405 }
   ]
 }

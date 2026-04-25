@@ -1,5 +1,6 @@
-import { HERO_CLAIM_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
+import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
+import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { armTapClaimAnchor, type GameState } from "../../state";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
@@ -56,6 +57,7 @@ function moveHeroToward(s: GameState): void {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
 }
 
 function applyWasd(s: GameState): boolean {
@@ -76,6 +78,7 @@ function applyWasd(s: GameState): boolean {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
   h.targetX = null;
   h.targetZ = null;
   h.moveWaypoints.length = 0;

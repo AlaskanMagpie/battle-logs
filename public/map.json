@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "mapId": "the_line",
   "world": { "halfExtents": 420, "groundY": 0 },
   "useAuthorTapSlots": true,
   "visual": {
@@ -11,46 +12,46 @@
     "sunHex": 16777212
   },
   "tapSlots": [
-    { "id": "tap_w01", "x": -320, "z": 0 },
-    { "id": "tap_w02", "x": -300, "z": 95 },
-    { "id": "tap_w03", "x": -300, "z": -95 },
-    { "id": "tap_w04", "x": -220, "z": 150 },
-    { "id": "tap_w05", "x": -220, "z": -150 },
-    { "id": "tap_w06", "x": -160, "z": 70 },
-    { "id": "tap_w07", "x": -160, "z": -70 },
-    { "id": "tap_w08", "x": -115, "z": 200 },
-    { "id": "tap_w09", "x": -115, "z": -200 },
-    { "id": "tap_w10", "x": -360, "z": 45 },
-    { "id": "tap_e01", "x": 320, "z": 0 },
-    { "id": "tap_e02", "x": 300, "z": 95 },
-    { "id": "tap_e03", "x": 300, "z": -95 },
-    { "id": "tap_e04", "x": 220, "z": 150 },
-    { "id": "tap_e05", "x": 220, "z": -150 },
-    { "id": "tap_e06", "x": 160, "z": 70 },
-    { "id": "tap_e07", "x": 160, "z": -70 },
-    { "id": "tap_e08", "x": 115, "z": 200 },
-    { "id": "tap_e09", "x": 115, "z": -200 },
-    { "id": "tap_e10", "x": 360, "z": -45 }
+    { "id": "tap_w01", "x": -305, "z": 0 },
+    { "id": "tap_w02", "x": -278, "z": 92 },
+    { "id": "tap_w03", "x": -278, "z": -92 },
+    { "id": "tap_w04", "x": -228, "z": 148 },
+    { "id": "tap_w05", "x": -228, "z": -148 },
+    { "id": "tap_w06", "x": -168, "z": 68 },
+    { "id": "tap_w07", "x": -168, "z": -68 },
+    { "id": "tap_w08", "x": -118, "z": 198 },
+    { "id": "tap_w09", "x": -118, "z": -198 },
+    { "id": "tap_w10", "x": -248, "z": 42 },
+    { "id": "tap_e01", "x": 305, "z": 0 },
+    { "id": "tap_e02", "x": 278, "z": 92 },
+    { "id": "tap_e03", "x": 278, "z": -92 },
+    { "id": "tap_e04", "x": 228, "z": 148 },
+    { "id": "tap_e05", "x": 228, "z": -148 },
+    { "id": "tap_e06", "x": 168, "z": 68 },
+    { "id": "tap_e07", "x": 168, "z": -68 },
+    { "id": "tap_e08", "x": 118, "z": 198 },
+    { "id": "tap_e09", "x": 118, "z": -198 },
+    { "id": "tap_e10", "x": 248, "z": -42 }
   ],
   "playerRelaySlots": [
-    { "id": "p_relay_1", "x": -125, "z": 155 },
-    { "id": "p_relay_2", "x": -95, "z": 175 },
-    { "id": "p_relay_3", "x": -185, "z": 45 },
-    { "id": "p_relay_4", "x": -55, "z": 25 },
-    { "id": "p_relay_5", "x": -145, "z": -120 },
-    { "id": "p_relay_6", "x": -75, "z": -165 }
+    { "id": "p_relay_1", "x": -412, "z": 0 },
+    { "id": "p_relay_2", "x": -400, "z": 78 },
+    { "id": "p_relay_3", "x": -396, "z": -72 },
+    { "id": "p_relay_4", "x": -382, "z": 44 },
+    { "id": "p_relay_5", "x": -368, "z": -138 },
+    { "id": "p_relay_6", "x": -358, "z": 152 }
   ],
   "enemyRelaySlots": [
-    { "id": "e_relay_1", "x": 285, "z": -55 },
-    { "id": "e_relay_2", "x": 305, "z": 105 },
-    { "id": "e_relay_3", "x": 195, "z": -175 }
+    { "id": "e_relay_1", "x": 412, "z": 0 },
+    { "id": "e_relay_2", "x": 400, "z": 82 },
+    { "id": "e_relay_3", "x": 392, "z": -68 }
   ],
-  "playerStart": { "x": -135, "z": 42 },
-  "enemyStart": { "x": 215, "z": -38 },
+  "playerStart": { "x": -404, "z": 14 },
+  "enemyStart": { "x": 402, "z": -12 },
   "enemyCamps": [
     {
       "id": "camp_alpha",
-      "origin": { "x": 130, "z": 90 },
+      "origin": { "x": 95, "z": 88 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 480,
@@ -62,7 +63,7 @@
     },
     {
       "id": "camp_beta",
-      "origin": { "x": 155, "z": -70 },
+      "origin": { "x": 118, "z": -72 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 480,
@@ -74,7 +75,7 @@
     },
     {
       "id": "camp_gamma",
-      "origin": { "x": 240, "z": 30 },
+      "origin": { "x": 188, "z": 28 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 520,
@@ -87,7 +88,7 @@
     },
     {
       "id": "camp_delta",
-      "origin": { "x": 295, "z": 90 },
+      "origin": { "x": 248, "z": 92 },
       "aggroRadius": 28,
       "wakeRadius": 56,
       "coreMaxHp": 560,
@@ -100,10 +101,98 @@
   ],
   "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
   "decor": [
-    { "kind": "box", "x": 35, "z": 25, "w": 12, "h": 4, "d": 8, "rotYDeg": 18, "color": 3555407 },
-    { "kind": "box", "x": 80, "z": -35, "w": 9, "h": 3.5, "d": 14, "rotYDeg": -24, "color": 3294550 },
-    { "kind": "cylinder", "x": 195, "z": 45, "radius": 4.5, "h": 6, "color": 4342851 },
-    { "kind": "cylinder", "x": 230, "z": -15, "radius": 5, "h": 7, "color": 3750979 },
-    { "kind": "box", "x": -90, "z": -55, "w": 10, "h": 3.2, "d": 10, "rotYDeg": 40, "color": 3026478 }
+    {
+      "kind": "box",
+      "x": -158,
+      "z": 168,
+      "w": 290,
+      "h": 30,
+      "d": 16,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2899532
+    },
+    {
+      "kind": "box",
+      "x": 158,
+      "z": 168,
+      "w": 290,
+      "h": 30,
+      "d": 16,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2899532
+    },
+    {
+      "kind": "box",
+      "x": -158,
+      "z": -168,
+      "w": 290,
+      "h": 30,
+      "d": 16,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2899532
+    },
+    {
+      "kind": "box",
+      "x": 158,
+      "z": -168,
+      "w": 290,
+      "h": 30,
+      "d": 16,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2899532
+    },
+    {
+      "kind": "box",
+      "x": -108,
+      "z": 0,
+      "w": 16,
+      "h": 32,
+      "d": 210,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 3026478
+    },
+    {
+      "kind": "box",
+      "x": 108,
+      "z": 0,
+      "w": 16,
+      "h": 32,
+      "d": 210,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 3026478
+    },
+    {
+      "kind": "box",
+      "x": 0,
+      "z": 92,
+      "w": 118,
+      "h": 26,
+      "d": 14,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2763306
+    },
+    {
+      "kind": "box",
+      "x": 0,
+      "z": -92,
+      "w": 118,
+      "h": 26,
+      "d": 14,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 2763306
+    },
+    { "kind": "box", "x": 38, "z": 28, "w": 12, "h": 4, "d": 8, "rotYDeg": 18, "color": 3555407 },
+    { "kind": "box", "x": 82, "z": -36, "w": 9, "h": 3.5, "d": 14, "rotYDeg": -24, "color": 3294550 },
+    { "kind": "cylinder", "x": 198, "z": 46, "radius": 4.5, "h": 6, "color": 4342851 },
+    { "kind": "cylinder", "x": 232, "z": -18, "radius": 5, "h": 7, "color": 3750979 },
+    { "kind": "box", "x": -92, "z": -58, "w": 10, "h": 3.2, "d": 10, "rotYDeg": 40, "color": 3026478 }
   ]
 }
