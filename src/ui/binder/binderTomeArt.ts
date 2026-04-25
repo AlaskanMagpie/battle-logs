@@ -41,12 +41,12 @@ export function paintBinderLeatherGrain(ctx: CanvasRenderingContext2D, w: number
 }
 
 /**
- * Exterior rear board of the ring-binder block: leather + faint blind-tooled
- * “probably / nothing” (same phrase as the old UI overlay, now baked into the skin).
+ * Exterior rear board of the ring-binder block: leather + gold-foil title
+ * “Probably” / “ Nothing” (two lines; orientation matches `rearArt` in CardBinderEngine).
  */
 export function createTomeRearBoardFaceTexture(spreadW: number, spreadH: number): THREE.CanvasTexture {
-  const w = 896;
-  const h = Math.max(280, Math.round((w * spreadH) / spreadW));
+  const w = 1024;
+  const h = Math.max(320, Math.round((w * spreadH) / spreadW));
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;
@@ -56,6 +56,14 @@ export function createTomeRearBoardFaceTexture(spreadW: number, spreadH: number)
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }
+
+  /**
+   * Vertical flip so the debossed copy reads upright on the rear plane
+   * (`rearArt.rotation.y = Math.PI` + Three UV sampling).
+   */
+  ctx.save();
+  ctx.translate(0, h);
+  ctx.scale(1, -1);
 
   paintBinderLeatherGrain(ctx, w, h);
 
@@ -68,43 +76,70 @@ export function createTomeRearBoardFaceTexture(spreadW: number, spreadH: number)
   ctx.stroke();
 
   const cx = w * 0.5;
-  const yProb = h * 0.4;
-  const yNoth = h * 0.56;
-  const fsP = Math.round(Math.max(22, w * 0.052));
-  const fsN = Math.round(Math.max(28, w * 0.068));
-  const fontP = `italic 500 ${fsP}px Georgia, "Palatino Linotype", "Times New Roman", serif`;
-  const fontN = `italic 600 ${fsN}px Georgia, "Palatino Linotype", "Times New Roman", serif`;
-
-  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const drawLine = (text: string, y: number, font: string): void => {
-    ctx.font = font;
-    ctx.fillStyle = "rgba(0,0,0,0.32)";
-    ctx.fillText(text, cx + 1.2, y + 1.4);
-    ctx.fillStyle = "rgba(28, 16, 10, 0.42)";
-    ctx.fillText(text, cx, y);
-    ctx.strokeStyle = "rgba(92, 70, 52, 0.16)";
-    ctx.lineWidth = 0.75;
-    ctx.strokeText(text, cx - 0.35, y - 0.45);
+  /** Bright gold foil + rim (reads clearly on dark leather). */
+  const drawGoldFoilLine = (
+    text: string,
+    x: number,
+    y: number,
+    fontPx: number,
+    weight: number,
+    align: CanvasTextAlign,
+  ): void => {
+    let px = Math.round(fontPx);
+    ctx.textAlign = align;
+    ctx.font = `${weight} ${px}px Georgia, "Palatino Linotype", "Times New Roman", serif`;
+    while (px > 22 && ctx.measureText(text).width > w * 0.88) {
+      px -= 1;
+      ctx.font = `${weight} ${px}px Georgia, "Palatino Linotype", "Times New Roman", serif`;
+    }
+    const foil = ctx.createLinearGradient(w * 0.08, y - px * 1.1, w * 0.92, y + px * 1.1);
+    foil.addColorStop(0, "#8a6a20");
+    foil.addColorStop(0.15, "#d4a21a");
+    foil.addColorStop(0.32, "#f0c040");
+    foil.addColorStop(0.48, "#ffe566");
+    foil.addColorStop(0.55, "#fff3b8");
+    foil.addColorStop(0.68, "#e8b428");
+    foil.addColorStop(0.85, "#b07810");
+    foil.addColorStop(1, "#6a4810");
+    ctx.lineWidth = Math.max(2.5, px * 0.07);
+    ctx.strokeStyle = "rgba(40, 22, 6, 0.42)";
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = foil;
+    ctx.fillText(text, x, y);
+    ctx.lineWidth = Math.max(1, px * 0.028);
+    ctx.strokeStyle = "rgba(255, 236, 180, 0.72)";
+    ctx.strokeText(text, x, y);
+    ctx.fillStyle = "rgba(255, 248, 210, 0.18)";
+    ctx.fillText(text, x, y - px * 0.04);
   };
 
-  drawLine("probably", yProb, fontP);
-  drawLine("nothing", yNoth, fontN);
+  const lineGap = Math.round(h * 0.1);
+  const yTop = h * 0.44;
+  const yBot = yTop + lineGap;
+  const baseFs = Math.max(44, Math.round(w * 0.068));
+  drawGoldFoilLine("Probably", cx, yTop, baseFs, 700, "center");
+  /* Slightly right of “Probably” (matches “ Probably /  Nothing” layout). */
+  drawGoldFoilLine("Nothing", cx + w * 0.055, yBot, Math.round(baseFs * 0.96), 650, "left");
 
   const gloss = ctx.createLinearGradient(0, 0, w, h);
   gloss.addColorStop(0, "rgba(255,255,255,0)");
-  gloss.addColorStop(0.45, "rgba(255,248,230,0.04)");
-  gloss.addColorStop(0.55, "rgba(255,248,230,0.07)");
+  gloss.addColorStop(0.45, "rgba(255,248,230,0.06)");
+  gloss.addColorStop(0.55, "rgba(255,248,230,0.1)");
   gloss.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = gloss;
   ctx.fillRect(0, 0, w, h);
+
+  ctx.restore();
 
   const t = new THREE.CanvasTexture(c);
   t.wrapS = THREE.ClampToEdgeWrapping;
   t.wrapT = THREE.ClampToEdgeWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
+  /** Canvas is pre-flipped for the rear plane; keep `flipY` false with `rearArt.rotation.y = Math.PI`. */
+  t.flipY = false;
   t.needsUpdate = true;
   return t;
 }

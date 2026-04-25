@@ -551,28 +551,38 @@ export class CardBinderEngine {
     const spreadW = PW * 2 + 0.44;
     const spreadH = PH + 0.34;
     const backDepth = 0.12;
+    /** World Z of the leather slab’s outer (back) face — plane was coplanar / inside → z-fight + no read. */
+    const backOuterZ = -0.132 - backDepth * 0.5;
     const back = new THREE.Mesh(new THREE.BoxGeometry(spreadW, spreadH, backDepth), leather);
+    back.name = "binder_tome_rear_leather_block";
+    back.renderOrder = 0;
     back.position.set(0, 0, -0.132);
     parent.add(back);
 
     const rearFace = new THREE.MeshStandardMaterial({
       map: rearFaceMap,
-      roughness: 0.9,
-      metalness: 0.04,
-      emissive: new THREE.Color(0x1a1008),
-      emissiveIntensity: 0.12,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
+      side: THREE.DoubleSide,
+      roughness: 0.22,
+      metalness: 0.78,
+      emissive: new THREE.Color(0xc9a050),
+      emissiveIntensity: 0.26,
+      envMapIntensity: 1.15,
+      polygonOffset: false,
+      depthWrite: true,
+      depthTest: true,
     });
     this._shellMaterials.push(rearFace);
     const rearArt = new THREE.Mesh(
-      new THREE.PlaneGeometry(spreadW * 0.994, spreadH * 0.994),
+      new THREE.PlaneGeometry(spreadW * 0.992, spreadH * 0.992),
       rearFace,
     );
     rearArt.name = "binder_tome_rear_tooled_face";
-    rearArt.position.set(0, 0, -0.132 - backDepth * 0.5 + 0.0007);
-    rearArt.rotation.x = Math.PI;
+    rearArt.renderOrder = 12;
+    /** Past the leather outer face (−Z), not coplanar / inside the box (avoids z-fighting). */
+    const goldStandoff = 0.022;
+    rearArt.position.set(0, 0, backOuterZ - goldStandoff);
+    /** Y-flip (not X) keeps the canvas right-way-up with `rearFaceMap.flipY = false` in tome art. */
+    rearArt.rotation.set(0, Math.PI, 0);
     parent.add(rearArt);
 
     /** Center gutter / binding — reads as the spine between left and right pages when open. */

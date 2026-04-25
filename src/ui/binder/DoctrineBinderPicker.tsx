@@ -633,7 +633,7 @@ export function DoctrineBinderPicker({
             <div
               className="binder-picker-tome-hint"
               role="status"
-              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB orbit. Double-click for full rules. Setup: Prev/Next. Orbit behind the tome to read the rear leather."
+              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB orbit. Double-click for full rules. Match select: Prev/Next. Orbit behind the tome to read the rear leather."
             >
               <strong>Tap</strong> card · <strong>Esc</strong> / empty page clears · <strong>Drag</strong> to the{" "}
               <strong>bottom hand strip</strong> (auto-sorts by cost) or <strong>hold</strong> ~0.4s · thin{" "}
@@ -711,7 +711,7 @@ export function DoctrineBinderPicker({
         <button
           type="button"
           className="binder-picker-setup-backdrop"
-          aria-label="Close setup"
+          aria-label="Close match select"
           tabIndex={-1}
           onClick={() => setPrematchSetupOpen(false)}
         />
@@ -724,10 +724,10 @@ export function DoctrineBinderPicker({
           aria-expanded={prematchSetupOpen}
           aria-controls="binder-prematch-setup-panel"
           id="binder-prematch-setup-trigger"
-          title="Setup: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
+          title="Match select: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
           onClick={() => setPrematchSetupOpen((o) => !o)}
         >
-          Setup
+          match select
         </button>
         {prematchSetupOpen ? (
           <aside
@@ -815,6 +815,14 @@ export function DoctrineBinderPicker({
             </div>
           </aside>
         ) : null}
+        <a
+          className="binder-picker-vibejam-link"
+          href="https://vibej.am/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          🎮 Vibe Jam 2026
+        </a>
       </div>
     </div>
   );
