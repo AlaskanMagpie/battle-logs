@@ -571,10 +571,18 @@ function dcAuxStructure(e: StructureCatalogEntry): string {
   const a = auraLabel(e);
   const t = traitLabel(e);
   if (!a && !t) return "";
-  const bits: string[] = [];
-  if (a) bits.push(`<div class="dc-aux">${escapeHtml(a)}</div>`);
-  if (t) bits.push(`<div class="dc-aux">${escapeHtml(t)}</div>`);
-  return bits.join("");
+  const lines: string[] = [];
+  if (a) lines.push(a);
+  if (t) lines.push(t);
+  const body = lines.map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+  return `<div class="dc-passive" role="group" aria-label="Passive structure effects">
+    <div class="dc-passive-ico" aria-hidden="true">▣</div>
+    <div class="dc-passive-mid">
+      <div class="dc-passive-title">Structure Upkeep</div>
+      <div class="dc-passive-lines">${body}</div>
+    </div>
+    <div class="dc-passive-right">Passive</div>
+  </div>`;
 }
 
 export type TcgCardVariant = "hud" | "picker";

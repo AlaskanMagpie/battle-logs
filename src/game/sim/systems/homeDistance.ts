@@ -5,7 +5,7 @@ import {
   HOME_CLAIM_DISTANCE_FAR,
   HOME_CLAIM_DISTANCE_NEAR,
   HOME_CLAIM_FLUX_MULT_MAX,
-  HOME_TAP_YIELD_MULT_MIN,
+  HOME_TAP_YIELD_MULT_MAX,
 } from "../../constants";
 import { findKeep, type GameState } from "../../state";
 import type { TeamId, Vec2 } from "../../types";
@@ -66,5 +66,5 @@ export function claimChannelSecForTap(s: GameState, team: TeamId, tap: Vec2): nu
 
 export function tapYieldMultForOwner(s: GameState, owner: TeamId, tap: Vec2): number {
   const t = homeStretchT(s, owner, tap);
-  return 1 - t * (1 - HOME_TAP_YIELD_MULT_MIN);
+  return 1 + t * (HOME_TAP_YIELD_MULT_MAX - 1);
 }

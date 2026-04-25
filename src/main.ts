@@ -69,6 +69,69 @@ function releasePointerSafe(el: Element, pointerId: number): void {
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
 
 const DRAG_REASON_ID = "drag-reason";
+const SELECT_BOX_ID = "unit-select-box";
+const RADIAL_ID = "unit-command-radial";
+
+function ensureSelectBoxEl(): HTMLDivElement {
+  let el = document.getElementById(SELECT_BOX_ID) as HTMLDivElement | null;
+  if (!el) {
+    el = document.createElement("div");
+    el.id = SELECT_BOX_ID;
+    el.className = "unit-select-box";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function updateSelectBox(a: { x: number; y: number }, b: { x: number; y: number }): void {
+  const el = ensureSelectBoxEl();
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  el.style.transform = `translate(${x}px, ${y}px)`;
+  el.style.width = `${Math.abs(a.x - b.x)}px`;
+  el.style.height = `${Math.abs(a.y - b.y)}px`;
+}
+
+function hideSelectBox(): void {
+  document.getElementById(SELECT_BOX_ID)?.remove();
+}
+
+function hideRadial(): void {
+  document.getElementById(RADIAL_ID)?.remove();
+}
+
+function showUnitCommandRadial(
+  clientX: number,
+  clientY: number,
+  onCommand: (mode: "move" | "attack_move" | "stay", queue: boolean) => void,
+): void {
+  hideRadial();
+  const el = document.createElement("div");
+  el.id = RADIAL_ID;
+  el.className = "unit-command-radial";
+  el.style.left = `${clientX}px`;
+  el.style.top = `${clientY}px`;
+  const buttons: Array<[string, "move" | "attack_move" | "stay", boolean, string]> = [
+    ["Move", "move", false, "Move selected units here"],
+    ["Attack", "attack_move", false, "Attack-move selected units"],
+    ["Queue", "move", true, "Queue this move after current order"],
+    ["Stay", "stay", false, "Hold selected units in place"],
+  ];
+  for (const [label, mode, queue, title] of buttons) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.title = title;
+    btn.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onCommand(mode, queue);
+      hideRadial();
+    });
+    el.appendChild(btn);
+  }
+  document.body.appendChild(el);
+}
 
 function ensureDragReasonEl(): HTMLDivElement {
   let el = document.getElementById(DRAG_REASON_ID) as HTMLDivElement | null;
@@ -258,9 +321,6 @@ function wireDoctrineDragToMap(
     if (cdTicks > 0) {
       warnings.push(`On cooldown ${Math.max(1, Math.ceil(cdTicks / TICK_HZ))}s`);
     }
-    if (st.flux < entry.fluxCost) {
-      warnings.push(`Need ${entry.fluxCost} Mana (have ${Math.floor(st.flux)})`);
-    }
     const ok = warnings.length === 0;
     updateDragReason(
       ev.clientX,
@@ -348,6 +408,42 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
     await renderer.loadTerrainFromMap(map);
     let state: GameState = createInitialState(map, initialDoctrine);
     let replay = createReplayCapture(state, map);
+    const testWindow = window as Window & {
+      render_game_to_text?: () => string;
+      advanceTime?: (ms: number) => void;
+    };
+    testWindow.render_game_to_text = () =>
+      JSON.stringify({
+        coords: "world XZ, origin center, +X enemy side",
+        phase: state.phase,
+        tick: state.tick,
+        hero: {
+          x: Number(state.hero.x.toFixed(1)),
+          z: Number(state.hero.z.toFixed(1)),
+          hp: Math.round(state.hero.hp),
+          teleportCooldown: Math.ceil(state.heroTeleportCooldownTicks / TICK_HZ),
+          teleportArmed: state.teleportClickPending,
+        },
+        selectedUnitIds: state.selectedUnitIds,
+        taps: state.taps.map((t) => ({
+          id: t.defId,
+          x: t.x,
+          z: t.z,
+          owner: t.ownerTeam ?? "neutral",
+          active: t.active,
+        })),
+        units: state.units
+          .filter((u) => u.hp > 0)
+          .slice(0, 30)
+          .map((u) => ({ id: u.id, team: u.team, x: Number(u.x.toFixed(1)), z: Number(u.z.toFixed(1)) })),
+      });
+    testWindow.advanceTime = (ms: number) => {
+      const steps = Math.max(1, Math.round(ms / (1000 / TICK_HZ)));
+      for (let i = 0; i < steps; i++) advanceTick(state, []);
+      renderer.sync(state, USE_GLB);
+      renderer.render();
+      updateHud(state);
+    };
     renderer.sync(state, USE_GLB);
     renderer.setCameraFollowHero(true);
     const resize = (): void => {
@@ -512,6 +608,9 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       } else if (ev.code === "KeyC") {
         ev.preventDefault();
         applyCameraToggle();
+      } else if (ev.code === "KeyT") {
+        ev.preventDefault();
+        pendingIntents.push({ type: "begin_hero_teleport" });
       }
     });
 
@@ -525,7 +624,15 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       doctrineDragRef,
     );
 
-    let rightHold: { pointerId: number; lastMs: number } | null = null;
+    let rightHold: {
+      pointerId: number;
+      lastMs: number;
+      startX: number;
+      startY: number;
+      radialTimer: ReturnType<typeof setTimeout> | null;
+    } | null = null;
+    let leftSelect: { pointerId: number; startX: number; startY: number; dragging: boolean } | null = null;
+    let chordDrag: { pointerId: number; lastX: number; lastY: number } | null = null;
 
     canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
 
@@ -534,21 +641,78 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       if (state.phase !== "playing") return;
       // Middle = camera pan (OrbitControls); do not treat as a map click.
       if (ev.button !== 0 && ev.button !== 2) return;
+      if ((ev.buttons & 1) && (ev.buttons & 2)) {
+        ev.preventDefault();
+        hideRadial();
+        chordDrag = { pointerId: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
+        try {
+          canvas.setPointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
       if (!hit) return;
+
+      if (state.teleportClickPending) {
+        ev.preventDefault();
+        pendingIntents.push({ type: "hero_teleport", x: hit.x, z: hit.z });
+        return;
+      }
+
+      if (ev.button === 0) {
+        ev.preventDefault();
+        leftSelect = { pointerId: ev.pointerId, startX: ev.clientX, startY: ev.clientY, dragging: false };
+        try {
+          canvas.setPointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
 
       // Right-click only moves the hero (middle mouse is camera orbit).
       if (ev.button === 2) {
         ev.preventDefault();
         pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z, shiftKey: ev.shiftKey });
         logGame("move", `RMB move → (${hit.x.toFixed(1)}, ${hit.z.toFixed(1)})`, state.tick);
-        rightHold = { pointerId: ev.pointerId, lastMs: performance.now() };
+        const hasSelection = state.selectedUnitIds.length > 0;
+        if (hasSelection) {
+          pendingIntents.push({
+            type: "command_selected_units",
+            x: hit.x,
+            z: hit.z,
+            mode: ev.altKey ? "attack_move" : "move",
+            queue: ev.shiftKey,
+          });
+        }
+        const radialTimer = hasSelection
+          ? setTimeout(() => {
+              showUnitCommandRadial(ev.clientX, ev.clientY, (mode, queue) => {
+                pendingIntents.push({ type: "command_selected_units", x: hit.x, z: hit.z, mode, queue });
+              });
+            }, 500)
+          : null;
+        rightHold = {
+          pointerId: ev.pointerId,
+          lastMs: performance.now(),
+          startX: ev.clientX,
+          startY: ev.clientY,
+          radialTimer,
+        };
         try {
           canvas.setPointerCapture(ev.pointerId);
         } catch {
           /* ignore */
         }
+        return;
+      }
+
+      if (state.teleportClickPending) {
+        ev.preventDefault();
+        pendingIntents.push({ type: "hero_teleport", x: hit.x, z: hit.z });
         return;
       }
 
@@ -563,7 +727,39 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
     });
 
     canvas.addEventListener("pointerup", (ev) => {
+      if (leftSelect && ev.pointerId === leftSelect.pointerId) {
+        const snap = leftSelect;
+        leftSelect = null;
+        hideSelectBox();
+        const rect = canvas.getBoundingClientRect();
+        if (snap.dragging) {
+          const ids = renderer.pickUnitIdsInScreenRect(
+            { x: snap.startX, y: snap.startY },
+            { x: ev.clientX, y: ev.clientY },
+            rect,
+          );
+          pendingIntents.push({ type: "select_units", unitIds: ids });
+        } else {
+          const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
+          const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
+          if (pickedUnitId != null) {
+            pendingIntents.push({ type: "select_units", unitIds: [pickedUnitId] });
+          } else if (hit && (state.pendingPlacementCatalogId || state.rallyClickPending)) {
+            pendingIntents.push({
+              type: "try_click_world",
+              pos: { x: hit.x, z: hit.z },
+              shiftKey: ev.shiftKey,
+              altKey: ev.altKey,
+              pickedUnitId: null,
+            });
+          } else {
+            pendingIntents.push({ type: "select_units", unitIds: [] });
+          }
+        }
+      }
+      if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
       if (rightHold && ev.pointerId === rightHold.pointerId) {
+        if (rightHold.radialTimer) clearTimeout(rightHold.radialTimer);
         rightHold = null;
         try {
           if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
@@ -573,18 +769,55 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       }
     });
     canvas.addEventListener("pointercancel", (ev) => {
-      if (rightHold && ev.pointerId === rightHold.pointerId) rightHold = null;
+      hideSelectBox();
+      if (leftSelect && ev.pointerId === leftSelect.pointerId) leftSelect = null;
+      if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
+      if (rightHold && ev.pointerId === rightHold.pointerId) {
+        if (rightHold.radialTimer) clearTimeout(rightHold.radialTimer);
+        rightHold = null;
+      }
     });
 
     canvas.addEventListener("pointermove", (ev) => {
+      if (chordDrag) {
+        const dx = ev.clientX - chordDrag.lastX;
+        const dy = ev.clientY - chordDrag.lastY;
+        chordDrag.lastX = ev.clientX;
+        chordDrag.lastY = ev.clientY;
+        renderer.rotateCameraByPixels(dx, dy);
+        syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
+        return;
+      }
+      if ((ev.buttons & 1) && (ev.buttons & 2)) {
+        hideRadial();
+        chordDrag = { pointerId: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
+        return;
+      }
+      if (leftSelect && ev.pointerId === leftSelect.pointerId) {
+        const dx = ev.clientX - leftSelect.startX;
+        const dy = ev.clientY - leftSelect.startY;
+        if (!leftSelect.dragging && dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+          leftSelect.dragging = true;
+        }
+        if (leftSelect.dragging) {
+          updateSelectBox({ x: leftSelect.startX, y: leftSelect.startY }, { x: ev.clientX, y: ev.clientY });
+        }
+        return;
+      }
       if (rightHold && ev.pointerId === rightHold.pointerId) {
+        const mdx = ev.clientX - rightHold.startX;
+        const mdy = ev.clientY - rightHold.startY;
+        if (rightHold.radialTimer && mdx * mdx + mdy * mdy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+          clearTimeout(rightHold.radialTimer);
+          rightHold.radialTimer = null;
+        }
         const now = performance.now();
         if (now - rightHold.lastMs >= 80) {
           rightHold.lastMs = now;
           const rectM = canvas.getBoundingClientRect();
           const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
           /** Drag-update follows cursor only (no queue append each tick). */
-          if (hitM) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
+          if (hitM && state.selectedUnitIds.length === 0) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
         }
         return;
       }
@@ -608,7 +841,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       if (!isStructureEntry(entry)) {
         renderer.setPlacementGhost(null, false);
         const slotErr = canUseDoctrineSlot(state, slot);
-        const valid = !slotErr && state.flux >= entry.fluxCost;
+        const valid = !slotErr;
         renderer.setCommandGhost(hit, commandEffectRadius(entry), valid);
         return;
       }

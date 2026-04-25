@@ -36,6 +36,18 @@ function obstacleSets(map: MapData): { discs: DiscObs[]; boxes: BoxObs[] } {
   return collectFromDecor(map.decor);
 }
 
+export type MapObstacleFootprint =
+  | { kind: "disc"; cx: number; cz: number; r: number }
+  | { kind: "box"; cx: number; cz: number; hx: number; hz: number; c: number; s: number };
+
+export function mapObstacleFootprints(map: MapData): MapObstacleFootprint[] {
+  const { discs, boxes } = obstacleSets(map);
+  return [
+    ...discs.map((d) => ({ kind: "disc" as const, ...d })),
+    ...boxes.map((b) => ({ kind: "box" as const, ...b })),
+  ];
+}
+
 function worldFromLocal(box: BoxObs, lx: number, lz: number): Vec2 {
   return {
     x: box.cx + lx * box.c - lz * box.s,
@@ -137,4 +149,118 @@ export function circleOverlapsMapObstacles(map: MapData, pos: Vec2, agentR: numb
     if (dx * dx + dz * dz < agentR * agentR) return true;
   }
   return false;
+}
+
+function segmentDist2ToPoint(a: Vec2, b: Vec2, p: Vec2): number {
+  const vx = b.x - a.x;
+  const vz = b.z - a.z;
+  const wx = p.x - a.x;
+  const wz = p.z - a.z;
+  const vv = vx * vx + vz * vz || 1;
+  const t = Math.max(0, Math.min(1, (wx * vx + wz * vz) / vv));
+  const x = a.x + vx * t;
+  const z = a.z + vz * t;
+  const dx = p.x - x;
+  const dz = p.z - z;
+  return dx * dx + dz * dz;
+}
+
+function segmentHitsBox(a: Vec2, b: Vec2, box: BoxObs, pad: number): boolean {
+  const la = toLocal(box, a.x, a.z);
+  const lb = toLocal(box, b.x, b.z);
+  let t0 = 0;
+  let t1 = 1;
+  const dx = lb.lx - la.lx;
+  const dz = lb.lz - la.lz;
+  const clip = (p: number, q: number): boolean => {
+    if (Math.abs(p) < 1e-8) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+  const hx = box.hx + pad;
+  const hz = box.hz + pad;
+  return clip(-dx, la.lx + hx) && clip(dx, hx - la.lx) && clip(-dz, la.lz + hz) && clip(dz, hz - la.lz);
+}
+
+function firstBlockingFootprint(map: MapData, from: Vec2, to: Vec2, agentR: number): MapObstacleFootprint | null {
+  const { discs, boxes } = obstacleSets(map);
+  let best: MapObstacleFootprint | null = null;
+  let bestD = Infinity;
+  for (const d of discs) {
+    if (segmentDist2ToPoint(from, to, { x: d.cx, z: d.cz }) > (d.r + agentR) * (d.r + agentR)) continue;
+    const dd = (d.cx - from.x) * (d.cx - from.x) + (d.cz - from.z) * (d.cz - from.z);
+    if (dd < bestD) {
+      bestD = dd;
+      best = { kind: "disc", ...d };
+    }
+  }
+  for (const b of boxes) {
+    if (!segmentHitsBox(from, to, b, agentR)) continue;
+    const dd = (b.cx - from.x) * (b.cx - from.x) + (b.cz - from.z) * (b.cz - from.z);
+    if (dd < bestD) {
+      bestD = dd;
+      best = { kind: "box", ...b };
+    }
+  }
+  return best;
+}
+
+function clampWorld(map: MapData, p: Vec2): Vec2 {
+  const h = map.world.halfExtents;
+  return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
+}
+
+function detourCandidates(o: MapObstacleFootprint, pad: number): Vec2[] {
+  if (o.kind === "disc") {
+    const r = o.r + pad;
+    return [
+      { x: o.cx + r, z: o.cz },
+      { x: o.cx - r, z: o.cz },
+      { x: o.cx, z: o.cz + r },
+      { x: o.cx, z: o.cz - r },
+    ];
+  }
+  const hx = o.hx + pad;
+  const hz = o.hz + pad;
+  const corners = [
+    { lx: hx, lz: hz },
+    { lx: hx, lz: -hz },
+    { lx: -hx, lz: hz },
+    { lx: -hx, lz: -hz },
+  ];
+  return corners.map((c) => worldFromLocal(o, c.lx, c.lz));
+}
+
+/**
+ * Small, deterministic local planner for wall maps. It returns one or more corner detours
+ * when the direct segment intersects blocking decor; callers still resolve each step.
+ */
+export function planPathAroundMapObstacles(map: MapData, from: Vec2, to: Vec2, agentR: number): Vec2[] {
+  const direct = firstBlockingFootprint(map, from, to, agentR);
+  if (!direct) return [clampWorld(map, to)];
+  const pad = Math.max(agentR + 3.2, 6);
+  const candidates = detourCandidates(direct, pad)
+    .map((p) => clampWorld(map, p))
+    .filter((p) => !circleOverlapsMapObstacles(map, p, agentR));
+  let best: Vec2[] | null = null;
+  let bestScore = Infinity;
+  for (const c of candidates) {
+    const first = firstBlockingFootprint(map, from, c, agentR);
+    const second = firstBlockingFootprint(map, c, to, agentR);
+    if (first || second) continue;
+    const score = Math.hypot(c.x - from.x, c.z - from.z) + Math.hypot(to.x - c.x, to.z - c.z);
+    if (score < bestScore) {
+      bestScore = score;
+      best = [c, clampWorld(map, to)];
+    }
+  }
+  if (best) return best;
+  return [...candidates.slice(0, 2), clampWorld(map, to)];
 }

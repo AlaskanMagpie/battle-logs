@@ -433,6 +433,7 @@ export class GameRenderer {
   private nearestTapRing: THREE.Mesh | null = null;
   private territoryGroup = new THREE.Group();
   private territoryMeshes: THREE.Mesh[] = [];
+  private territoryWallMeshes: THREE.Mesh[] = [];
   private territoryKey = "";
   private heroGroup: THREE.Group | null = null;
   private heroHpBarBg: THREE.Mesh | null = null;
@@ -586,6 +587,19 @@ export class GameRenderer {
     this.controls.enabled = enabled;
   }
 
+  rotateCameraByPixels(dx: number, dy: number): void {
+    this.cameraFollowHero = false;
+    const target = this.controls.target;
+    const off = this.camera.position.clone().sub(target);
+    const sph = new THREE.Spherical().setFromVector3(off);
+    sph.theta -= dx * 0.006;
+    sph.phi = Math.max(this.controls.minPolarAngle, Math.min(this.controls.maxPolarAngle, sph.phi - dy * 0.004));
+    off.setFromSpherical(sph);
+    this.camera.position.copy(target).add(off);
+    this.camera.lookAt(target);
+    this.controls.update();
+  }
+
   /**
    * Normalized XZ basis for camera-relative WASD: **W/S** = along the camera view direction flattened
    * onto the ground; **A/D** = strafe (right-hand rule with world +Y). Matches typical third-person controls.
@@ -609,7 +623,7 @@ export class GameRenderer {
     }
     const fx = this.camGroundFwd.x;
     const fz = this.camGroundFwd.z;
-    this.camGroundRight.crossVectors(this.camera.up, this.camGroundFwd).normalize();
+    this.camGroundRight.crossVectors(this.camGroundFwd, this.camera.up).normalize();
     this.camGroundRight.y = 0;
     if (this.camGroundRight.lengthSq() < 1e-8) {
       this.camGroundRight.set(fz, 0, -fx);
@@ -696,6 +710,24 @@ export class GameRenderer {
       }
     }
     return null;
+  }
+
+  pickUnitIdsInScreenRect(a: { x: number; y: number }, b: { x: number; y: number }, rect: DOMRect): number[] {
+    const minX = Math.min(a.x, b.x);
+    const maxX = Math.max(a.x, b.x);
+    const minY = Math.min(a.y, b.y);
+    const maxY = Math.max(a.y, b.y);
+    const ids: number[] = [];
+    const st = this.currentState;
+    if (!st) return ids;
+    for (const u of st.units) {
+      if (u.team !== "player" || u.hp <= 0) continue;
+      const p = new THREE.Vector3(u.x, 1.2, u.z).project(this.camera);
+      const sx = rect.left + ((p.x + 1) / 2) * rect.width;
+      const sy = rect.top + ((1 - p.y) / 2) * rect.height;
+      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) ids.push(u.id);
+    }
+    return ids;
   }
 
   /** Remove custom terrain and show the default ground plane again. */
@@ -1472,7 +1504,7 @@ export class GameRenderer {
   }
 
   private syncSelectionAndRally(state: GameState): void {
-    const uSel = state.selectedUnitId;
+    const uSel = state.selectedUnitId ?? state.selectedUnitIds[0] ?? null;
     const selU = uSel !== null ? state.units.find((x) => x.id === uSel) : null;
     const plrUnit = selU && selU.team === "player" && selU.hp > 0 ? selU : null;
 
@@ -1760,13 +1792,26 @@ export class GameRenderer {
   private syncMapDecor(state: GameState): void {
     if (this.decorBuilt) return;
     this.decorBuilt = true;
+    const blockingColor = (() => {
+      switch (state.map.visual?.groundPreset) {
+        case "ember_wastes":
+          return 0x723f2c;
+        case "glacier_grid":
+          return 0x466b7f;
+        case "mesa_band":
+          return 0x806044;
+        default:
+          return 0x3a4657;
+      }
+    })();
     for (const d of state.map.decor ?? []) {
       let mesh: THREE.Mesh | null = null;
+      const color = d.blocksMovement ? blockingColor : d.color;
       if (d.kind === "box") {
         mesh = new THREE.Mesh(
           new THREE.BoxGeometry(d.w, d.h, d.d),
           new THREE.MeshStandardMaterial({
-            color: d.color ?? 0x3a4657,
+            color: color ?? 0x3a4657,
             roughness: 0.9,
             metalness: 0.04,
           }),
@@ -1777,7 +1822,7 @@ export class GameRenderer {
         mesh = new THREE.Mesh(
           new THREE.CylinderGeometry(d.radius, d.radius, d.h, 18),
           new THREE.MeshStandardMaterial({
-            color: d.color ?? 0x4a4d5f,
+            color: color ?? 0x4a4d5f,
             roughness: 0.85,
             metalness: 0.05,
           }),
@@ -1789,7 +1834,7 @@ export class GameRenderer {
         mesh = new THREE.Mesh(
           new THREE.SphereGeometry(r, 20, 16),
           new THREE.MeshStandardMaterial({
-            color: d.color ?? 0x5a6270,
+            color: color ?? 0x5a6270,
             roughness: 0.78,
             metalness: 0.12,
           }),
@@ -1799,7 +1844,7 @@ export class GameRenderer {
         mesh = new THREE.Mesh(
           new THREE.ConeGeometry(d.radius, d.h, 14),
           new THREE.MeshStandardMaterial({
-            color: d.color ?? 0x4d5a68,
+            color: color ?? 0x4d5a68,
             roughness: 0.88,
             metalness: 0.06,
           }),
@@ -1810,7 +1855,7 @@ export class GameRenderer {
         mesh = new THREE.Mesh(
           new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
           new THREE.MeshStandardMaterial({
-            color: d.color ?? 0x3d4555,
+            color: color ?? 0x3d4555,
             roughness: 0.8,
             metalness: 0.18,
           }),
@@ -1882,6 +1927,12 @@ export class GameRenderer {
       (m.material as THREE.Material).dispose();
     }
     this.territoryMeshes = [];
+    for (const m of this.territoryWallMeshes) {
+      this.territoryGroup.remove(m);
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    }
+    this.territoryWallMeshes = [];
     if (sources.length === 0) return;
     const geo = new THREE.RingGeometry(0, TERRITORY_RADIUS, 48);
     const mat = new THREE.MeshBasicMaterial({
@@ -1900,8 +1951,49 @@ export class GameRenderer {
       this.territoryGroup.add(m);
       this.territoryMeshes.push(m);
     }
+    const wallGeo = new THREE.BoxGeometry(5.8, 2.8, 0.72);
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x2c82c9,
+      emissive: 0x061a2c,
+      emissiveIntensity: 0.35,
+      roughness: 0.62,
+      metalness: 0.08,
+      transparent: true,
+      opacity: 0.82,
+    });
+    const segs = 72;
+    const r = TERRITORY_RADIUS;
+    for (let si = 0; si < sources.length; si++) {
+      const p = sources[si]!;
+      for (let i = 0; i < segs; i++) {
+        const a = (i / segs) * Math.PI * 2;
+        const x = p.x + Math.cos(a) * r;
+        const z = p.z + Math.sin(a) * r;
+        let covered = false;
+        for (let sj = 0; sj < sources.length; sj++) {
+          if (sj === si) continue;
+          const o = sources[sj]!;
+          const dx = x - o.x;
+          const dz = z - o.z;
+          if (dx * dx + dz * dz < (r - 3) * (r - 3)) {
+            covered = true;
+            break;
+          }
+        }
+        if (covered) continue;
+        const w = new THREE.Mesh(wallGeo.clone(), wallMat.clone());
+        w.position.set(x, 1.35, z);
+        w.rotation.y = a - Math.PI / 2;
+        w.castShadow = true;
+        w.receiveShadow = true;
+        this.territoryGroup.add(w);
+        this.territoryWallMeshes.push(w);
+      }
+    }
     mat.dispose();
     geo.dispose();
+    wallGeo.dispose();
+    wallMat.dispose();
   }
 
   private buildHeroMesh(): THREE.Group {

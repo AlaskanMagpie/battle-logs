@@ -14,9 +14,19 @@ export type PlayerIntent =
       /** Nearest unit under cursor from client raycast; omitted on old replays. */
       pickedUnitId?: number | null;
     }
+  | { type: "select_units"; unitIds: number[] }
+  | {
+      type: "command_selected_units";
+      x: number;
+      z: number;
+      mode: "move" | "attack_move" | "stay";
+      queue?: boolean;
+    }
   | { type: "toggle_structure_orders"; structureId: number }
   | { type: "set_army_stance"; stance: ArmyStance }
   | { type: "toggle_army_stance" }
+  | { type: "begin_hero_teleport" }
+  | { type: "hero_teleport"; x: number; z: number }
   | { type: "hero_move"; x: number; z: number; shiftKey?: boolean }
   /**
    * Strafe / forward from keyboard (-1, 0, 1) in **camera** space when `camFx`…`camRz` are set

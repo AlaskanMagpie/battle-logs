@@ -1,5 +1,5 @@
 import type { PlayerIntent } from "../intents";
-import type { GameState } from "../state";
+import { tickHeroTeleportCooldown, type GameState } from "../state";
 import { movement, wakeCamps } from "./systems/ai";
 import { auras } from "./systems/auras";
 import { combat } from "./systems/combat";
@@ -18,6 +18,7 @@ export { applyPlayerIntents } from "./systems/intents";
 export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   if (s.phase === "win" || s.phase === "lose") return;
   tickDoctrineCooldowns(s);
+  tickHeroTeleportCooldown(s);
   applyPlayerIntents(s, intents);
   economy(s);
   salvageTrickle(s);

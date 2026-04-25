@@ -1,26 +1,32 @@
 import { getCatalogEntry } from "../../catalog";
 import {
-  COMMAND_FRIENDLY_PRESENCE_RADIUS,
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
   FORWARD_BUILD_TIME_MULT,
   FORWARD_STRUCTURE_HP_MULT,
+  HERO_MAP_OBSTACLE_RADIUS,
   HERO_MOVE_WAYPOINT_CAP,
+  HERO_TELEPORT_DEST_RADIUS,
+  HERO_TELEPORT_UNIT_RADIUS,
   SHATTER_TARGET_RADIUS,
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
 import type { PlayerIntent } from "../../intents";
+import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
   canPlaceStructureHere,
   canUseDoctrineSlot,
+  heroTeleportCooldownSeconds,
   isKeep,
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
+  resetHeroTeleportCooldown,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
+  type UnitOrderMode,
 } from "../../state";
 import type { Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
@@ -31,6 +37,93 @@ import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 const ALT_HOLD_PICK_RADIUS = 6;
 
 const PICK_STRUCTURE = 5;
+
+export function orderPlayerUnits(
+  s: GameState,
+  ids: number[],
+  pos: Vec2,
+  mode: UnitOrderMode,
+  queue = false,
+): void {
+  const chosen = ids.length ? ids : s.selectedUnitIds;
+  if (chosen.length === 0) {
+    s.lastMessage = "No units selected.";
+    return;
+  }
+  let n = 0;
+  for (const id of chosen) {
+    const u = s.units.find((x) => x.id === id && x.team === "player" && x.hp > 0);
+    if (!u) continue;
+    n++;
+    if (mode === "stay") {
+      u.order = { mode: "stay", x: u.x, z: u.z, waypoints: [], queued: [] };
+      continue;
+    }
+    const jx = ((id * 17) % 9) - 4;
+    const jz = ((id * 11) % 9) - 4;
+    const target = { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9 };
+    if (queue && u.order) {
+      u.order.queued.push(target);
+    } else {
+      u.order = { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+    }
+  }
+  if (n > 0) {
+    s.globalRallyActive = false;
+    s.lastMessage =
+      mode === "stay"
+        ? `${n} unit${n === 1 ? "" : "s"} holding position.`
+        : `${n} unit${n === 1 ? "" : "s"} ordered to ${mode === "attack_move" ? "attack-move" : "move"}.`;
+  }
+}
+
+function canTeleportHeroTo(s: GameState, pos: Vec2): string | null {
+  if (s.heroTeleportCooldownTicks > 0) {
+    return `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
+  }
+  if (pos.x > 0) return "Teleport can only target your half of the map.";
+  if (circleOverlapsMapObstacles(s.map, pos, HERO_TELEPORT_DEST_RADIUS)) {
+    return "Teleport destination is blocked.";
+  }
+  return null;
+}
+
+function tryHeroTeleport(s: GameState, pos: Vec2): void {
+  const half = s.map.world.halfExtents;
+  const dest = {
+    x: Math.max(-half, Math.min(0, pos.x)),
+    z: Math.max(-half, Math.min(half, pos.z)),
+  };
+  const err = canTeleportHeroTo(s, dest);
+  if (err) {
+    s.lastMessage = err;
+    return;
+  }
+  const from = { x: s.hero.x, z: s.hero.z };
+  const dx = dest.x - s.hero.x;
+  const dz = dest.z - s.hero.z;
+  const r2 = HERO_TELEPORT_UNIT_RADIUS * HERO_TELEPORT_UNIT_RADIUS;
+  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && dist2(u, s.hero) <= r2);
+  s.hero.x = dest.x;
+  s.hero.z = dest.z;
+  s.hero.targetX = null;
+  s.hero.targetZ = null;
+  s.hero.moveWaypoints.length = 0;
+  s.hero.claimChannelTarget = null;
+  s.hero.claimChannelTicksRemaining = 0;
+  resolveCircleAgainstMapObstacles(s.map, s.hero, HERO_MAP_OBSTACLE_RADIUS);
+  for (const u of carried) {
+    u.x += dx;
+    u.z += dz;
+    u.x = Math.max(-half, Math.min(half, u.x));
+    u.z = Math.max(-half, Math.min(half, u.z));
+  }
+  resetHeroTeleportCooldown(s);
+  s.teleportClickPending = false;
+  s.lastFx = { kind: "lightning", x: s.hero.x, z: s.hero.z, tick: s.tick, fromX: from.x, fromZ: from.z };
+  s.lastMessage = `Teleported Wizard squad (${carried.length} troops carried).`;
+  logGame("move", `Teleport -> (${s.hero.x.toFixed(1)}, ${s.hero.z.toFixed(1)})`, s.tick);
+}
 
 function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
   let best: number | null = null;
@@ -117,33 +210,16 @@ function tryPlaceStructure(
   s.lastMessage = `${def.name} summoned${placementForward ? " (forward — slower build, fragile)" : ""} — lightning crackles.`;
 }
 
-function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number): void {
+function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number, maxFreeUses: number): void {
+  const used = s.doctrineCommandUses[slotIdx] ?? 0;
+  const exhausted = used >= maxFreeUses;
+  s.doctrineCommandUses[slotIdx] = used + 1;
+  s.stats.commandsCast += 1;
   if (cooldownSec > 0) {
-    s.doctrineCooldownTicks[slotIdx] = Math.round(cooldownSec * TICK_HZ);
+    s.doctrineCooldownTicks[slotIdx] = Math.round(cooldownSec * (exhausted ? 3 : 1) * TICK_HZ);
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
-}
-
-function hasFriendlyPresenceNear(s: GameState, pos: Vec2, radius: number): boolean {
-  const r2 = radius * radius;
-  for (const u of s.units) {
-    if (u.team !== "player" || u.hp <= 0) continue;
-    if (dist2(u, pos) <= r2) return true;
-  }
-  for (const st of s.structures) {
-    if (st.team !== "player" || !st.complete) continue;
-    if (dist2(st, pos) <= r2) return true;
-  }
-  return false;
-}
-
-function payCmd(s: GameState, cost: number, salvagePct: number): void {
-  s.flux -= cost;
-  const sal = (cost * salvagePct) / 100;
-  s.salvage += sal;
-  s.stats.salvageRecovered += sal;
-  s.stats.commandsCast += 1;
 }
 
 function emitFx(s: GameState, kind: CastFxKind, pos: Vec2): void {
@@ -193,12 +269,9 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     s.lastMessage = slotErr;
     return;
   }
-  if (s.flux < cmd.fluxCost) {
-    s.lastMessage = "Not enough Mana for this spell.";
-    return;
-  }
-
   const fx = cmd.effect;
+  const usesLeft = Math.max(0, cmd.maxCharges - (s.doctrineCommandUses[slotIdx] ?? 0));
+  const castSuffix = usesLeft > 0 ? `${usesLeft - 1} free uses left.` : "exhausted cast - triple cooldown.";
   switch (fx.type) {
     case "recycle_structure": {
       const stId = pickPlayerStructure(s, pos);
@@ -213,7 +286,6 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         return;
       }
       const target: Vec2 = { x: st.x, z: st.z };
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       const bdef = getCatalogEntry(st.catalogId);
       if (bdef && isStructureEntry(bdef)) {
         const refund = bdef.fluxCost * 0.9;
@@ -222,18 +294,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       s.units = s.units.filter((u) => u.structureId !== st.id);
       s.structures = s.structures.filter((x) => x.id !== st.id);
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", target);
       emitFx(s, "recycle", target);
       s.lastMessage = "Recycle — structure scrapped, Salvage refunded.";
       return;
     }
     case "aoe_damage": {
-      if (!hasFriendlyPresenceNear(s, pos, COMMAND_FRIENDLY_PRESENCE_RADIUS)) {
-        s.lastMessage = `${cmd.name}: requires friendly presence near the target.`;
-        return;
-      }
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       const r2 = fx.radius * fx.radius;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
@@ -243,10 +310,10 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (er.hp <= 0) continue;
         if (dist2(er, pos) <= r2) er.hp -= fx.damage * 0.5;
       }
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", pos);
       emitFx(s, "firestorm", pos);
-      s.lastMessage = `${cmd.name} detonated.`;
+      s.lastMessage = `${cmd.name} detonated; ${castSuffix}`;
       return;
     }
     case "buff_structure": {
@@ -257,12 +324,11 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       const st = s.structures.find((x) => x.id === stId);
       if (!st) return;
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       st.damageReductionUntilTick = s.tick + Math.round(fx.durationSeconds * TICK_HZ);
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", { x: st.x, z: st.z });
       emitFx(s, "fortify", { x: st.x, z: st.z });
-      s.lastMessage = `${cmd.name}: ${fx.damageReductionPct}% damage reduction for ${fx.durationSeconds}s.`;
+      s.lastMessage = `${cmd.name}: ${fx.damageReductionPct}% damage reduction for ${fx.durationSeconds}s; ${castSuffix}`;
       return;
     }
     case "shatter_structure": {
@@ -271,7 +337,6 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         s.lastMessage = `${cmd.name}: click an enemy Dark Fortress.`;
         return;
       }
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
       const er = s.enemyRelays[erIdx]!;
       er.hp -= fx.damage;
       const silenceTick = s.tick + Math.round(fx.silenceSeconds * TICK_HZ);
@@ -283,15 +348,14 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick, silenceTick);
         }
       }
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", { x: er.x, z: er.z });
       emitFx(s, "shatter", { x: er.x, z: er.z });
-      s.lastMessage = `${cmd.name}: Fortress takes ${fx.damage} damage + ${fx.silenceSeconds}s silence.`;
+      s.lastMessage = `${cmd.name}: Fortress takes ${fx.damage} damage + ${fx.silenceSeconds}s silence; ${castSuffix}`;
       return;
     }
     case "noop": {
-      payCmd(s, cmd.fluxCost, cmd.salvagePctOnCast);
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds);
+      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", pos);
       s.lastMessage = `${cmd.name} spent.`;
       return;
@@ -370,6 +434,11 @@ function handleWorldClick(
     return;
   }
 
+  if (s.teleportClickPending) {
+    tryHeroTeleport(s, pos);
+    return;
+  }
+
   if (pickedUnitId != null) {
     const u = s.units.find((x) => x.id === pickedUnitId);
     if (u && u.hp > 0) {
@@ -411,23 +480,52 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.selectedStructureId = null;
       s.selectedUnitId = null;
       s.rallyClickPending = false;
+      s.teleportClickPending = false;
       s.lastMessage = e
         ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast." : "click map to summon."}`
         : `Selected ${id}`;
     } else if (it.type === "begin_rally_click") {
       if (s.phase !== "playing") continue;
       s.rallyClickPending = !s.rallyClickPending;
+      if (s.rallyClickPending) s.teleportClickPending = false;
       s.lastMessage = s.rallyClickPending
         ? "Rally armed — click the map to set rally (R again to cancel)."
         : "Rally arm cancelled.";
+    } else if (it.type === "begin_hero_teleport") {
+      if (s.phase !== "playing") continue;
+      if (s.heroTeleportCooldownTicks > 0) {
+        s.lastMessage = `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
+        continue;
+      }
+      s.teleportClickPending = !s.teleportClickPending;
+      if (s.teleportClickPending) {
+        s.rallyClickPending = false;
+        s.pendingPlacementCatalogId = null;
+        s.selectedDoctrineIndex = null;
+      }
+      s.lastMessage = s.teleportClickPending
+        ? "Teleport armed - click your half to blink the Wizard and nearby troops."
+        : "Teleport cancelled.";
+    } else if (it.type === "hero_teleport") {
+      if (s.phase !== "playing") continue;
+      tryHeroTeleport(s, { x: it.x, z: it.z });
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
       s.selectedUnitId = null;
       s.rallyClickPending = false;
+      s.teleportClickPending = false;
       s.lastMessage = "Cleared placement selection.";
     } else if (it.type === "try_click_world") {
       handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true, it.pickedUnitId);
+    } else if (it.type === "select_units") {
+      const ids = it.unitIds.filter((id) => s.units.some((u) => u.id === id && u.team === "player" && u.hp > 0));
+      s.selectedUnitIds = ids;
+      s.selectedUnitId = ids[0] ?? null;
+      s.selectedStructureId = null;
+      if (ids.length > 0) s.lastMessage = `${ids.length} unit${ids.length === 1 ? "" : "s"} selected.`;
+    } else if (it.type === "command_selected_units") {
+      orderPlayerUnits(s, s.selectedUnitIds, { x: it.x, z: it.z }, it.mode, it.queue === true);
     } else if (it.type === "toggle_structure_orders") {
       const st = s.structures.find((x) => x.id === it.structureId);
       if (st && st.team === "player") {
@@ -451,6 +549,8 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
           ? "Stance: Defense — army rallying on the Wizard."
           : "Stance: Offense — army seeks out foes.";
     } else if (it.type === "hero_move") {
+      if (s.selectedUnitIds.length > 0) continue;
+      s.teleportClickPending = false;
       const half = s.map.world.halfExtents;
       const x = Math.max(-half, Math.min(half, it.x));
       const z = Math.max(-half, Math.min(half, it.z));

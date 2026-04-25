@@ -4,6 +4,7 @@ import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
   findKeep,
+  heroTeleportCooldownSeconds,
   placementFailureReason,
   signalCountsSatisfied,
   tierRequirementSatisfied,
@@ -265,6 +266,9 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         >
           Camera: lock
         </button>
+        <button class="hud-btn hud-btn--ghost" id="btn-teleport" type="button" aria-pressed="false" title="Teleport Wizard squad (T). Click your half; carries nearby friendly troops.">
+          Teleport
+        </button>
         <details class="hud-gamelog" id="hud-gamelog">
           <summary>Log</summary>
           <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
@@ -377,6 +381,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     onCameraFollowToggle?.();
   });
 
+  root.querySelector("#btn-teleport")?.addEventListener("click", () => {
+    pushIntent({ type: "begin_hero_teleport" });
+  });
+
   root.querySelector("#btn-rematch")?.addEventListener("click", () => {
     onRematch?.();
   });
@@ -412,6 +420,8 @@ export function updateHud(state: GameState): void {
       ? `placing:${state.pendingPlacementCatalogId}`
       : state.rallyClickPending
         ? "rally-click"
+        : state.teleportClickPending
+          ? "teleport"
         : state.globalRallyActive && state.armyStance === "offense"
           ? "marching"
           : "idle";
@@ -433,6 +443,8 @@ export function updateHud(state: GameState): void {
     if (state.pendingPlacementCatalogId) {
       const e = getCatalogEntry(state.pendingPlacementCatalogId);
       if (e) label = `Selected: ${e.name}`;
+    } else if (state.teleportClickPending) {
+      label = "Teleport armed - click your half";
     } else if (state.rallyClickPending) {
       label = "Rally armed — click map (R to cancel)";
     }
@@ -449,6 +461,16 @@ export function updateHud(state: GameState): void {
     rallyBtn.textContent = state.rallyClickPending ? "Rally: click map" : "Rally map…";
     rallyBtn.setAttribute("aria-pressed", state.rallyClickPending ? "true" : "false");
     rallyBtn.classList.toggle("hud-btn--armed", state.rallyClickPending);
+  }
+
+  const teleportBtn = document.querySelector<HTMLButtonElement>("#btn-teleport");
+  if (teleportBtn) {
+    const cd = heroTeleportCooldownSeconds(state);
+    const cooling = state.heroTeleportCooldownTicks > 0;
+    teleportBtn.textContent = cooling ? `Teleport ${cd}s` : state.teleportClickPending ? "Teleport: click" : "Teleport";
+    teleportBtn.disabled = cooling;
+    teleportBtn.setAttribute("aria-pressed", state.teleportClickPending ? "true" : "false");
+    teleportBtn.classList.toggle("hud-btn--armed", state.teleportClickPending);
   }
 
   const readout = document.querySelector("#hud-readout");

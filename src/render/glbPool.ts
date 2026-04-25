@@ -89,10 +89,9 @@ function pickFileForClass(kind: UnitSizeClass | "hero", files: string[]): string
   return files[idx % files.length] ?? files[0] ?? null;
 }
 
-/** Subtle warm push so enemy GLBs read red vs blue rim rings (safe on StandardMaterial only). */
+/** Team albedo push so GLBs keep an immediate blue-vs-red read. */
 function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
-  if (team !== "enemy") return;
-  const mul = new THREE.Color(1.12, 0.72, 0.72);
+  const mul = team === "enemy" ? new THREE.Color(1.16, 0.62, 0.62) : new THREE.Color(0.68, 0.88, 1.18);
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || !m.material) return;

@@ -25,6 +25,18 @@ const CATALOG_IDS = CATALOG.map((c) => c.id);
 const BINDER_GRID_CATALOG_IDS: readonly string[] = CATALOG_IDS;
 const validIds = new Set(CATALOG_IDS);
 const MIN_FILLED = 4;
+const QUICK_PICK_IDS: readonly string[] = [
+  "outpost",
+  "watchtower",
+  "root_bunker",
+  "menders_hut",
+  "salvage_yard",
+  "war_camp",
+  "firestorm",
+  "fortify",
+  "recycle",
+  "shatter",
+];
 
 function padDoctrineSlotsLocal(row: (string | null)[]): (string | null)[] {
   const a = row.length > DOCTRINE_SLOT_COUNT ? row.slice(0, DOCTRINE_SLOT_COUNT) : [...row];
@@ -601,6 +613,15 @@ export function DoctrineBinderPicker({
     );
   }, []);
 
+  const pickForMe = useCallback(() => {
+    const ids = QUICK_PICK_IDS.map((id) => (validIds.has(id) ? id : null));
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(ids));
+    setActiveDoctrineSlot(null);
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+    setSlots(norm);
+    saveDoctrinePickerState(norm, null);
+  }, []);
+
   const saveDoctrine = useCallback(() => {
     const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
     saveDoctrinePickerState(norm, binderSlotPick);
@@ -795,6 +816,9 @@ export function DoctrineBinderPicker({
                 <div className="binder-picker-toolbar-actions">
                   <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
                     Reset
+                  </button>
+                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={pickForMe}>
+                    Pick for me
                   </button>
                   <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
                     Save

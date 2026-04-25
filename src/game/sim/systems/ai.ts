@@ -8,9 +8,12 @@ import {
   UNIT_SEPARATION_MAX_STEP,
   UNIT_SEPARATION_PASSES,
   UNIT_SEPARATION_STRENGTH,
+  HERO_CLAIM_CHANNEL_SEC,
+  HERO_CLAIM_RADIUS,
+  TAP_YIELD_MAX,
 } from "../../constants";
-import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import type { GameState, StructureRuntime, UnitRuntime } from "../../state";
+import { planPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
+import { armTapClaimAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
 import type { Vec2 } from "../../types";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
 
@@ -81,6 +84,20 @@ function moveToward(u: UnitRuntime, target: Vec2, step: number): void {
     u.x += (dx / len) * step;
     u.z += (dz / len) * step;
   }
+}
+
+function moveUnitOnPath(s: GameState, u: UnitRuntime, target: Vec2, step: number): boolean {
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  if (!u.flying && (!u.order || u.order.waypoints.length === 0)) {
+    const path = planPathAroundMapObstacles(s.map, u, target, r);
+    if (u.order) u.order.waypoints = path;
+    else u.order = { mode: "move", x: target.x, z: target.z, waypoints: path, queued: [] };
+  }
+  const next = !u.flying && u.order && u.order.waypoints.length > 0 ? u.order.waypoints[0]! : target;
+  moveToward(u, next, step);
+  clampToWorldAndObstacles(s, u);
+  if (dist2(u, next) <= 1.4 * 1.4 && u.order && u.order.waypoints.length > 0) u.order.waypoints.shift();
+  return dist2(u, target) <= 2.2 * 2.2;
 }
 
 function clampToWorld(s: GameState, u: UnitRuntime): void {
@@ -197,6 +214,35 @@ export function movement(s: GameState): void {
 
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
+    if (u.order) {
+      if (u.order.mode === "stay") {
+        clampToWorldAndObstacles(s, u);
+        continue;
+      }
+      const foe = u.order.mode === "attack_move"
+        ? nearestEnemyUnit(s, u, Math.max(PLAYER_UNIT_HUNT_DETECT_MIN, u.range * PLAYER_UNIT_HUNT_DETECT_MULT) ** 2)
+        : null;
+      if (foe && dist2(u, foe) > u.range * u.range) {
+        moveUnitOnPath(s, u, foe, u.speedPerSec * stepScale);
+        continue;
+      }
+      if (foe) {
+        clampToWorldAndObstacles(s, u);
+        continue;
+      }
+      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, u.speedPerSec * stepScale);
+      if (arrived) {
+        const next = u.order.queued.shift();
+        if (next) {
+          u.order.x = next.x;
+          u.order.z = next.z;
+          u.order.waypoints = [];
+        } else {
+          u.order = undefined;
+        }
+      }
+      continue;
+    }
     const st = s.structures.find((x) => x.id === u.structureId);
     const hold = st?.holdOrders ?? false;
     const detect = Math.max(PLAYER_UNIT_HUNT_DETECT_MIN, u.range * PLAYER_UNIT_HUNT_DETECT_MULT);
@@ -207,8 +253,7 @@ export function movement(s: GameState): void {
     const canEngage = foe && (!defense || dist2(foe, hero) <= defR2);
 
     if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
-      moveToward(u, foe, u.speedPerSec * stepScale);
-      clampToWorldAndObstacles(s, u);
+      moveUnitOnPath(s, u, foe, u.speedPerSec * stepScale);
       continue;
     }
     if (canEngage) {
@@ -219,8 +264,7 @@ export function movement(s: GameState): void {
       if (st) {
         const jx = ((u.id * 13) % 10) * 0.55 - 2.5;
         const jz = ((u.id * 7) % 11) * 0.5 - 2.5;
-        moveToward(u, { x: st.x + jx, z: st.z + jz }, u.speedPerSec * stepScale);
-        clampToWorldAndObstacles(s, u);
+        moveUnitOnPath(s, u, { x: st.x + jx, z: st.z + jz }, u.speedPerSec * stepScale);
       } else {
         clampToWorldAndObstacles(s, u);
       }
@@ -245,11 +289,52 @@ export function movement(s: GameState): void {
         target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
       }
     }
-    moveToward(u, target, u.speedPerSec * stepScale);
-    clampToWorldAndObstacles(s, u);
+    moveUnitOnPath(s, u, target, u.speedPerSec * stepScale);
   }
 
   applyUnitSeparation(s);
+  unitCaptureNodes(s);
+}
+
+function unitCaptureNodes(s: GameState): void {
+  for (let i = 0; i < s.taps.length; i++) {
+    const tap = s.taps[i]!;
+    if (tap.active) {
+      tap.claimTeam = undefined;
+      tap.claimTicksRemaining = undefined;
+      continue;
+    }
+    let team: "player" | "enemy" | null = null;
+    const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
+    for (const u of s.units) {
+      if (u.hp <= 0) continue;
+      if (dist2(u, tap) > r2) continue;
+      if (team && team !== u.team) {
+        team = null;
+        break;
+      }
+      team = u.team;
+    }
+    if (!team) {
+      tap.claimTeam = undefined;
+      tap.claimTicksRemaining = undefined;
+      continue;
+    }
+    if (tap.claimTeam !== team || tap.claimTicksRemaining == null) {
+      tap.claimTeam = team;
+      tap.claimTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ * 1.35);
+    }
+    tap.claimTicksRemaining -= 1;
+    if (tap.claimTicksRemaining > 0) continue;
+    tap.active = true;
+    tap.ownerTeam = team;
+    armTapClaimAnchor(tap);
+    tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
+    s.lastFx = { kind: "claim", x: tap.x, z: tap.z, tick: s.tick };
+    s.lastMessage = team === "player" ? "Unit squad captured a Mana node." : "Enemy units captured a Mana node.";
+    tap.claimTeam = undefined;
+    tap.claimTicksRemaining = undefined;
+  }
 }
 
 function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {

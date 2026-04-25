@@ -10,6 +10,7 @@ import {
   HERO_MAX_HP,
   HERO_MAP_OBSTACLE_RADIUS,
   HERO_SPEED,
+  HERO_TELEPORT_COOLDOWN_SEC,
   STRUCTURE_MAP_OBSTACLE_RADIUS,
   INFRA_PLACE_RADIUS,
   KEEP_ID,
@@ -126,6 +127,8 @@ export interface TapRuntime {
    */
   anchorHp?: number;
   anchorMaxHp?: number;
+  claimTeam?: TeamId;
+  claimTicksRemaining?: number;
 }
 
 /** Instantly spawn full anchor HP when a wizard finishes claiming a node. */
@@ -230,6 +233,17 @@ export interface UnitRuntime {
   signal?: SignalType;
   /** Bonus vs enemy relays / structures (Siege Works). Default 1 when unset. */
   damageVsStructuresMult?: number;
+  order?: UnitOrderRuntime;
+}
+
+export type UnitOrderMode = "move" | "attack_move" | "stay";
+
+export interface UnitOrderRuntime {
+  mode: UnitOrderMode;
+  x: number;
+  z: number;
+  waypoints: Vec2[];
+  queued: Vec2[];
 }
 
 export interface MatchStats {
@@ -259,11 +273,18 @@ export interface GameState {
   /** Remaining placements per doctrine slot (match start). */
   doctrineChargesRemaining: number[];
   doctrineCooldownTicks: number[];
+  doctrineCommandUses: number[];
   selectedDoctrineIndex: number | null;
   /** @deprecated No longer set by gameplay; kept for replay/checksum compat. */
   selectedStructureId: number | null;
-  /** Friendly unit picked for range preview (LMB on unit when not placing/casting). */
+  /** Primary friendly unit picked for range preview (compat). */
   selectedUnitId: number | null;
+  /** Current RTS selection; can include any player-controlled friendly unit. */
+  selectedUnitIds: number[];
+  selectedUnitBox: { x1: number; z1: number; x2: number; z2: number } | null;
+  /** After T / teleport button: next valid map click blinks the Wizard squad. */
+  teleportClickPending: boolean;
+  heroTeleportCooldownTicks: number;
   /**
    * Throttled combat telegraphs for this tick (attacker-anchored wedges); renderer consumes and clears.
    * Not part of replay checksum.
@@ -622,9 +643,14 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     doctrineSlotCatalogIds: slots,
     doctrineChargesRemaining: rt.charges,
     doctrineCooldownTicks: rt.cd,
+    doctrineCommandUses: Array.from({ length: DOCTRINE_SLOT_COUNT }, () => 0),
     selectedDoctrineIndex: null,
     selectedStructureId: null,
     selectedUnitId: null,
+    selectedUnitIds: [],
+    selectedUnitBox: null,
+    teleportClickPending: false,
+    heroTeleportCooldownTicks: 0,
     combatHitMarks: [],
     pendingPlacementCatalogId: null,
     armyStance: "offense",
@@ -818,6 +844,18 @@ export function territorySources(s: GameState): Vec2[] {
   return out;
 }
 
+export function heroTeleportCooldownSeconds(s: GameState): number {
+  return Math.ceil(Math.max(0, s.heroTeleportCooldownTicks) / TICK_HZ);
+}
+
+export function tickHeroTeleportCooldown(s: GameState): void {
+  if (s.heroTeleportCooldownTicks > 0) s.heroTeleportCooldownTicks -= 1;
+}
+
+export function resetHeroTeleportCooldown(s: GameState): void {
+  s.heroTeleportCooldownTicks = Math.round(HERO_TELEPORT_COOLDOWN_SEC * TICK_HZ);
+}
+
 /**
  * War Camp aura: safe_deploy_radius extends "near infra" (safe placement) around
  * its own position so new structures don't suffer forward-placement penalties.
@@ -931,7 +969,7 @@ export function placementFailureReason(
     return `Requires wizard tier ${need} (claim ${nextNeed} Mana nodes — you have ${taps}).`;
   }
 
-  if (s.flux < entry.fluxCost) {
+  if (isStructureEntry(entry) && s.flux < entry.fluxCost) {
     return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
   }
 

@@ -12,26 +12,18 @@
     "sunHex": 16777212
   },
   "tapSlots": [
-    { "id": "tap_w01", "x": -305, "z": 0 },
-    { "id": "tap_w02", "x": -278, "z": 92 },
-    { "id": "tap_w03", "x": -278, "z": -92 },
-    { "id": "tap_w04", "x": -228, "z": 148 },
-    { "id": "tap_w05", "x": -228, "z": -148 },
-    { "id": "tap_w06", "x": -168, "z": 68 },
-    { "id": "tap_w07", "x": -168, "z": -68 },
-    { "id": "tap_w08", "x": -118, "z": 198 },
-    { "id": "tap_w09", "x": -118, "z": -198 },
-    { "id": "tap_w10", "x": -248, "z": 42 },
-    { "id": "tap_e01", "x": 305, "z": 0 },
-    { "id": "tap_e02", "x": 278, "z": 92 },
-    { "id": "tap_e03", "x": 278, "z": -92 },
-    { "id": "tap_e04", "x": 228, "z": 148 },
-    { "id": "tap_e05", "x": 228, "z": -148 },
-    { "id": "tap_e06", "x": 168, "z": 68 },
-    { "id": "tap_e07", "x": 168, "z": -68 },
-    { "id": "tap_e08", "x": 118, "z": 198 },
-    { "id": "tap_e09", "x": 118, "z": -198 },
-    { "id": "tap_e10", "x": 248, "z": -42 }
+    { "id": "tap_p_back", "x": -332, "z": 0 },
+    { "id": "tap_p_north", "x": -282, "z": 108 },
+    { "id": "tap_p_south", "x": -274, "z": -122 },
+    { "id": "tap_p_hook", "x": -214, "z": 42 },
+    { "id": "tap_mid_west", "x": -86, "z": -42 },
+    { "id": "tap_mid_north", "x": -18, "z": 118 },
+    { "id": "tap_mid_south", "x": 16, "z": -116 },
+    { "id": "tap_mid_east", "x": 82, "z": 38 },
+    { "id": "tap_e_hook", "x": 214, "z": -44 },
+    { "id": "tap_e_north", "x": 282, "z": 116 },
+    { "id": "tap_e_south", "x": 274, "z": -106 },
+    { "id": "tap_e_back", "x": 332, "z": 0 }
   ],
   "playerRelaySlots": [
     { "id": "p_relay_1", "x": -412, "z": 0 },
@@ -110,7 +102,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2899532
+      "color": 7482151
     },
     {
       "kind": "box",
@@ -121,7 +113,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2899532
+      "color": 7482151
     },
     {
       "kind": "box",
@@ -132,7 +124,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2899532
+      "color": 7482151
     },
     {
       "kind": "box",
@@ -143,7 +135,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2899532
+      "color": 7482151
     },
     {
       "kind": "box",
@@ -154,7 +146,7 @@
       "d": 210,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 3026478
+      "color": 6046765
     },
     {
       "kind": "box",
@@ -165,7 +157,7 @@
       "d": 210,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 3026478
+      "color": 6046765
     },
     {
       "kind": "box",
@@ -176,7 +168,7 @@
       "d": 14,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2763306
+      "color": 4998446
     },
     {
       "kind": "box",
@@ -187,7 +179,7 @@
       "d": 14,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 2763306
+      "color": 4998446
     },
     { "kind": "box", "x": 38, "z": 28, "w": 12, "h": 4, "d": 8, "rotYDeg": 18, "color": 3555407 },
     { "kind": "box", "x": 82, "z": -36, "w": 9, "h": 3.5, "d": 14, "rotYDeg": -24, "color": 3294550 },

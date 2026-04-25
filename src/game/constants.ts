@@ -5,7 +5,7 @@ export const TICK_HZ = 20;
 export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 
 /** When false, doctrine slots are normalized to structure cards only (no command "spells"). */
-export const DOCTRINE_COMMANDS_ENABLED = false;
+export const DOCTRINE_COMMANDS_ENABLED = true;
 
 /** Player doctrine size everywhere (binder picker, match HUD, sim). */
 export const DOCTRINE_SLOT_COUNT = 10;
@@ -152,8 +152,8 @@ export const HOME_CLAIM_DISTANCE_FAR = 130;
 export const HOME_CLAIM_CHANNEL_MULT_MAX = 2.15;
 /** Far from home: Mana fee multiplier vs `HERO_CLAIM_FLUX_FEE` (1 at home). */
 export const HOME_CLAIM_FLUX_MULT_MAX = 1.72;
-/** Far from home: tap Mana/sec yield scales down to this fraction (1 at home). */
-export const HOME_TAP_YIELD_MULT_MIN = 0.52;
+/** Far from home / closer to mid-field: tap Mana/sec yield scales up to this multiplier. */
+export const HOME_TAP_YIELD_MULT_MAX = 1.65;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
 export const HERO_WASD_SPEED = 11;
@@ -165,6 +165,10 @@ export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
 export const HERO_ATTACK_RANGE = 9.25;
 export const HERO_ATTACK_DAMAGE = 54;
 export const HERO_ATTACK_COOLDOWN_TICKS = 14;
+/** Tactical recall/blink: moves Wizard plus nearby friendly troops, never into the enemy half. */
+export const HERO_TELEPORT_COOLDOWN_SEC = 30;
+export const HERO_TELEPORT_UNIT_RADIUS = 12;
+export const HERO_TELEPORT_DEST_RADIUS = 3.2;
 /** Extra damage multiplier when the strike hits a Swarm-class unit. */
 export const HERO_ATTACK_SWARM_MULT = 1.7;
 /** Rival strike vs Swarm (below player Swarm mult for parity). */
