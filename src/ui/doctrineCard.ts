@@ -1,9 +1,16 @@
 import { commandEffectRadius, getCatalogEntry } from "../game/catalog";
+import {
+  ANTI_CLASS_DAMAGE_MULT,
+  PLAYER_UNIT_STRUCTURE_DAMAGE_MULT,
+  TICK_HZ,
+  UNIT_AOE_SPLASH_DAMAGE_MULT,
+  UNIT_LIFESTEAL_DAMAGE_FRAC,
+  UNIT_TAP_ANCHOR_DAMAGE_MULT,
+} from "../game/constants";
+import { productionBatchSizeForClass, TRAMPLE, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import type {
   CatalogEntry,
   CommandCatalogEntry,
-  SignalCountRequirement,
-  SignalType,
   StructureCatalogEntry,
   UnitSizeClass,
 } from "../game/types";
@@ -11,50 +18,17 @@ import { isCommandEntry, isStructureEntry } from "../game/types";
 
 function structurePopCapLine(e: StructureCatalogEntry): string {
   const cap = e.localPopCap + (e.structureLocalPopCapBonus ?? 0);
-  return `${e.producedPop}/${cap}`;
+  return `${productionBatchSizeForClass(e.producedSizeClass)}x/${cap}`;
+}
+
+function structureProductionLine(e: StructureCatalogEntry): string {
+  return `${productionBatchSizeForClass(e.producedSizeClass)}x ${e.producedSizeClass} every ${e.productionSeconds}s`;
 }
 
 function matchArmyPopBonusNote(e: StructureCatalogEntry): string {
   const b = e.matchGlobalPopCapBonus;
   if (!b) return "";
   return `<p class="dc-note">+${b} global pop cap this match while this doctrine card is in your loadout.</p>`;
-}
-
-function dominantSignalFromEntry(e: CatalogEntry): SignalType | undefined {
-  if (!e.signalTypes.length) return undefined;
-  const counts: Record<SignalType, number> = { Vanguard: 0, Bastion: 0, Reclaim: 0 };
-  for (const s of e.signalTypes) counts[s]++;
-  let best: SignalType = e.signalTypes[0]!;
-  let bestN = -1;
-  for (const k of Object.keys(counts) as SignalType[]) {
-    if (counts[k] > bestN) {
-      bestN = counts[k];
-      best = k;
-    }
-  }
-  return best;
-}
-
-function wizardTierShort(requiredTier: number): string {
-  const t = Math.max(1, requiredTier || 1);
-  return `Wizard Tier ${t}`;
-}
-
-/** Readable relay gate (matches `requiredSignalCounts` in catalog). */
-function formatRelayRequirement(rc: SignalCountRequirement): string {
-  const parts: string[] = [];
-  for (const k of ["Vanguard", "Bastion", "Reclaim"] as const) {
-    const n = rc[k];
-    if (n && n > 0) parts.push(`${n}× ${k}`);
-  }
-  return parts.join(", ");
-}
-
-function relayRequirementSentence(e: { requiredSignalCounts?: SignalCountRequirement }): string | null {
-  const rc = e.requiredSignalCounts;
-  if (!rc) return null;
-  const s = formatRelayRequirement(rc);
-  return s ? `You need ${s} on the field from built relays before you can play this card.` : null;
 }
 
 /** Readable spell summary for tooltips / titles. */
@@ -194,10 +168,6 @@ function initials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-function signalTypesLine(e: CatalogEntry): string {
-  return e.signalTypes?.length ? e.signalTypes.join(", ") : "—";
-}
-
 function auraLabel(e: StructureCatalogEntry): string | null {
   if (!e.aura) return null;
   const a = e.aura;
@@ -229,6 +199,70 @@ function traitLabel(e: StructureCatalogEntry): string | null {
     bits.push(`Refund ${Math.round(e.salvageRefundFrac * 100)}% on death`);
   }
   return bits.length ? bits.join(" · ") : null;
+}
+
+function compactNumber(n: number, digits = 1): string {
+  if (Number.isInteger(n)) return String(n);
+  return n.toFixed(digits).replace(/\.0$/, "");
+}
+
+function multiplier(n: number): string {
+  return `${compactNumber(n, 2)}x`;
+}
+
+function bonusPct(mult: number): string {
+  return `+${Math.round((mult - 1) * 100)}%`;
+}
+
+function trampleText(sizeClass: UnitSizeClass): string | null {
+  const table = TRAMPLE[sizeClass];
+  const parts = (Object.keys(table) as UnitSizeClass[])
+    .map((target) => {
+      const mult = table[target];
+      return mult ? `${multiplier(mult)} vs ${target}` : "";
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join(" / ") : null;
+}
+
+function dcCombatProfile(e: StructureCatalogEntry): string {
+  const st = unitStatsForCatalog(e.producedSizeClass);
+  const dps = st.dmgPerTick * TICK_HZ;
+  const objectiveMult = e.producedDamageVsStructuresMult ?? 1;
+  const trample = trampleText(e.producedSizeClass);
+  const chips = [
+    e.producedAntiClass
+      ? `Anti-${e.producedAntiClass} ${bonusPct(ANTI_CLASS_DAMAGE_MULT)}`
+      : "No anti-class",
+    trample ? `Trample ${trample}` : "No trample",
+    `Objectives ${multiplier(PLAYER_UNIT_STRUCTURE_DAMAGE_MULT * objectiveMult)} structures / ${multiplier(
+      UNIT_TAP_ANCHOR_DAMAGE_MULT * objectiveMult,
+    )} anchors`,
+  ];
+  if (e.unitTrait === "lifesteal") {
+    chips.push(`Lifesteal ${Math.round(UNIT_LIFESTEAL_DAMAGE_FRAC * 100)}% dealt`);
+  }
+  if (e.unitAoeRadius) {
+    chips.push(`AoE r${compactNumber(e.unitAoeRadius)} splash ${Math.round(UNIT_AOE_SPLASH_DAMAGE_MULT * 100)}%`);
+  }
+  if (e.unitFlying) chips.push("Flying pathing");
+
+  const cell = (value: string, label: string, mod: string) =>
+    `<div class="dc-combat-cell dc-combat-cell--${mod}"><span>${escapeHtml(value)}</span><small>${escapeHtml(label)}</small></div>`;
+  const chipHtml = chips.map((chip) => `<span class="dc-combat-chip">${escapeHtml(chip)}</span>`).join("");
+  return `<section class="dc-combat-profile" aria-label="Produced unit combat profile">
+    <div class="dc-combat-head">
+      <span class="dc-combat-title">Combat Profile</span>
+      <span class="dc-combat-note">${escapeHtml(e.producedSizeClass)} unit</span>
+    </div>
+    <div class="dc-combat-grid">
+      ${cell(String(st.maxHp), "Unit HP", "hp")}
+      ${cell(`${compactNumber(st.range)}u`, "Range", "range")}
+      ${cell(`${compactNumber(st.speedPerSec)}u/s`, "Speed", "speed")}
+      ${cell(compactNumber(dps), "DPS", "dps")}
+    </div>
+    <div class="dc-combat-chips">${chipHtml}</div>
+  </section>`;
 }
 
 function silhouetteShapes(e: StructureCatalogEntry): string {
@@ -310,15 +344,7 @@ function catalogPortraitSvg(catalogId: string, hue: number, cmd: boolean, idSuff
 
 /* —— Doctrine card “blueprint” layout (dc-*) —— */
 
-const DC_ICON_SIG = `<svg class="dc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 2v11h3v9l7-12h-4l4-10H7z"/></svg>`;
-const DC_ICON_LOCK = `<svg class="dc-ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1V8z"/></svg>`;
 const DC_ICON_SWORDS = `<span class="dc-ico dc-ico--txt" aria-hidden="true">⚔</span>`;
-
-function signalSlug(e: CatalogEntry): string {
-  const d = dominantSignalFromEntry(e);
-  if (!d) return "none";
-  return d.toLowerCase();
-}
 
 function unitPillTitle(e: StructureCatalogEntry): string {
   const f = e.producedFlavor?.trim();
@@ -470,14 +496,6 @@ function dmHeroArt(catalogId: string, portrait: string, useGlbPreview: boolean, 
   </div>`;
 }
 
-function dmSignalLabel(e: CatalogEntry): string {
-  const dom = dominantSignalFromEntry(e);
-  if (dom) return dom;
-  if (e.signalTypes.length === 1) return e.signalTypes[0]!;
-  if (e.signalTypes.length > 1) return "Mixed signals";
-  return "—";
-}
-
 function dmCdTitle(cmd: boolean): string {
   return cmd ? "Per-use cooldown after casting this spell" : "Cooldown between spawned units";
 }
@@ -486,7 +504,7 @@ function dmStatsOneLine(e: CatalogEntry): string {
   if (isCommandEntry(e)) {
     return `${e.fluxCost} · ${e.chargeCooldownSeconds}s · ${e.salvagePctOnCast}%`;
   }
-  return `${e.maxHp} HP · ${e.buildSeconds} / ${e.productionSeconds}s · ${structurePopCapLine(e)}`;
+  return `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)}`;
 }
 
 function dcHeroTopTags(cmd: boolean, classOrSpell: string, cdSeconds: number): string {
@@ -508,7 +526,7 @@ function dcTitleBlock(name: string, kindWord: "Structure" | "Command", compact: 
   </div>`;
 }
 
-type DcStatTone = "hp" | "build" | "prod" | "pop" | "mana" | "cd" | "salv" | "tier";
+type DcStatTone = "hp" | "build" | "prod" | "pop" | "mana" | "cd" | "salv" | "uses";
 
 function dcStatRail4(
   a: { v: string; l: string; t: DcStatTone },
@@ -522,30 +540,6 @@ function dcStatRail4(
   const div = `<span class="dc-stat-div" aria-hidden="true"></span>`;
   const railMod = compact ? "dc-stat-rail--compact" : "";
   return `<div class="dc-stat-rail ${railMod}">${cell(a)}${div}${cell(b)}${div}${cell(c)}${div}${cell(d)}</div>`;
-}
-
-function dcMetaSignal(e: CatalogEntry): string {
-  const slug = signalSlug(e);
-  const line = signalTypesLine(e);
-  return `<div class="dc-meta-row">
-    <span class="dc-meta-ico dc-meta-ico--sig" aria-hidden="true">${DC_ICON_SIG}</span>
-    <span class="dc-meta-k">Signal</span>
-    <span class="dc-meta-v dc-meta-v--sig-${slug}">${escapeHtml(line)}</span>
-  </div>`;
-}
-
-function dcMetaUnlock(tier: number): string {
-  return `<div class="dc-meta-row">
-    <span class="dc-meta-ico dc-meta-ico--lock" aria-hidden="true">${DC_ICON_LOCK}</span>
-    <span class="dc-meta-k">Unlock</span>
-    <span class="dc-meta-v dc-meta-v--unlock">${escapeHtml(wizardTierShort(tier))}</span>
-  </div>`;
-}
-
-function dcRelayRow(e: CatalogEntry): string {
-  const s = relayRequirementSentence(e);
-  if (!s) return "";
-  return `<div class="dc-meta-row dc-meta-row--relay"><span class="dc-meta-k">Relays</span><span class="dc-meta-v dc-meta-v--relay">${escapeHtml(s)}</span></div>`;
 }
 
 function dcUnitPill(e: StructureCatalogEntry): string {
@@ -619,15 +613,12 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
   const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
-  const slug = signalSlug(e);
-  const sigLine = dmSignalLabel(e);
-  const tier = Math.max(1, e.requiredRelayTier || 1);
   const cdSec = e.chargeCooldownSeconds;
   const cdShow = cdSec > 0 ? `${cdSec}s` : "—";
   const statsLine = dmStatsOneLine(e);
   const statsTitle = isCommandEntry(e)
     ? commandSpellTooltipSummary(e as CommandCatalogEntry)
-    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${e.productionSeconds}s spawn · ${structurePopCapLine(e)} pop`;
+    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)} · ${structurePopCapLine(e)} pop/cap`;
   const spellFx = cmd ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
   const statsBlock = cmd
     ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry))}</div>`
@@ -646,8 +637,8 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
     ${spellFx}
     ${statsBlock}
     <div class="dm-foot">
-      <span class="dm-sig dm-sig--${slug}" title="Dominant signal">${escapeHtml(sigLine)}</span>
-      <span class="dm-tier" title="${escapeHtml(wizardTierShort(tier))}">T${tier}</span>
+      <span class="dm-sig" title="Resource gate">${escapeHtml(cmd ? "Mana spell" : structureProductionLine(e as StructureCatalogEntry))}</span>
+      <span class="dm-zone" title="${cmd ? "Cast with Mana" : "Build inside territory"}">${cmd ? "Cast" : "Zone"}</span>
     </div>
   </div>
 </div>`;
@@ -691,7 +682,7 @@ export function tcgCardFullHtml(
         { v: manaVal, l: "MANA", t: "mana" },
         { v: `${e.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" },
         { v: `${e.salvagePctOnCast}%`, l: "SALVAGE", t: "salv" },
-        { v: `T${Math.max(1, e.requiredRelayTier || 1)}`, l: "TIER", t: "tier" },
+        { v: `${e.maxCharges}`, l: "USES", t: "uses" },
         false,
       )
     : dcStatRail4(
@@ -706,8 +697,8 @@ export function tcgCardFullHtml(
         false,
       );
   const bodyFull = cmd
-    ? `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcSpellEffectPanel(e as CommandCatalogEntry)}</div>`
-    : `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcUnitPill(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${matchArmyPopBonusNote(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
+    ? `<div class="dc-body">${dcSpellEffectPanel(e as CommandCatalogEntry)}</div>`
+    : `<div class="dc-body">${dcUnitPill(e as StructureCatalogEntry)}${dcCombatProfile(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${matchArmyPopBonusNote(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
 
   return `<div class="tcg tcg--full tcg--layout-v2 ${kindClass} ${previewTypeClass} tcg--${variant}${detailCls}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="dc-shell">

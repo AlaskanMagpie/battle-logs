@@ -34,8 +34,9 @@ export function nearestFoeInBuckets(
   let bestD = maxD2;
   const gx = Math.floor(from.x / cell);
   const gz = Math.floor(from.z / cell);
-  for (let ox = -1; ox <= 1; ox++) {
-    for (let oz = -1; oz <= 1; oz++) {
+  const reachCells = Math.max(1, Math.ceil(Math.sqrt(maxD2) / cell));
+  for (let ox = -reachCells; ox <= reachCells; ox++) {
+    for (let oz = -reachCells; oz <= reachCells; oz++) {
       const list = buckets.get(`${gx + ox},${gz + oz}`);
       if (!list) continue;
       for (const o of list) {
@@ -58,12 +59,14 @@ export function unitsNearXZ(
   cz: number,
   skip: UnitRuntime | null,
   cell: number = COMBAT_SPATIAL_CELL,
+  radius: number = cell,
 ): UnitRuntime[] {
   const out: UnitRuntime[] = [];
   const gx = Math.floor(cx / cell);
   const gz = Math.floor(cz / cell);
-  for (let ox = -1; ox <= 1; ox++) {
-    for (let oz = -1; oz <= 1; oz++) {
+  const reachCells = Math.max(1, Math.ceil(radius / cell));
+  for (let ox = -reachCells; ox <= reachCells; ox++) {
+    for (let oz = -reachCells; oz <= reachCells; oz++) {
       const list = buckets.get(`${gx + ox},${gz + oz}`);
       if (!list) continue;
       for (const o of list) {

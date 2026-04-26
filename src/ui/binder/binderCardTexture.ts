@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { getCatalogEntry } from "../../game/catalog";
+import { productionBatchSizeForClass } from "../../game/sim/systems/helpers";
 import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
@@ -60,12 +61,6 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error("preview img"));
     img.src = src;
   });
-}
-
-function dominantSignalLabel(e: CatalogEntry): string {
-  if (e.signalTypes.length === 0) return "—";
-  if (e.signalTypes.length === 1) return e.signalTypes[0]!;
-  return "Mixed";
 }
 
 const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
@@ -152,7 +147,7 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
       { v: String(st.maxHp), l: "HP", color: "#e85555" },
       { v: `${st.buildSeconds}s`, l: "BUILD", color: "#6ab0ff" },
       { v: `${st.productionSeconds}s`, l: "PROD", color: "#d4b060" },
-      { v: `${st.producedPop}/${popCap}`, l: "POP", color: "#b090ff" },
+      { v: `${productionBatchSizeForClass(st.producedSizeClass)}x/${popCap}`, l: "BATCH", color: "#b090ff" },
     ];
     for (let i = 0; i < 4; i++) {
       const cx = pad + colW * i + colW / 2;
@@ -169,7 +164,7 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
       { v: String(cmd.fluxCost), l: "MANA", color: "#b080ff" },
       { v: `${cmd.chargeCooldownSeconds}s`, l: "CD", color: "#6ab0ff" },
       { v: `${cmd.salvagePctOnCast}%`, l: "SALV", color: "#7cdb9f" },
-      { v: `T${Math.max(1, cmd.requiredRelayTier)}`, l: "TIER", color: "#d4b060" },
+      { v: String(cmd.maxCharges), l: "USES", color: "#d4b060" },
     ];
     for (let i = 0; i < 4; i++) {
       const cx = pad + colW * i + colW / 2;
@@ -186,9 +181,9 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   ctx.textAlign = "left";
   ctx.font = `${Math.max(9, Math.round(w * 0.024))}px system-ui, Segoe UI, sans-serif`;
   ctx.fillStyle = "rgba(190,204,226,0.9)";
-  ctx.fillText(`Signal  ${dominantSignalLabel(e)}`, pad, y);
+  ctx.fillText(`Role  ${isStructureEntry(e) ? `${productionBatchSizeForClass(e.producedSizeClass)}x ${e.producedSizeClass}` : "Mana spell"}`, pad, y);
   ctx.textAlign = "right";
-  ctx.fillText(`Unlock  Wizard Tier ${Math.max(1, e.requiredRelayTier)}`, w - pad, y);
+  ctx.fillText(isStructureEntry(e) ? "Place  Territory" : "Cast  Mana", w - pad, y);
 
   y += 16;
   ctx.textAlign = "left";

@@ -31,8 +31,9 @@ import {
   type StructureRuntime,
   type UnitOrderMode,
 } from "../../state";
-import type { Vec2 } from "../../types";
+import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
+import { applyAttackImpulse } from "./combat";
 import { findNeutralTapIndexNearHero } from "./hero";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
@@ -225,13 +226,17 @@ function tryPlaceStructure(
   s.lastMessage = `${def.name} summoned${placementForward ? " (forward — slower build, fragile)" : ""} — lightning crackles.`;
 }
 
-function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number, maxFreeUses: number): void {
+function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEntry): void {
   const used = s.doctrineCommandUses[slotIdx] ?? 0;
-  const exhausted = used >= maxFreeUses;
+  const exhausted = used >= cmd.maxCharges;
+  s.flux -= cmd.fluxCost;
+  if (cmd.salvagePctOnCast > 0) {
+    s.salvage += cmd.fluxCost * (cmd.salvagePctOnCast / 100);
+  }
   s.doctrineCommandUses[slotIdx] = used + 1;
   s.stats.commandsCast += 1;
-  if (cooldownSec > 0) {
-    s.doctrineCooldownTicks[slotIdx] = Math.round(cooldownSec * (exhausted ? 3 : 1) * TICK_HZ);
+  if (cmd.chargeCooldownSeconds > 0) {
+    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * (exhausted ? 3 : 1) * TICK_HZ);
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
@@ -341,6 +346,10 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     s.lastMessage = slotErr;
     return;
   }
+  if (s.flux < cmd.fluxCost) {
+    s.lastMessage = `Need ${cmd.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
+    return;
+  }
   const fx = cmd.effect;
   const usesLeft = Math.max(0, cmd.maxCharges - (s.doctrineCommandUses[slotIdx] ?? 0));
   const castSuffix = usesLeft > 0 ? `${usesLeft - 1} free uses left.` : "exhausted cast - triple cooldown.";
@@ -358,15 +367,14 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
         u.hp -= fx.damage;
         const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
-        u.vxImpulse += nx * SPELL_KNOCKBACK_SPEED;
-        u.vzImpulse += nz * SPELL_KNOCKBACK_SPEED;
+        applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED);
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
         if (!pointInCorridor(er.x, er.z, hx, hz, ex, ez, hw)) continue;
         er.hp -= fx.damage * 0.35;
       }
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
+      consumeCommandSlot(s, slotIdx, cmd);
       const mx = (hx + ex) * 0.5;
       const mz = (hz + ez) * 0.5;
       pushFx(s, { kind: "lightning", x: ex, z: ez, fromX: hx, fromZ: hz });
@@ -389,17 +397,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
         u.hp -= fx.damage;
-        const dx = u.x - pos.x;
-        const dz = u.z - pos.z;
-        const len = Math.hypot(dx, dz) || 1;
-        u.vxImpulse += (dx / len) * SPELL_KNOCKBACK_SPEED;
-        u.vzImpulse += (dz / len) * SPELL_KNOCKBACK_SPEED;
+        applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED);
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
         if (dist2(er, pos) <= r2) er.hp -= fx.damage * 0.5;
       }
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
+      consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       emitFx(s, "firestorm", pos);
       pushFx(s, {
@@ -425,7 +429,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         enemyDamageMult: fx.enemyDamageMult,
         enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
       });
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
+      consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       emitFx(s, "fortify", pos);
       pushFx(s, {
@@ -511,7 +515,10 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         } else {
           const uid = Number(bestKey.slice(2));
           const u = s.units.find((x) => x.id === uid);
-          if (u) u.hp -= dmg;
+          if (u) {
+            u.hp -= dmg;
+            applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
+          }
         }
         hits++;
         ox = bx;
@@ -521,12 +528,12 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         s.lastMessage = `${cmd.name}: no enemies in the cast ring — try dropping closer.`;
         return;
       }
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
+      consumeCommandSlot(s, slotIdx, cmd);
       s.lastMessage = `${cmd.name}: ${hits} chain strike${hits === 1 ? "" : "s"} (lightning); ${castSuffix}`;
       return;
     }
     case "noop": {
-      consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
+      consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       s.lastMessage = `${cmd.name} spent.`;
       return;
@@ -617,7 +624,7 @@ function handleWorldClick(
         s.selectedUnitId = s.selectedUnitId === u.id ? null : u.id;
         s.selectedStructureId = null;
         s.lastMessage = s.selectedUnitId
-          ? `Troop selected — melee range ${u.range.toFixed(1)}.`
+          ? `Troop selected — weapon range ${u.range.toFixed(1)}.`
           : "Troop deselected.";
         return;
       }

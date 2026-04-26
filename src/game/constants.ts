@@ -103,7 +103,7 @@ export const KEEP_MAX_HP = 900;
 export const KEEP_SWARM_PERIOD_SEC = 6;
 export const KEEP_ID = "wizard_keep";
 
-/** Army-wide population ceiling (legacy / doctrine card math only — production ignores caps). */
+/** Army-wide population ceiling for player and rival structure production. */
 export const GLOBAL_POP_CAP = 1000;
 
 /** Hard ceiling for `GLOBAL_POP_CAP + doctrine match bonuses` (prevents absurd overflow). */
@@ -117,7 +117,7 @@ export const UNIT_MESH_SWARM = 1.55;
 export const UNIT_MESH_SCALE_STEP = 1.5;
 
 /** Spatial cell size (world XZ) for combat nearest-neighbor queries. */
-export const COMBAT_SPATIAL_CELL = 11;
+export const COMBAT_SPATIAL_CELL = 14;
 
 /** Firestorm / spell knockback initial planar speed (world units/sec impulse integrated per tick). */
 export const SPELL_KNOCKBACK_SPEED = 9;
@@ -128,7 +128,7 @@ export const SPELL_AOE_KNOCKBACK = 4.2;
 /** Exponential decay per second for unit knockback velocity. */
 export const KNOCKBACK_DECAY_PER_SEC = 7.5;
 
-/** Enough for Tap + first Relay + one Tier-1 structure in one beat (playtest pacing). */
+/** Enough for an early Mana node claim plus a first resource-gated structure. */
 export const PLAYER_STARTING_FLUX = 280;
 
 export const STRUCTURE_AGGRO_BLOCK_RADIUS = 12;
@@ -146,6 +146,13 @@ export const FORWARD_BUILD_TIME_MULT = 2;
 export const FORWARD_BUILD_INCOMING_DAMAGE_MULT = 2;
 
 export const ANTI_CLASS_DAMAGE_MULT = 1.5;
+
+/** Unit combat derived-card constants. Keep these synced with `combat.ts` reads, not card copy. */
+export const UNIT_LIFESTEAL_DAMAGE_FRAC = 0.35;
+export const UNIT_AOE_SPLASH_DAMAGE_MULT = 0.6;
+export const PLAYER_UNIT_STRUCTURE_DAMAGE_MULT = 0.5;
+export const ENEMY_UNIT_STRUCTURE_DAMAGE_MULT = 0.35;
+export const UNIT_TAP_ANCHOR_DAMAGE_MULT = 0.42;
 
 /** Commands: friendly unit or completed player structure must be within this radius of the cast point (world units). */
 export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 12;
@@ -176,8 +183,8 @@ export const CUT_LINE_HALF_WIDTH = 3.5;
 export const CUT_LINE_DAMAGE_PER_UNIT = 32;
 
 /** Weapon reach thresholds for close / medium / long combat FX profiles (world units). */
-export const ATTACK_RANGE_CLOSE_MAX = 2.75;
-export const ATTACK_RANGE_MEDIUM_MAX = 5.35;
+export const ATTACK_RANGE_CLOSE_MAX = 9.5;
+export const ATTACK_RANGE_MEDIUM_MAX = 14.5;
 
 /** Shatter (interim vs enemy relay): pick radius and burst damage; production pause when enemy structures exist uses structure runtime. */
 export const SHATTER_TARGET_RADIUS = 9;
@@ -238,8 +245,8 @@ export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
 /** Structure ghost center must stay outside blocking decor by at least this radius. */
 export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
-export const HERO_ATTACK_RANGE = 9.25;
-export const HERO_ATTACK_DAMAGE = 54;
+export const HERO_ATTACK_RANGE = 15;
+export const HERO_ATTACK_DAMAGE = 42;
 export const HERO_ATTACK_COOLDOWN_TICKS = 14;
 /** Tactical recall/blink: moves Wizard plus nearby friendly troops, never into the enemy half. */
 export const HERO_TELEPORT_COOLDOWN_SEC = 30;
@@ -261,5 +268,5 @@ export const TAP_NODES_PER_SIDE = 10;
 /** Minimum spacing between procedurally placed Mana nodes (world units). */
 export const TAP_GENERATION_MIN_SEP = 36;
 
-/** Territory: union of radii around the Keep, the Wizard, and claimed player taps (world units). */
+/** Territory: union of radii around the Keep and owned Mana anchors (world units). */
 export const TERRITORY_RADIUS = 72;

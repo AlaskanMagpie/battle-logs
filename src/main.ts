@@ -66,6 +66,11 @@ function releasePointerSafe(el: Element, pointerId: number): void {
   }
 }
 
+function isMatchSurfaceTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("#game, #hud-root, #doctrine-picker, #unit-command-radial"));
+}
+
 /** GLB art on by default; set `VITE_USE_UNIT_GLB=false` to force cubes only. */
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
 
@@ -645,7 +650,13 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
     let leftSelect: { pointerId: number; startX: number; startY: number; dragging: boolean } | null = null;
     let chordDrag: { pointerId: number; lastX: number; lastY: number } | null = null;
 
-    canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    window.addEventListener(
+      "contextmenu",
+      (ev) => {
+        if (isMatchSurfaceTarget(ev.target)) ev.preventDefault();
+      },
+      { capture: true },
+    );
 
     canvas.addEventListener("pointerdown", (ev) => {
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");

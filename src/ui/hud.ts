@@ -6,10 +6,7 @@ import {
   findKeep,
   heroTeleportCooldownSeconds,
   placementFailureReason,
-  signalCountsSatisfied,
-  tierRequirementSatisfied,
   totalPlayerPop,
-  wizardTier,
   type GameState,
 } from "../game/state";
 import { getGameLogLines } from "../game/gameLog";
@@ -184,7 +181,7 @@ function computeObjective(state: GameState): string {
 
   if (claimedNodes === 0)
     return "Claim a node — walk to the nearest grey ring and stand still to channel (need Mana for the claim fee).";
-  if (playerTowers.length === 0) return "Drop a tower inside your claimed territory (blue ring) to summon production.";
+  if (playerTowers.length === 0) return "Drop a tower inside claimed territory (blue field) to start batch production.";
   if (playerUnits.length === 0) {
     const producing = playerStructs.find((st) => st.complete);
     if (producing) {
@@ -220,7 +217,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <span class="hud-stat hud-stat--econ">Mana <strong id="flux">0</strong></span>
           <span class="hud-stat hud-stat--econ">Salvage <strong id="salvage">0</strong></span>
           <span class="hud-stat hud-stat--econ">Pop <strong id="pop">0</strong></span>
-          <span class="hud-stat hud-stat--econ">Tier <strong id="tier">1</strong></span>
           <span class="hud-stat hud-stat--field">Nodes <strong id="nodes">0</strong></span>
           <span class="hud-stat hud-stat--mode">Mode <strong id="mode">idle</strong></span>
         </div>
@@ -397,7 +393,6 @@ export function updateHud(state: GameState): void {
   const flux = document.querySelector("#flux");
   const salvage = document.querySelector("#salvage");
   const pop = document.querySelector("#pop");
-  const tier = document.querySelector("#tier");
   const nodes = document.querySelector("#nodes");
   const mode = document.querySelector("#mode");
   const phase = document.querySelector("#phase");
@@ -406,7 +401,6 @@ export function updateHud(state: GameState): void {
   if (salvage) salvage.textContent = String(Math.floor(state.salvage));
   const popVal = totalPlayerPop(state);
   if (pop) pop.textContent = String(popVal);
-  if (tier) tier.textContent = String(wizardTier(state));
   if (nodes) nodes.textContent = String(claimedTapCount(state));
   if (mode) {
     mode.textContent = state.pendingPlacementCatalogId
@@ -626,11 +620,7 @@ export function updateHud(state: GameState): void {
 
     const cd = state.doctrineCooldownTicks[i] ?? 0;
     const locked = cd > 0;
-    const tierOk = tierRequirementSatisfied(state, e);
-    const sigOk = tierOk && signalCountsSatisfied(state, e);
     if (locked) b.classList.add("slot-locked");
-    else if (!tierOk) b.classList.add("slot-await-infra");
-    else if (!sigOk) b.classList.add("slot-sigwarn");
     else b.classList.add("slot-ready");
 
     if (live) {

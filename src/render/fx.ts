@@ -308,6 +308,23 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   group.add(mid);
   group.add(core);
 
+  const tracerHeight =
+    m.sizeClass === "Swarm" ? 0.45 : m.sizeClass === "Line" ? 0.62 : m.sizeClass === "Heavy" ? 0.82 : 1.1;
+  const tracerGeo = new THREE.BufferGeometry();
+  tracerGeo.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute([0, tracerHeight, 0, 0, tracerHeight + 0.12, reach], 3),
+  );
+  const tracerMat = new THREE.LineBasicMaterial({
+    color: m.sizeClass === "Swarm" ? pal.spark : m.sizeClass === "Line" ? pal.glow : pal.rim,
+    transparent: true,
+    opacity: m.sizeClass === "Titan" ? 0.95 : 0.72,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const tracer = new THREE.Line(tracerGeo, tracerMat);
+  group.add(tracer);
+
   const rimGeo = new THREE.RingGeometry(reach * 0.88, reach * 1.02, seg, 1, -halfAngle, halfAngle * 2);
   const rim = new THREE.Mesh(
     rimGeo,
@@ -359,6 +376,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     (outer.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
     (mid.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p * 0.92);
     (core.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p * 0.85);
+    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.95 : 0.72) * (1 - p * 0.82);
     (rim.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p);
     for (const s of sparks) {
       s.mesh.position.x += s.vx * dt;
@@ -558,6 +576,7 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
     transparent: true,
     opacity: 0.9,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   });
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.rotation.x = -Math.PI / 2;
@@ -570,22 +589,24 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
     transparent: true,
     opacity: 0.85,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   });
   const inner = new THREE.Mesh(innerGeo, innerMat);
   inner.rotation.x = -Math.PI / 2;
   group.add(inner);
 
   const embers: { mesh: THREE.Mesh; vy: number; vx: number; vz: number }[] = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 16; i++) {
     const g = new THREE.SphereGeometry(0.18, 6, 6);
     const m = new THREE.MeshBasicMaterial({
       color: 0xffaa44,
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
     const e = new THREE.Mesh(g, m);
-    const ang = (i / 12) * Math.PI * 2 + Math.random() * 0.4;
+    const ang = (i / 16) * Math.PI * 2 + Math.random() * 0.4;
     const sp = 4 + Math.random() * 3;
     e.position.set(Math.cos(ang) * 0.3, 0.3, Math.sin(ang) * 0.3);
     group.add(e);

@@ -4,9 +4,14 @@ import {
   CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
   FORTIFY_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
+  ENEMY_UNIT_STRUCTURE_DAMAGE_MULT,
+  PLAYER_UNIT_STRUCTURE_DAMAGE_MULT,
   SPELL_AOE_KNOCKBACK,
   TAP_ANCHOR_STRIKE_RADIUS,
   COMBAT_SPATIAL_CELL,
+  UNIT_AOE_SPLASH_DAMAGE_MULT,
+  UNIT_LIFESTEAL_DAMAGE_FRAC,
+  UNIT_TAP_ANCHOR_DAMAGE_MULT,
 } from "../../constants";
 import {
   classifyAttackRangeBand,
@@ -17,8 +22,49 @@ import {
   type StructureRuntime,
   type UnitRuntime,
 } from "../../state";
+import type { UnitSizeClass, Vec2 } from "../../types";
 import { dist2, TRAMPLE } from "./helpers";
 import { buildCombatUnitBuckets, nearestFoeInBuckets, unitsNearXZ } from "../unitSpatial";
+
+const IMPULSE_MASS: Record<UnitSizeClass, number> = {
+  Swarm: 0.85,
+  Line: 1,
+  Heavy: 1.7,
+  Titan: 2.8,
+};
+
+const ATTACK_IMPULSE_BY_CLASS: Record<UnitSizeClass, number> = {
+  Swarm: 0.34,
+  Line: 0.48,
+  Heavy: 0.72,
+  Titan: 1.05,
+};
+
+const ATTACK_IMPULSE_CAP = 8.5;
+
+export function applyAttackImpulse(
+  target: UnitRuntime,
+  from: Vec2,
+  strength: number,
+  targetMassClass: UnitSizeClass = target.sizeClass,
+): void {
+  if (target.hp <= 0 || strength <= 0) return;
+  const dx = target.x - from.x;
+  const dz = target.z - from.z;
+  const len = Math.hypot(dx, dz) || 1;
+  const mass = IMPULSE_MASS[targetMassClass] ?? 1;
+  const k = strength / mass;
+  let vx = target.vxImpulse + (dx / len) * k;
+  let vz = target.vzImpulse + (dz / len) * k;
+  const mag = Math.hypot(vx, vz);
+  if (mag > ATTACK_IMPULSE_CAP) {
+    const c = ATTACK_IMPULSE_CAP / mag;
+    vx *= c;
+    vz *= c;
+  }
+  target.vxImpulse = vx;
+  target.vzImpulse = vz;
+}
 
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   let d = attacker.dmgPerTick;
@@ -34,19 +80,27 @@ function applyUnitDamage(s: GameState, attacker: UnitRuntime, defender: UnitRunt
   d *= tacticsFieldIncomingDamageMult(s, defender.team, defender.x, defender.z);
   defender.hp -= d;
   if (attacker.trait === "lifesteal") {
-    attacker.hp = Math.min(attacker.maxHp, attacker.hp + d * 0.35);
+    attacker.hp = Math.min(attacker.maxHp, attacker.hp + d * UNIT_LIFESTEAL_DAMAGE_FRAC);
   }
   return d;
 }
 
-const COMBAT_MARK_MAX = 28;
 const cell = COMBAT_SPATIAL_CELL;
+
+function combatMarkBudget(unitCount: number): number {
+  if (unitCount >= 1500) return 2;
+  if (unitCount >= 900) return 4;
+  if (unitCount >= 450) return 8;
+  if (unitCount >= 220) return 14;
+  return 28;
+}
 
 export function combat(s: GameState): void {
   s.lastSiegeHit = null;
   s.combatHitMarks.length = 0;
   const markAttackers = new Set<number>();
   const buckets = buildCombatUnitBuckets(s, cell);
+  const markMax = combatMarkBudget(s.units.length);
 
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
@@ -55,7 +109,8 @@ export function combat(s: GameState): void {
     const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell);
     if (!best) continue;
     applyUnitDamage(s, u, best);
-    if (s.combatHitMarks.length < COMBAT_MARK_MAX && !markAttackers.has(u.id)) {
+    applyAttackImpulse(best, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
+    if (s.combatHitMarks.length < markMax && !markAttackers.has(u.id)) {
       markAttackers.add(u.id);
       s.combatHitMarks.push({
         ax: u.x,
@@ -74,21 +129,17 @@ export function combat(s: GameState): void {
     }
     if (u.aoeRadius && u.aoeRadius > 0) {
       const r2 = u.aoeRadius * u.aoeRadius;
-      const near = unitsNearXZ(buckets, best.x, best.z, best, cell);
+      const near = unitsNearXZ(buckets, best.x, best.z, best, cell, u.aoeRadius);
       for (const splash of near) {
         if (splash.team !== foeTeam || splash.hp <= 0) continue;
         if (dist2(best, splash) > r2) continue;
-        const spBase = physicalDamage(u, splash) * 0.6;
+        const spBase = physicalDamage(u, splash) * UNIT_AOE_SPLASH_DAMAGE_MULT;
         const sp =
           spBase *
           tacticsFieldOutgoingDamageMult(s, u.team, u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, splash.team, splash.x, splash.z);
         splash.hp -= sp;
-        const dx = splash.x - best.x;
-        const dz = splash.z - best.z;
-        const len = Math.hypot(dx, dz) || 1;
-        splash.vxImpulse += (dx / len) * SPELL_AOE_KNOCKBACK;
-        splash.vzImpulse += (dz / len) * SPELL_AOE_KNOCKBACK;
+        applyAttackImpulse(splash, best, SPELL_AOE_KNOCKBACK);
       }
     }
   }
@@ -108,7 +159,7 @@ export function combat(s: GameState): void {
       }
     }
     if (best) {
-      let incoming = u.dmgPerTick * 0.35;
+      let incoming = u.dmgPerTick * ENEMY_UNIT_STRUCTURE_DAMAGE_MULT;
       incoming *= tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z);
       if (!best.complete && best.placementForward) incoming *= FORWARD_BUILD_INCOMING_DAMAGE_MULT;
       if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
@@ -154,7 +205,7 @@ export function combat(s: GameState): void {
       if (dist2(u, er) <= u.range * u.range) {
         const raw =
           u.dmgPerTick *
-          0.5 *
+          PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
           buildingDmgMult *
           tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, "enemy", er.x, er.z);
@@ -167,7 +218,7 @@ export function combat(s: GameState): void {
       if (dist2(u, st) <= u.range * u.range) {
         const raw =
           u.dmgPerTick *
-          0.5 *
+          PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
           buildingDmgMult *
           tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
@@ -187,7 +238,7 @@ export function combat(s: GameState): void {
       if ((t.anchorHp ?? 0) <= 0) continue;
       if (dist2(u, t) > ar2) continue;
       const mult = u.damageVsStructuresMult ?? 1;
-      t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - u.dmgPerTick * 0.42 * mult);
+      t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - u.dmgPerTick * UNIT_TAP_ANCHOR_DAMAGE_MULT * mult);
       if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
     }
   }

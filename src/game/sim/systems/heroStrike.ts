@@ -14,6 +14,7 @@ import {
   type StructureRuntime,
 } from "../../state";
 import type { Vec2 } from "../../types";
+import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
 
 export type PlayerHeroStrikeTag =
@@ -62,6 +63,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? HERO_ATTACK_SWARM_MULT : 1;
     bestU.hp -= HERO_ATTACK_DAMAGE * swarmMult;
+    applyAttackImpulse(bestU, from, 2.4 * swarmMult);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "player_vs_unit");
     logGame(

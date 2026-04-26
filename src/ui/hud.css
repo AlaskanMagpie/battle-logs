@@ -3574,7 +3574,7 @@ button.hud-btn--armed::after {
 .tcg--layout-v2 .dc-stat-val--salv {
   color: #9fe8c3;
 }
-.tcg--layout-v2 .dc-stat-val--tier {
+.tcg--layout-v2 .dc-stat-val--uses {
   color: #d0d8ea;
 }
 .tcg--layout-v2 .dc-stat-lbl {
@@ -3803,6 +3803,94 @@ button.hud-btn--armed::after {
 .tcg--layout-v2 .dc-body--compact .dc-unit-tag {
   font-size: 7px;
   padding: 1px 4px;
+}
+
+/* Combat profile */
+.tcg--layout-v2 .dc-combat-profile {
+  padding: 8px 10px 9px;
+  border-radius: 9px;
+  border: 1px solid hsla(var(--tcg-h), 54%, 56%, 0.36);
+  background:
+    linear-gradient(135deg, hsla(var(--tcg-h), 42%, 18%, 0.4), rgba(7, 11, 17, 0.92)),
+    radial-gradient(120% 160% at 100% 0%, hsla(var(--tcg-h), 70%, 58%, 0.16), transparent 54%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.tcg--layout-v2 .dc-combat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.tcg--layout-v2 .dc-combat-title {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(238, 244, 255, 0.92);
+}
+.tcg--layout-v2 .dc-combat-note {
+  font-size: 10px;
+  font-weight: 800;
+  color: hsla(var(--tcg-h), 58%, 76%, 0.9);
+}
+.tcg--layout-v2 .dc-combat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+.tcg--layout-v2 .dc-combat-cell {
+  min-width: 0;
+  padding: 6px 4px 5px;
+  border-radius: 6px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.tcg--layout-v2 .dc-combat-cell span {
+  display: block;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 900;
+  color: #eef5ff;
+}
+.tcg--layout-v2 .dc-combat-cell small {
+  display: block;
+  margin-top: 4px;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(146, 158, 181, 0.86);
+}
+.tcg--layout-v2 .dc-combat-cell--hp span {
+  color: #ff5965;
+}
+.tcg--layout-v2 .dc-combat-cell--range span {
+  color: #72c6ff;
+}
+.tcg--layout-v2 .dc-combat-cell--speed span {
+  color: #7ce0a4;
+}
+.tcg--layout-v2 .dc-combat-cell--dps span {
+  color: #ffc34d;
+}
+.tcg--layout-v2 .dc-combat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+.tcg--layout-v2 .dc-combat-chip {
+  max-width: 100%;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(218, 227, 244, 0.88);
+  font-size: 9px;
+  font-weight: 760;
+  line-height: 1.15;
 }
 
 /* Ability panel */
@@ -4119,7 +4207,7 @@ button.hud-btn--armed::after {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(4, 6, 10, 0.38);
 }
-.tcg--layout-min .dm-tier {
+.tcg--layout-min .dm-zone {
   opacity: 0.75;
   font-weight: 700;
 }
@@ -4896,6 +4984,33 @@ button.hud-btn--armed::after {
   color: rgba(211, 200, 255, 0.84);
   font-size: 9px;
   letter-spacing: 0.12em;
+}
+
+.tcg--full.tcg--layout-v2 .dc-combat-profile {
+  padding: 8px 10px 9px;
+  border-radius: 6px;
+  border-color: hsla(var(--tcg-h), 58%, 58%, 0.44);
+  background:
+    radial-gradient(75% 130% at 100% 0%, hsla(var(--tcg-h), 78%, 58%, 0.16), transparent 62%),
+    rgba(12, 18, 27, 0.84);
+}
+
+.tcg--full.tcg--layout-v2 .dc-combat-title {
+  letter-spacing: 0.16em;
+  color: rgba(238, 244, 255, 0.95);
+}
+
+.tcg--full.tcg--layout-v2 .dc-combat-cell {
+  padding: 6px 4px 5px;
+  border-radius: 5px;
+}
+
+.tcg--full.tcg--layout-v2 .dc-combat-cell span {
+  font-size: 15px;
+}
+
+.tcg--full.tcg--layout-v2 .dc-combat-chip {
+  font-size: 9px;
 }
 
 .tcg--full.tcg--layout-v2 .dc-ability {

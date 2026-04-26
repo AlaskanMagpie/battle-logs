@@ -227,6 +227,7 @@ export async function requestGlbForUnit(
   placeholder: THREE.Mesh,
   team: TeamId = "player",
 ): Promise<void> {
+  if (kind === "Swarm") return;
   const extent = unitMeshLinearSize(kind) * 0.95;
   await attachGlbForClass(kind, placeholder, extent, team);
 }

@@ -28,7 +28,6 @@ import {
   enemyTerritorySources,
   findKeep,
   inEnemyTerritory,
-  meetsEnemyStructureRequirements,
   nearEnemyInfra,
   pushFx,
   rand,
@@ -40,6 +39,7 @@ import {
 } from "../../state";
 import { isStructureEntry } from "../../types";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
+import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
@@ -254,7 +254,7 @@ function attemptEnemyAiBuild(s: GameState): void {
   const sep2 = ENEMY_AI_MIN_BUILD_SEP * ENEMY_AI_MIN_BUILD_SEP;
   const legalIds = [...ENEMY_AI_BUILD_CATALOG_IDS].filter((id) => {
     const e = getCatalogEntry(id);
-    return e && isStructureEntry(e) && meetsEnemyStructureRequirements(s, e);
+    return e && isStructureEntry(e);
   });
   if (legalIds.length === 0) return;
   const weights = legalIds.map((id) => {
@@ -389,6 +389,7 @@ function enemyHeroTryStrike(s: GameState): void {
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
     bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE * swarmMult;
+    applyAttackImpulse(bestU, from, 2.1 * swarmMult);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "rival_vs_unit");
     return;

@@ -471,11 +471,15 @@ export function enemyWizardTier(s: GameState): number {
 }
 
 export function tierRequirementSatisfied(s: GameState, entry: CatalogEntry): boolean {
-  return wizardTier(s) >= Math.max(1, entry.requiredRelayTier || 1);
+  void s;
+  void entry;
+  return true;
 }
 
 export function enemyTierRequirementSatisfied(s: GameState, entry: CatalogEntry): boolean {
-  return enemyWizardTier(s) >= Math.max(1, entry.requiredRelayTier || 1);
+  void s;
+  void entry;
+  return true;
 }
 
 /** Signals are no longer required in the wizard build — keep the hook for
@@ -485,11 +489,15 @@ export function signalCountsSatisfied(_s: GameState, _entry: CatalogEntry): bool
 }
 
 export function meetsSignalRequirements(s: GameState, entry: CatalogEntry): boolean {
-  return tierRequirementSatisfied(s, entry);
+  void s;
+  void entry;
+  return true;
 }
 
 export function meetsEnemyStructureRequirements(s: GameState, entry: CatalogEntry): boolean {
-  return enemyTierRequirementSatisfied(s, entry);
+  void s;
+  void entry;
+  return true;
 }
 
 /** The Wizard Keep structure (completed or still alive). Null if already destroyed. */
@@ -901,10 +909,9 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
-/** Territory = union of `TERRITORY_RADIUS` around the Keep, the Wizard, and claimed taps. */
+/** Territory = union of `TERRITORY_RADIUS` around the live Keep and owned Mana anchors. */
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
-  if (s.hero.hp > 0 && dist2(pos, s.hero) <= r2) return true;
   const keep = findKeep(s);
   if (keep && dist2(pos, keep) <= r2) return true;
   for (const t of s.taps) {
@@ -946,10 +953,9 @@ export function enemyTerritorySources(s: GameState): Vec2[] {
   return out;
 }
 
-/** Current list of positions feeding the territory union (Wizard + Keep + claimed taps). */
+/** Current list of positions feeding the territory union (Keep + claimed taps). */
 export function territorySources(s: GameState): Vec2[] {
   const out: Vec2[] = [];
-  if (s.hero.hp > 0) out.push({ x: s.hero.x, z: s.hero.z });
   const keep = findKeep(s);
   if (keep) out.push({ x: keep.x, z: keep.z });
   for (const t of s.taps) {
@@ -1008,7 +1014,6 @@ export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | nu
   const e = getCatalogEntry(id);
   if (!e) return "Unknown entry.";
   if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) return "Doctrine slot on cooldown.";
-  if (!meetsSignalRequirements(s, e)) return "Tier requirements not met.";
   return null;
 }
 
@@ -1039,7 +1044,6 @@ const ENEMY_KEEP_EXCLUSION_RADIUS = 24;
 export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: Vec2): string | null {
   const entry = getCatalogEntry(catalogId);
   if (!entry || !isStructureEntry(entry)) return "Not a structure.";
-  if (!meetsEnemyStructureRequirements(s, entry)) return "Enemy tier too low.";
   if (s.enemyFlux < entry.fluxCost) return "Enemy lacks Mana.";
   if (!inEnemyTerritory(s, pos)) return "Outside enemy territory.";
   const keep = findKeep(s);
@@ -1075,15 +1079,11 @@ export function placementFailureReason(
     const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
     return `Card on cooldown (${secs}s).`;
   }
-  const tier = wizardTier(s);
-  const need = Math.max(1, entry.requiredRelayTier || 1);
-  if (tier < need) {
-    const taps = claimedTapCount(s);
-    const nextNeed = need === 2 ? 2 : 4;
-    return `Requires wizard tier ${need} (claim ${nextNeed} Mana nodes — you have ${taps}).`;
-  }
 
   if (isStructureEntry(entry) && s.flux < entry.fluxCost) {
+    return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
+  }
+  if (isCommandEntry(entry) && s.flux < entry.fluxCost) {
     return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
   }
 

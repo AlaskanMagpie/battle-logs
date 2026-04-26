@@ -2,6 +2,9 @@ import * as THREE from "three";
 import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getCatalogEntry } from "../game/catalog";
 import {
@@ -14,6 +17,7 @@ import {
 import { unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
+  enemyTerritorySources,
   findKeep,
   signalColorHex,
   territorySources,
@@ -461,9 +465,14 @@ export class GameRenderer {
   /** "Next node" highlight ring on the nearest unclaimed tap to the hero. */
   private nearestTapRing: THREE.Mesh | null = null;
   private territoryGroup = new THREE.Group();
-  private territoryMeshes: THREE.Mesh[] = [];
-  private territoryWallMeshes: THREE.Mesh[] = [];
+  private territoryField: THREE.Mesh | null = null;
+  private enemyTerritoryField: THREE.Mesh | null = null;
+  private territoryTexture: THREE.CanvasTexture | null = null;
+  private enemyTerritoryTexture: THREE.CanvasTexture | null = null;
+  private territoryOutline: THREE.LineSegments | null = null;
+  private enemyTerritoryOutline: THREE.LineSegments | null = null;
   private territoryKey = "";
+  private enemyTerritoryKey = "";
   private heroGroup: THREE.Group | null = null;
   private heroHpBarBg: THREE.Mesh | null = null;
   private heroHpBarFg: THREE.Mesh | null = null;
@@ -499,6 +508,11 @@ export class GameRenderer {
   private cmdGhostLine: THREE.Mesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
+  private readonly composer: EffectComposer;
+  private readonly bloomPass: UnrealBloomPass;
+  private bloomEnabled = false;
+  private rollingFps = 60;
+  private bloomDecisionMs = 0;
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
   private readonly camGroundFwd = new THREE.Vector3();
   private readonly camGroundRight = new THREE.Vector3();
@@ -552,6 +566,9 @@ export class GameRenderer {
     /** Cap DPR for 120Hz — full retina is often fill-rate bound. */
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.shadowMap.enabled = false;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.04;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0e1116);
 
@@ -599,6 +616,11 @@ export class GameRenderer {
       MIDDLE: MOUSE.PAN,
       RIGHT: -1,
     };
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.16, 0.32, 0.88);
+    this.composer.addPass(this.bloomPass);
   }
 
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
@@ -608,6 +630,7 @@ export class GameRenderer {
 
   setSize(w: number, h: number): void {
     this.renderer.setSize(w, h, false);
+    this.composer.setSize(w, h);
     const aspect = w / Math.max(1, h);
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
@@ -1875,6 +1898,14 @@ export class GameRenderer {
     pair.fg.position.x = -0.66 * (1 - frac);
   }
 
+  private setHpBarPairVisible(parent: THREE.Object3D, key: string, visible: boolean): void {
+    const ud = parent.userData as Record<string, unknown>;
+    const bg = ud[`${key}_hpBg`] as THREE.Mesh | undefined;
+    const fg = ud[`${key}_hpFg`] as THREE.Mesh | undefined;
+    if (bg) bg.visible = visible;
+    if (fg) fg.visible = visible;
+  }
+
   private syncMapDecor(state: GameState): void {
     if (this.decorBuilt) return;
     this.decorBuilt = true;
@@ -2003,83 +2034,160 @@ export class GameRenderer {
   }
 
   private syncTerritory(state: GameState): void {
-    const sources = territorySources(state);
-    const key = sources.map((p) => `${p.x.toFixed(1)},${p.z.toFixed(1)}`).join("|");
-    if (key === this.territoryKey && this.territoryMeshes.length === sources.length) return;
-    this.territoryKey = key;
-    for (const m of this.territoryMeshes) {
-      this.territoryGroup.remove(m);
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
-    this.territoryMeshes = [];
-    for (const m of this.territoryWallMeshes) {
-      this.territoryGroup.remove(m);
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
-    this.territoryWallMeshes = [];
+    this.syncTerritoryTeam("player", territorySources(state), 0x56c9ff, 0.18);
+    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff5d54, 0.13);
+  }
+
+  private territorySourceKey(sources: { x: number; z: number }[]): string {
+    return `${this.worldPlaneHalf.toFixed(1)}|${sources.map((p) => `${p.x.toFixed(1)},${p.z.toFixed(1)}`).join("|")}`;
+  }
+
+  private syncTerritoryTeam(
+    team: "player" | "enemy",
+    sources: { x: number; z: number }[],
+    color: number,
+    opacity: number,
+  ): void {
+    const key = this.territorySourceKey(sources);
+    const oldKey = team === "player" ? this.territoryKey : this.enemyTerritoryKey;
+    if (key === oldKey) return;
+    if (team === "player") this.territoryKey = key;
+    else this.enemyTerritoryKey = key;
+
+    this.disposeTerritoryTeam(team);
     if (sources.length === 0) return;
-    const geo = new THREE.RingGeometry(0, TERRITORY_RADIUS, 48);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x6ae1ff,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.08,
-      depthWrite: false,
-      depthTest: false,
-      blending: THREE.AdditiveBlending,
-    });
-    for (const p of sources) {
-      const m = new THREE.Mesh(geo.clone(), mat.clone());
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(p.x, 0.06, p.z);
-      this.territoryGroup.add(m);
-      this.territoryMeshes.push(m);
+
+    const half = Math.max(this.worldPlaneHalf, TERRITORY_RADIUS * 2);
+    const texture = this.createTerritoryTexture(sources, half);
+    const field = new THREE.Mesh(
+      new THREE.PlaneGeometry(half * 2, half * 2),
+      new THREE.MeshBasicMaterial({
+        color,
+        map: texture,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        depthTest: true,
+        side: THREE.DoubleSide,
+      }),
+    );
+    field.rotation.x = -Math.PI / 2;
+    field.position.y = team === "player" ? 0.055 : 0.052;
+    field.renderOrder = -6;
+
+    const outline = this.createTerritoryOutline(sources, color, team === "player" ? 0.78 : 0.52);
+    if (outline) this.territoryGroup.add(outline);
+    this.territoryGroup.add(field);
+
+    if (team === "player") {
+      this.territoryField = field;
+      this.territoryTexture = texture;
+      this.territoryOutline = outline;
+    } else {
+      this.enemyTerritoryField = field;
+      this.enemyTerritoryTexture = texture;
+      this.enemyTerritoryOutline = outline;
     }
-    const wallGeo = new THREE.BoxGeometry(5.8, 2.8, 0.72);
-    const wallMat = new THREE.MeshStandardMaterial({
-      color: 0x2c82c9,
-      emissive: 0x061a2c,
-      emissiveIntensity: 0.35,
-      roughness: 0.62,
-      metalness: 0.08,
-      transparent: true,
-      opacity: 0.82,
-    });
-    const segs = 72;
+  }
+
+  private disposeTerritoryTeam(team: "player" | "enemy"): void {
+    const field = team === "player" ? this.territoryField : this.enemyTerritoryField;
+    const texture = team === "player" ? this.territoryTexture : this.enemyTerritoryTexture;
+    const outline = team === "player" ? this.territoryOutline : this.enemyTerritoryOutline;
+    if (field) {
+      this.territoryGroup.remove(field);
+      field.geometry.dispose();
+      (field.material as THREE.Material).dispose();
+    }
+    if (texture) texture.dispose();
+    if (outline) {
+      this.territoryGroup.remove(outline);
+      outline.geometry.dispose();
+      (outline.material as THREE.Material).dispose();
+    }
+    if (team === "player") {
+      this.territoryField = null;
+      this.territoryTexture = null;
+      this.territoryOutline = null;
+    } else {
+      this.enemyTerritoryField = null;
+      this.enemyTerritoryTexture = null;
+      this.enemyTerritoryOutline = null;
+    }
+  }
+
+  private createTerritoryTexture(sources: { x: number; z: number }[], half: number): THREE.CanvasTexture {
+    const size = 512;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = "rgba(255,255,255,1)";
+    const scale = size / (half * 2);
+    const radius = TERRITORY_RADIUS * scale;
+    for (const p of sources) {
+      const cx = (p.x + half) * scale;
+      const cy = (half - p.z) * scale;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  private createTerritoryOutline(
+    sources: { x: number; z: number }[],
+    color: number,
+    opacity: number,
+  ): THREE.LineSegments | null {
+    const positions: number[] = [];
+    const segs = 96;
     const r = TERRITORY_RADIUS;
+    const coverR2 = (r - 1.5) * (r - 1.5);
     for (let si = 0; si < sources.length; si++) {
       const p = sources[si]!;
       for (let i = 0; i < segs; i++) {
-        const a = (i / segs) * Math.PI * 2;
-        const x = p.x + Math.cos(a) * r;
-        const z = p.z + Math.sin(a) * r;
+        const a0 = (i / segs) * Math.PI * 2;
+        const a1 = ((i + 1) / segs) * Math.PI * 2;
+        const am = (a0 + a1) * 0.5;
+        const mx = p.x + Math.cos(am) * r;
+        const mz = p.z + Math.sin(am) * r;
         let covered = false;
         for (let sj = 0; sj < sources.length; sj++) {
           if (sj === si) continue;
           const o = sources[sj]!;
-          const dx = x - o.x;
-          const dz = z - o.z;
-          if (dx * dx + dz * dz < (r - 3) * (r - 3)) {
+          const dx = mx - o.x;
+          const dz = mz - o.z;
+          if (dx * dx + dz * dz < coverR2) {
             covered = true;
             break;
           }
         }
         if (covered) continue;
-        const w = new THREE.Mesh(wallGeo.clone(), wallMat.clone());
-        w.position.set(x, 1.35, z);
-        w.rotation.y = a - Math.PI / 2;
-        w.castShadow = true;
-        w.receiveShadow = true;
-        this.territoryGroup.add(w);
-        this.territoryWallMeshes.push(w);
+        positions.push(p.x + Math.cos(a0) * r, 0.16, p.z + Math.sin(a0) * r);
+        positions.push(p.x + Math.cos(a1) * r, 0.16, p.z + Math.sin(a1) * r);
       }
     }
-    mat.dispose();
-    geo.dispose();
-    wallGeo.dispose();
-    wallMat.dispose();
+    if (positions.length === 0) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+    });
+    const line = new THREE.LineSegments(geo, mat);
+    line.renderOrder = -5;
+    return line;
   }
 
   private buildHeroMesh(): THREE.Group {
@@ -2292,10 +2400,18 @@ export class GameRenderer {
       obj.position.set(u.x, 0, u.z);
       const g = obj as THREE.Group;
       g.userData["unitId"] = u.id;
-      const h = unitMeshLinearSize(u.sizeClass) * 1.22;
-      const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
-      const pair = this.ensureHpBarPair(g, "u", h, fg);
-      this.setHpBarFrac(pair, u.maxHp > 0 ? u.hp / u.maxHp : 0);
+      const hpFrac = u.maxHp > 0 ? u.hp / u.maxHp : 0;
+      const selected = state.selectedUnitIds.includes(u.id);
+      const showHp = selected || hpFrac < 0.995;
+      if (showHp) {
+        const h = unitMeshLinearSize(u.sizeClass) * 1.22;
+        const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
+        const pair = this.ensureHpBarPair(g, "u", h, fg);
+        this.setHpBarFrac(pair, hpFrac);
+        this.setHpBarPairVisible(g, "u", true);
+      } else {
+        this.setHpBarPairVisible(g, "u", false);
+      }
       const prevHp = this.unitPrevHp.get(u.id);
       if (prevHp !== undefined && u.hp < prevHp - 0.25) {
         (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
@@ -2358,14 +2474,36 @@ export class GameRenderer {
     if (this.enemyHeroGroup) pulse(this.enemyHeroGroup);
   }
 
+  private updateAdaptiveBloom(dt: number): void {
+    if (dt > 0.001) {
+      const fps = 1 / dt;
+      this.rollingFps = this.rollingFps * 0.94 + fps * 0.06;
+    }
+    const now = performance.now();
+    if (now - this.bloomDecisionMs < 500) return;
+    this.bloomDecisionMs = now;
+    const state = this.currentState;
+    const unitCount = state?.units.length ?? 0;
+    const coarseInput = navigator.maxTouchPoints > 0 && Math.min(window.innerWidth, window.innerHeight) < 760;
+    const mobileUA = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const heavyLoad = unitCount >= 700;
+    const lowFps = this.rollingFps < 46;
+    this.bloomEnabled = !!state && !coarseInput && !mobileUA && !heavyLoad && !lowFps;
+    this.bloomPass.strength = unitCount > 420 ? 0.08 : 0.16;
+    this.bloomPass.radius = unitCount > 420 ? 0.22 : 0.32;
+    this.bloomPass.threshold = 0.88;
+  }
+
   render(): void {
     const dt = Math.min(0.1, this.clock.getDelta());
+    this.updateAdaptiveBloom(dt);
     this.applyHeroCameraFollow(dt);
     this.controls.update();
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.bloomEnabled) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

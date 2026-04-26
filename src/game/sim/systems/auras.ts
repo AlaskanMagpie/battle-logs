@@ -2,6 +2,7 @@ import { getCatalogEntry } from "../../catalog";
 import { TICK_HZ } from "../../constants";
 import type { GameState, UnitRuntime } from "../../state";
 import { isStructureEntry } from "../../types";
+import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
 
 export function auras(s: GameState): void {
@@ -31,7 +32,10 @@ export function auras(s: GameState): void {
           best = u;
         }
       }
-      if (best) best.hp -= aura.value;
+      if (best) {
+        best.hp -= aura.value;
+        applyAttackImpulse(best, st, aura.value * 0.95);
+      }
     }
     // salvage_bonus & safe_deploy_radius are read at death / placement time respectively.
   }

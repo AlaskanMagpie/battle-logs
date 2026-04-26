@@ -167,9 +167,9 @@ export interface StructureCatalogEntry {
   kind: "structure";
   fluxCost: number;
   buildSeconds: number;
-  /** Minimum player relays built (tier). */
-  requiredRelayTier: number;
-  /** Require this many active signals of each type from built Relays. */
+  /** Deprecated/back-compat only: progression is resource based. */
+  requiredRelayTier?: number;
+  /** Deprecated/back-compat only: progression is resource based. */
   requiredSignalCounts?: SignalCountRequirement;
   /** Structure's own signal tags (UI / future hybrid rules). */
   signalTypes: SignalType[];
@@ -234,7 +234,8 @@ export interface CommandCatalogEntry {
   name: string;
   kind: "command";
   fluxCost: number;
-  requiredRelayTier: number;
+  /** Deprecated/back-compat only: progression is resource based. */
+  requiredRelayTier?: number;
   requiredSignalCounts?: SignalCountRequirement;
   signalTypes: SignalType[];
   /** 100 = all spell cost goes to Salvage pool (PRD). */
