@@ -9,8 +9,9 @@ function aoeVisualScale(e: CommandCatalogEntry): number {
     return 0.84 + t * 0.36;
   }
   const fx = e.effect.type;
-  if (fx === "shatter_structure") return 0.78;
-  if (fx === "recycle_structure" || fx === "buff_structure") return 0.5;
+  if (fx === "aoe_shatter_chain") return 0.78;
+  if (fx === "aoe_tactics_field") return 0.72;
+  if (fx === "aoe_line_damage") return 0.88;
   if (fx === "noop") return 0.55;
   return 0.65;
 }
@@ -127,7 +128,7 @@ export function drawSpellBinderHero(
     const haloR = rMax * (0.19 + 0.19 * haloT);
     const haloA = 0.55 * (1 - haloT);
     strokeCircle(ctx, cx, cy, haloR, 2, `rgba(255, 170, 80, ${0.2 + 0.35 * haloA})`);
-  } else if (fx === "buff_structure") {
+  } else if (fx === "aoe_tactics_field") {
     strokeCircle(
       ctx,
       cx,
@@ -164,42 +165,30 @@ export function drawSpellBinderHero(
     ctx.fillStyle = "rgba(106, 225, 255, 0.1)";
     ctx.fill();
     ctx.restore();
-  } else if (fx === "recycle_structure") {
-    const rot = tSec * 0.85;
+  } else if (fx === "aoe_line_damage") {
+    const { length: lineLen, halfWidth: hw } = cmd.effect;
+    const span = Math.min(rMax * 1.05, (lineLen / 42) * rMax * 1.1);
+    const thick = Math.max(2, (hw / 3.5) * rMax * 0.07);
+    const ang = -0.15 + 0.04 * Math.sin(tSec * 2.8);
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(rot);
-    const rw = rMax * 0.46;
-    const rh = rMax * 0.46;
-    ctx.strokeStyle = `rgba(180, 190, 210, ${0.45 + 0.2 * pulseOuter})`;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 5]);
-    roundRectPath(ctx, -rw / 2, -rh / 2, rw, rh, 10);
+    ctx.rotate(ang);
+    const wobble = 0.08 * Math.sin(tSec * 4.2);
+    ctx.strokeStyle = `rgba(255, 110, 210, ${0.35 + 0.35 * pulseOuter})`;
+    ctx.lineWidth = thick + 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-span * 0.52, wobble);
+    ctx.lineTo(span * 0.52, -wobble);
     ctx.stroke();
-    ctx.setLineDash([]);
-    strokeCircle(
-      ctx,
-      0,
-      0,
-      rMax * 0.15 * breath,
-      1,
-      `rgba(220, 225, 235, ${0.28 + 0.3 * pulseInner})`,
-    );
+    ctx.strokeStyle = `rgba(160, 255, 210, ${0.42 + 0.38 * pulseInner})`;
+    ctx.lineWidth = thick;
+    ctx.beginPath();
+    ctx.moveTo(-span * 0.52, wobble);
+    ctx.lineTo(span * 0.52, -wobble);
+    ctx.stroke();
     ctx.restore();
-    for (let i = 0; i < 6; i++) {
-      const ang = (i / 6) * Math.PI * 2 + tSec * 1.1 + 0.2;
-      const rad = rMax * 0.2;
-      const ox = cx + Math.cos(ang) * rad;
-      const oy = cy + Math.sin(ang) * rad;
-      const tumble = Math.sin(tSec * ((Math.PI * 2) / 1.2) + i * 0.7);
-      ctx.save();
-      ctx.translate(ox, oy);
-      ctx.rotate(ang + tumble * 2.4);
-      ctx.fillStyle = `rgba(190, 195, 205, ${0.45 + 0.35 * tumble})`;
-      ctx.fillRect(-rMax * 0.028, -rMax * 0.028, rMax * 0.056, rMax * 0.056);
-      ctx.restore();
-    }
-  } else if (fx === "shatter_structure") {
+  } else if (fx === "aoe_shatter_chain") {
     strokeCircle(
       ctx,
       cx,

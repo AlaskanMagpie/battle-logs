@@ -1,21 +1,68 @@
 import {
-  ENEMY_UNIT_HUNT_DETECT,
   HERO_FOLLOW_RADIUS,
-  PLAYER_UNIT_HUNT_DETECT_MIN,
-  PLAYER_UNIT_HUNT_DETECT_MULT,
+  KNOCKBACK_DECAY_PER_SEC,
   TICK_HZ,
+  UNIT_FORMATION_SPACING,
+  UNIT_MOVEMENT_SPEED_SCALE,
   UNIT_SEPARATION_GRID,
   UNIT_SEPARATION_MAX_STEP,
   UNIT_SEPARATION_PASSES,
   UNIT_SEPARATION_STRENGTH,
   HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_RADIUS,
+  TAP_CAPTURE_CONTEST_RADIUS,
   TAP_YIELD_MAX,
 } from "../../constants";
 import { planPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import { armTapClaimAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
+import {
+  armTapClaimAnchor,
+  pushFx,
+  tacticsFieldSpeedMult,
+  type GameState,
+  type StructureRuntime,
+  type UnitRuntime,
+} from "../../state";
 import type { Vec2 } from "../../types";
+import { enemyHuntDetectRadius, playerAcquireRadius } from "../engagement";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
+
+/** Stable ring around a point (wizard blob / idle clump). */
+function formationRingAround(center: Vec2, u: UnitRuntime, spacing: number): Vec2 {
+  const seed = (u.id * 1103515245 + (u.visualSeed | 0)) >>> 0;
+  const ang = ((seed & 0xffffff) / 0xffffff) * Math.PI * 2;
+  const rad = spacing * (0.48 + ((seed >>> 16) % 6) * 0.17);
+  return {
+    x: center.x + Math.cos(ang) * rad,
+    z: center.z + Math.sin(ang) * rad,
+  };
+}
+
+/**
+ * Rank/file slot behind `anchor` along the march axis `anchor - origin`, with lateral spread.
+ * Units share the same anchor so they walk in a block instead of converging on one tile.
+ */
+function formationMarchSlot(u: UnitRuntime, anchor: Vec2, origin: Vec2, spacing: number): Vec2 {
+  let dx = anchor.x - origin.x;
+  let dz = anchor.z - origin.z;
+  const len0 = Math.hypot(dx, dz);
+  if (len0 < 1.25) {
+    dx = 1;
+    dz = 0;
+  } else {
+    dx /= len0;
+    dz /= len0;
+  }
+  const px = -dz;
+  const pz = dx;
+  const seed = (u.id * 1103515245 + (u.visualSeed | 0)) >>> 0;
+  const file = ((seed % 19) - 9) * spacing * 0.38;
+  const rank = (seed >>> 5) % 7;
+  const rankF = rank * spacing * 0.48;
+  return {
+    x: anchor.x - dx * rankF + px * file,
+    z: anchor.z - dz * rankF + pz * file,
+  };
+}
 
 export function nearestEnemyUnit(s: GameState, from: Vec2, maxD2: number): UnitRuntime | null {
   let best: UnitRuntime | null = null;
@@ -27,6 +74,27 @@ export function nearestEnemyUnit(s: GameState, from: Vec2, maxD2: number): UnitR
     if (d < bestD) {
       bestD = d;
       best = u;
+    }
+  }
+  return best;
+}
+
+/** Nearest enemy to `fromUnit` among those contesting a point (e.g. a Mana node). */
+function nearestEnemyContestingPoint(
+  s: GameState,
+  fromUnit: UnitRuntime,
+  origin: Vec2,
+  contestR2: number,
+): UnitRuntime | null {
+  let best: UnitRuntime | null = null;
+  let bestD = Infinity;
+  for (const o of s.units) {
+    if (o.team !== "enemy" || o.hp <= 0) continue;
+    if (dist2(origin, o) > contestR2) continue;
+    const d = dist2(fromUnit, o);
+    if (d < bestD) {
+      bestD = d;
+      best = o;
     }
   }
   return best;
@@ -113,6 +181,24 @@ function clampToWorldAndObstacles(s: GameState, u: UnitRuntime): void {
   resolveCircleAgainstMapObstacles(s.map, u, r);
 }
 
+/** Knockback velocity integration (world units/sec, exponential decay). */
+function integrateKnockback(s: GameState, u: UnitRuntime, stepScale: number): void {
+  if (u.hp <= 0) return;
+  const vx = u.vxImpulse;
+  const vz = u.vzImpulse;
+  if (Math.abs(vx) < 0.015 && Math.abs(vz) < 0.015) {
+    u.vxImpulse = 0;
+    u.vzImpulse = 0;
+    return;
+  }
+  u.x += vx * stepScale;
+  u.z += vz * stepScale;
+  const decay = Math.exp(-KNOCKBACK_DECAY_PER_SEC * stepScale);
+  u.vxImpulse *= decay;
+  u.vzImpulse *= decay;
+  clampToWorldAndObstacles(s, u);
+}
+
 /** Push overlapping units apart (all teams) so large armies keep readable spacing. */
 function applyUnitSeparation(s: GameState): void {
   const alive = s.units.filter((u) => u.hp > 0);
@@ -191,17 +277,27 @@ function applyUnitSeparation(s: GameState): void {
 
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
+  const half = s.map.world.halfExtents;
+  const stepU = (u: UnitRuntime) =>
+    u.speedPerSec * stepScale * tacticsFieldSpeedMult(s, u.team, u.x, u.z) * UNIT_MOVEMENT_SPEED_SCALE;
 
-  const anyEnemyCampAwake = s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
+  for (const u of s.units) {
+    if (u.hp <= 0) continue;
+    integrateKnockback(s, u, stepScale);
+  }
+
+  const anyEnemyCampAwake =
+    s.map.enemyCamps.length === 0 || s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
   if (anyEnemyCampAwake) {
-    const detect = ENEMY_UNIT_HUNT_DETECT;
+    const detect = enemyHuntDetectRadius(half);
     const d2 = detect * detect;
     for (const u of s.units) {
       if (u.team !== "enemy" || u.hp <= 0) continue;
       const tgt = nearestEnemyAttackTarget(s, u);
       if (!tgt) continue;
       if (dist2(u, tgt) > d2) continue;
-      moveToward(u, tgt, u.speedPerSec * stepScale);
+      const slot = formationRingAround(tgt, u, UNIT_FORMATION_SPACING * 0.42);
+      moveToward(u, slot, stepU(u));
       clampToWorldAndObstacles(s, u);
     }
   }
@@ -219,18 +315,42 @@ export function movement(s: GameState): void {
         clampToWorldAndObstacles(s, u);
         continue;
       }
+      const capIdx = u.order.captureTapIndex;
+      if (capIdx !== undefined) {
+        const tap = capIdx >= 0 && capIdx < s.taps.length ? s.taps[capIdx]! : null;
+        if (!tap || (tap.active && tap.ownerTeam === "player")) {
+          u.order = undefined;
+          continue;
+        }
+        const jx = ((u.id * 17) % 7) * 0.45 - 1.35;
+        const jz = ((u.id * 11) % 7) * 0.45 - 1.35;
+        u.order.x = tap.x + jx;
+        u.order.z = tap.z + jz;
+        const contestR2 = TAP_CAPTURE_CONTEST_RADIUS * TAP_CAPTURE_CONTEST_RADIUS;
+        const foeCap = nearestEnemyContestingPoint(s, u, tap, contestR2);
+        if (foeCap && dist2(u, foeCap) > u.range * u.range) {
+          moveUnitOnPath(s, u, foeCap, stepU(u));
+          continue;
+        }
+        if (foeCap) {
+          clampToWorldAndObstacles(s, u);
+          continue;
+        }
+        moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u));
+        continue;
+      }
       const foe = u.order.mode === "attack_move"
-        ? nearestEnemyUnit(s, u, Math.max(PLAYER_UNIT_HUNT_DETECT_MIN, u.range * PLAYER_UNIT_HUNT_DETECT_MULT) ** 2)
+        ? nearestEnemyUnit(s, u, playerAcquireRadius(half, u.range) ** 2)
         : null;
       if (foe && dist2(u, foe) > u.range * u.range) {
-        moveUnitOnPath(s, u, foe, u.speedPerSec * stepScale);
+        moveUnitOnPath(s, u, foe, stepU(u));
         continue;
       }
       if (foe) {
         clampToWorldAndObstacles(s, u);
         continue;
       }
-      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, u.speedPerSec * stepScale);
+      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u));
       if (arrived) {
         const next = u.order.queued.shift();
         if (next) {
@@ -245,15 +365,15 @@ export function movement(s: GameState): void {
     }
     const st = s.structures.find((x) => x.id === u.structureId);
     const hold = st?.holdOrders ?? false;
-    const detect = Math.max(PLAYER_UNIT_HUNT_DETECT_MIN, u.range * PLAYER_UNIT_HUNT_DETECT_MULT);
-    const foe = nearestEnemyUnit(s, u, detect * detect);
+    const detectR = playerAcquireRadius(half, u.range);
+    const foe = nearestEnemyUnit(s, u, detectR * detectR);
 
     // In Defense: units only engage foes that are near the wizard; otherwise
     // they ignore aggression and gather on the hero.
     const canEngage = foe && (!defense || dist2(foe, hero) <= defR2);
 
     if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
-      moveUnitOnPath(s, u, foe, u.speedPerSec * stepScale);
+      moveUnitOnPath(s, u, foe, stepU(u));
       continue;
     }
     if (canEngage) {
@@ -262,9 +382,13 @@ export function movement(s: GameState): void {
     }
     if (hold && !defense) {
       if (st) {
-        const jx = ((u.id * 13) % 10) * 0.55 - 2.5;
-        const jz = ((u.id * 7) % 11) * 0.5 - 2.5;
-        moveUnitOnPath(s, u, { x: st.x + jx, z: st.z + jz }, u.speedPerSec * stepScale);
+        const holdGoal = formationMarchSlot(
+          u,
+          { x: st.x, z: st.z },
+          { x: hero.x, z: hero.z },
+          UNIT_FORMATION_SPACING,
+        );
+        moveUnitOnPath(s, u, holdGoal, stepU(u));
       } else {
         clampToWorldAndObstacles(s, u);
       }
@@ -273,23 +397,26 @@ export function movement(s: GameState): void {
 
     let target: Vec2;
     if (defense) {
-      // Every friendly gathers on the wizard. Small radius offset keeps them from stacking.
-      target = { x: hero.x, z: hero.z };
+      target = formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.92);
     } else if (s.globalRallyActive) {
-      target = { x: s.globalRallyX, z: s.globalRallyZ };
+      const anchor = { x: s.globalRallyX, z: s.globalRallyZ };
+      target = formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING);
     } else {
       const near = dist2(u, hero) <= heroR2;
       if (near) {
-        const jx = ((u.id * 17) % 10) * 0.4 - 1.8;
-        const jz = ((u.id * 11) % 10) * 0.4 - 1.8;
-        target = { x: hero.x + jx, z: hero.z + jz };
+        target = formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.78);
       } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
-        target = { x: st.rallyX, z: st.rallyZ };
+        const anchor = { x: st.rallyX, z: st.rallyZ };
+        target = formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING);
       } else {
-        target = pushLaneTarget(s, u) ?? { x: u.x, z: u.z };
+        const pushed = pushLaneTarget(s, u);
+        const anchor = pushed ?? { x: hero.x, z: hero.z };
+        target = pushed
+          ? formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING)
+          : formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.78);
       }
     }
-    moveUnitOnPath(s, u, target, u.speedPerSec * stepScale);
+    moveUnitOnPath(s, u, target, stepU(u));
   }
 
   applyUnitSeparation(s);
@@ -330,7 +457,7 @@ function unitCaptureNodes(s: GameState): void {
     tap.ownerTeam = team;
     armTapClaimAnchor(tap);
     tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
-    s.lastFx = { kind: "claim", x: tap.x, z: tap.z, tick: s.tick };
+    pushFx(s, { kind: "claim", x: tap.x, z: tap.z });
     s.lastMessage = team === "player" ? "Unit squad captured a Mana node." : "Enemy units captured a Mana node.";
     tap.claimTeam = undefined;
     tap.claimTicksRemaining = undefined;

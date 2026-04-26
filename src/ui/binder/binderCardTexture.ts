@@ -147,11 +147,12 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
 
   if (isStructureEntry(e)) {
     const st = e as StructureCatalogEntry;
+    const popCap = st.localPopCap + (st.structureLocalPopCapBonus ?? 0);
     const cols = [
       { v: String(st.maxHp), l: "HP", color: "#e85555" },
       { v: `${st.buildSeconds}s`, l: "BUILD", color: "#6ab0ff" },
       { v: `${st.productionSeconds}s`, l: "PROD", color: "#d4b060" },
-      { v: `${st.producedPop}/${st.localPopCap}`, l: "POP", color: "#b090ff" },
+      { v: `${st.producedPop}/${popCap}`, l: "POP", color: "#b090ff" },
     ];
     for (let i = 0; i < 4; i++) {
       const cx = pad + colW * i + colW / 2;

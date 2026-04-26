@@ -42,9 +42,15 @@ export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
 /** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */
 export const ENEMY_UNIT_HUNT_DETECT = 118;
 
+/** Scales enemy hunt radius with `map.world.halfExtents` (large arenas need larger acquire). */
+export const ENEMY_HUNT_DETECT_MAP_MULT = 0.42;
+
 /** Player units (offense): larger than old `max(10, range*3)` so armies actually contest space. */
 export const PLAYER_UNIT_HUNT_DETECT_MULT = 6;
 export const PLAYER_UNIT_HUNT_DETECT_MIN = 28;
+
+/** Extra floor for player acquire radius from map half-extent (world units). */
+export const PLAYER_ACQUIRE_MAP_MULT = 0.22;
 
 /** Spatial hash cell size (world XZ) for unit–unit separation. */
 export const UNIT_SEPARATION_GRID = 3.5;
@@ -57,6 +63,15 @@ export const UNIT_SEPARATION_PASSES = 2;
 
 /** Max XZ displacement from separation in one pass (world units). */
 export const UNIT_SEPARATION_MAX_STEP = 1.6;
+
+/**
+ * Multiplies unit walk speed in `movement()` only (player + enemy units — not wizards).
+ * Lower leaves more time between contacts for strategy.
+ */
+export const UNIT_MOVEMENT_SPEED_SCALE = 0.52;
+
+/** Base spacing (world units) for formation slots when marching or gathering. */
+export const UNIT_FORMATION_SPACING = 2.7;
 
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
 export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
@@ -88,8 +103,30 @@ export const KEEP_MAX_HP = 900;
 export const KEEP_SWARM_PERIOD_SEC = 6;
 export const KEEP_ID = "wizard_keep";
 
-/** Army-wide population ceiling (sum of unit `pop`). High cap for stress tests / swarm play. */
+/** Army-wide population ceiling (legacy / doctrine card math only — production ignores caps). */
 export const GLOBAL_POP_CAP = 1000;
+
+/** Hard ceiling for `GLOBAL_POP_CAP + doctrine match bonuses` (prevents absurd overflow). */
+export const GLOBAL_POP_CAP_MAX = 9999;
+
+/**
+ * Procedural unit placeholder mesh: Swarm baseline width (world units). Each tier is
+ * `UNIT_MESH_SCALE_STEP`× larger (Line / Heavy / Titan) so Titan ≈ small tower footprint (~5.2u).
+ */
+export const UNIT_MESH_SWARM = 1.55;
+export const UNIT_MESH_SCALE_STEP = 1.5;
+
+/** Spatial cell size (world XZ) for combat nearest-neighbor queries. */
+export const COMBAT_SPATIAL_CELL = 11;
+
+/** Firestorm / spell knockback initial planar speed (world units/sec impulse integrated per tick). */
+export const SPELL_KNOCKBACK_SPEED = 9;
+
+/** Small knockback on melee AoE splash targets (world units/sec impulse). */
+export const SPELL_AOE_KNOCKBACK = 4.2;
+
+/** Exponential decay per second for unit knockback velocity. */
+export const KNOCKBACK_DECAY_PER_SEC = 7.5;
 
 /** Enough for Tap + first Relay + one Tier-1 structure in one beat (playtest pacing). */
 export const PLAYER_STARTING_FLUX = 280;
@@ -117,14 +154,42 @@ export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 12;
 export const FORTIFY_DURATION_SEC = 15;
 export const FORTIFY_INCOMING_DAMAGE_MULT = 0.5;
 
+/** Fortify field: ground AoE duration and radius (drag-and-drop like other spells). */
+export const FORTIFY_FIELD_RADIUS = 13;
+export const FORTIFY_FIELD_DURATION_SEC = 14;
+/** Allies in the field: move faster, hit harder, take slightly less from attacks. */
+export const FORTIFY_FIELD_ALLY_SPEED_MULT = 1.2;
+export const FORTIFY_FIELD_ALLY_DAMAGE_MULT = 1.14;
+export const FORTIFY_FIELD_ALLY_INCOMING_MULT = 0.9;
+/** Enemies in the field: slowed, weakened outgoing damage, take more damage. */
+export const FORTIFY_FIELD_ENEMY_SPEED_MULT = 0.76;
+export const FORTIFY_FIELD_ENEMY_DAMAGE_MULT = 0.8;
+export const FORTIFY_FIELD_ENEMY_INCOMING_MULT = 1.12;
+
 /** Firestorm: radius and burst damage to each enemy unit in the area. */
 export const FIRESTORM_RADIUS = 11;
 export const FIRESTORM_DAMAGE_PER_UNIT = 38;
+
+/** Cut Back (Reclaim line spell): corridor from the Wizard toward aim; damages enemy units in the strip. */
+export const CUT_LINE_LENGTH = 40;
+export const CUT_LINE_HALF_WIDTH = 3.5;
+export const CUT_LINE_DAMAGE_PER_UNIT = 32;
+
+/** Weapon reach thresholds for close / medium / long combat FX profiles (world units). */
+export const ATTACK_RANGE_CLOSE_MAX = 2.75;
+export const ATTACK_RANGE_MEDIUM_MAX = 5.35;
 
 /** Shatter (interim vs enemy relay): pick radius and burst damage; production pause when enemy structures exist uses structure runtime. */
 export const SHATTER_TARGET_RADIUS = 9;
 export const SHATTER_DAMAGE = 300;
 export const SHATTER_PRODUCTION_PAUSE_SEC = 10;
+/** Shatter: ground AoE to acquire first target, then chain lightning hops. */
+export const SHATTER_CAST_RADIUS = 12;
+export const SHATTER_CHAIN_RANGE = 15;
+/** Total targets struck: first hit in the cast ring, then up to five chain jumps. */
+export const SHATTER_CHAIN_MAX_TARGETS = 6;
+/** Per-hop damage multiplier after the first strike. */
+export const SHATTER_CHAIN_DAMAGE_FALLOFF = 0.72;
 
 /** Optional camp scenario: player units within this range of a camp origin damage the camp core while the camp is awake. */
 export const CAMP_CORE_ATTACK_RADIUS = 7;
@@ -132,7 +197,14 @@ export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
 export const ENEMY_WAVE_EVERY_TICKS = 12 * TICK_HZ;
-export const ENEMY_WAVE_GLOBAL_CAP = 22;
+/** Max living enemy units before camp waves stop adding more (stress-test scale). */
+export const ENEMY_WAVE_GLOBAL_CAP = 8000;
+/** Same cadence as camp waves: free Swarm batches from the Wizard Keep for parity with camp floods. */
+export const PLAYER_KEEP_WAVE_EVERY_TICKS = ENEMY_WAVE_EVERY_TICKS;
+/** Max living player units before keep reserve waves stop (matches enemy wave ceiling). */
+export const PLAYER_KEEP_WAVE_GLOBAL_CAP = ENEMY_WAVE_GLOBAL_CAP;
+/** Swarm count per reinforcement pulse (camps + keep both use this). */
+export const REINFORCEMENT_WAVE_BATCH = 40;
 
 /** Player-controlled hero. */
 export const HERO_SPEED = 11;
@@ -141,6 +213,10 @@ export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
 /** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
 export const HERO_CLAIM_RADIUS = 12;
+/** Player right-click near a Mana node: assign capture order within this radius of the node's center. */
+export const TAP_UNIT_ORDER_SNAP_RADIUS = 15;
+/** While capturing, only chase enemies within this radius of the node (stay focused on the objective). */
+export const TAP_CAPTURE_CONTEST_RADIUS = 26;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
 

@@ -30,8 +30,10 @@ import {
   inEnemyTerritory,
   meetsEnemyStructureRequirements,
   nearEnemyInfra,
+  pushFx,
   rand,
   shatterTapAnchor,
+  tacticsFieldSpeedMult,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
@@ -42,7 +44,7 @@ import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
 function emitFx(s: GameState, kind: CastFxKind, pos: { x: number; z: number }): void {
-  s.lastFx = { kind, x: pos.x, z: pos.z, tick: s.tick };
+  pushFx(s, { kind, x: pos.x, z: pos.z });
 }
 
 function moveEnemyHeroToward(s: GameState): void {
@@ -57,7 +59,7 @@ function moveEnemyHeroToward(s: GameState): void {
     return;
   }
   h.facing = Math.atan2(dx, dz);
-  const step = h.speedPerSec / TICK_HZ;
+  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "enemy", h.x, h.z);
   if (len <= step) {
     h.x = h.targetX;
     h.z = h.targetZ;
@@ -195,6 +197,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
     damageReductionUntilTick: 0,
     productionSilenceUntilTick: 0,
     holdOrders: false,
+    localPopCapBonus: 0,
   };
   s.structures.push(st);
   s.stats.structuresBuilt += 1;

@@ -98,6 +98,14 @@ export function stateChecksum(s: GameState): number {
   h = mix(h, s.armyStance === "defense" ? 1 : 0);
   h = mix(h, s.globalRallyActive ? 1 : 0);
   h = mix(h, s.rallyClickPending ? 1 : 0);
+  h = mix(h, s.tacticsFieldZones.length | 0);
+  for (const zf of s.tacticsFieldZones) {
+    h = mix(h, quant(zf.x));
+    h = mix(h, quant(zf.z));
+    h = mix(h, quant(zf.radius));
+    h = mix(h, zf.untilTick | 0);
+  }
+  h = mix(h, s.globalPopCapBonus | 0);
   h = mix(h, quant(s.globalRallyX));
   h = mix(h, quant(s.globalRallyZ));
   for (const er of s.enemyRelays) {

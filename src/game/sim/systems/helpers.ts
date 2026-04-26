@@ -1,3 +1,4 @@
+import { UNIT_MESH_SCALE_STEP, UNIT_MESH_SWARM } from "../../constants";
 import type { UnitSizeClass, Vec2 } from "../../types";
 
 export function dist2(a: Vec2, b: Vec2): number {
@@ -14,25 +15,16 @@ export const TRAMPLE: Record<UnitSizeClass, Partial<Record<UnitSizeClass, number
   Line: {},
 };
 
+/** Characteristic width/footprint for procedural unit placeholders (1.5× per tier from Swarm). */
+export function unitMeshLinearSize(size: UnitSizeClass): number {
+  const t = size === "Swarm" ? 0 : size === "Line" ? 1 : size === "Heavy" ? 2 : 3;
+  return UNIT_MESH_SWARM * UNIT_MESH_SCALE_STEP ** t;
+}
+
 /** Minimum center spacing in XZ so units (especially swarms) do not sit on one spot. */
 export function unitSeparationRadiusXZ(size: UnitSizeClass, flying?: boolean): number {
-  let r: number;
-  switch (size) {
-    case "Swarm":
-      r = 1.08;
-      break;
-    case "Line":
-      r = 1.48;
-      break;
-    case "Heavy":
-      r = 2.1;
-      break;
-    case "Titan":
-      r = 3.35;
-      break;
-  }
-  if (flying) r *= 0.78;
-  return r;
+  const r = 0.39 * unitMeshLinearSize(size);
+  return flying ? r * 0.78 : r;
 }
 
 export function unitStatsForCatalog(size: UnitSizeClass): {

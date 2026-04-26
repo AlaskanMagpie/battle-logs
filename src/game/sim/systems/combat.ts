@@ -4,10 +4,21 @@ import {
   CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK,
   FORTIFY_INCOMING_DAMAGE_MULT,
   FORWARD_BUILD_INCOMING_DAMAGE_MULT,
+  SPELL_AOE_KNOCKBACK,
   TAP_ANCHOR_STRIKE_RADIUS,
+  COMBAT_SPATIAL_CELL,
 } from "../../constants";
-import { shatterTapAnchor, type GameState, type StructureRuntime, type UnitRuntime } from "../../state";
+import {
+  classifyAttackRangeBand,
+  shatterTapAnchor,
+  tacticsFieldIncomingDamageMult,
+  tacticsFieldOutgoingDamageMult,
+  type GameState,
+  type StructureRuntime,
+  type UnitRuntime,
+} from "../../state";
 import { dist2, TRAMPLE } from "./helpers";
+import { buildCombatUnitBuckets, nearestFoeInBuckets, unitsNearXZ } from "../unitSpatial";
 
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   let d = attacker.dmgPerTick;
@@ -17,8 +28,10 @@ function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   return d;
 }
 
-function applyUnitDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
-  const d = physicalDamage(attacker, defender);
+function applyUnitDamage(s: GameState, attacker: UnitRuntime, defender: UnitRuntime): number {
+  let d = physicalDamage(attacker, defender);
+  d *= tacticsFieldOutgoingDamageMult(s, attacker.team, attacker.x, attacker.z);
+  d *= tacticsFieldIncomingDamageMult(s, defender.team, defender.x, defender.z);
   defender.hp -= d;
   if (attacker.trait === "lifesteal") {
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + d * 0.35);
@@ -26,29 +39,22 @@ function applyUnitDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   return d;
 }
 
-const COMBAT_MARK_MAX = 14;
+const COMBAT_MARK_MAX = 28;
+const cell = COMBAT_SPATIAL_CELL;
 
 export function combat(s: GameState): void {
   s.lastSiegeHit = null;
   s.combatHitMarks.length = 0;
   const markAttackers = new Set<number>();
+  const buckets = buildCombatUnitBuckets(s, cell);
 
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     const foeTeam = u.team === "player" ? "enemy" : "player";
-    let best: UnitRuntime | null = null;
-    let bestD = u.range * u.range;
-    for (const o of s.units) {
-      if (o.team !== foeTeam || o.hp <= 0) continue;
-      const d = dist2(u, o);
-      if (d <= bestD) {
-        bestD = d;
-        best = o;
-      }
-    }
+    const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell);
     if (!best) continue;
-    applyUnitDamage(u, best);
+    applyUnitDamage(s, u, best);
     if (s.combatHitMarks.length < COMBAT_MARK_MAX && !markAttackers.has(u.id)) {
       markAttackers.add(u.id);
       s.combatHitMarks.push({
@@ -63,15 +69,26 @@ export function combat(s: GameState): void {
         signal: u.signal,
         visualSeed: u.visualSeed,
         trait: u.trait,
+        rangeBand: classifyAttackRangeBand(u.range),
       });
     }
     if (u.aoeRadius && u.aoeRadius > 0) {
       const r2 = u.aoeRadius * u.aoeRadius;
-      for (const splash of s.units) {
-        if (splash === best || splash.team !== foeTeam || splash.hp <= 0) continue;
-        if (dist2(best, splash) <= r2) {
-          splash.hp -= physicalDamage(u, splash) * 0.6;
-        }
+      const near = unitsNearXZ(buckets, best.x, best.z, best, cell);
+      for (const splash of near) {
+        if (splash.team !== foeTeam || splash.hp <= 0) continue;
+        if (dist2(best, splash) > r2) continue;
+        const spBase = physicalDamage(u, splash) * 0.6;
+        const sp =
+          spBase *
+          tacticsFieldOutgoingDamageMult(s, u.team, u.x, u.z) *
+          tacticsFieldIncomingDamageMult(s, splash.team, splash.x, splash.z);
+        splash.hp -= sp;
+        const dx = splash.x - best.x;
+        const dz = splash.z - best.z;
+        const len = Math.hypot(dx, dz) || 1;
+        splash.vxImpulse += (dx / len) * SPELL_AOE_KNOCKBACK;
+        splash.vzImpulse += (dz / len) * SPELL_AOE_KNOCKBACK;
       }
     }
   }
@@ -92,8 +109,10 @@ export function combat(s: GameState): void {
     }
     if (best) {
       let incoming = u.dmgPerTick * 0.35;
+      incoming *= tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z);
       if (!best.complete && best.placementForward) incoming *= FORWARD_BUILD_INCOMING_DAMAGE_MULT;
       if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
+      if (best.team === "player") incoming *= tacticsFieldIncomingDamageMult(s, "player", best.x, best.z);
       best.hp -= incoming;
     }
   }
@@ -103,7 +122,12 @@ export function combat(s: GameState): void {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (s.hero.hp <= 0) break;
     if (dist2(u, s.hero) <= u.range * u.range) {
-      s.hero.hp = Math.max(0, s.hero.hp - u.dmgPerTick * 0.4);
+      const raw =
+        u.dmgPerTick *
+        0.4 *
+        tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z) *
+        tacticsFieldIncomingDamageMult(s, "player", s.hero.x, s.hero.z);
+      s.hero.hp = Math.max(0, s.hero.hp - raw);
     }
   }
 
@@ -112,7 +136,11 @@ export function combat(s: GameState): void {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (s.enemyHero.hp <= 0) break;
     if (dist2(u, s.enemyHero) <= u.range * u.range) {
-      s.enemyHero.hp = Math.max(0, s.enemyHero.hp - u.dmgPerTick);
+      const raw =
+        u.dmgPerTick *
+        tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
+        tacticsFieldIncomingDamageMult(s, "enemy", s.enemyHero.x, s.enemyHero.z);
+      s.enemyHero.hp = Math.max(0, s.enemyHero.hp - raw);
     }
   }
 
@@ -124,14 +152,26 @@ export function combat(s: GameState): void {
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
       if (dist2(u, er) <= u.range * u.range) {
-        er.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
+        const raw =
+          u.dmgPerTick *
+          0.5 *
+          buildingDmgMult *
+          tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
+          tacticsFieldIncomingDamageMult(s, "enemy", er.x, er.z);
+        er.hp -= raw;
         if (isSiege) s.lastSiegeHit = { x: er.x, z: er.z, tick: s.tick };
       }
     }
     for (const st of s.structures) {
       if (st.team !== "enemy") continue;
       if (dist2(u, st) <= u.range * u.range) {
-        st.hp -= u.dmgPerTick * 0.5 * buildingDmgMult;
+        const raw =
+          u.dmgPerTick *
+          0.5 *
+          buildingDmgMult *
+          tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
+          tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
+        st.hp -= raw;
         if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
       }
     }

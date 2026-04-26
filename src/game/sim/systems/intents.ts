@@ -9,6 +9,8 @@ import {
   HERO_TELEPORT_DEST_RADIUS,
   HERO_TELEPORT_UNIT_RADIUS,
   SHATTER_TARGET_RADIUS,
+  SPELL_KNOCKBACK_SPEED,
+  TAP_UNIT_ORDER_SNAP_RADIUS,
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
@@ -17,11 +19,12 @@ import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "..
 import {
   canPlaceStructureHere,
   canUseDoctrineSlot,
+  classifyAttackRangeBand,
   heroTeleportCooldownSeconds,
-  isKeep,
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
+  pushFx,
   resetHeroTeleportCooldown,
   type CastFxKind,
   type GameState,
@@ -38,6 +41,22 @@ const ALT_HOLD_PICK_RADIUS = 6;
 
 const PICK_STRUCTURE = 5;
 
+function tapIndexNearForCaptureOrder(s: GameState, pos: Vec2): number | null {
+  const r2 = TAP_UNIT_ORDER_SNAP_RADIUS * TAP_UNIT_ORDER_SNAP_RADIUS;
+  let best: number | null = null;
+  let bestD = r2;
+  for (let i = 0; i < s.taps.length; i++) {
+    const t = s.taps[i]!;
+    if (t.active && t.ownerTeam === "player") continue;
+    const d = dist2(pos, t);
+    if (d <= bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 export function orderPlayerUnits(
   s: GameState,
   ids: number[],
@@ -50,6 +69,7 @@ export function orderPlayerUnits(
     s.lastMessage = "No units selected.";
     return;
   }
+  const captureTapIdx = !queue && mode !== "stay" ? tapIndexNearForCaptureOrder(s, pos) : null;
   let n = 0;
   for (const id of chosen) {
     const u = s.units.find((x) => x.id === id && x.team === "player" && x.hp > 0);
@@ -61,19 +81,29 @@ export function orderPlayerUnits(
     }
     const jx = ((id * 17) % 9) - 4;
     const jz = ((id * 11) % 9) - 4;
-    const target = { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9 };
+    const tap = captureTapIdx !== null ? s.taps[captureTapIdx]! : null;
+    const target = tap
+      ? { x: tap.x + jx * 0.45, z: tap.z + jz * 0.45 }
+      : { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9 };
     if (queue && u.order) {
       u.order.queued.push(target);
     } else {
-      u.order = { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+      u.order =
+        captureTapIdx !== null
+          ? { mode, x: target.x, z: target.z, waypoints: [], queued: [], captureTapIndex: captureTapIdx }
+          : { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
     }
   }
   if (n > 0) {
     s.globalRallyActive = false;
-    s.lastMessage =
-      mode === "stay"
-        ? `${n} unit${n === 1 ? "" : "s"} holding position.`
-        : `${n} unit${n === 1 ? "" : "s"} ordered to ${mode === "attack_move" ? "attack-move" : "move"}.`;
+    if (captureTapIdx !== null) {
+      s.lastMessage = `${n} unit${n === 1 ? "" : "s"} committed to capture this Mana node (fight there until it is yours or they fall).`;
+    } else {
+      s.lastMessage =
+        mode === "stay"
+          ? `${n} unit${n === 1 ? "" : "s"} holding position.`
+          : `${n} unit${n === 1 ? "" : "s"} ordered to ${mode === "attack_move" ? "attack-move" : "move"}.`;
+    }
   }
 }
 
@@ -120,7 +150,7 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   }
   resetHeroTeleportCooldown(s);
   s.teleportClickPending = false;
-  s.lastFx = { kind: "lightning", x: s.hero.x, z: s.hero.z, tick: s.tick, fromX: from.x, fromZ: from.z };
+  pushFx(s, { kind: "lightning", x: s.hero.x, z: s.hero.z, fromX: from.x, fromZ: from.z });
   s.lastMessage = `Teleported Wizard squad (${carried.length} troops carried).`;
   logGame("move", `Teleport -> (${s.hero.x.toFixed(1)}, ${s.hero.z.toFixed(1)})`, s.tick);
 }
@@ -135,22 +165,6 @@ function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
     if (d <= maxD2 && d < bestD) {
       bestD = d;
       best = st.id;
-    }
-  }
-  return best;
-}
-
-function pickEnemyRelay(s: GameState, pos: Vec2): number | null {
-  let best: number | null = null;
-  let bestD = Infinity;
-  const maxD2 = PICK_STRUCTURE * PICK_STRUCTURE;
-  for (let i = 0; i < s.enemyRelays.length; i++) {
-    const er = s.enemyRelays[i]!;
-    if (er.hp <= 0) continue;
-    const d = dist2(pos, er);
-    if (d <= maxD2 && d < bestD) {
-      bestD = d;
-      best = i;
     }
   }
   return best;
@@ -198,6 +212,7 @@ function tryPlaceStructure(
     damageReductionUntilTick: 0,
     productionSilenceUntilTick: 0,
     holdOrders: false,
+    localPopCapBonus: 0,
   };
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
@@ -223,7 +238,7 @@ function consumeCommandSlot(s: GameState, slotIdx: number, cooldownSec: number, 
 }
 
 function emitFx(s: GameState, kind: CastFxKind, pos: Vec2): void {
-  s.lastFx = { kind, x: pos.x, z: pos.z, tick: s.tick };
+  pushFx(s, { kind, x: pos.x, z: pos.z });
 }
 
 /** Shift+click a friendly tower — instant next spawn, no Mana, no doctrine slot (replaces the old Muster spell). */
@@ -259,6 +274,63 @@ function emitSummonFx(s: GameState, catalogId: string, pos: Vec2): void {
   else emitFx(s, "reclaim_pulse", pos);
 }
 
+/** Unit direction from hero `hx,hz` toward `aim`; defaults to +X if aim is on the Wizard. */
+function aimUnitFromHero(hx: number, hz: number, aimX: number, aimZ: number): { ux: number; uz: number } {
+  let dx = aimX - hx;
+  let dz = aimZ - hz;
+  const d = Math.hypot(dx, dz);
+  if (d < 0.25) {
+    return { ux: 1, uz: 0 };
+  }
+  return { ux: dx / d, uz: dz / d };
+}
+
+function pointInCorridor(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  halfW: number,
+): boolean {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const ab2 = abx * abx + abz * abz;
+  const t = ab2 < 1e-8 ? 0 : Math.max(0, Math.min(1, (apx * abx + apz * abz) / ab2));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  const ddx = px - cx;
+  const ddz = pz - cz;
+  return ddx * ddx + ddz * ddz <= halfW * halfW;
+}
+
+function corridorKnockNormal(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): { nx: number; nz: number } {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const ab2 = abx * abx + abz * abz;
+  const t = ab2 < 1e-8 ? 0 : Math.max(0, Math.min(1, (apx * abx + apz * abz) / ab2));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  let nx = px - cx;
+  let nz = pz - cz;
+  const nlen = Math.hypot(nx, nz) || 1;
+  nx /= nlen;
+  nz /= nlen;
+  return { nx, nz };
+}
+
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   if (!DOCTRINE_COMMANDS_ENABLED) return;
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
@@ -273,38 +345,55 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   const usesLeft = Math.max(0, cmd.maxCharges - (s.doctrineCommandUses[slotIdx] ?? 0));
   const castSuffix = usesLeft > 0 ? `${usesLeft - 1} free uses left.` : "exhausted cast - triple cooldown.";
   switch (fx.type) {
-    case "recycle_structure": {
-      const stId = pickPlayerStructure(s, pos);
-      if (stId === null) {
-        s.lastMessage = "Recycle: click one of your structures.";
-        return;
+    case "aoe_line_damage": {
+      const hx = s.hero.x;
+      const hz = s.hero.z;
+      const { ux, uz } = aimUnitFromHero(hx, hz, pos.x, pos.z);
+      const L = fx.length;
+      const ex = hx + ux * L;
+      const ez = hz + uz * L;
+      const hw = fx.halfWidth;
+      for (const u of s.units) {
+        if (u.team !== "enemy" || u.hp <= 0) continue;
+        if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
+        u.hp -= fx.damage;
+        const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
+        u.vxImpulse += nx * SPELL_KNOCKBACK_SPEED;
+        u.vzImpulse += nz * SPELL_KNOCKBACK_SPEED;
       }
-      const st = s.structures.find((x) => x.id === stId);
-      if (!st || st.team !== "player") return;
-      if (isKeep(st)) {
-        s.lastMessage = "The Keep cannot be recycled.";
-        return;
+      for (const er of s.enemyRelays) {
+        if (er.hp <= 0) continue;
+        if (!pointInCorridor(er.x, er.z, hx, hz, ex, ez, hw)) continue;
+        er.hp -= fx.damage * 0.35;
       }
-      const target: Vec2 = { x: st.x, z: st.z };
-      const bdef = getCatalogEntry(st.catalogId);
-      if (bdef && isStructureEntry(bdef)) {
-        const refund = bdef.fluxCost * 0.9;
-        s.salvage += refund;
-        s.stats.salvageRecovered += refund;
-      }
-      s.units = s.units.filter((u) => u.structureId !== st.id);
-      s.structures = s.structures.filter((x) => x.id !== st.id);
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
-      emitFx(s, "lightning", target);
-      emitFx(s, "recycle", target);
-      s.lastMessage = "Recycle — structure scrapped, Salvage refunded.";
+      const mx = (hx + ex) * 0.5;
+      const mz = (hz + ez) * 0.5;
+      pushFx(s, { kind: "lightning", x: ex, z: ez, fromX: hx, fromZ: hz });
+      emitFx(s, "reclaim_pulse", { x: mx, z: mz });
+      pushFx(s, {
+        kind: "line_cleave",
+        x: ex,
+        z: ez,
+        fromX: hx,
+        fromZ: hz,
+        impactRadius: hw * 2,
+      });
+      s.lastMessage = `${cmd.name} — cleaving ${L}u; ${castSuffix}`;
       return;
     }
     case "aoe_damage": {
-      const r2 = fx.radius * fx.radius;
+      const r = fx.radius;
+      const r2 = r * r;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
-        if (dist2(u, pos) <= r2) u.hp -= fx.damage;
+        if (dist2(u, pos) > r2) continue;
+        u.hp -= fx.damage;
+        const dx = u.x - pos.x;
+        const dz = u.z - pos.z;
+        const len = Math.hypot(dx, dz) || 1;
+        u.vxImpulse += (dx / len) * SPELL_KNOCKBACK_SPEED;
+        u.vzImpulse += (dz / len) * SPELL_KNOCKBACK_SPEED;
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
@@ -313,45 +402,127 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
       emitFx(s, "lightning", pos);
       emitFx(s, "firestorm", pos);
+      pushFx(s, {
+        kind: "combat_boom",
+        x: pos.x,
+        z: pos.z,
+        impactRadius: r,
+        rangeBand: classifyAttackRangeBand(r),
+      });
       s.lastMessage = `${cmd.name} detonated; ${castSuffix}`;
       return;
     }
-    case "buff_structure": {
-      const stId = pickPlayerStructure(s, pos);
-      if (stId === null) {
-        s.lastMessage = `${cmd.name}: click one of your structures.`;
-        return;
-      }
-      const st = s.structures.find((x) => x.id === stId);
-      if (!st) return;
-      st.damageReductionUntilTick = s.tick + Math.round(fx.durationSeconds * TICK_HZ);
+    case "aoe_tactics_field": {
+      s.tacticsFieldZones.push({
+        x: pos.x,
+        z: pos.z,
+        radius: fx.radius,
+        untilTick: s.tick + Math.round(fx.durationSeconds * TICK_HZ),
+        allySpeedMult: fx.allySpeedMult,
+        allyDamageMult: fx.allyDamageMult,
+        allyIncomingDamageMult: fx.allyIncomingDamageMult,
+        enemySpeedMult: fx.enemySpeedMult,
+        enemyDamageMult: fx.enemyDamageMult,
+        enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
+      });
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
-      emitFx(s, "lightning", { x: st.x, z: st.z });
-      emitFx(s, "fortify", { x: st.x, z: st.z });
-      s.lastMessage = `${cmd.name}: ${fx.damageReductionPct}% damage reduction for ${fx.durationSeconds}s; ${castSuffix}`;
+      emitFx(s, "lightning", pos);
+      emitFx(s, "fortify", pos);
+      pushFx(s, {
+        kind: "combat_boom",
+        x: pos.x,
+        z: pos.z,
+        impactRadius: fx.radius,
+        rangeBand: classifyAttackRangeBand(fx.radius),
+      });
+      s.lastMessage = `${cmd.name}: ${fx.durationSeconds}s control field — allies empowered, enemies hindered; ${castSuffix}`;
       return;
     }
-    case "shatter_structure": {
-      const erIdx = pickEnemyRelay(s, pos);
-      if (erIdx === null) {
-        s.lastMessage = `${cmd.name}: click an enemy Dark Fortress.`;
+    case "aoe_shatter_chain": {
+      const used = new Set<string>();
+      let ox = pos.x;
+      let oz = pos.z;
+      let hits = 0;
+      const silenceR2 = SHATTER_TARGET_RADIUS * SHATTER_TARGET_RADIUS;
+      for (let hop = 0; hop < fx.maxTargets; hop++) {
+        const maxR2 = hop === 0 ? fx.castRadius * fx.castRadius : fx.chainRange * fx.chainRange;
+        let bestKey: string | null = null;
+        let bestD = maxR2;
+        let bx = 0;
+        let bz = 0;
+        for (let i = 0; i < s.enemyRelays.length; i++) {
+          const er = s.enemyRelays[i]!;
+          if (er.hp <= 0) continue;
+          const k = `r:${i}`;
+          if (used.has(k)) continue;
+          const d = dist2(er, { x: ox, z: oz });
+          if (d <= bestD) {
+            bestD = d;
+            bestKey = k;
+            bx = er.x;
+            bz = er.z;
+          }
+        }
+        for (const st of s.structures) {
+          if (st.team !== "enemy") continue;
+          const k = `s:${st.id}`;
+          if (used.has(k)) continue;
+          const d = dist2(st, { x: ox, z: oz });
+          if (d <= bestD) {
+            bestD = d;
+            bestKey = k;
+            bx = st.x;
+            bz = st.z;
+          }
+        }
+        for (const u of s.units) {
+          if (u.team !== "enemy" || u.hp <= 0) continue;
+          const k = `u:${u.id}`;
+          if (used.has(k)) continue;
+          const d = dist2(u, { x: ox, z: oz });
+          if (d <= bestD) {
+            bestD = d;
+            bestKey = k;
+            bx = u.x;
+            bz = u.z;
+          }
+        }
+        if (!bestKey) break;
+        const dmg = fx.damage * Math.pow(fx.chainDamageFalloff, hop);
+        used.add(bestKey);
+        pushFx(s, { kind: "lightning", x: bx, z: bz, fromX: ox, fromZ: oz });
+        if (hop === 0) emitFx(s, "shatter", { x: bx, z: bz });
+        if (bestKey.startsWith("r:")) {
+          const idx = Number(bestKey.slice(2));
+          const er = s.enemyRelays[idx]!;
+          er.hp -= dmg;
+          const silenceTick = s.tick + Math.round(fx.silenceSeconds * TICK_HZ);
+          er.silencedUntilTick = Math.max(er.silencedUntilTick, silenceTick);
+          for (const st of s.structures) {
+            if (st.team !== "enemy") continue;
+            if (dist2(st, { x: er.x, z: er.z }) <= silenceR2) {
+              st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick, silenceTick);
+            }
+          }
+        } else if (bestKey.startsWith("s:")) {
+          const sid = Number(bestKey.slice(2));
+          const st = s.structures.find((x) => x.id === sid);
+          if (st) st.hp -= dmg;
+        } else {
+          const uid = Number(bestKey.slice(2));
+          const u = s.units.find((x) => x.id === uid);
+          if (u) u.hp -= dmg;
+        }
+        hits++;
+        ox = bx;
+        oz = bz;
+      }
+      if (hits === 0) {
+        s.lastMessage = `${cmd.name}: no enemies in the cast ring — try dropping closer.`;
         return;
       }
-      const er = s.enemyRelays[erIdx]!;
-      er.hp -= fx.damage;
-      const silenceTick = s.tick + Math.round(fx.silenceSeconds * TICK_HZ);
-      er.silencedUntilTick = silenceTick;
-      const r2 = SHATTER_TARGET_RADIUS * SHATTER_TARGET_RADIUS;
-      for (const st of s.structures) {
-        if (st.team !== "enemy") continue;
-        if (dist2(st, { x: er.x, z: er.z }) <= r2) {
-          st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick, silenceTick);
-        }
-      }
       consumeCommandSlot(s, slotIdx, cmd.chargeCooldownSeconds, cmd.maxCharges);
-      emitFx(s, "lightning", { x: er.x, z: er.z });
-      emitFx(s, "shatter", { x: er.x, z: er.z });
-      s.lastMessage = `${cmd.name}: Fortress takes ${fx.damage} damage + ${fx.silenceSeconds}s silence; ${castSuffix}`;
+      s.lastMessage = `${cmd.name}: ${hits} chain strike${hits === 1 ? "" : "s"} (lightning); ${castSuffix}`;
       return;
     }
     case "noop": {

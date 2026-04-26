@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_CHANNEL_SEC,
@@ -10,7 +11,7 @@ import {
   TERRITORY_RADIUS,
   TICK_HZ,
 } from "../game/constants";
-import { unitStatsForCatalog } from "../game/sim/systems/helpers";
+import { unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
   findKeep,
@@ -36,19 +37,6 @@ import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbP
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 /** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
 const CAMERA_HERO_PIVOT_Y = 1.38;
-
-function unitScale(size: UnitSizeClass): number {
-  switch (size) {
-    case "Swarm":
-      return 0.72;
-    case "Line":
-      return 0.98;
-    case "Heavy":
-      return 1.48;
-    case "Titan":
-      return 2.15;
-  }
-}
 
 function structureDims(entry: StructureCatalogEntry | null): { w: number; h: number; d: number } {
   if (!entry) return { w: 3, h: 5, d: 3 };
@@ -76,6 +64,86 @@ function hsl(hex: number, dl: number): THREE.Color {
 
 function matFor(color: number, roughness = 0.82, metalness = 0.08): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+/** Limb/torso chunkiness on top of `unitMeshLinearSize` so classes read distinct at a glance. */
+function bipedBulkScale(size: UnitSizeClass): number {
+  switch (size) {
+    case "Swarm":
+      return 0.82;
+    case "Line":
+      return 0.95;
+    case "Heavy":
+      return 1.12;
+    case "Titan":
+      return 1.38;
+  }
+}
+
+/**
+ * Strong per–size-class palette (user request), still nudged by signal + team so factions stay readable.
+ */
+function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, team: "player" | "enemy"): number {
+  const basis = new THREE.Color(
+    size === "Swarm"
+      ? 0x3fd4c8
+      : size === "Line"
+        ? 0x9fe04a
+        : size === "Heavy"
+          ? 0xff8f2e
+          : 0xad7dff,
+  );
+  basis.lerp(new THREE.Color(signalColorHex(signal)), 0.26);
+  if (team === "player") basis.lerp(new THREE.Color(0x58b4ff), 0.2);
+  else basis.lerp(new THREE.Color(0xff6048), 0.22);
+  return basis.getHex();
+}
+
+/** Single merged mesh (GLB anchor): feet at y=0, jointless boxes for legs, torso, head, hanging arms. */
+function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferGeometry {
+  const b = bipedBulkScale(size);
+  const legH = 0.38 * L * b;
+  const spread = 0.11 * L * b;
+  const legW = 0.085 * L * b;
+  const legD = 0.095 * L * b;
+  const torsoW = 0.2 * L * b;
+  const torsoH = 0.22 * L * b;
+  const torsoD = 0.11 * L * b;
+  const headS = 0.12 * L * b;
+  const armLenV = 0.3 * L * b;
+  const armTh = 0.062 * L * b;
+
+  const cy = legH + torsoH * 0.5;
+  const shoulderY = legH + torsoH - armTh * 0.35;
+  const ax = torsoW * 0.5 + armTh * 0.65;
+
+  const parts: THREE.BufferGeometry[] = [];
+
+  const legL = new THREE.BoxGeometry(legW, legH, legD);
+  legL.translate(-spread, legH * 0.5, 0);
+  parts.push(legL);
+
+  const legR = new THREE.BoxGeometry(legW, legH, legD);
+  legR.translate(spread, legH * 0.5, 0);
+  parts.push(legR);
+
+  const torso = new THREE.BoxGeometry(torsoW, torsoH, torsoD);
+  torso.translate(0, cy, 0);
+  parts.push(torso);
+
+  const head = new THREE.BoxGeometry(headS, headS, headS * 0.92);
+  head.translate(0, legH + torsoH + headS * 0.46, 0);
+  parts.push(head);
+
+  const armL = new THREE.BoxGeometry(armTh, armLenV, armTh);
+  armL.translate(-ax, shoulderY - armLenV * 0.48, 0);
+  parts.push(armL);
+
+  const armR = new THREE.BoxGeometry(armTh, armLenV, armTh);
+  armR.translate(ax, shoulderY - armLenV * 0.48, 0);
+  parts.push(armR);
+
+  return mergeGeometries(parts, false);
 }
 
 /** Builds a reusable CanvasTexture-backed Sprite for floating world-space labels.
@@ -348,58 +416,19 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
 
 function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy", size: UnitSizeClass): THREE.Group {
   const g = new THREE.Group();
-  const s = unitScale(size);
+  const L = unitMeshLinearSize(size);
 
-  const sigColor = signalColorHex(signal);
-  const color = team === "enemy" ? hsl(sigColor, -0.18).getHex() : sigColor;
+  const color = bipedUnitColor(size, signal, team);
+  const geom = buildBipedMergedGeometry(size, L);
 
-  let body: THREE.Mesh;
-  if (size === "Swarm") {
-    body = new THREE.Mesh(
-      new THREE.ConeGeometry(s * 0.48, s * 1.05, 8),
-      matFor(color, 0.55, 0.1),
-    );
-    body.position.y = s * 0.52;
-  } else if (size === "Line") {
-    body = new THREE.Mesh(
-      new THREE.BoxGeometry(s, s * 1.1, s * 0.6),
-      matFor(color, 0.7, 0.1),
-    );
-    body.position.y = s * 0.55;
-  } else if (size === "Heavy") {
-    body = new THREE.Mesh(
-      new THREE.BoxGeometry(s * 1.1, s * 0.9, s * 1.1),
-      matFor(color, 0.78, 0.15),
-    );
-    body.position.y = s * 0.45;
-  } else {
-    body = new THREE.Mesh(
-      new THREE.CylinderGeometry(s * 0.55, s * 0.72, s * 1.4, 10),
-      matFor(color, 0.7, 0.18),
-    );
-    body.position.y = s * 0.7;
-  }
+  const rough =
+    size === "Swarm" ? 0.58 : size === "Line" ? 0.66 : size === "Heavy" ? 0.72 : 0.68;
+  const body = new THREE.Mesh(geom, matFor(color, rough, 0.08));
   body.castShadow = true;
+  body.receiveShadow = true;
   body.userData["isPlaceholder"] = true;
   g.add(body);
   (g.userData as Record<string, unknown>)["bodyMesh"] = body;
-
-  const ringColor = team === "player" ? 0x4da3ff : 0xff4d4d;
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(s * 0.62, s * 0.85, 24),
-    new THREE.MeshBasicMaterial({
-      color: ringColor,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.72,
-      depthWrite: false,
-      depthTest: false,
-      blending: THREE.AdditiveBlending,
-    }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.03;
-  g.add(ring);
 
   return g;
 }
@@ -466,13 +495,14 @@ export class GameRenderer {
   private ghost: THREE.Mesh | null = null;
   private cmdGhost: THREE.Mesh | null = null;
   private cmdGhostCore: THREE.Mesh | null = null;
+  /** Line-strip preview for aimed cleave spells (Cut Back). */
+  private cmdGhostLine: THREE.Mesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
   private readonly camGroundFwd = new THREE.Vector3();
   private readonly camGroundRight = new THREE.Vector3();
   private readonly fx: FxHost;
-  private lastFxTick = -1;
   private lastSiegeTick = -1;
   private currentState: GameState | null = null;
   private worldPlaneHalf = 0;
@@ -808,18 +838,22 @@ export class GameRenderer {
   private useGlb = false;
 
   private consumeCastEvents(state: GameState): void {
-    const fxEvt = state.lastFx;
-    if (fxEvt && fxEvt.tick !== this.lastFxTick) {
-      const boltFrom =
-        fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
-          ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
-          : undefined;
-      spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, {
-        ...boltFrom,
-        strikeVariant: fxEvt.strikeVariant,
-      });
-      if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
-      this.lastFxTick = fxEvt.tick;
+    const q = state.fxQueue;
+    if (q.length > 0) {
+      for (const fxEvt of q) {
+        const boltFrom =
+          fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
+            ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
+            : undefined;
+        spawnCastFx(this.fx, fxEvt.kind, { x: fxEvt.x, z: fxEvt.z }, {
+          ...boltFrom,
+          strikeVariant: fxEvt.strikeVariant,
+          impactRadius: fxEvt.impactRadius,
+          rangeBand: fxEvt.rangeBand,
+        });
+        if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
+      }
+      q.length = 0;
     }
     const siege = state.lastSiegeHit;
     if (siege && siege.tick !== this.lastSiegeTick) {
@@ -865,17 +899,69 @@ export class GameRenderer {
    * Ground ring + inner dot shown while dragging a command card so the player
    * can see where the spell will land (and, when relevant, the effect radius).
    * Pass `radius = null` for point-target commands; a small marker is drawn.
+   * When `line` is set, `pos` is the aim point and a corridor from `line.from*` toward `pos` is shown.
    */
   setCommandGhost(
     pos: { x: number; z: number } | null,
     radius: number | null,
     valid: boolean,
+    line?: { fromX: number; fromZ: number; length: number; halfWidth: number } | null,
   ): void {
     if (!pos) {
       if (this.cmdGhost) this.cmdGhost.visible = false;
       if (this.cmdGhostCore) this.cmdGhostCore.visible = false;
+      if (this.cmdGhostLine) this.cmdGhostLine.visible = false;
       return;
     }
+
+    if (line) {
+      if (this.cmdGhost) this.cmdGhost.visible = false;
+      if (this.cmdGhostCore) this.cmdGhostCore.visible = false;
+
+      let dx = pos.x - line.fromX;
+      let dz = pos.z - line.fromZ;
+      const d0 = Math.hypot(dx, dz);
+      if (d0 < 1e-3) {
+        dx = 1;
+        dz = 0;
+      } else {
+        dx /= d0;
+        dz /= d0;
+      }
+      const L = line.length;
+      const ex = line.fromX + dx * L;
+      const ez = line.fromZ + dz * L;
+      const cx = (line.fromX + ex) * 0.5;
+      const cz = (line.fromZ + ez) * 0.5;
+      const hw = line.halfWidth;
+
+      if (!this.cmdGhostLine) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0xc8ffe8,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.42,
+          depthWrite: false,
+          depthTest: false,
+          blending: THREE.AdditiveBlending,
+        });
+        this.cmdGhostLine = new THREE.Mesh(new THREE.BoxGeometry(1, 0.14, 1), mat);
+        this.cmdGhostLine.position.y = 0.1;
+        this.scene.add(this.cmdGhostLine);
+      }
+      const mesh = this.cmdGhostLine;
+      mesh.visible = true;
+      mesh.position.set(cx, 0.1, cz);
+      mesh.rotation.y = Math.atan2(ex - line.fromX, ez - line.fromZ);
+      (mesh.material as THREE.MeshBasicMaterial).color.set(valid ? 0xc8ffe8 : 0xffb0b8);
+      (mesh.material as THREE.MeshBasicMaterial).opacity = valid ? 0.42 : 0.36;
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.BoxGeometry(hw * 2, 0.14, L);
+      return;
+    }
+
+    if (this.cmdGhostLine) this.cmdGhostLine.visible = false;
+
     if (!this.cmdGhost) {
       const mat = new THREE.MeshBasicMaterial({
         color: 0xd87bff,
@@ -2206,7 +2292,7 @@ export class GameRenderer {
       obj.position.set(u.x, 0, u.z);
       const g = obj as THREE.Group;
       g.userData["unitId"] = u.id;
-      const h = unitScale(u.sizeClass) * 1.35;
+      const h = unitMeshLinearSize(u.sizeClass) * 1.22;
       const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
       const pair = this.ensureHpBarPair(g, "u", h, fg);
       this.setHpBarFrac(pair, u.maxHp > 0 ? u.hp / u.maxHp : 0);

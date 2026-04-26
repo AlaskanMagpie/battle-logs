@@ -1,5 +1,5 @@
 import { getCatalogEntry } from "../game/catalog";
-import { DOCTRINE_SLOT_COUNT, GLOBAL_POP_CAP, TICK_HZ } from "../game/constants";
+import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
@@ -219,7 +219,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         <div class="hud-chrome__stats">
           <span class="hud-stat hud-stat--econ">Mana <strong id="flux">0</strong></span>
           <span class="hud-stat hud-stat--econ">Salvage <strong id="salvage">0</strong></span>
-          <span class="hud-stat hud-stat--econ">Pop <strong id="pop">0</strong> / ${GLOBAL_POP_CAP}</span>
+          <span class="hud-stat hud-stat--econ">Pop <strong id="pop">0</strong></span>
           <span class="hud-stat hud-stat--econ">Tier <strong id="tier">1</strong></span>
           <span class="hud-stat hud-stat--field">Nodes <strong id="nodes">0</strong></span>
           <span class="hud-stat hud-stat--mode">Mode <strong id="mode">idle</strong></span>
@@ -405,14 +405,7 @@ export function updateHud(state: GameState): void {
   if (flux) flux.textContent = String(Math.floor(state.flux));
   if (salvage) salvage.textContent = String(Math.floor(state.salvage));
   const popVal = totalPlayerPop(state);
-  if (pop) {
-    pop.textContent = String(popVal);
-    const warnBand = Math.min(120, Math.max(8, Math.floor(GLOBAL_POP_CAP * 0.08)));
-    const near = popVal >= GLOBAL_POP_CAP - warnBand;
-    const full = popVal >= GLOBAL_POP_CAP;
-    pop.classList.toggle("cap-warn", near && !full);
-    pop.classList.toggle("cap-full", full);
-  }
+  if (pop) pop.textContent = String(popVal);
   if (tier) tier.textContent = String(wizardTier(state));
   if (nodes) nodes.textContent = String(claimedTapCount(state));
   if (mode) {

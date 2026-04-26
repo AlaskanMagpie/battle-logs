@@ -1,15 +1,12 @@
 import { getCatalogEntry } from "../../catalog";
-import { GLOBAL_POP_CAP, TICK_HZ } from "../../constants";
+import { TICK_HZ } from "../../constants";
 import {
   dominantSignal,
-  localPopForEnemyStructure,
-  localPopForStructure,
   meetsEnemyStructureRequirements,
   meetsSignalRequirements,
+  pushFx,
   rand,
   randU32,
-  totalEnemyPop,
-  totalPlayerPop,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
@@ -58,10 +55,12 @@ function pushSpawnedUnit(s: GameState, st: StructureRuntime, team: "player" | "e
     flying: def.unitFlying,
     damageVsStructuresMult: def.producedDamageVsStructuresMult ?? 1,
     signal: dominantSignal(def),
+    vxImpulse: 0,
+    vzImpulse: 0,
   };
   s.units.push(u);
   if (team === "player") s.stats.unitsProduced += 1;
-  s.lastFx = { kind: spawnFxKindForUnit(def.producedSizeClass), x: u.x, z: u.z, tick: s.tick };
+  pushFx(s, { kind: spawnFxKindForUnit(def.producedSizeClass), x: u.x, z: u.z });
 }
 
 export function spawnPlayerUnit(s: GameState, st: StructureRuntime): void {
@@ -79,6 +78,10 @@ export function buildProgress(s: GameState): void {
     if (st.buildTicksRemaining <= 0) {
       st.complete = true;
       st.buildTicksRemaining = 0;
+      const def = getCatalogEntry(st.catalogId);
+      if (def && isStructureEntry(def) && typeof def.structureLocalPopCapBonus === "number") {
+        st.localPopCapBonus = def.structureLocalPopCapBonus;
+      }
     }
   }
 }
@@ -95,27 +98,8 @@ export function production(s: GameState): void {
     st.productionTicksRemaining -= 1;
     if (st.productionTicksRemaining > 0) continue;
 
-    const localCap = def.localPopCap;
-    const local = localPopForStructure(s, st.id);
-    const global = totalPlayerPop(s);
-    const defPop = unitStatsForCatalog(def.producedSizeClass).pop;
-    const maxFitLocal = Math.floor((localCap - local) / defPop);
-    const maxFitGlobal = Math.floor((GLOBAL_POP_CAP - global) / defPop);
-    const n = Math.min(maxFitLocal, maxFitGlobal);
-    if (n < 1) {
-      if (st.productionTicksRemaining <= 0) {
-        if (maxFitLocal < 1) s.lastMessage = `${def.name}: local pop cap reached (waiting…).`;
-        else s.lastMessage = `Global pop cap reached (${GLOBAL_POP_CAP}). Free a slot to resume production.`;
-      }
-      st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
-      continue;
-    }
-
-    for (let i = 0; i < n; i++) spawnPlayerUnit(s, st);
-    s.lastMessage =
-      n === 1
-        ? `${def.name} produced a ${def.producedSizeClass}.`
-        : `${def.name} produced ${n}× ${def.producedSizeClass}.`;
+    spawnPlayerUnit(s, st);
+    s.lastMessage = `${def.name} produced a ${def.producedSizeClass}.`;
     st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
   }
 
@@ -130,19 +114,7 @@ export function production(s: GameState): void {
     st.productionTicksRemaining -= 1;
     if (st.productionTicksRemaining > 0) continue;
 
-    const localCap = def.localPopCap;
-    const local = localPopForEnemyStructure(s, st.id);
-    const global = totalEnemyPop(s);
-    const defPop = unitStatsForCatalog(def.producedSizeClass).pop;
-    const maxFitLocal = Math.floor((localCap - local) / defPop);
-    const maxFitGlobal = Math.floor((GLOBAL_POP_CAP - global) / defPop);
-    const n = Math.min(maxFitLocal, maxFitGlobal);
-    if (n < 1) {
-      st.productionTicksRemaining = Math.round(0.5 * TICK_HZ);
-      continue;
-    }
-
-    for (let i = 0; i < n; i++) spawnEnemyUnit(s, st);
+    spawnEnemyUnit(s, st);
     st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
   }
 }

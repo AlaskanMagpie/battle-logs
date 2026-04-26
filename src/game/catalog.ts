@@ -1,12 +1,25 @@
 import {
+  CUT_LINE_DAMAGE_PER_UNIT,
+  CUT_LINE_HALF_WIDTH,
+  CUT_LINE_LENGTH,
   DOCTRINE_SLOT_COUNT,
   FIRESTORM_DAMAGE_PER_UNIT,
   FIRESTORM_RADIUS,
-  FORTIFY_DURATION_SEC,
-  FORTIFY_INCOMING_DAMAGE_MULT,
+  FORTIFY_FIELD_ALLY_DAMAGE_MULT,
+  FORTIFY_FIELD_ALLY_INCOMING_MULT,
+  FORTIFY_FIELD_ALLY_SPEED_MULT,
+  FORTIFY_FIELD_DURATION_SEC,
+  FORTIFY_FIELD_ENEMY_DAMAGE_MULT,
+  FORTIFY_FIELD_ENEMY_INCOMING_MULT,
+  FORTIFY_FIELD_ENEMY_SPEED_MULT,
+  FORTIFY_FIELD_RADIUS,
   KEEP_ID,
   KEEP_MAX_HP,
   KEEP_SWARM_PERIOD_SEC,
+  SHATTER_CAST_RADIUS,
+  SHATTER_CHAIN_DAMAGE_FALLOFF,
+  SHATTER_CHAIN_MAX_TARGETS,
+  SHATTER_CHAIN_RANGE,
   SHATTER_DAMAGE,
   SHATTER_PRODUCTION_PAUSE_SEC,
 } from "./constants";
@@ -195,6 +208,8 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     chargeCooldownSeconds: 13,
     aura: { kind: "safe_deploy_radius", radius: 10, value: 1 },
     producedFlavor: "Line soldiers (balanced melee)",
+    matchGlobalPopCapBonus: 400,
+    structureLocalPopCapBonus: 4,
   },
   {
     id: "raid_nest",
@@ -307,7 +322,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
 const COMMAND_DATA: CommandCatalogEntry[] = [
   {
     id: "recycle",
-    name: "Recycle",
+    name: "Cut Back",
     kind: "command",
     fluxCost: 40,
     requiredRelayTier: 1,
@@ -316,7 +331,12 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     salvagePctOnCast: 100,
     maxCharges: 2,
     chargeCooldownSeconds: 11,
-    effect: { type: "recycle_structure" },
+    effect: {
+      type: "aoe_line_damage",
+      length: CUT_LINE_LENGTH,
+      halfWidth: CUT_LINE_HALF_WIDTH,
+      damage: CUT_LINE_DAMAGE_PER_UNIT,
+    },
   },
   {
     id: "fortify",
@@ -330,9 +350,15 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     maxCharges: 2,
     chargeCooldownSeconds: 13,
     effect: {
-      type: "buff_structure",
-      damageReductionPct: Math.round((1 - FORTIFY_INCOMING_DAMAGE_MULT) * 100),
-      durationSeconds: FORTIFY_DURATION_SEC,
+      type: "aoe_tactics_field",
+      radius: FORTIFY_FIELD_RADIUS,
+      durationSeconds: FORTIFY_FIELD_DURATION_SEC,
+      allySpeedMult: FORTIFY_FIELD_ALLY_SPEED_MULT,
+      allyDamageMult: FORTIFY_FIELD_ALLY_DAMAGE_MULT,
+      allyIncomingDamageMult: FORTIFY_FIELD_ALLY_INCOMING_MULT,
+      enemySpeedMult: FORTIFY_FIELD_ENEMY_SPEED_MULT,
+      enemyDamageMult: FORTIFY_FIELD_ENEMY_DAMAGE_MULT,
+      enemyIncomingDamageMult: FORTIFY_FIELD_ENEMY_INCOMING_MULT,
     },
   },
   {
@@ -364,9 +390,13 @@ const COMMAND_DATA: CommandCatalogEntry[] = [
     maxCharges: 1,
     chargeCooldownSeconds: 18,
     effect: {
-      type: "shatter_structure",
+      type: "aoe_shatter_chain",
+      castRadius: SHATTER_CAST_RADIUS,
+      chainRange: SHATTER_CHAIN_RANGE,
+      maxTargets: SHATTER_CHAIN_MAX_TARGETS,
       damage: SHATTER_DAMAGE,
       silenceSeconds: SHATTER_PRODUCTION_PAUSE_SEC,
+      chainDamageFalloff: SHATTER_CHAIN_DAMAGE_FALLOFF,
     },
   },
 ];
@@ -399,14 +429,14 @@ export function getCatalogEntry(id: string | null | undefined): CatalogEntry | n
  */
 export function commandTargetingHint(entry: CommandCatalogEntry): string {
   switch (entry.effect.type) {
-    case "recycle_structure":
-      return "Drop on one of your structures to scrap it.";
-    case "buff_structure":
-      return "Drop on one of your structures to shield it.";
-    case "shatter_structure":
-      return "Drop on an enemy Relay.";
+    case "aoe_line_damage":
+      return "Aim from your Wizard: a long cut sweeps toward where you drop.";
+    case "aoe_tactics_field":
+      return "Drop on the ground: allies inside move faster and hit harder; enemies are slowed and weakened.";
+    case "aoe_shatter_chain":
+      return "Drop on the ground: strikes the nearest hostile in the ring, then chain lightning jumps to more targets.";
     case "aoe_damage":
-      return "Drop near enemy units (needs a friendly nearby).";
+      return "Drop on the ground — burns enemies in the blast ring.";
     case "noop":
       return "Drop anywhere to cast.";
   }
@@ -415,12 +445,14 @@ export function commandTargetingHint(entry: CommandCatalogEntry): string {
 /** One-word target label for a command (used as a compact card caption). */
 export function commandTargetingLabel(entry: CommandCatalogEntry): string {
   switch (entry.effect.type) {
-    case "recycle_structure":
-    case "buff_structure":
-    case "shatter_structure":
-      return "Enemy Relay";
+    case "aoe_line_damage":
+      return "Enemy line";
+    case "aoe_tactics_field":
+      return "Ground zone";
+    case "aoe_shatter_chain":
+      return "Ground chain";
     case "aoe_damage":
-      return "Enemy area";
+      return "Ground blast";
     case "noop":
       return "Anywhere";
   }
@@ -430,5 +462,17 @@ export function commandTargetingLabel(entry: CommandCatalogEntry): string {
 export function commandEffectRadius(entry: CommandCatalogEntry): number | null {
   const fx = entry.effect;
   if (fx.type === "aoe_damage") return fx.radius;
+  if (fx.type === "aoe_line_damage") return fx.length * 0.5;
+  if (fx.type === "aoe_tactics_field") return fx.radius;
+  if (fx.type === "aoe_shatter_chain") return fx.castRadius;
+  return null;
+}
+
+/** When non-null, the in-world command ghost is a line strip from the Wizard toward the cursor. */
+export function commandLineGhostPreview(
+  entry: CommandCatalogEntry,
+): { length: number; halfWidth: number } | null {
+  const fx = entry.effect;
+  if (fx.type === "aoe_line_damage") return { length: fx.length, halfWidth: fx.halfWidth };
   return null;
 }

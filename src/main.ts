@@ -1,5 +1,6 @@
 import {
   commandEffectRadius,
+  commandLineGhostPreview,
   commandTargetingHint,
   getCatalogEntry,
 } from "./game/catalog";
@@ -310,8 +311,18 @@ function wireDoctrineDragToMap(
     // Command / spell card.
     renderer.setPlacementGhost(null, false);
     const radius = commandEffectRadius(entry);
+    const linePrev = commandLineGhostPreview(entry);
     if (hit) {
-      renderer.setCommandGhost(hit, radius, true);
+      if (linePrev) {
+        renderer.setCommandGhost(hit, null, true, {
+          fromX: st.hero.x,
+          fromZ: st.hero.z,
+          length: linePrev.length,
+          halfWidth: linePrev.halfWidth,
+        });
+      } else {
+        renderer.setCommandGhost(hit, radius, true);
+      }
     } else {
       renderer.setCommandGhost(null, null, false);
     }
@@ -842,7 +853,17 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
         renderer.setPlacementGhost(null, false);
         const slotErr = canUseDoctrineSlot(state, slot);
         const valid = !slotErr;
-        renderer.setCommandGhost(hit, commandEffectRadius(entry), valid);
+        const linePrev = commandLineGhostPreview(entry);
+        if (linePrev) {
+          renderer.setCommandGhost(hit, null, valid, {
+            fromX: state.hero.x,
+            fromZ: state.hero.z,
+            length: linePrev.length,
+            halfWidth: linePrev.halfWidth,
+          });
+        } else {
+          renderer.setCommandGhost(hit, commandEffectRadius(entry), valid);
+        }
         return;
       }
       renderer.setCommandGhost(null, null, false);

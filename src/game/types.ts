@@ -158,6 +158,9 @@ export interface StructureAura {
 
 export type UnitTrait = "lifesteal";
 
+/** Melee / breath / artillery reach bucket for combat FX. */
+export type AttackRangeBand = "close" | "medium" | "long";
+
 export interface StructureCatalogEntry {
   id: string;
   name: string;
@@ -195,13 +198,35 @@ export interface StructureCatalogEntry {
   producedFlavor?: string;
   /** Extra damage multiplier when this structure's units attack enemy structures (e.g. Siege Works). */
   producedDamageVsStructuresMult?: number;
+  /** Added to `GLOBAL_POP_CAP` for this match when this card is in the doctrine loadout (prematch binder). */
+  matchGlobalPopCapBonus?: number;
+  /** Added to this spawner's local pop cap once the structure finishes building. */
+  structureLocalPopCapBonus?: number;
 }
 
 export type CommandEffect =
-  | { type: "recycle_structure" }
+  | { type: "aoe_line_damage"; length: number; halfWidth: number; damage: number }
   | { type: "aoe_damage"; radius: number; damage: number }
-  | { type: "buff_structure"; damageReductionPct: number; durationSeconds: number }
-  | { type: "shatter_structure"; damage: number; silenceSeconds: number }
+  | {
+      type: "aoe_tactics_field";
+      radius: number;
+      durationSeconds: number;
+      allySpeedMult: number;
+      allyDamageMult: number;
+      allyIncomingDamageMult: number;
+      enemySpeedMult: number;
+      enemyDamageMult: number;
+      enemyIncomingDamageMult: number;
+    }
+  | {
+      type: "aoe_shatter_chain";
+      castRadius: number;
+      chainRange: number;
+      maxTargets: number;
+      damage: number;
+      silenceSeconds: number;
+      chainDamageFalloff: number;
+    }
   | { type: "noop" };
 
 export interface CommandCatalogEntry {

@@ -1,9 +1,12 @@
-import { ENEMY_WAVE_EVERY_TICKS, ENEMY_WAVE_GLOBAL_CAP, GLOBAL_POP_CAP } from "../../constants";
-import { rand, randU32, totalEnemyPop, type GameState } from "../../state";
+import {
+  ENEMY_WAVE_EVERY_TICKS,
+  ENEMY_WAVE_GLOBAL_CAP,
+  PLAYER_KEEP_WAVE_EVERY_TICKS,
+  PLAYER_KEEP_WAVE_GLOBAL_CAP,
+  REINFORCEMENT_WAVE_BATCH,
+} from "../../constants";
+import { findKeep, rand, randU32, type GameState } from "../../state";
 import { unitStatsForCatalog } from "./helpers";
-
-/** Swarm reinforcements per wave tick (same moment, clamped by unit cap + pop cap). */
-const ENEMY_WAVE_BATCH = 5;
 
 /**
  * While at least one enemy camp is awake, periodically spawn Swarm reinforcements
@@ -23,10 +26,7 @@ export function maybeEnemyReinforcements(s: GameState): void {
   const dmgMult = s.map.difficulty?.enemyDmgMult ?? 1;
   const st = unitStatsForCatalog("Swarm");
   const hp = Math.max(1, Math.round(st.maxHp * hpMult));
-  const globalPop = totalEnemyPop(s);
-  const maxByPop = Math.floor((GLOBAL_POP_CAP - globalPop) / st.pop);
-  if (maxByPop < 1) return;
-  const batch = Math.min(ENEMY_WAVE_BATCH, roomUnits, maxByPop);
+  const batch = Math.min(REINFORCEMENT_WAVE_BATCH, roomUnits);
 
   for (let i = 0; i < batch; i++) {
     s.units.push({
@@ -43,7 +43,51 @@ export function maybeEnemyReinforcements(s: GameState): void {
       range: st.range,
       dmgPerTick: st.dmgPerTick * dmgMult,
       visualSeed: randU32(s),
+      vxImpulse: 0,
+      vzImpulse: 0,
     });
   }
   s.stats.enemyUnitsSpawned += batch;
+}
+
+/**
+ * Periodic Swarm batches from the Wizard Keep — same cadence/cap as camp waves, and only
+ * while at least one enemy camp is awake (matches when `maybeEnemyReinforcements` runs).
+ */
+export function maybePlayerKeepReinforcements(s: GameState): void {
+  const awakeCamps = s.map.enemyCamps.filter((c) => s.enemyCampAwake[c.id]);
+  if (awakeCamps.length === 0) return;
+  if (s.tick === 0 || s.tick % PLAYER_KEEP_WAVE_EVERY_TICKS !== 0) return;
+  const keep = findKeep(s);
+  if (!keep || keep.hp <= 0) return;
+
+  const alive = s.units.reduce((n, u) => (u.team === "player" && u.hp > 0 ? n + 1 : n), 0);
+  const roomUnits = PLAYER_KEEP_WAVE_GLOBAL_CAP - alive;
+  if (roomUnits < 1) return;
+
+  const st = unitStatsForCatalog("Swarm");
+  const hp = st.maxHp;
+  const batch = Math.min(REINFORCEMENT_WAVE_BATCH, roomUnits);
+
+  for (let i = 0; i < batch; i++) {
+    s.units.push({
+      id: s.nextId.unit++,
+      team: "player",
+      structureId: null,
+      x: keep.x + (rand(s) - 0.5) * 4,
+      z: keep.z + (rand(s) - 0.5) * 4,
+      hp,
+      maxHp: hp,
+      sizeClass: "Swarm",
+      pop: st.pop,
+      speedPerSec: st.speedPerSec,
+      range: st.range,
+      dmgPerTick: st.dmgPerTick,
+      visualSeed: randU32(s),
+      signal: "Bastion",
+      vxImpulse: 0,
+      vzImpulse: 0,
+    });
+  }
+  s.stats.unitsProduced += batch;
 }

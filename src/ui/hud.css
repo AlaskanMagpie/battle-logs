@@ -3021,34 +3021,34 @@ button.hud-btn--armed::after {
   transform: translate(-50%, -50%);
   animation: spell-aoe-inner 1.35s ease-in-out infinite;
 }
-.spell-card-viz--buff_structure .spell-card-viz__aoe-ring--outer {
+.spell-card-viz--aoe_tactics_field .spell-card-viz__aoe-ring--outer {
   border-color: rgba(106, 225, 255, 0.38);
   opacity: 0.55;
 }
-.spell-card-viz--buff_structure .spell-card-viz__aoe-ring--inner {
+.spell-card-viz--aoe_tactics_field .spell-card-viz__aoe-ring--inner {
   border-color: rgba(255, 217, 104, 0.4);
   opacity: 0.5;
 }
-.spell-card-viz--recycle_structure .spell-card-viz__aoe-ring--outer {
-  border-radius: 10px;
-  width: calc(46% * var(--spell-aoe));
-  height: calc(46% * var(--spell-aoe));
-  border: 2px dashed rgba(180, 190, 210, 0.55);
-  transform: translate(-50%, -50%);
-  animation: spell-aoe-dashed 2.2s linear infinite;
+.spell-card-viz--aoe_line_damage .spell-card-viz__aoe-ring--outer {
+  border-radius: 4px;
+  width: calc(92% * var(--spell-aoe));
+  height: calc(22% * var(--spell-aoe));
+  border: 2px solid rgba(255, 120, 200, 0.42);
+  transform: translate(-50%, -50%) rotate(-8deg);
+  animation: spell-aoe-cut-outer 1.45s ease-in-out infinite;
 }
-.spell-card-viz--recycle_structure .spell-card-viz__aoe-ring--inner {
-  border-radius: 8px;
-  width: calc(30% * var(--spell-aoe));
-  height: calc(30% * var(--spell-aoe));
-  border: 1px solid rgba(220, 225, 235, 0.35);
-  transform: translate(-50%, -50%);
-  animation: spell-aoe-inner-recycle 1.6s ease-in-out infinite;
+.spell-card-viz--aoe_line_damage .spell-card-viz__aoe-ring--inner {
+  border-radius: 3px;
+  width: calc(78% * var(--spell-aoe));
+  height: calc(12% * var(--spell-aoe));
+  border: 2px solid rgba(150, 255, 210, 0.38);
+  transform: translate(-50%, -50%) rotate(-8deg);
+  animation: spell-aoe-cut-inner 1.25s ease-in-out infinite;
 }
-.spell-card-viz--shatter_structure .spell-card-viz__aoe-ring--outer {
+.spell-card-viz--aoe_shatter_chain .spell-card-viz__aoe-ring--outer {
   border-color: rgba(143, 214, 255, 0.5);
 }
-.spell-card-viz--shatter_structure .spell-card-viz__aoe-ring--inner {
+.spell-card-viz--aoe_shatter_chain .spell-card-viz__aoe-ring--inner {
   border-color: rgba(200, 179, 255, 0.48);
 }
 .spell-card-viz--noop .spell-card-viz__aoe-ring--outer {
@@ -3164,22 +3164,38 @@ button.hud-btn--armed::after {
   animation-name: spell-shock-b;
   animation-delay: 0.1s;
 }
-.spell-card-viz__ghost-scraps {
+.spell-card-viz__slash-ribbons {
   position: absolute;
   inset: 0;
 }
-.spell-card-viz__scrap {
+.spell-card-viz__slash {
   position: absolute;
   left: 50%;
-  top: 44%;
-  width: clamp(5px, 10cqw, 12px);
-  height: clamp(5px, 10cqw, 12px);
-  background: linear-gradient(145deg, #b8bcc8, #6a6f7a);
-  border-radius: 1px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-  transform: translate(-50%, -50%) rotate(calc(var(--scrap-i) / 6 * 1turn + 12deg)) translateY(-10px);
-  animation: spell-scrap-tumble 1.2s ease-in-out infinite;
-  animation-delay: calc(var(--scrap-i) * -0.11s);
+  top: 46%;
+  width: clamp(42%, 52cqw, 78%);
+  height: 3px;
+  margin-left: -21%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 140, 210, 0.85), rgba(170, 255, 210, 0.9), transparent);
+  box-shadow: 0 0 10px rgba(255, 120, 200, 0.45);
+  transform: translate(-50%, -50%) rotate(calc(-10deg + var(--slash-i) * 4deg))
+    translateY(calc(-6px + var(--slash-i) * 5px));
+  opacity: 0.75;
+  animation: spell-slash-shear 1.15s ease-in-out infinite;
+  animation-delay: calc(var(--slash-i) * -0.12s);
+}
+.spell-card-viz__ghost--cut_line::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 48%;
+  height: 3px;
+  transform: translate(-50%, -50%) rotate(-10deg);
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(255, 130, 200, 0.95), rgba(170, 255, 215, 0.85), transparent);
+  box-shadow: 0 0 12px rgba(255, 110, 200, 0.55);
+  animation: spell-slash-core 0.95s ease-in-out infinite;
 }
 .spell-card-viz__ghost--noop::before {
   content: "";
@@ -3224,20 +3240,50 @@ button.hud-btn--armed::after {
     transform: translate(-50%, -50%) scale(1.04);
   }
 }
-@keyframes spell-aoe-inner-recycle {
+@keyframes spell-aoe-cut-outer {
   0%,
   100% {
-    opacity: 0.35;
-    transform: translate(-50%, -50%) scale(0.96);
+    opacity: 0.48;
+    transform: translate(-50%, -50%) rotate(-8deg) scaleX(0.94);
   }
   50% {
-    opacity: 0.62;
-    transform: translate(-50%, -50%) scale(1.03);
+    opacity: 0.82;
+    transform: translate(-50%, -50%) rotate(-8deg) scaleX(1.02);
   }
 }
-@keyframes spell-aoe-dashed {
-  to {
-    transform: translate(-50%, -50%) rotate(1turn);
+@keyframes spell-aoe-cut-inner {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: translate(-50%, -50%) rotate(-8deg) scaleX(0.92);
+  }
+  50% {
+    opacity: 0.78;
+    transform: translate(-50%, -50%) rotate(-8deg) scaleX(1.06);
+  }
+}
+@keyframes spell-slash-shear {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translate(-50%, -50%) rotate(calc(-10deg + var(--slash-i) * 4deg)) translateY(calc(-6px + var(--slash-i) * 5px))
+      scaleX(0.9);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) rotate(calc(-10deg + var(--slash-i) * 4deg)) translateY(calc(-6px + var(--slash-i) * 5px))
+      scaleX(1.05);
+  }
+}
+@keyframes spell-slash-core {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translate(-50%, -50%) rotate(-10deg) scaleX(0.88);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) rotate(-10deg) scaleX(1.05);
   }
 }
 @keyframes spell-ember-twinkle {
@@ -3306,17 +3352,6 @@ button.hud-btn--armed::after {
     opacity: 0;
   }
 }
-@keyframes spell-scrap-tumble {
-  0%,
-  100% {
-    transform: translate(-50%, -50%) rotate(calc(var(--scrap-i) / 6 * 1turn + 12deg)) translateY(-10px) rotate(0deg);
-    opacity: 0.85;
-  }
-  50% {
-    transform: translate(-50%, -50%) rotate(calc(var(--scrap-i) / 6 * 1turn + 12deg)) translateY(-18px) rotate(140deg);
-    opacity: 0.45;
-  }
-}
 @keyframes spell-noop-pulse {
   0%,
   100% {
@@ -3335,7 +3370,7 @@ button.hud-btn--armed::after {
   .spell-card-viz__crack,
   .spell-card-viz__ghost::before,
   .spell-card-viz__ghost::after,
-  .spell-card-viz__scrap {
+  .spell-card-viz__slash {
     animation: none !important;
   }
   .spell-card-viz__aoe-ring--outer {
@@ -3563,6 +3598,12 @@ button.hud-btn--armed::after {
   flex-direction: column;
   gap: 6px;
   overflow: hidden;
+}
+.tcg--layout-v2 .dc-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: hsla(var(--tcg-h), 42%, 78%, 0.88);
 }
 .tcg--layout-v2 .dc-body--compact {
   padding: 4px 6px 6px;

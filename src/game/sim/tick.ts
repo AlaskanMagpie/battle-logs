@@ -9,7 +9,7 @@ import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
 import { applyPlayerIntents } from "./systems/intents";
 import { buildProgress, production } from "./systems/production";
-import { maybeEnemyReinforcements } from "./systems/waves";
+import { maybeEnemyReinforcements, maybePlayerKeepReinforcements } from "./systems/waves";
 import { loseCheck, winCheck } from "./systems/winlose";
 
 export { applyPlayerIntents } from "./systems/intents";
@@ -17,6 +17,9 @@ export { applyPlayerIntents } from "./systems/intents";
 /** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
 export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   if (s.phase === "win" || s.phase === "lose") return;
+  if (s.tacticsFieldZones.length > 0) {
+    s.tacticsFieldZones = s.tacticsFieldZones.filter((z) => z.untilTick > s.tick);
+  }
   tickDoctrineCooldowns(s);
   tickHeroTeleportCooldown(s);
   applyPlayerIntents(s, intents);
@@ -27,6 +30,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   auras(s);
   wakeCamps(s);
   maybeEnemyReinforcements(s);
+  maybePlayerKeepReinforcements(s);
   heroSystem(s);
   enemyHeroSystem(s);
   movement(s);

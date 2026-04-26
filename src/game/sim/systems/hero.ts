@@ -1,7 +1,7 @@
 import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import { armTapClaimAnchor, type GameState } from "../../state";
+import { armTapClaimAnchor, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 import { tryPlayerHeroStrike } from "./heroStrike";
@@ -45,7 +45,7 @@ function moveHeroToward(s: GameState): void {
     return;
   }
   h.facing = Math.atan2(dx, dz);
-  const step = h.speedPerSec / TICK_HZ;
+  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
   if (len <= step) {
     h.x = h.targetX;
     h.z = h.targetZ;
@@ -72,7 +72,7 @@ function applyWasd(s: GameState): boolean {
   dx /= len;
   dz /= len;
   h.facing = Math.atan2(dx, dz);
-  const step = HERO_WASD_SPEED / TICK_HZ;
+  const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
   h.x += dx * step;
   h.z += dz * step;
   const half = s.map.world.halfExtents;
@@ -155,7 +155,7 @@ export function heroSystem(s: GameState): void {
           tap.ownerTeam = "player";
           armTapClaimAnchor(tap);
           tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
-          s.lastFx = { kind: "claim", x: tap.x, z: tap.z, tick: s.tick };
+          pushFx(s, { kind: "claim", x: tap.x, z: tap.z });
           s.lastMessage = `Node claimed (+1 Mana/sec). Territory expanded.`;
           logGame("claim", `Mana node ${tap.defId} claimed`, s.tick);
         }

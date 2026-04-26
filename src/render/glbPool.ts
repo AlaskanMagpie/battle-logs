@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getCatalogEntry } from "../game/catalog";
+import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
 
 let manifest: string[] | undefined;
@@ -89,16 +90,21 @@ function pickFileForClass(kind: UnitSizeClass | "hero", files: string[]): string
   return files[idx % files.length] ?? files[0] ?? null;
 }
 
-/** Team albedo push so GLBs keep an immediate blue-vs-red read. */
+/** Team albedo push so GLBs keep an immediate blue-vs-red read (multiply + slight anchor lerp). */
 function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
-  const mul = team === "enemy" ? new THREE.Color(1.16, 0.62, 0.62) : new THREE.Color(0.68, 0.88, 1.18);
+  const mul = team === "enemy" ? new THREE.Color(1.12, 0.64, 0.64) : new THREE.Color(0.58, 0.88, 1.14);
+  const anchor = team === "enemy" ? new THREE.Color(0xef6a5a) : new THREE.Color(0x6ec9ff);
+  const lerp = team === "enemy" ? 0.26 : 0.3;
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || !m.material) return;
     const mats = Array.isArray(m.material) ? m.material : [m.material];
     for (const raw of mats) {
       const mat = raw as THREE.MeshStandardMaterial;
-      if (mat.isMeshStandardMaterial && mat.color) mat.color.multiply(mul);
+      if (mat.isMeshStandardMaterial && mat.color) {
+        mat.color.multiply(mul);
+        mat.color.lerp(anchor, lerp);
+      }
     }
   });
 }
@@ -221,7 +227,7 @@ export async function requestGlbForUnit(
   placeholder: THREE.Mesh,
   team: TeamId = "player",
 ): Promise<void> {
-  const extent = kind === "Swarm" ? 1.4 : kind === "Line" ? 1.9 : kind === "Heavy" ? 2.6 : 3.4;
+  const extent = unitMeshLinearSize(kind) * 0.95;
   await attachGlbForClass(kind, placeholder, extent, team);
 }
 
@@ -230,7 +236,7 @@ export async function requestGlbForHero(placeholder: THREE.Mesh): Promise<void> 
 }
 
 /** Line unit default max extent in `requestGlbForUnit` — towers scale relative to this. */
-const UNIT_EXTENT_LINE = 1.9;
+const UNIT_EXTENT_LINE = unitMeshLinearSize("Line");
 
 /** Player towers: GLB is normalized so max axis ≈ this (≥ 4× Line unit silhouette). */
 export const TOWER_GLB_TARGET_EXTENT = UNIT_EXTENT_LINE * 4;

@@ -22,9 +22,14 @@ import {
   TAP_NODES_PER_SIDE,
   TERRITORY_RADIUS,
   TICK_HZ,
+  GLOBAL_POP_CAP,
+  GLOBAL_POP_CAP_MAX,
+  ATTACK_RANGE_CLOSE_MAX,
+  ATTACK_RANGE_MEDIUM_MAX,
 } from "./constants";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
+  AttackRangeBand,
   CatalogEntry,
   GamePhase,
   MapData,
@@ -43,13 +48,14 @@ export type CastFxKind =
   | "shatter"
   | "fortify"
   | "muster"
-  | "recycle"
+  | "line_cleave"
   | "claim"
   | "lightning"
   | "hero_strike"
   | "spark_burst"
   | "ground_crack"
-  | "reclaim_pulse";
+  | "reclaim_pulse"
+  | "combat_boom";
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
@@ -68,6 +74,8 @@ export interface CombatHitMark {
   /** Stable per-unit hash for FX variety (spark seeds, fork count). */
   visualSeed: number;
   trait?: UnitTrait;
+  /** Reach bucket for layered zap / cone / boom reads in the renderer. */
+  rangeBand?: AttackRangeBand;
 }
 
 /** Wizard melee burst palette (both heroes). */
@@ -92,24 +100,42 @@ export interface CastFxEvent {
   fromZ?: number;
   /** When `kind === "hero_strike"`, picks elemental cone + bolt colors. */
   strikeVariant?: HeroStrikeFxVariant;
+  /** Ground boom / shock disc radius for `combat_boom` and similar. */
+  impactRadius?: number;
+  rangeBand?: AttackRangeBand;
 }
 
 /** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */
+const FX_QUEUE_CAP = 48;
+
+/** Classify weapon reach for combat FX (close / medium / long). */
+export function classifyAttackRangeBand(range: number): AttackRangeBand {
+  if (range <= ATTACK_RANGE_CLOSE_MAX) return "close";
+  if (range <= ATTACK_RANGE_MEDIUM_MAX) return "medium";
+  return "long";
+}
+
+/** Queue a cast / spell / proc FX event (multiple per tick supported). */
+export function pushFx(s: GameState, evt: Omit<CastFxEvent, "tick"> & { tick?: number }): void {
+  const tick = evt.tick ?? s.tick;
+  if (s.fxQueue.length >= FX_QUEUE_CAP) s.fxQueue.shift();
+  s.fxQueue.push({ ...evt, tick } as CastFxEvent);
+}
+
 export function emitHeroStrikeFx(
   s: GameState,
   target: Vec2,
   from: Vec2,
   strikeVariant: HeroStrikeFxVariant,
 ): void {
-  s.lastFx = {
+  pushFx(s, {
     kind: "hero_strike",
     x: target.x,
     z: target.z,
-    tick: s.tick,
     fromX: from.x,
     fromZ: from.z,
     strikeVariant,
-  };
+  });
 }
 
 export type ArmyStance = "offense" | "defense";
@@ -209,6 +235,8 @@ export interface StructureRuntime {
   productionSilenceUntilTick: number;
   /** Hold orders — produced units don't advance to rally, only engage foes in range. */
   holdOrders: boolean;
+  /** Extra local pop cap from catalog `structureLocalPopCapBonus` applied when build completes. */
+  localPopCapBonus: number;
 }
 
 export interface UnitRuntime {
@@ -234,6 +262,9 @@ export interface UnitRuntime {
   /** Bonus vs enemy relays / structures (Siege Works). Default 1 when unset. */
   damageVsStructuresMult?: number;
   order?: UnitOrderRuntime;
+  /** Knockback velocity XZ (world units/sec), decayed in movement. */
+  vxImpulse: number;
+  vzImpulse: number;
 }
 
 export type UnitOrderMode = "move" | "attack_move" | "stay";
@@ -244,6 +275,11 @@ export interface UnitOrderRuntime {
   z: number;
   waypoints: Vec2[];
   queued: Vec2[];
+  /**
+   * When set, this order is a commitment to that Mana node index in `GameState.taps`:
+   * move/fight there until your team owns the node or this unit dies — no "arrived and idle" early exit.
+   */
+  captureTapIndex?: number;
 }
 
 export interface MatchStats {
@@ -256,6 +292,20 @@ export interface MatchStats {
   commandsCast: number;
   /** Enemy units spawned this match (initial camps + reinforcements). Win "routed" only counts if this is > 0. */
   enemyUnitsSpawned: number;
+}
+
+/** Player Fortify (and similar): persistent ground zone that buffs allies and debuffs enemies. */
+export interface TacticsFieldZone {
+  x: number;
+  z: number;
+  radius: number;
+  untilTick: number;
+  allySpeedMult: number;
+  allyDamageMult: number;
+  allyIncomingDamageMult: number;
+  enemySpeedMult: number;
+  enemyDamageMult: number;
+  enemyIncomingDamageMult: number;
 }
 
 export interface GameState {
@@ -307,8 +357,10 @@ export interface GameState {
   stats: MatchStats;
   /** Per camp id: remaining HP for optional scenario core (see `EnemyCampDef.coreMaxHp`). */
   enemyCampCoreHp: Record<string, number>;
-  /** Most recent spell cast event; renderer consumes and clears each sync. */
-  lastFx: CastFxEvent | null;
+  /** Pending cast / proc FX for the renderer (drained each frame). */
+  fxQueue: CastFxEvent[];
+  /** Doctrine loadout bonus: sum of `matchGlobalPopCapBonus` from structure cards in slots. */
+  globalPopCapBonus: number;
   /** One-shot flag: at least one player unit dealt bonus damage to an enemy building this tick. Set by combat.ts, consumed by renderer. */
   lastSiegeHit: { x: number; z: number; tick: number } | null;
   /** Player-controlled hero wizard. */
@@ -319,9 +371,51 @@ export interface GameState {
   enemyFlux: number;
   /** Enemy auto-build: last placed catalog id (soft diversity so AI does not spam one tower). */
   enemyAiLastBuildCatalogId: string | null;
+  /** Active Fortify-style fields (tick-based expiry). */
+  tacticsFieldZones: TacticsFieldZone[];
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
+function inTacticsFieldAt(zf: TacticsFieldZone, x: number, z: number, tick: number): boolean {
+  if (zf.untilTick <= tick) return false;
+  const dx = x - zf.x;
+  const dz = z - zf.z;
+  return dx * dx + dz * dz <= zf.radius * zf.radius;
+}
+
+/** Movement speed multiplier from active tactics fields at (x,z). */
+export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: number): number {
+  let m = 1;
+  for (const zf of s.tacticsFieldZones) {
+    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (team === "player") m *= zf.allySpeedMult;
+    else m *= zf.enemySpeedMult;
+  }
+  return team === "player" ? Math.min(1.45, m) : Math.max(0.5, m);
+}
+
+/** Outgoing attack damage multiplier for a team at (x,z). */
+export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
+  let m = 1;
+  for (const zf of s.tacticsFieldZones) {
+    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (team === "player") m *= zf.allyDamageMult;
+    else m *= zf.enemyDamageMult;
+  }
+  return team === "player" ? Math.min(1.55, m) : Math.max(0.55, m);
+}
+
+/** Incoming damage multiplier for a team at (x,z) (lower = tougher). */
+export function tacticsFieldIncomingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
+  let m = 1;
+  for (const zf of s.tacticsFieldZones) {
+    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (team === "player") m *= zf.allyIncomingDamageMult;
+    else m *= zf.enemyIncomingDamageMult;
+  }
+  return team === "player" ? Math.max(0.72, m) : Math.min(1.5, m);
+}
+
 export function rand(s: GameState): number {
   let x = s.rngState | 0;
   x ^= x << 13;
@@ -545,7 +639,22 @@ function spawnKeep(state: GameState): void {
     damageReductionUntilTick: 0,
     productionSilenceUntilTick: 0,
     holdOrders: false,
+    localPopCapBonus: 0,
   });
+}
+
+function doctrineMatchGlobalPopCapBonus(slots: (string | null)[]): number {
+  let sum = 0;
+  for (const id of slots) {
+    const e = getCatalogEntry(id);
+    if (e && isStructureEntry(e) && typeof e.matchGlobalPopCapBonus === "number") sum += e.matchGlobalPopCapBonus;
+  }
+  return Math.min(Math.max(0, GLOBAL_POP_CAP_MAX - GLOBAL_POP_CAP), sum);
+}
+
+/** Army-wide pop cap for this match (base + doctrine loadout bonuses). */
+export function effectiveGlobalPopCap(s: GameState): number {
+  return Math.min(GLOBAL_POP_CAP_MAX, GLOBAL_POP_CAP + s.globalPopCapBonus);
 }
 
 export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
@@ -556,6 +665,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       : [...rawIn, ...Array.from({ length: DOCTRINE_SLOT_COUNT - rawIn.length }, () => null)];
   const slots = normalizeDoctrineSlotsForMatch(rawSlots);
   const rt = initDoctrineRuntime(slots);
+  const globalPopCapBonus = doctrineMatchGlobalPopCapBonus(slots);
 
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
   const taps: TapRuntime[] =
@@ -672,11 +782,13 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       enemyUnitsSpawned: 0,
     },
     enemyCampCoreHp: {},
-    lastFx: null,
+    fxQueue: [],
+    globalPopCapBonus,
     lastSiegeHit: null,
     hero,
     enemyHero,
     enemyAiLastBuildCatalogId: null,
+    tacticsFieldZones: [],
   };
 
   spawnKeep(state);
@@ -713,6 +825,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
         range: base.range,
         dmgPerTick: base.dmgPerTick * dmgMult,
         visualSeed: randU32(state),
+        vxImpulse: 0,
+        vzImpulse: 0,
       });
     }
   }

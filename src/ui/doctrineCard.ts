@@ -1,5 +1,4 @@
 import { commandEffectRadius, getCatalogEntry } from "../game/catalog";
-import { COMMAND_FRIENDLY_PRESENCE_RADIUS } from "../game/constants";
 import type {
   CatalogEntry,
   CommandCatalogEntry,
@@ -9,6 +8,17 @@ import type {
   UnitSizeClass,
 } from "../game/types";
 import { isCommandEntry, isStructureEntry } from "../game/types";
+
+function structurePopCapLine(e: StructureCatalogEntry): string {
+  const cap = e.localPopCap + (e.structureLocalPopCapBonus ?? 0);
+  return `${e.producedPop}/${cap}`;
+}
+
+function matchArmyPopBonusNote(e: StructureCatalogEntry): string {
+  const b = e.matchGlobalPopCapBonus;
+  if (!b) return "";
+  return `<p class="dc-note">+${b} global pop cap this match while this doctrine card is in your loadout.</p>`;
+}
 
 function dominantSignalFromEntry(e: CatalogEntry): SignalType | undefined {
   if (!e.signalTypes.length) return undefined;
@@ -61,38 +71,39 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
   const fx = e.effect;
   const payLine = `Costs ${e.fluxCost} mana · ${e.salvagePctOnCast}% of that cost goes to Salvage · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
   switch (fx.type) {
-    case "recycle_structure":
+    case "aoe_line_damage":
       return {
-        target: "One of your finished towers (the Keep cannot be picked).",
+        target: "Aim from your Wizard toward the enemy tide — the cut runs forward a fixed distance.",
         rolls: [
-          "Destroys the tower and removes any units tied to it.",
-          "You gain Salvage equal to about 90% of that tower's original build price.",
+          `Corridor ${fx.length}u long × ${fx.halfWidth * 2}u wide: each enemy unit inside takes ${fx.damage} damage.`,
+          "Enemy Dark Fortresses crossed by the corridor take reduced damage from this spell.",
         ],
         payLine,
       };
     case "aoe_damage":
       return {
-        target: `Ground point; a friendly unit or tower must be within ${COMMAND_FRIENDLY_PRESENCE_RADIUS} world units of the blast center.`,
+        target: "Ground point — drag onto the map and release.",
         rolls: [
           `Ring radius ${fx.radius}: every enemy unit inside takes ${fx.damage} damage.`,
           "Enemy Dark Fortresses touched by the ring take half that damage from this spell.",
         ],
         payLine,
       };
-    case "buff_structure":
+    case "aoe_tactics_field":
       return {
-        target: "One of your finished towers.",
+        target: "Ground zone — drag onto the map and release.",
         rolls: [
-          `For ${fx.durationSeconds}s incoming damage to that tower is reduced by ${fx.damageReductionPct}% (multiplicative with other effects).`,
+          `For ${fx.durationSeconds}s, radius ${fx.radius}: player units and your Wizard move faster (${fx.allySpeedMult}×) and deal more damage (${fx.allyDamageMult}×).`,
+          `Enemies inside move slower (${fx.enemySpeedMult}×), deal less damage (${fx.enemyDamageMult}×), and take more (${fx.enemyIncomingDamageMult}× incoming).`,
         ],
         payLine,
       };
-    case "shatter_structure":
+    case "aoe_shatter_chain":
       return {
-        target: "Enemy Dark Fortress — click the fortress itself.",
+        target: `Ground point — first hit picks the nearest hostile within ${fx.castRadius}u of the drop.`,
         rolls: [
-          `The fortress loses ${fx.damage} HP.`,
-          `Its production is silenced for ${fx.silenceSeconds}s; nearby enemy towers can catch the same silence window.`,
+          `Up to ${fx.maxTargets} strikes (first in the cast ring, then up to ${fx.maxTargets - 1} chain jumps up to ${fx.chainRange}u): fortresses, towers, and troops.`,
+          `Primary damage ${fx.damage} (each hop multiplies by ${fx.chainDamageFalloff}); Dark Fortresses silenced ${fx.silenceSeconds}s with splash silence on nearby enemy towers.`,
         ],
         payLine,
       };
@@ -338,8 +349,9 @@ function spellAoeScale(e: CommandCatalogEntry): string {
     return (0.84 + t * 0.36).toFixed(3);
   }
   const fx = e.effect;
-  if (fx.type === "shatter_structure") return "0.78";
-  if (fx.type === "recycle_structure" || fx.type === "buff_structure") return "0.5";
+  if (fx.type === "aoe_shatter_chain") return "0.78";
+  if (fx.type === "aoe_tactics_field") return "0.72";
+  if (fx.type === "aoe_line_damage") return "0.88";
   if (fx.type === "noop") return "0.55";
   return "0.65";
 }
@@ -348,12 +360,12 @@ function spellGhostClass(e: CommandCatalogEntry): string {
   switch (e.effect.type) {
     case "aoe_damage":
       return "spell-card-viz__ghost--firestorm";
-    case "buff_structure":
+    case "aoe_tactics_field":
       return "spell-card-viz__ghost--fortify";
-    case "shatter_structure":
+    case "aoe_shatter_chain":
       return "spell-card-viz__ghost--shatter";
-    case "recycle_structure":
-      return "spell-card-viz__ghost--recycle";
+    case "aoe_line_damage":
+      return "spell-card-viz__ghost--cut_line";
     default:
       return "spell-card-viz__ghost--noop";
   }
@@ -375,10 +387,10 @@ function spellAoeCrackLines(n: number): string {
   return parts.join("");
 }
 
-function spellRecycleCubes(n: number): string {
+function spellSlashRibbons(n: number): string {
   const parts: string[] = [];
   for (let i = 0; i < n; i++) {
-    parts.push(`<span class="spell-card-viz__scrap" style="--scrap-i:${i}"></span>`);
+    parts.push(`<span class="spell-card-viz__slash" style="--slash-i:${i}"></span>`);
   }
   return parts.join("");
 }
@@ -392,12 +404,12 @@ function spellCardVizHtml(e: CommandCatalogEntry): string {
   let aoeDecor = "";
   if (fxType === "aoe_damage") {
     aoeDecor = `<div class="spell-card-viz__embers" aria-hidden="true">${spellAoeEmberDots(10)}</div>`;
-  } else if (fxType === "shatter_structure") {
+  } else if (fxType === "aoe_shatter_chain") {
     aoeDecor = `<div class="spell-card-viz__cracks" aria-hidden="true">${spellAoeCrackLines(6)}</div>`;
   }
   let ghostDecor = "";
-  if (fxType === "recycle_structure") {
-    ghostDecor = `<div class="spell-card-viz__ghost-scraps" aria-hidden="true">${spellRecycleCubes(6)}</div>`;
+  if (fxType === "aoe_line_damage") {
+    ghostDecor = `<div class="spell-card-viz__slash-ribbons" aria-hidden="true">${spellSlashRibbons(5)}</div>`;
   }
   return `<div class="spell-card-viz spell-card-viz--${escapeHtml(fxType)}" data-spell-effect="${escapeHtml(fxType)}" style="--spell-aoe:${aoe}">
     <div class="spell-card-viz__aoe" aria-hidden="true">
@@ -474,7 +486,7 @@ function dmStatsOneLine(e: CatalogEntry): string {
   if (isCommandEntry(e)) {
     return `${e.fluxCost} · ${e.chargeCooldownSeconds}s · ${e.salvagePctOnCast}%`;
   }
-  return `${e.maxHp} HP · ${e.buildSeconds} / ${e.productionSeconds}s · ${e.producedPop}/${e.localPopCap}`;
+  return `${e.maxHp} HP · ${e.buildSeconds} / ${e.productionSeconds}s · ${structurePopCapLine(e)}`;
 }
 
 function dcHeroTopTags(cmd: boolean, classOrSpell: string, cdSeconds: number): string {
@@ -615,7 +627,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
   const statsLine = dmStatsOneLine(e);
   const statsTitle = isCommandEntry(e)
     ? commandSpellTooltipSummary(e as CommandCatalogEntry)
-    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${e.productionSeconds}s spawn · ${e.producedPop}/${e.localPopCap} pop`;
+    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${e.productionSeconds}s spawn · ${structurePopCapLine(e)} pop`;
   const spellFx = cmd ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
   const statsBlock = cmd
     ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry))}</div>`
@@ -687,7 +699,7 @@ export function tcgCardFullHtml(
         { v: `${e.buildSeconds}s`, l: "BUILD", t: "build" },
         { v: `${e.productionSeconds}s`, l: "PROD", t: "prod" },
         {
-          v: `${e.producedPop}/${e.localPopCap}`,
+          v: structurePopCapLine(e as StructureCatalogEntry),
           l: "POP / CAP",
           t: "pop",
         },
@@ -695,7 +707,7 @@ export function tcgCardFullHtml(
       );
   const bodyFull = cmd
     ? `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcSpellEffectPanel(e as CommandCatalogEntry)}</div>`
-    : `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcUnitPill(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
+    : `<div class="dc-body">${dcMetaSignal(e)}${dcMetaUnlock(e.requiredRelayTier)}${dcRelayRow(e)}${dcUnitPill(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${matchArmyPopBonusNote(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
 
   return `<div class="tcg tcg--full tcg--layout-v2 ${kindClass} ${previewTypeClass} tcg--${variant}${detailCls}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="dc-shell">
