@@ -18,8 +18,8 @@ import type { PlayerIntent } from "../../intents";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
   canPlaceStructureHere,
-  canUseDoctrineSlot,
   classifyAttackRangeBand,
+  doctrineCardPlayability,
   heroTeleportCooldownSeconds,
   HERO_SELECTION_ID,
   liveSquadCount,
@@ -391,13 +391,9 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
   const cmd = getCatalogEntry(id);
   if (!cmd || !isCommandEntry(cmd)) return;
-  const slotErr = canUseDoctrineSlot(s, slotIdx);
-  if (slotErr) {
-    s.lastMessage = slotErr;
-    return;
-  }
-  if (s.flux < cmd.fluxCost) {
-    s.lastMessage = `Need ${cmd.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
+  const playable = doctrineCardPlayability(s, id, pos, slotIdx);
+  if (playable.reason) {
+    s.lastMessage = playable.reason;
     return;
   }
   const fx = cmd.effect;
@@ -498,7 +494,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       });
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
-      emitFx(s, "fortify", pos);
+      pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
       pushFx(s, {
         kind: "combat_boom",
         x: pos.x,

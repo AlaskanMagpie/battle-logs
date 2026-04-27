@@ -17,8 +17,7 @@ import type {
 import { isCommandEntry, isStructureEntry } from "../game/types";
 
 function structurePopCapLine(e: StructureCatalogEntry): string {
-  const cap = e.localPopCap + (e.structureLocalPopCapBonus ?? 0);
-  return `${productionBatchSizeForClass(e.producedSizeClass)}x/${cap}`;
+  return `${productionBatchSizeForClass(e.producedSizeClass)} bodies`;
 }
 
 function structureProductionLine(e: StructureCatalogEntry): string {
@@ -26,9 +25,8 @@ function structureProductionLine(e: StructureCatalogEntry): string {
 }
 
 function matchArmyPopBonusNote(e: StructureCatalogEntry): string {
-  const b = e.matchGlobalPopCapBonus;
-  if (!b) return "";
-  return `<p class="dc-note">+${b} global pop cap this match while this doctrine card is in your loadout.</p>`;
+  if (!e.matchGlobalPopCapBonus) return "";
+  return `<p class="dc-note">Doctrine loadout bonus retained for army scaling; production itself is uncapped.</p>`;
 }
 
 /** Readable spell summary for tooltips / titles. */
@@ -43,7 +41,7 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
   payLine: string;
 } {
   const fx = e.effect;
-  const payLine = `Costs ${e.fluxCost} mana · ${e.salvagePctOnCast}% of that cost goes to Salvage · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
+  const payLine = `Costs ${e.fluxCost} Mana · ${e.salvagePctOnCast}% of that cost goes to Salvage · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
   switch (fx.type) {
     case "aoe_line_damage":
       return {
@@ -91,7 +89,7 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
 }
 
 function dmSpellCostLine(e: CommandCatalogEntry): string {
-  return `${e.fluxCost} mana · ${e.chargeCooldownSeconds}s cooldown · ${e.salvagePctOnCast}% → Salvage`;
+  return `${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown · ${e.salvagePctOnCast}% to Salvage`;
 }
 
 function dmSpellFxCompact(e: CommandCatalogEntry): string {
@@ -618,7 +616,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
   const statsLine = dmStatsOneLine(e);
   const statsTitle = isCommandEntry(e)
     ? commandSpellTooltipSummary(e as CommandCatalogEntry)
-    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)} · ${structurePopCapLine(e)} pop/cap`;
+    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)} · ${structurePopCapLine(e)} per event`;
   const spellFx = cmd ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
   const statsBlock = cmd
     ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry))}</div>`
@@ -691,7 +689,7 @@ export function tcgCardFullHtml(
         { v: `${e.productionSeconds}s`, l: "PROD", t: "prod" },
         {
           v: structurePopCapLine(e as StructureCatalogEntry),
-          l: "POP / CAP",
+          l: "BATCH",
           t: "pop",
         },
         false,

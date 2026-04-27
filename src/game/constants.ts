@@ -52,8 +52,8 @@ export const PLAYER_UNIT_HUNT_DETECT_MIN = 28;
 /** Extra floor for player acquire radius from map half-extent (world units). */
 export const PLAYER_ACQUIRE_MAP_MULT = 0.22;
 
-/** Spatial hash cell size (world XZ) for unit–unit separation. */
-export const UNIT_SEPARATION_GRID = 3.5;
+/** Spatial hash cell size (world XZ) for unit–unit separation. Covers the 50ft Titan footprint. */
+export const UNIT_SEPARATION_GRID = 8;
 
 /** Portion of pairwise overlap to resolve per separation pass (0..1). */
 export const UNIT_SEPARATION_STRENGTH = 0.62;
@@ -71,7 +71,7 @@ export const UNIT_SEPARATION_MAX_STEP = 1.6;
 export const UNIT_MOVEMENT_SPEED_SCALE = 0.52;
 
 /** Base spacing (world units) for formation slots when marching or gathering. */
-export const UNIT_FORMATION_SPACING = 2.7;
+export const UNIT_FORMATION_SPACING = 3.2;
 
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
 export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
@@ -89,13 +89,13 @@ export const TAP_YIELD_MAX = 250;
 /** Physical claim pillar on a Mana node — HP pool; when destroyed the node returns to neutral. */
 export const TAP_ANCHOR_MAX_HP = 200;
 /** Melee / strike range from unit or wizard to tap (x,z) to damage the anchor. */
-export const TAP_ANCHOR_STRIKE_RADIUS = 3.2;
+export const TAP_ANCHOR_STRIKE_RADIUS = 7;
 
 /** Build / place proximity to Tap or Keep (world units). */
-export const INFRA_PLACE_RADIUS = 16;
+export const INFRA_PLACE_RADIUS = 18;
 
 /** Forward placement: near friendly unit/structure but not near infra (world units). */
-export const FORWARD_PLACE_RADIUS = 8;
+export const FORWARD_PLACE_RADIUS = 10;
 
 export const ENEMY_RELAY_MAX_HP = 520;
 
@@ -112,27 +112,24 @@ export const GLOBAL_POP_CAP = 1000;
 export const GLOBAL_POP_CAP_MAX = 9999;
 
 /**
- * Canonical unit footprint ladder (world units).
- *
- * Towers are the source of truth: Titan is anchored to the current production-tower GLB
- * target extent (`UNIT_MESH_TITAN`, ~9.3u). This preserves existing tower size and scales
- * units downward from there.
- *
- * Each class below it is exactly `UNIT_MESH_SCALE_STEP` smaller:
- * - Swarm ≈ 2.76
- * - Line  ≈ 4.13
- * - Heavy ≈ 6.20
- * - Titan ≈ 9.30
- *
- * Procedural fallback meshes, GLB normalization, HP bars, and separation all derive from this
- * same ladder so art swaps do not silently change gameplay/readability scale.
+ * Visual scale contract: one Titan / tower height is 50ft. One world unit is therefore
+ * roughly 5.38ft, and all unit GLB normalization + procedural fallback bodies derive from
+ * these class heights.
  */
-export const UNIT_MESH_SCALE_STEP = 1.5;
+export const UNIT_HEIGHT_FEET = {
+  Swarm: 10,
+  Line: 20,
+  Heavy: 30,
+  Titan: 50,
+} as const;
 export const UNIT_MESH_TITAN = 9.3;
-export const UNIT_MESH_SWARM = UNIT_MESH_TITAN / UNIT_MESH_SCALE_STEP ** 3;
+export const FEET_PER_WORLD_UNIT = UNIT_HEIGHT_FEET.Titan / UNIT_MESH_TITAN;
+export const UNIT_MESH_SWARM = UNIT_HEIGHT_FEET.Swarm / FEET_PER_WORLD_UNIT;
+export const UNIT_MESH_LINE = UNIT_HEIGHT_FEET.Line / FEET_PER_WORLD_UNIT;
+export const UNIT_MESH_HEAVY = UNIT_HEIGHT_FEET.Heavy / FEET_PER_WORLD_UNIT;
 
 /** Spatial cell size (world XZ) for combat nearest-neighbor queries. */
-export const COMBAT_SPATIAL_CELL = 14;
+export const COMBAT_SPATIAL_CELL = 18;
 
 /** Firestorm / spell knockback initial planar speed (world units/sec impulse integrated per tick). */
 export const SPELL_KNOCKBACK_SPEED = 9;
@@ -146,7 +143,7 @@ export const KNOCKBACK_DECAY_PER_SEC = 7.5;
 /** Enough for an early Mana node claim plus a first resource-gated structure. */
 export const PLAYER_STARTING_FLUX = 280;
 
-export const STRUCTURE_AGGRO_BLOCK_RADIUS = 12;
+export const STRUCTURE_AGGRO_BLOCK_RADIUS = 15;
 
 /** Salvage → Flux: pool/40 per second, capped at 15 Flux/sec (implemented per tick). */
 export const SALVAGE_FLUX_PER_POOL_PER_SEC = 1 / 40;
@@ -186,14 +183,14 @@ export const UNIT_ATTACK_DAMAGE_MULT = {
 export const SMART_RADIAL_IDLE_RADIUS = 20;
 
 /** Commands: friendly unit or completed player structure must be within this radius of the cast point (world units). */
-export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 12;
+export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 18;
 
 /** Fortify: duration and incoming damage multiplier while active (50% DR → multiply incoming by this). */
 export const FORTIFY_DURATION_SEC = 15;
 export const FORTIFY_INCOMING_DAMAGE_MULT = 0.5;
 
 /** Fortify field: ground AoE duration and radius (drag-and-drop like other spells). */
-export const FORTIFY_FIELD_RADIUS = 13;
+export const FORTIFY_FIELD_RADIUS = 18;
 export const FORTIFY_FIELD_DURATION_SEC = 14;
 /** Allies in the field: move faster, hit harder, take slightly less from attacks. */
 export const FORTIFY_FIELD_ALLY_SPEED_MULT = 1.2;
@@ -205,32 +202,32 @@ export const FORTIFY_FIELD_ENEMY_DAMAGE_MULT = 0.8;
 export const FORTIFY_FIELD_ENEMY_INCOMING_MULT = 1.12;
 
 /** Firestorm: radius and burst damage to each enemy unit in the area. */
-export const FIRESTORM_RADIUS = 11;
-export const FIRESTORM_DAMAGE_PER_UNIT = 38;
+export const FIRESTORM_RADIUS = 16;
+export const FIRESTORM_DAMAGE_PER_UNIT = 46;
 
 /** Cut Back (Reclaim line spell): corridor from the Wizard toward aim; damages enemy units in the strip. */
-export const CUT_LINE_LENGTH = 40;
-export const CUT_LINE_HALF_WIDTH = 5.5;
-export const CUT_LINE_DAMAGE_PER_UNIT = 48;
+export const CUT_LINE_LENGTH = 55;
+export const CUT_LINE_HALF_WIDTH = 7.5;
+export const CUT_LINE_DAMAGE_PER_UNIT = 56;
 
 /** Weapon reach thresholds for close / medium / long combat FX profiles (world units). */
-export const ATTACK_RANGE_CLOSE_MAX = 9.5;
-export const ATTACK_RANGE_MEDIUM_MAX = 14.5;
+export const ATTACK_RANGE_CLOSE_MAX = 10;
+export const ATTACK_RANGE_MEDIUM_MAX = 16;
 
 /** Shatter (interim vs enemy relay): pick radius and burst damage; production pause when enemy structures exist uses structure runtime. */
-export const SHATTER_TARGET_RADIUS = 9;
-export const SHATTER_DAMAGE = 300;
+export const SHATTER_TARGET_RADIUS = 12;
+export const SHATTER_DAMAGE = 340;
 export const SHATTER_PRODUCTION_PAUSE_SEC = 10;
 /** Shatter: ground AoE to acquire first target, then chain lightning hops. */
-export const SHATTER_CAST_RADIUS = 12;
-export const SHATTER_CHAIN_RANGE = 15;
+export const SHATTER_CAST_RADIUS = 16;
+export const SHATTER_CHAIN_RANGE = 22;
 /** Total targets struck: first hit in the cast ring, then up to five chain jumps. */
 export const SHATTER_CHAIN_MAX_TARGETS = 6;
 /** Per-hop damage multiplier after the first strike. */
 export const SHATTER_CHAIN_DAMAGE_FALLOFF = 0.72;
 
 /** Optional camp scenario: player units within this range of a camp origin damage the camp core while the camp is awake. */
-export const CAMP_CORE_ATTACK_RADIUS = 7;
+export const CAMP_CORE_ATTACK_RADIUS = 12;
 export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 
 /** After any enemy camp wakes, spawn a reinforcement Swarm on this cadence while under the cap. */
@@ -246,11 +243,11 @@ export const HERO_SPEED = 11;
 export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
 /** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
-export const HERO_CLAIM_RADIUS = 12;
+export const HERO_CLAIM_RADIUS = 14;
 /** Player right-click near a Mana node: assign capture order within this radius of the node's center. */
-export const TAP_UNIT_ORDER_SNAP_RADIUS = 15;
+export const TAP_UNIT_ORDER_SNAP_RADIUS = 18;
 /** While capturing, only chase enemies within this radius of the node (stay focused on the objective). */
-export const TAP_CAPTURE_CONTEST_RADIUS = 26;
+export const TAP_CAPTURE_CONTEST_RADIUS = 30;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
 export const HERO_CLAIM_FLUX_FEE = 20;
 
@@ -272,13 +269,13 @@ export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
 /** Structure ghost center must stay outside blocking decor by at least this radius. */
 export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
-export const HERO_ATTACK_RANGE = 15;
-export const HERO_ATTACK_DAMAGE = 42;
+export const HERO_ATTACK_RANGE = 18;
+export const HERO_ATTACK_DAMAGE = 48;
 export const HERO_ATTACK_COOLDOWN_TICKS = 14;
 /** Tactical recall/blink: moves Wizard plus nearby friendly troops, never into the enemy half. */
 export const HERO_TELEPORT_COOLDOWN_SEC = 30;
-export const HERO_TELEPORT_UNIT_RADIUS = 12;
-export const HERO_TELEPORT_DEST_RADIUS = 3.2;
+export const HERO_TELEPORT_UNIT_RADIUS = 16;
+export const HERO_TELEPORT_DEST_RADIUS = 4;
 /** Extra damage multiplier when the strike hits a Swarm-class unit. */
 export const HERO_ATTACK_SWARM_MULT = 1.7;
 /** Rival strike vs Swarm (below player Swarm mult for parity). */

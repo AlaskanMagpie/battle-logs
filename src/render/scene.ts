@@ -14,7 +14,7 @@ import {
   TERRITORY_RADIUS,
   TICK_HZ,
 } from "../game/constants";
-import { unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
+import { dist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
   enemyTerritorySources,
@@ -46,20 +46,56 @@ const CAMERA_HERO_PIVOT_Y = 1.38;
 /** Match start: overhead map view eases into the default framed camera over this many seconds. */
 const MATCH_INTRO_CAMERA_SEC = 3;
 
+function makeGroundOverlayTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d")!;
+  ctx.clearRect(0, 0, size, size);
+  ctx.strokeStyle = "rgba(130, 190, 255, 0.16)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= size; i += 32) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, i);
+    ctx.lineTo(size, i);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 12; i++) {
+    const y = 70 + i * 34;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(size * 0.28, y - 26, size * 0.66, y + 30, size, y - 8);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3.5, 3.5);
+  return tex;
+}
+
 function structureDims(entry: StructureCatalogEntry | null): { w: number; h: number; d: number } {
-  if (!entry) return { w: 3, h: 5, d: 3 };
+  const H = unitMeshLinearSize("Titan");
+  if (!entry) return { w: 4.8, h: H, d: 4.8 };
   const signals = entry.signalTypes;
   const isBastion = signals.filter((s) => s === "Bastion").length >= 2;
   const isVanguard = signals.filter((s) => s === "Vanguard").length >= 1;
   const isReclaim = signals.filter((s) => s === "Reclaim").length >= 1;
-  if (entry.producedSizeClass === "Titan") return { w: 5.2, h: 9.5, d: 5.2 };
-  if (entry.producedSizeClass === "Heavy" && isBastion) return { w: 6.2, h: 4.2, d: 6.2 };
-  if (entry.producedSizeClass === "Heavy") return { w: 4.6, h: 5.8, d: 4.6 };
-  if (isBastion) return { w: 6, h: 3.6, d: 6 };
-  if (isVanguard && isReclaim) return { w: 3.8, h: 5.6, d: 3.8 };
-  if (isVanguard) return { w: 2.6, h: 7.2, d: 2.6 };
-  if (isReclaim) return { w: 3.8, h: 4.8, d: 3.8 };
-  return { w: 3.2, h: 5, d: 3.2 };
+  if (entry.producedSizeClass === "Titan") return { w: 6.2, h: H, d: 6.2 };
+  if (entry.producedSizeClass === "Heavy" && isBastion) return { w: 6.4, h: H, d: 6.4 };
+  if (entry.producedSizeClass === "Heavy") return { w: 5.6, h: H, d: 5.6 };
+  if (isBastion) return { w: 6.2, h: H, d: 6.2 };
+  if (isVanguard && isReclaim) return { w: 5.1, h: H, d: 5.1 };
+  if (isVanguard) return { w: 4.5, h: H, d: 4.5 };
+  if (isReclaim) return { w: 5.2, h: H, d: 5.2 };
+  return { w: 4.8, h: H, d: 4.8 };
 }
 
 function hsl(hex: number, dl: number): THREE.Color {
@@ -107,18 +143,18 @@ function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, tea
   return basis.getHex();
 }
 
-/** Single merged mesh (GLB anchor): feet at y=0, jointless boxes for legs, torso, head, hanging arms. */
+/** Single merged mesh (GLB anchor): feet at y=0; total height is approximately `L`. */
 function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferGeometry {
   const b = bipedBulkScale(size);
-  const legH = 0.38 * L * b;
+  const legH = 0.48 * L;
+  const torsoH = 0.34 * L;
+  const headS = 0.18 * L;
   const spread = 0.11 * L * b;
   const legW = 0.085 * L * b;
   const legD = 0.095 * L * b;
   const torsoW = 0.2 * L * b;
-  const torsoH = 0.22 * L * b;
   const torsoD = 0.11 * L * b;
-  const headS = 0.12 * L * b;
-  const armLenV = 0.3 * L * b;
+  const armLenV = 0.37 * L;
   const armTh = 0.062 * L * b;
 
   const cy = legH + torsoH * 0.5;
@@ -140,7 +176,7 @@ function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferG
   parts.push(torso);
 
   const head = new THREE.BoxGeometry(headS, headS, headS * 0.92);
-  head.translate(0, legH + torsoH + headS * 0.46, 0);
+  head.translate(0, legH + torsoH + headS * 0.5, 0);
   parts.push(head);
 
   const armL = new THREE.BoxGeometry(armTh, armLenV, armTh);
@@ -492,6 +528,7 @@ export class GameRenderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   private readonly ground: THREE.Mesh;
+  private readonly groundOverlay: THREE.Mesh;
   private readonly hemiLight: THREE.HemisphereLight;
   private readonly sunLight: THREE.DirectionalLight;
   private groundVisualKey = "";
@@ -550,6 +587,7 @@ export class GameRenderer {
   private unitMeleeRing: THREE.Mesh | null = null;
   private campAggroRings = new Map<string, THREE.Mesh>();
   private campWakeRings = new Map<string, THREE.Mesh>();
+  private tacticsFieldRings = new Map<string, THREE.Mesh>();
   private decorBuilt = false;
 
   private ghost: THREE.Mesh | null = null;
@@ -559,6 +597,8 @@ export class GameRenderer {
   private cmdGhostLine: THREE.Mesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
+  /** Animation/render delta must not use `clock.getDelta()` because sync code calls `getElapsedTime()` for pulses. */
+  private lastRenderFrameMs = performance.now();
   private readonly composer: EffectComposer;
   private readonly bloomPass: UnrealBloomPass;
   private bloomEnabled = false;
@@ -662,6 +702,19 @@ export class GameRenderer {
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = false;
     this.scene.add(this.ground);
+    this.groundOverlay = new THREE.Mesh(
+      new THREE.PlaneGeometry(240, 240),
+      new THREE.MeshBasicMaterial({
+        map: makeGroundOverlayTexture(),
+        transparent: true,
+        opacity: 0.24,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    this.groundOverlay.rotation.x = -Math.PI / 2;
+    this.groundOverlay.position.y = 0.018;
+    this.scene.add(this.groundOverlay);
 
     this.territoryGroup.name = "territory";
     this.root.add(this.decor, this.markers, this.entities, this.territoryGroup);
@@ -1306,11 +1359,17 @@ export class GameRenderer {
       }
       m.position.set(t.x, 0.05, t.z);
       const mat = m.material as THREE.MeshBasicMaterial;
-      if (t.active && t.ownerTeam === "player") mat.color.set(0x4da3ff);
-      else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xd06060);
-      else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x888888);
+      const nodeR2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
+      const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && dist2(u, t) <= nodeR2);
+      const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && dist2(u, t) <= nodeR2);
+      const contested = playerNear && enemyNear;
+      if (contested) mat.color.set(0xffd36a);
+      else if (t.active && t.ownerTeam === "player") mat.color.set(0x54c7ff);
+      else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xff6b6b);
+      else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x7d8895);
       else if (t.active) mat.color.set(0x52b0ff);
-      else mat.color.set(0x8a96a6);
+      else mat.color.set(0xc1ccd8);
+      mat.opacity = contested ? 1 : t.active ? 0.92 : 0.72;
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
       let claimArc = this.tapClaimArcs.get(t.defId);
@@ -1376,8 +1435,8 @@ export class GameRenderer {
           this.markers.add(label.sprite);
           this.tapLabels.set(t.defId, label);
         }
-        const text = depleted ? "Depleted" : "Stand to claim";
-        const accent = depleted ? "#8a96a6" : "#6ae1ff";
+        const text = depleted ? "Node depleted" : contested ? "Contested Mana" : "Claim Mana node";
+        const accent = depleted ? "#8a96a6" : contested ? "#ffd36a" : "#6ae1ff";
         drawLabel(label, text, accent);
         label.sprite.position.set(t.x, Math.max(5.2, claimR * 0.45 + 3.8), t.z);
         label.sprite.visible = true;
@@ -1388,7 +1447,7 @@ export class GameRenderer {
           this.markers.add(label.sprite);
           this.tapLabels.set(t.defId, label);
         }
-        drawLabel(label, "Destroy anchor to uncap", "#ff9a7a");
+        drawLabel(label, "Destroy red anchor", "#ff9a7a");
         label.sprite.position.set(t.x, Math.max(6, claimR * 0.48 + 4.2), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
@@ -1527,6 +1586,7 @@ export class GameRenderer {
   private syncMarkers(state: GameState): void {
     this.syncTaps(state);
     this.syncCampZones(state);
+    this.syncTacticsFields(state);
 
     // Only enemy relays (Dark Fortresses) render as markers now — the player's
     // Keep is just a structure and renders through syncStructures().
@@ -1573,6 +1633,45 @@ export class GameRenderer {
         (m.userData as Record<string, unknown>)["hitPulse"] = 0.22;
       }
       this.relayPrevHp.set(id, er.hp);
+    }
+  }
+
+  private syncTacticsFields(state: GameState): void {
+    const alive = new Set<string>();
+    for (let i = 0; i < state.tacticsFieldZones.length; i++) {
+      const zf = state.tacticsFieldZones[i]!;
+      const key = `${i}:${Math.round(zf.x * 10)}:${Math.round(zf.z * 10)}:${zf.untilTick}`;
+      alive.add(key);
+      let ring = this.tacticsFieldRings.get(key);
+      if (!ring) {
+        ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.92, 1, 96),
+          new THREE.MeshBasicMaterial({
+            color: 0x7fe7ff,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.36,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.072;
+        this.markers.add(ring);
+        this.tacticsFieldRings.set(key, ring);
+      }
+      const lifeFrac = Math.max(0, Math.min(1, (zf.untilTick - state.tick) / Math.max(1, 14 * TICK_HZ)));
+      ring.position.set(zf.x, 0.072, zf.z);
+      ring.scale.setScalar(Math.max(1, zf.radius));
+      const mat = ring.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.16 + lifeFrac * 0.24;
+      mat.color.set(lifeFrac < 0.25 ? 0xffd86a : 0x7fe7ff);
+    }
+    for (const [key, ring] of this.tacticsFieldRings) {
+      if (alive.has(key)) continue;
+      this.markers.remove(ring);
+      this.disposeObject(ring);
+      this.tacticsFieldRings.delete(key);
     }
   }
 
@@ -1768,7 +1867,7 @@ export class GameRenderer {
         }
       });
 
-      const dims = structEntry ? structureDims(structEntry) : { w: 3, h: 5, d: 3 };
+      const dims = structureDims(structEntry);
       const fg = st.team === "player" ? 0x7ec8ff : 0xff8a7a;
       const pair = this.ensureHpBarPair(g, "st", dims.h * buildT + 0.9, fg);
       this.setHpBarFrac(pair, st.maxHp > 0 ? st.hp / st.maxHp : 0);
@@ -1821,7 +1920,7 @@ export class GameRenderer {
           this.holdCubes.set(st.id, cube);
         }
         const entry = getCatalogEntry(st.catalogId);
-        const dims = entry && isStructureEntry(entry) ? structureDims(entry) : { w: 3, h: 5, d: 3 };
+        const dims = structureDims(entry && isStructureEntry(entry) ? entry : null);
         const hover = 0.2 * Math.sin(elapsed * 3);
         cube.position.set(st.x, dims.h + 1.4 + hover, st.z);
         cube.rotation.y = elapsed * 0.9;
@@ -2042,12 +2141,13 @@ export class GameRenderer {
     const size = half * 2;
     this.ground.geometry.dispose();
     this.ground.geometry = new THREE.PlaneGeometry(size, size);
+    this.groundOverlay.geometry.dispose();
+    this.groundOverlay.geometry = new THREE.PlaneGeometry(size, size);
     this.groundVisualKey = "";
   }
 
   /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
   private applyMapVisual(state: GameState): void {
-    if (!this.ground.visible) return;
     const v = state.map.visual;
     const preset = v?.groundPreset ?? "solid";
     const fogH = v?.fogHex;
@@ -2082,6 +2182,7 @@ export class GameRenderer {
         this.ground.material = createGroundShaderMaterial(preset);
       }
     }
+    this.groundOverlay.visible = true;
   }
 
   private ensureHpBarPair(
@@ -2157,17 +2258,41 @@ export class GameRenderer {
     for (const d of state.map.decor ?? []) {
       let mesh: THREE.Mesh | null = null;
       const color = d.blocksMovement ? blockingColor : d.color;
+      const baseColor = color ?? 0x3a4657;
+      const accentMat = new THREE.MeshStandardMaterial({
+        color: hsl(baseColor, d.blocksMovement ? 0.12 : 0.08),
+        roughness: 0.7,
+        metalness: d.blocksMovement ? 0.16 : 0.08,
+      });
+      const shadowMat = new THREE.MeshStandardMaterial({
+        color: hsl(baseColor, -0.16),
+        roughness: 0.95,
+        metalness: 0.02,
+      });
       if (d.kind === "box") {
         mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(d.w, d.h, d.d),
+          new THREE.BoxGeometry(d.w * 0.96, d.h, d.d * 0.96),
           new THREE.MeshStandardMaterial({
-            color: color ?? 0x3a4657,
+            color: baseColor,
             roughness: 0.9,
             metalness: 0.04,
           }),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.82, Math.min(0.34, d.h * 0.08), d.d * 0.82), accentMat);
+        cap.position.y = d.h * 0.5 + Math.min(0.18, d.h * 0.04);
+        const base = new THREE.Mesh(new THREE.BoxGeometry(d.w * 1.06, Math.min(0.28, d.h * 0.08), d.d * 1.06), shadowMat);
+        base.position.y = -d.h * 0.5 + Math.min(0.14, d.h * 0.04);
+        mesh.add(cap, base);
+        if (d.blocksMovement) {
+          const railW = Math.min(0.26, Math.max(0.08, Math.min(d.w, d.d) * 0.08));
+          const railA = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.9, railW, railW), accentMat);
+          const railB = railA.clone();
+          railA.position.set(0, d.h * 0.18, d.d * 0.5);
+          railB.position.set(0, d.h * 0.18, -d.d * 0.5);
+          mesh.add(railA, railB);
+        }
       } else if (d.kind === "cylinder") {
         mesh = new THREE.Mesh(
           new THREE.CylinderGeometry(d.radius, d.radius, d.h, 18),
@@ -2178,6 +2303,10 @@ export class GameRenderer {
           }),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(d.radius * 1.02, Math.max(0.035, d.radius * 0.06), 8, 28), accentMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = d.h * 0.5 + 0.04;
+        mesh.add(ring);
       } else if (d.kind === "sphere") {
         const r = d.radius;
         const cy = d.y ?? r;
@@ -2190,6 +2319,9 @@ export class GameRenderer {
           }),
         );
         mesh.position.set(d.x, cy, d.z);
+        const chip = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 0.28, 0), accentMat);
+        chip.position.set(r * 0.18, r * 0.4, -r * 0.24);
+        mesh.add(chip);
       } else if (d.kind === "cone") {
         mesh = new THREE.Mesh(
           new THREE.ConeGeometry(d.radius, d.h, 14),
@@ -2201,6 +2333,9 @@ export class GameRenderer {
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const skirt = new THREE.Mesh(new THREE.CylinderGeometry(d.radius * 1.02, d.radius * 1.1, Math.max(0.12, d.h * 0.06), 14), shadowMat);
+        skirt.position.y = -d.h * 0.5 + Math.max(0.06, d.h * 0.03);
+        mesh.add(skirt);
       } else if (d.kind === "torus") {
         mesh = new THREE.Mesh(
           new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
@@ -2213,6 +2348,9 @@ export class GameRenderer {
         mesh.rotation.x = -Math.PI / 2;
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
         mesh.position.set(d.x, d.tube * 0.5 + 0.02, d.z);
+        const core = new THREE.Mesh(new THREE.CylinderGeometry(d.radius * 0.36, d.radius * 0.42, d.tube * 0.75, 18), shadowMat);
+        core.position.y = -d.tube * 0.12;
+        mesh.add(core);
       }
       if (!mesh) continue;
       mesh.castShadow = true;
@@ -2772,7 +2910,7 @@ export class GameRenderer {
       const run = ud?.["glbRunAction"] as THREE.AnimationAction | undefined;
       const idle = ud?.["glbIdleAction"] as THREE.AnimationAction | undefined;
       if (attack) attack.fadeOut(0.08);
-      const nextBase = ud?.["glbBaseState"] === "idle" ? idle : run;
+      const nextBase = ud?.["glbBaseState"] === "idle" ? (idle ?? run) : run;
       if (nextBase) {
         nextBase.enabled = true;
         nextBase.play();
@@ -2845,6 +2983,7 @@ export class GameRenderer {
     const ud = root.userData as Record<string, unknown>;
     const attack = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
     if (!attack) return;
+    if (ud["glbAttackTimer"] !== undefined) return;
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
     const duration = Math.max(0.18, (ud["glbAttackDuration"] as number | undefined) ?? 0.65);
@@ -2855,7 +2994,7 @@ export class GameRenderer {
     attack.setEffectiveWeight(1);
     attack.fadeIn(0.04);
     attack.play();
-    ud["glbAttackTimer"] = Math.min(duration, 1.1);
+    ud["glbAttackTimer"] = duration;
     ud["glbClampChecksRemaining"] = Math.max((ud["glbClampChecksRemaining"] as number | undefined) ?? 0, 1);
   }
 
@@ -2883,16 +3022,16 @@ export class GameRenderer {
     if (ud["glbAttackTimer"] !== undefined) return;
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
-    if (!run || !idle) return;
+    if (!run) return;
     const next = moving ? "run" : "idle";
     if (ud["glbBaseState"] === next) return;
     const from = next === "run" ? idle : run;
-    const to = next === "run" ? run : idle;
-    from.fadeOut(0.12);
+    const to = next === "run" ? run : (idle ?? run);
+    if (from && from !== to) from.fadeOut(0.12);
     to.enabled = true;
     to.play();
     to.fadeIn(0.12);
-    ud["glbBaseState"] = next;
+    ud["glbBaseState"] = next === "idle" && !idle ? "run" : next;
   }
 
   private updateAdaptiveBloom(dt: number): void {
@@ -2916,7 +3055,9 @@ export class GameRenderer {
   }
 
   render(): void {
-    const dt = Math.min(0.1, this.clock.getDelta());
+    const now = performance.now();
+    const dt = Math.min(0.1, Math.max(0, (now - this.lastRenderFrameMs) / 1000));
+    this.lastRenderFrameMs = now;
     this.updateAdaptiveBloom(dt);
     this.tickMatchIntroCinematic();
     this.applyHeroCameraFollow(dt);

@@ -167,7 +167,6 @@ export function combat(s: GameState): void {
     if (!best) continue;
     applyUnitDamage(s, u, best);
     applyAttackImpulse(best, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
-    pushAttackMark(s, u, best, markMax, markAttackers);
     if (u.aoeRadius && u.aoeRadius > 0) {
       const r2 = u.aoeRadius * u.aoeRadius;
       const near = unitsNearXZ(buckets, best.x, best.z, best, cell, u.aoeRadius);
@@ -184,6 +183,7 @@ export function combat(s: GameState): void {
       }
     }
     commitAttack(s, u);
+    pushAttackMark(s, u, best, markMax, markAttackers);
   }
 
   // Enemy → player structures (Keep is just another player structure).
@@ -208,8 +208,8 @@ export function combat(s: GameState): void {
       if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
       if (best.team === "player") incoming *= tacticsFieldIncomingDamageMult(s, "player", best.x, best.z);
       best.hp -= incoming;
-      pushAttackMark(s, u, best, markMax, markAttackers);
       commitAttack(s, u);
+      pushAttackMark(s, u, best, markMax, markAttackers);
     }
   }
 
@@ -225,8 +225,8 @@ export function combat(s: GameState): void {
         tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z) *
         tacticsFieldIncomingDamageMult(s, "player", s.hero.x, s.hero.z);
       s.hero.hp = Math.max(0, s.hero.hp - raw);
-      pushAttackMark(s, u, s.hero, markMax, markAttackers);
       commitAttack(s, u);
+      pushAttackMark(s, u, s.hero, markMax, markAttackers);
     }
   }
 
@@ -241,8 +241,8 @@ export function combat(s: GameState): void {
         tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
         tacticsFieldIncomingDamageMult(s, "enemy", s.enemyHero.x, s.enemyHero.z);
       s.enemyHero.hp = Math.max(0, s.enemyHero.hp - raw);
-      pushAttackMark(s, u, s.enemyHero, markMax, markAttackers);
       commitAttack(s, u);
+      pushAttackMark(s, u, s.enemyHero, markMax, markAttackers);
     }
   }
 
@@ -264,8 +264,8 @@ export function combat(s: GameState): void {
           tacticsFieldIncomingDamageMult(s, "enemy", er.x, er.z);
         er.hp -= raw;
         if (isSiege) s.lastSiegeHit = { x: er.x, z: er.z, tick: s.tick };
-        pushAttackMark(s, u, er, markMax, markAttackers);
         commitAttack(s, u);
+        pushAttackMark(s, u, er, markMax, markAttackers);
         attacked = true;
         break;
       }
@@ -282,8 +282,8 @@ export function combat(s: GameState): void {
           tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
         st.hp -= raw;
         if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
-        pushAttackMark(s, u, st, markMax, markAttackers);
         commitAttack(s, u);
+        pushAttackMark(s, u, st, markMax, markAttackers);
         break;
       }
     }
@@ -304,8 +304,8 @@ export function combat(s: GameState): void {
         0,
         (t.anchorHp ?? 0) - attackDamageFromPerTick(u, u.dmgPerTick) * UNIT_TAP_ANCHOR_DAMAGE_MULT * mult,
       );
-      pushAttackMark(s, u, t, markMax, markAttackers);
       commitAttack(s, u);
+      pushAttackMark(s, u, t, markMax, markAttackers);
       if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
       break;
     }
@@ -323,8 +323,8 @@ export function combat(s: GameState): void {
       if (!attackReady(u)) continue;
       if (dist2(u, camp.origin) <= r2) {
         dmg += attackDamageFromPerTick(u, CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK);
-        pushAttackMark(s, u, camp.origin, markMax, markAttackers);
         commitAttack(s, u);
+        pushAttackMark(s, u, camp.origin, markMax, markAttackers);
       }
     }
     if (dmg > 0) s.enemyCampCoreHp[camp.id] = Math.max(0, cur - dmg);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { getCatalogEntry } from "./catalog";
 import { buildProgress, production } from "./sim/systems/production";
 import { availableProductionSlots } from "./sim/systems/production";
+import { movement } from "./sim/systems/ai";
 import { applyAttackImpulse, combat } from "./sim/systems/combat";
 import { applyPlayerIntents } from "./sim/systems/intents";
 import { advanceTick } from "./sim/tick";
@@ -19,6 +20,7 @@ import {
   canPlaceEnemyStructureAt,
   canUseDoctrineSlot,
   createInitialState,
+  doctrineCardPlayability,
   HERO_SELECTION_ID,
   inPlayerTerritory,
   liveSquadCount,
@@ -106,13 +108,52 @@ describe("resource-first doctrine gates", () => {
   });
 });
 
+describe("doctrine card playability", () => {
+  it("explains affordable, unaffordable, cooldown, and territory states", () => {
+    const ready = createInitialState(tinyMap, ["watchtower"]);
+    ready.flux = 1000;
+    expect(doctrineCardPlayability(ready, "watchtower", { x: -40, z: 0 }, 0).kind).toBe("ready");
+
+    const poor = createInitialState(tinyMap, ["watchtower"]);
+    poor.flux = 0;
+    const mana = doctrineCardPlayability(poor, "watchtower", { x: -40, z: 0 }, 0);
+    expect(mana.kind).toBe("mana");
+    expect(mana.reason).toContain("more Mana");
+
+    const cooling = createInitialState(tinyMap, ["watchtower"]);
+    cooling.flux = 1000;
+    cooling.doctrineCooldownTicks[0] = TICK_HZ * 3;
+    const cd = doctrineCardPlayability(cooling, "watchtower", { x: -40, z: 0 }, 0);
+    expect(cd.kind).toBe("cooldown");
+    expect(cd.liveLabel).toBe("CD 3s");
+
+    const outside = createInitialState(tinyMap, ["watchtower"]);
+    outside.flux = 1000;
+    const territory = doctrineCardPlayability(outside, "watchtower", { x: 130, z: 0 }, 0);
+    expect(territory.kind).toBe("territory");
+  });
+
+  it("keeps exhausted commands playable while warning about the long cooldown", () => {
+    const s = createInitialState(tinyMap, ["firestorm"]);
+    s.flux = 1000;
+    s.doctrineCommandUses[0] = 2;
+
+    const play = doctrineCardPlayability(s, "firestorm", { x: 10, z: 0 }, 0);
+
+    expect(play.ok).toBe(true);
+    expect(play.kind).toBe("long_cooldown");
+    expect(play.longCooldown).toBe(true);
+    expect(placementFailureReason(s, "firestorm", { x: 10, z: 0 }, 0)).toBeNull();
+  });
+});
+
 describe("batch production", () => {
   it.each([
     ["watchtower", "Swarm", 4],
     ["outpost", "Line", 3],
     ["siege_works", "Heavy", 2],
     ["dragon_roost", "Titan", 1],
-  ] as const)("spawns aggregate %s squads", (catalogId, sizeClass, expected) => {
+  ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);
     const stats = unitStatsForCatalog(sizeClass);
@@ -122,38 +163,37 @@ describe("batch production", () => {
     production(s);
 
     const spawned = s.units.slice(before).filter((u) => u.team === "player" && u.structureId === st.id);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0]!.sizeClass).toBe(sizeClass);
-    expect(spawned[0]!.squadMaxCount).toBe(expected);
-    expect(spawned[0]!.singleMaxHp).toBe(stats.maxHp);
-    expect(spawned[0]!.maxHp).toBe(stats.maxHp * expected);
-    expect(spawned[0]!.pop).toBe(stats.pop * expected);
+    expect(spawned).toHaveLength(expected);
+    expect(spawned.every((u) => u.sizeClass === sizeClass)).toBe(true);
+    expect(spawned.every((u) => u.squadMaxCount === undefined && u.singleMaxHp === undefined)).toBe(true);
+    expect(spawned.every((u) => u.maxHp === stats.maxHp && u.pop === stats.pop)).toBe(true);
   });
 
-  it("respects local pop room and retries when capped", () => {
+  it("ignores old local pop caps and always emits the full batch", () => {
     const s = createInitialState(tinyMap, []);
     const st = structure("watchtower", 200);
     s.structures.push(st);
     for (let i = 0; i < 16; i++) s.units.push(unit(1000 + i, "player", "Swarm", st.id));
 
-    expect(availableProductionSlots(s, st)).toBe(0);
+    expect(availableProductionSlots(s, st)).toBe(4);
     production(s);
 
-    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(16);
-    expect(st.productionTicksRemaining).toBe(1);
+    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(20);
+    expect(st.productionTicksRemaining).toBeGreaterThan(1);
   });
 
-  it("uses partial local pop room instead of overfilling", () => {
+  it("does not partial-fill production batches", () => {
     const s = createInitialState(tinyMap, []);
     const st = structure("watchtower", 201);
     s.structures.push(st);
     for (let i = 0; i < 14; i++) s.units.push(unit(2000 + i, "player", "Swarm", st.id));
 
-    expect(availableProductionSlots(s, st)).toBe(2);
+    expect(availableProductionSlots(s, st)).toBe(4);
     production(s);
 
-    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(15);
-    expect(s.units.find((u) => u.structureId === st.id && u.squadMaxCount === 2)?.squadMaxCount).toBe(2);
+    const spawned = s.units.filter((u) => u.structureId === st.id);
+    expect(spawned).toHaveLength(18);
+    expect(spawned.filter((u) => u.squadMaxCount === undefined)).toHaveLength(18);
     expect(st.productionTicksRemaining).toBeGreaterThan(1);
   });
 
@@ -172,8 +212,8 @@ describe("batch production", () => {
 
     expect(st.complete).toBe(true);
     const spawned = s.units.filter((u) => u.structureId === st.id);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0]!.squadMaxCount).toBe(4);
+    expect(spawned).toHaveLength(4);
+    expect(spawned.every((u) => u.sizeClass === "Swarm")).toBe(true);
     expect(st.productionTicksRemaining).toBe(Math.round(def.productionSeconds * TICK_HZ));
   });
 
@@ -187,13 +227,12 @@ describe("batch production", () => {
     production(s);
 
     const spawned = s.units.filter((u) => u.team === "enemy" && u.structureId === st.id);
-    expect(spawned).toHaveLength(1);
-    expect(spawned[0]!.squadMaxCount).toBe(4);
+    expect(spawned).toHaveLength(4);
     expect(spawned.every((u) => u.dmgPerTick === unitStatsForCatalog("Swarm").dmgPerTick * ENEMY_DAMAGE_MULT)).toBe(true);
     expect(st.productionTicksRemaining).toBe(Math.round((def.productionSeconds * TICK_HZ) / ENEMY_PRODUCTION_RATE_MULT));
   });
 
-  it("keeps the Wizard Keep to a small aggregate guard trickle", () => {
+  it("keeps the Wizard Keep producing literal guard bodies", () => {
     const s = createInitialState(tinyMap, []);
     const keep = s.structures.find((st) => st.catalogId === KEEP_ID);
     if (!keep) throw new Error("missing keep");
@@ -202,19 +241,30 @@ describe("batch production", () => {
     production(s);
 
     const first = s.units.filter((u) => u.structureId === keep.id);
-    expect(first).toHaveLength(1);
-    expect(first[0]!.squadMaxCount).toBe(4);
-    expect(first[0]!.singleMaxHp).toBe(unitStatsForCatalog("Swarm").maxHp);
+    expect(first).toHaveLength(4);
+    expect(first.every((u) => u.maxHp === unitStatsForCatalog("Swarm").maxHp)).toBe(true);
     expect(keep.productionTicksRemaining).toBe(Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
 
     keep.productionTicksRemaining = 1;
     production(s);
-    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(2);
+    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(8);
 
     keep.productionTicksRemaining = 1;
     production(s);
-    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(2);
-    expect(keep.productionTicksRemaining).toBe(1);
+    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(12);
+    expect(keep.productionTicksRemaining).toBe(Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
+  });
+
+  it("production spawns bodies without combat energy hit marks", () => {
+    const s = createInitialState(tinyMap, []);
+    const st = structure("watchtower", 204);
+    s.structures.push(st);
+
+    production(s);
+
+    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(4);
+    expect(s.combatHitMarks).toHaveLength(0);
+    expect(s.fxQueue).toHaveLength(0);
   });
 
   it("degrades squad count and combat output as pooled HP drops", () => {
@@ -241,6 +291,8 @@ describe("batch production", () => {
 
     const expectedHit = swarm.dmgPerTick * 3 * UNIT_ATTACK_COOLDOWN_TICKS.Swarm * UNIT_ATTACK_DAMAGE_MULT.Swarm;
     expect(defender.hp).toBeCloseTo(100 - expectedHit, 5);
+    expect(attacker.lastAttackTick).toBe(s.tick);
+    expect(s.combatHitMarks.some((m) => m.attackerId === attacker.id)).toBe(true);
     const afterFirst = defender.hp;
     expect(attacker.attackCooldownTicksRemaining).toBeGreaterThan(0);
 
@@ -371,6 +423,22 @@ describe("attack impulses", () => {
     applyAttackImpulse(dead, { x: 0, z: 0 }, 50);
     expect(dead.vxImpulse).toBe(0);
     expect(dead.vzImpulse).toBe(0);
+  });
+});
+
+describe("autonomous unit movement", () => {
+  it("keeps idle offense units pressing map objectives without creating player orders", () => {
+    const s = createInitialState(tinyMap, []);
+    const ally = unit(5200, "player", "Swarm", null);
+    ally.x = s.hero.x;
+    ally.z = s.hero.z;
+    s.units.push(ally);
+
+    movement(s);
+
+    expect(ally.order).toBeUndefined();
+    expect(ally.autoOrder).toBeDefined();
+    expect(ally.x).toBeGreaterThan(s.hero.x);
   });
 });
 

@@ -1,11 +1,17 @@
 import { getCatalogEntry } from "../game/catalog";
-import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "../game/constants";
+import {
+  DOCTRINE_SLOT_COUNT,
+  SALVAGE_FLUX_CAP_PER_SEC,
+  SALVAGE_FLUX_PER_POOL_PER_SEC,
+  TAP_FLUX_PER_SEC,
+  TICK_HZ,
+} from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import {
   claimedTapCount,
+  doctrineCardPlayability,
   findKeep,
   heroTeleportCooldownSeconds,
-  placementFailureReason,
   totalPlayerPop,
   type GameState,
 } from "../game/state";
@@ -19,8 +25,32 @@ import {
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineCardBody } from "./doctrineCard";
 import { doctrineSlotHudTone } from "./doctrineSlotHudTone";
+import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
 const HAND_ACTIVE_LIFT = 5;
+
+function escapeHudHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function playerManaIncomePerSec(state: GameState): number {
+  let perSec = 0;
+  for (const t of state.taps) {
+    if (!t.active || t.ownerTeam !== "player") continue;
+    if ((t.anchorHp ?? 0) <= 0 || t.yieldRemaining <= 0) continue;
+    perSec += TAP_FLUX_PER_SEC * tapYieldMultForOwner(state, "player", t);
+  }
+  return perSec;
+}
+
+function salvageManaPerSec(state: GameState): number {
+  if (state.salvage <= 0) return 0;
+  return Math.min(state.salvage, SALVAGE_FLUX_CAP_PER_SEC, state.salvage * SALVAGE_FLUX_PER_POOL_PER_SEC);
+}
 
 /** Half angular span (rad) from end to end across one fanned row — higher = less overlap. */
 const ARC_ALPHA_MAX = 0.42;
@@ -398,21 +428,40 @@ export function updateHud(state: GameState): void {
   const mode = document.querySelector("#mode");
   const phase = document.querySelector("#phase");
   const msg = document.querySelector("#msg");
-  if (flux) flux.textContent = String(Math.floor(state.flux));
-  if (salvage) salvage.textContent = String(Math.floor(state.salvage));
+  const nodeIncome = playerManaIncomePerSec(state);
+  const salvageIncome = salvageManaPerSec(state);
+  if (flux) {
+    flux.textContent = String(Math.floor(state.flux));
+    const parent = flux.closest<HTMLElement>(".hud-stat");
+    if (parent) parent.title = `Mana pays for cards. Income: +${(nodeIncome + salvageIncome).toFixed(1)}/s (${nodeIncome.toFixed(1)} from nodes, ${salvageIncome.toFixed(1)} from Salvage).`;
+  }
+  if (salvage) {
+    salvage.textContent = String(Math.floor(state.salvage));
+    const parent = salvage.closest<HTMLElement>(".hud-stat");
+    if (parent) parent.title = `Salvage is a reserve that converts into Mana over time: +${salvageIncome.toFixed(1)}/s right now.`;
+  }
   const popVal = totalPlayerPop(state);
   if (pop) pop.textContent = String(popVal);
-  if (nodes) nodes.textContent = String(claimedTapCount(state));
+  if (nodes) {
+    const claimed = claimedTapCount(state);
+    nodes.textContent = String(claimed);
+    const parent = nodes.closest<HTMLElement>(".hud-stat");
+    const activeYielding = state.taps.filter((t) => t.active && t.ownerTeam === "player" && t.yieldRemaining > 0 && (t.anchorHp ?? 0) > 0).length;
+    if (parent) parent.title = `${claimed} Mana nodes claimed; ${activeYielding} still producing. Claim neutral rings to expand the cyan build area.`;
+  }
   if (mode) {
-    mode.textContent = state.pendingPlacementCatalogId
-      ? `placing:${state.pendingPlacementCatalogId}`
-      : state.rallyClickPending
-        ? "rally-click"
+    if (state.pendingPlacementCatalogId) {
+      const e = getCatalogEntry(state.pendingPlacementCatalogId);
+      mode.textContent = e ? `Placing ${e.name}` : "Placing card";
+    } else {
+      mode.textContent = state.rallyClickPending
+        ? "Set rally"
         : state.teleportClickPending
-          ? "teleport"
-        : state.globalRallyActive && state.armyStance === "offense"
-          ? "marching"
-          : "idle";
+          ? "Teleport"
+          : state.globalRallyActive && state.armyStance === "offense"
+            ? "Marching"
+            : "Idle";
+    }
   }
   if (phase) phase.textContent = `${state.phase} · tick ${state.tick}`;
   if (msg) msg.textContent = state.lastMessage;
@@ -564,6 +613,9 @@ export function updateHud(state: GameState): void {
       "slot-empty",
       "slot-ready",
       "slot-locked",
+      "slot-need-mana",
+      "slot-blocked",
+      "slot-long-cooldown",
       "slot-sigwarn",
       "slot-await-infra",
       "disabled",
@@ -622,18 +674,21 @@ export function updateHud(state: GameState): void {
       b.appendChild(dup);
     }
 
-    const cd = state.doctrineCooldownTicks[i] ?? 0;
-    const locked = cd > 0;
-    if (locked) b.classList.add("slot-locked");
+    const play = doctrineCardPlayability(state, id, null, i);
+    if (play.kind === "cooldown") b.classList.add("slot-locked");
+    else if (play.kind === "mana") b.classList.add("slot-need-mana");
+    else if (play.kind === "long_cooldown") b.classList.add("slot-long-cooldown", "slot-ready");
+    else if (!play.ok) b.classList.add("slot-blocked");
     else b.classList.add("slot-ready");
 
     if (live) {
-      live.innerHTML = cd > 0 ? `CD <b>${(cd / TICK_HZ).toFixed(1)}s</b>` : "";
+      const cls = play.ok ? (play.longCooldown ? "live-warn" : "live-info") : play.kind === "mana" ? "live-warn" : "live-bad";
+      live.innerHTML = play.liveLabel ? `<span class="${cls}">${escapeHudHtml(play.liveLabel)}</span>` : "";
     }
 
-    const reason = placementFailureReason(state, id, null, i);
     const hk = i === 9 ? "0" : String(i + 1);
-    b.title = `${reason ?? "Drag onto the map to place."} (key ${hk})`;
+    b.title = `${play.reason ?? play.hint} (key ${hk})`;
+    b.setAttribute("aria-disabled", play.reason ? "true" : "false");
     b.dataset.slotTone = doctrineSlotHudTone(e);
   });
 

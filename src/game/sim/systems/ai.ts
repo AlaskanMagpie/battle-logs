@@ -168,6 +168,28 @@ function moveUnitOnPath(s: GameState, u: UnitRuntime, target: Vec2, step: number
   return dist2(u, target) <= 2.2 * 2.2;
 }
 
+function moveUnitAutonomousOnPath(s: GameState, u: UnitRuntime, target: Vec2, step: number): boolean {
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  const stale =
+    !u.autoOrder ||
+    dist2(u.autoOrder, target) > 8 * 8 ||
+    (!u.flying && u.autoOrder.waypoints.length === 0 && dist2(u, target) > 3.4 * 3.4);
+  if (stale) {
+    u.autoOrder = {
+      x: target.x,
+      z: target.z,
+      waypoints: u.flying ? [] : planPathAroundMapObstacles(s.map, u, target, r),
+    };
+  }
+  const next = !u.flying && u.autoOrder.waypoints.length > 0 ? u.autoOrder.waypoints[0]! : target;
+  moveToward(u, next, step);
+  clampToWorldAndObstacles(s, u);
+  if (dist2(u, next) <= 1.4 * 1.4 && u.autoOrder.waypoints.length > 0) u.autoOrder.waypoints.shift();
+  const arrived = dist2(u, target) <= 2.2 * 2.2;
+  if (arrived) u.autoOrder = undefined;
+  return arrived;
+}
+
 function clampToWorld(s: GameState, u: UnitRuntime): void {
   const h = s.map.world.halfExtents;
   u.x = Math.max(-h, Math.min(h, u.x));
@@ -275,6 +297,82 @@ function applyUnitSeparation(s: GameState): void {
   }
 }
 
+function nearestNeutralTapTarget(s: GameState, from: Vec2): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bestD = Infinity;
+  for (const tap of s.taps) {
+    if (tap.active) continue;
+    const d = dist2(from, tap);
+    if (d < bestD) {
+      bestD = d;
+      best = tap;
+    }
+  }
+  return best;
+}
+
+function nearestFriendlyPointUnderThreat(s: GameState, from: Vec2, maxTravelD2: number): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bestD = maxTravelD2;
+  const threatR2 = 38 * 38;
+  const consider = (point: Vec2): void => {
+    let threatened = false;
+    for (const enemy of s.units) {
+      if (enemy.team !== "enemy" || enemy.hp <= 0) continue;
+      if (dist2(enemy, point) <= threatR2) {
+        threatened = true;
+        break;
+      }
+    }
+    if (!threatened) return;
+    const d = dist2(from, point);
+    if (d < bestD) {
+      bestD = d;
+      best = point;
+    }
+  };
+
+  if (s.hero.hp > 0) consider(s.hero);
+  for (const st of s.structures) {
+    if (st.team === "player" && st.complete && st.hp > 0) consider(st);
+  }
+  for (const tap of s.taps) {
+    if (tap.active && tap.ownerTeam === "player") consider(tap);
+  }
+  return best;
+}
+
+function patrolTarget(s: GameState, u: UnitRuntime, anchor: Vec2): Vec2 {
+  const seed = (u.id * 1664525 + (u.visualSeed | 0) + 1013904223) >>> 0;
+  const patrolPhase = Math.floor(s.tick / Math.max(1, TICK_HZ * 5));
+  const slot = (seed + patrolPhase) % 8;
+  const angle = (slot / 8) * Math.PI * 2 + (((seed >>> 8) & 0xff) / 0xff) * 0.35;
+  const radius = UNIT_FORMATION_SPACING * (1.55 + ((seed >>> 16) % 4) * 0.24);
+  return {
+    x: anchor.x + Math.cos(angle) * radius,
+    z: anchor.z + Math.sin(angle) * radius,
+  };
+}
+
+function idleOffenseTarget(s: GameState, u: UnitRuntime, st: StructureRuntime | undefined, hero: Vec2): Vec2 {
+  const defensePoint = nearestFriendlyPointUnderThreat(s, u, 96 * 96);
+  if (defensePoint) return formationMarchSlot(u, defensePoint, hero, UNIT_FORMATION_SPACING);
+
+  const neutralTap = nearestNeutralTapTarget(s, u);
+  if (neutralTap) return formationMarchSlot(u, neutralTap, hero, UNIT_FORMATION_SPACING);
+
+  const pressure = pushLaneTarget(s, u);
+  if (pressure) return formationMarchSlot(u, pressure, hero, UNIT_FORMATION_SPACING);
+
+  const anchor =
+    st && (st.rallyX !== st.x || st.rallyZ !== st.z)
+      ? { x: st.rallyX, z: st.rallyZ }
+      : st
+        ? { x: st.x, z: st.z }
+        : hero;
+  return patrolTarget(s, u, anchor);
+}
+
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
   const half = s.map.world.halfExtents;
@@ -311,6 +409,7 @@ export function movement(s: GameState): void {
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (u.order) {
+      u.autoOrder = undefined;
       if (u.order.mode === "stay") {
         clampToWorldAndObstacles(s, u);
         continue;
@@ -373,7 +472,7 @@ export function movement(s: GameState): void {
     const canEngage = foe && (!defense || dist2(foe, hero) <= defR2);
 
     if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
-      moveUnitOnPath(s, u, foe, stepU(u));
+      moveUnitAutonomousOnPath(s, u, foe, stepU(u));
       continue;
     }
     if (canEngage) {
@@ -388,7 +487,7 @@ export function movement(s: GameState): void {
           { x: hero.x, z: hero.z },
           UNIT_FORMATION_SPACING,
         );
-        moveUnitOnPath(s, u, holdGoal, stepU(u));
+        moveUnitAutonomousOnPath(s, u, holdGoal, stepU(u));
       } else {
         clampToWorldAndObstacles(s, u);
       }
@@ -397,26 +496,17 @@ export function movement(s: GameState): void {
 
     let target: Vec2;
     if (defense) {
-      target = formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.92);
+      const defensePoint = nearestFriendlyPointUnderThreat(s, u, 140 * 140);
+      target = defensePoint
+        ? formationMarchSlot(u, defensePoint, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING)
+        : formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.92);
     } else if (s.globalRallyActive) {
       const anchor = { x: s.globalRallyX, z: s.globalRallyZ };
       target = formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING);
     } else {
-      const near = dist2(u, hero) <= heroR2;
-      if (near) {
-        target = formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.78);
-      } else if (st && (st.rallyX !== st.x || st.rallyZ !== st.z)) {
-        const anchor = { x: st.rallyX, z: st.rallyZ };
-        target = formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING);
-      } else {
-        const pushed = pushLaneTarget(s, u);
-        const anchor = pushed ?? { x: hero.x, z: hero.z };
-        target = pushed
-          ? formationMarchSlot(u, anchor, { x: hero.x, z: hero.z }, UNIT_FORMATION_SPACING)
-          : formationRingAround({ x: hero.x, z: hero.z }, u, UNIT_FORMATION_SPACING * 0.78);
-      }
+      target = idleOffenseTarget(s, u, st, { x: hero.x, z: hero.z });
     }
-    moveUnitOnPath(s, u, target, stepU(u));
+    moveUnitAutonomousOnPath(s, u, target, stepU(u));
   }
 
   applyUnitSeparation(s);

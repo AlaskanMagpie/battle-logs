@@ -61,7 +61,7 @@ export type CastFxKind =
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
-  /** Runtime id of the squad that committed this hit (for attack animation triggers). */
+  /** Runtime id of the unit that committed this hit (for attack animation triggers). */
   attackerId?: number;
   ax: number;
   az: number;
@@ -272,6 +272,8 @@ export interface UnitRuntime {
   /** Bonus vs enemy relays / structures (Siege Works). Default 1 when unset. */
   damageVsStructuresMult?: number;
   order?: UnitOrderRuntime;
+  /** Internal autonomous path cache; unlike `order`, this is never a player-issued command. */
+  autoOrder?: UnitAutoOrderRuntime;
   /** Knockback velocity XZ (world units/sec), decayed in movement. */
   vxImpulse: number;
   vzImpulse: number;
@@ -308,6 +310,12 @@ export interface UnitOrderRuntime {
    * move/fight there until your team owns the node or this unit dies — no "arrived and idle" early exit.
    */
   captureTapIndex?: number;
+}
+
+export interface UnitAutoOrderRuntime {
+  x: number;
+  z: number;
+  waypoints: Vec2[];
 }
 
 export interface MatchStats {
@@ -1035,14 +1043,109 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
+export type DoctrinePlayabilityKind =
+  | "ready"
+  | "cooldown"
+  | "mana"
+  | "territory"
+  | "enemy"
+  | "terrain"
+  | "invalid"
+  | "empty"
+  | "long_cooldown";
+
+export interface DoctrinePlayability {
+  ok: boolean;
+  kind: DoctrinePlayabilityKind;
+  reason: string | null;
+  hint: string;
+  liveLabel: string;
+  missingMana?: number;
+  cooldownSeconds?: number;
+  longCooldown?: boolean;
+}
+
+function blocked(kind: DoctrinePlayabilityKind, reason: string, liveLabel: string, extra?: Partial<DoctrinePlayability>): DoctrinePlayability {
+  return { ok: false, kind, reason, hint: reason, liveLabel, ...extra };
+}
+
+function ready(hint: string, liveLabel = "Ready", extra?: Partial<DoctrinePlayability>): DoctrinePlayability {
+  return { ok: true, kind: "ready", reason: null, hint, liveLabel, ...extra };
+}
+
+export function doctrineCardPlayability(
+  s: GameState,
+  catalogId: string | null,
+  pos: Vec2 | null,
+  slotIndex: number,
+): DoctrinePlayability {
+  if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) {
+    return blocked("invalid", "Invalid doctrine slot.", "Invalid");
+  }
+  if (!catalogId) return blocked("empty", "Empty doctrine slot.", "Empty");
+  const entry = getCatalogEntry(catalogId);
+  if (!entry) return blocked("invalid", "Unknown card.", "Unknown");
+  if (s.doctrineSlotCatalogIds[slotIndex] !== catalogId) {
+    return blocked("invalid", "Card is not in this doctrine slot.", "Invalid");
+  }
+
+  const cdTicks = s.doctrineCooldownTicks[slotIndex] ?? 0;
+  if (cdTicks > 0) {
+    const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
+    return blocked("cooldown", `Card on cooldown (${secs}s).`, `CD ${secs}s`, {
+      cooldownSeconds: secs,
+    });
+  }
+
+  if (isCommandEntry(entry) && !DOCTRINE_COMMANDS_ENABLED) {
+    return blocked("invalid", "Command cards are disabled.", "Disabled");
+  }
+
+  const missingMana = Math.max(0, Math.ceil(entry.fluxCost - s.flux));
+  if (missingMana > 0) {
+    return blocked("mana", `Need ${missingMana} more Mana (${entry.fluxCost} total; have ${Math.floor(s.flux)}).`, `Need ${missingMana}`, {
+      missingMana,
+    });
+  }
+
+  if (isStructureEntry(entry) && pos) {
+    if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
+    if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
+      return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+    }
+    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+      return blocked("terrain", "Blocked by terrain — try another spot.", "Blocked");
+    }
+  }
+
+  if (isCommandEntry(entry)) {
+    const used = s.doctrineCommandUses[slotIndex] ?? 0;
+    const usesLeft = Math.max(0, entry.maxCharges - used);
+    if (usesLeft <= 0) {
+      return {
+        ok: true,
+        kind: "long_cooldown",
+        reason: null,
+        hint: "Playable now, but this extra cast triggers the long cooldown.",
+        liveLabel: "Long CD",
+        longCooldown: true,
+      };
+    }
+    return ready(`Ready — ${usesLeft} normal cast${usesLeft === 1 ? "" : "s"} before the long cooldown.`, `Cast ${usesLeft}`);
+  }
+
+  if (isStructureEntry(entry)) {
+    return ready(pos ? "Release to summon here." : `Ready — costs ${entry.fluxCost} Mana.`, `Play ${entry.fluxCost}`);
+  }
+
+  return blocked("invalid", "Unknown card type.", "Invalid");
+}
+
 export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | null {
-  if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return "Invalid doctrine slot.";
-  const id = s.doctrineSlotCatalogIds[slotIndex] ?? null;
-  if (!id) return "Empty doctrine slot.";
-  const e = getCatalogEntry(id);
-  if (!e) return "Unknown entry.";
-  if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) return "Doctrine slot on cooldown.";
-  return null;
+  const id = slotIndex >= 0 && slotIndex < DOCTRINE_SLOT_COUNT ? (s.doctrineSlotCatalogIds[slotIndex] ?? null) : null;
+  const play = doctrineCardPlayability(s, id, null, slotIndex);
+  if (play.kind === "mana" || play.kind === "long_cooldown") return null;
+  return play.reason;
 }
 
 export function canPlaceStructureHere(
@@ -1053,17 +1156,7 @@ export function canPlaceStructureHere(
 ): string | null {
   const entry = getCatalogEntry(catalogId);
   if (!entry || !isStructureEntry(entry)) return "Not a structure card.";
-  const slotErr = canUseDoctrineSlot(s, slotIndex);
-  if (slotErr) return slotErr;
-  if (s.flux < entry.fluxCost) return "Not enough Mana.";
-  if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy (aggro).";
-  if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-    return "Must place inside your territory (cyan area). Claim more nodes to expand.";
-  }
-  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
-    return "Blocked by terrain — try another spot.";
-  }
-  return null;
+  return doctrineCardPlayability(s, catalogId, pos, slotIndex).reason;
 }
 
 const ENEMY_KEEP_EXCLUSION_RADIUS = 24;
@@ -1089,9 +1182,10 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
 }
 
 /**
- * Specific, player-facing explanation of why a tower cannot be placed right now
- * at `pos`. Mirrors `canPlaceStructureHere` gate order but returns a targeted
- * sentence per failing gate (tier count, flux deficit, territory).
+ * Specific, player-facing explanation of why a card cannot be used right now.
+ * Mirrors the shared doctrine card gates: cooldown, Mana, territory, enemy
+ * proximity, and terrain. A null result means playable; command long-cooldown
+ * warnings are exposed through `doctrineCardPlayability`.
  */
 export function placementFailureReason(
   s: GameState,
@@ -1099,33 +1193,7 @@ export function placementFailureReason(
   pos: Vec2 | null,
   slotIndex: number,
 ): string | null {
-  const entry = getCatalogEntry(catalogId);
-  if (!entry) return "Unknown card.";
-
-  const cdTicks = s.doctrineCooldownTicks[slotIndex] ?? 0;
-  if (cdTicks > 0) {
-    const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
-    return `Card on cooldown (${secs}s).`;
-  }
-
-  if (isStructureEntry(entry) && s.flux < entry.fluxCost) {
-    return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
-  }
-  if (isCommandEntry(entry) && s.flux < entry.fluxCost) {
-    return `Need ${entry.fluxCost} Mana (have ${Math.floor(s.flux)}).`;
-  }
-
-  if (isStructureEntry(entry) && pos) {
-    if (nearestEnemyAggroBlocked(s, pos)) return "Too close to enemy — can't summon here.";
-    if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-      return "Outside your territory — claim more Mana nodes to expand the cyan area.";
-    }
-    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
-      return "Blocked by terrain — try another spot.";
-    }
-  }
-
-  return null;
+  return doctrineCardPlayability(s, catalogId, pos, slotIndex).reason;
 }
 
 /** Map signal → display color (HSL). Used by 3D and cards for visual consistency. */

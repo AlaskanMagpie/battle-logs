@@ -10,8 +10,8 @@ import { loadMapMerged } from "./game/loadMap";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
 import {
   canPlaceStructureHere,
-  canUseDoctrineSlot,
   createInitialState,
+  doctrineCardPlayability,
   placementFailureReason,
   type GameState,
 } from "./game/state";
@@ -293,22 +293,22 @@ function wireDoctrineDragToMap(
       renderer.setCommandGhost(null, null, false);
       if (!hit) {
         renderer.setPlacementGhost(null, false);
-        const reason = placementFailureReason(st, session.catalogId, null, session.slotIndex);
+        const playable = doctrineCardPlayability(st, session.catalogId, null, session.slotIndex);
         updateDragReason(
           ev.clientX,
           ev.clientY,
-          reason ?? "Drag onto the map to place.",
-          reason === null,
+          playable.reason ?? playable.hint,
+          playable.reason === null,
         );
         return;
       }
-      const reason = placementFailureReason(st, session.catalogId, hit, session.slotIndex);
-      const valid = reason === null;
+      const playable = doctrineCardPlayability(st, session.catalogId, hit, session.slotIndex);
+      const valid = playable.reason === null;
       renderer.setPlacementGhost(hit, valid);
       updateDragReason(
         ev.clientX,
         ev.clientY,
-        reason ?? "Release to place.",
+        playable.reason ?? playable.hint,
         valid,
       );
       return;
@@ -318,32 +318,29 @@ function wireDoctrineDragToMap(
     renderer.setPlacementGhost(null, false);
     const radius = commandEffectRadius(entry);
     const linePrev = commandLineGhostPreview(entry);
+    const playable = doctrineCardPlayability(st, session.catalogId, hit, session.slotIndex);
+    const valid = playable.reason === null;
     if (hit) {
       if (linePrev) {
-        renderer.setCommandGhost(hit, null, true, {
+        renderer.setCommandGhost(hit, null, valid, {
           fromX: st.hero.x,
           fromZ: st.hero.z,
           length: linePrev.length,
           halfWidth: linePrev.halfWidth,
         });
       } else {
-        renderer.setCommandGhost(hit, radius, true);
+        renderer.setCommandGhost(hit, radius, valid);
       }
     } else {
       renderer.setCommandGhost(null, null, false);
     }
     const hint = commandTargetingHint(entry);
-    const warnings: string[] = [];
-    const cdTicks = st.doctrineCooldownTicks[session.slotIndex] ?? 0;
-    if (cdTicks > 0) {
-      warnings.push(`On cooldown ${Math.max(1, Math.ceil(cdTicks / TICK_HZ))}s`);
-    }
-    const ok = warnings.length === 0;
+    const msg = playable.reason ?? (playable.longCooldown ? `${hint} — ${playable.hint}` : hint);
     updateDragReason(
       ev.clientX,
       ev.clientY,
-      ok ? hint : `${hint} — ${warnings.join(", ")}`,
-      ok,
+      msg,
+      valid,
     );
   }
 
@@ -867,8 +864,8 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       }
       if (!isStructureEntry(entry)) {
         renderer.setPlacementGhost(null, false);
-        const slotErr = canUseDoctrineSlot(state, slot);
-        const valid = !slotErr;
+        const playable = doctrineCardPlayability(state, pending, hit, slot);
+        const valid = playable.reason === null;
         const linePrev = commandLineGhostPreview(entry);
         if (linePrev) {
           renderer.setCommandGhost(hit, null, valid, {

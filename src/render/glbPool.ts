@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { KEEP_ID, TICK_HZ, UNIT_ATTACK_COOLDOWN_TICKS } from "../game/constants";
+import { KEEP_ID } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
@@ -14,11 +14,13 @@ type GltfTemplate = { root: THREE.Object3D; animations: THREE.AnimationClip[] };
 const cache = new Map<string, GltfTemplate>();
 /** In-flight loads: many units can request the same manifest URL before the first parse finishes. */
 const templateLoadPromises = new Map<string, Promise<GltfTemplate>>();
+const warnedAnimationRoles = new Set<string>();
 
 const AZURE_SPEAR_SWARM_PREFIX = "azure_spear_swarm_";
 const AZURE_SPEAR_SWARM_RUN_FILE = "azure_spear_swarm_run_fast.glb";
 const AZURE_SPEAR_SWARM_ATTACK_FILE = "azure_spear_swarm_attack_spin.glb";
-const AZURE_SPEAR_SWARM_IDLE_FILE = "azure_spear_swarm_walking.glb";
+const AZURE_SPEAR_SWARM_IDLE_FILE = "azure_spear_swarm_idle.glb";
+const AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE = "azure_spear_swarm_walking.glb";
 const AZURE_SPEAR_SWARM_DEATH_FILE = "azure_spear_swarm_dying.glb";
 const LANTERNBOUND_LINE_PREFIX = "lanternbound_line_";
 const LANTERNBOUND_LINE_RUN_FILE = "lanternbound_line_running.glb";
@@ -45,7 +47,10 @@ function attackFileForClass(kind: UnitSizeClass | "hero", files: string[]): stri
 }
 
 function idleFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
-  if (kind === "Swarm") return files.includes(AZURE_SPEAR_SWARM_IDLE_FILE) ? AZURE_SPEAR_SWARM_IDLE_FILE : null;
+  if (kind === "Swarm") {
+    if (files.includes(AZURE_SPEAR_SWARM_IDLE_FILE)) return AZURE_SPEAR_SWARM_IDLE_FILE;
+    return files.includes(AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE) ? AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE : null;
+  }
   if (kind === "Line") return files.includes(LANTERNBOUND_LINE_IDLE_FILE) ? LANTERNBOUND_LINE_IDLE_FILE : null;
   return null;
 }
@@ -57,14 +62,17 @@ function deathFileForClass(kind: UnitSizeClass | "hero", files: string[]): strin
 }
 
 function attackPlaybackSeconds(kind: UnitSizeClass | "hero"): number | undefined {
-  if (kind === "hero") return undefined;
-  return Math.max(0.28, (UNIT_ATTACK_COOLDOWN_TICKS[kind] ?? UNIT_ATTACK_COOLDOWN_TICKS.Line) / TICK_HZ);
+  void kind;
+  // Use authored timing. Compressing long attack files to sim cooldowns made rich
+  // sequences (e.g. triple-combo) flash by as a single pose.
+  return undefined;
 }
 
 function safeClip(clip: THREE.AnimationClip): THREE.AnimationClip {
-  // Meshy exports often include scale and translation keys in units that don't match the mesh.
-  // Keeping rotations preserves the run/attack motion while preventing map-sized skeleton offsets.
-  const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale") && !track.name.endsWith(".position"));
+  // Meshy exports often include scale keys that fight our class-based GLB normalization.
+  // Keep bone position tracks: these clips use them heavily for hips/limbs, so stripping
+  // them makes runs and attacks look like a single held frame instead of a full sequence.
+  const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
@@ -255,6 +263,8 @@ type AttachGlbOpts = {
   deathFile?: string | null;
   /** Compress/expand long source attacks to the sim's actual attack event cadence. */
   attackPlaybackSeconds?: number;
+  /** Unit/art role label used for one-time dev warnings when expected clips are absent. */
+  animationRoleLabel?: string;
 };
 
 async function attachGlbByFile(
@@ -295,6 +305,7 @@ async function attachGlbByFile(
       parent.userData["glbMixer"] = mixer;
       parent.userData["glbAction"] = action;
       parent.userData["glbRunAction"] = action;
+      parent.userData["glbBaseState"] = "run";
     }
     if (opts?.idleFile) {
       const idleTemplate = await loadGltfTemplate(`/assets/units/${opts.idleFile}`);
@@ -344,6 +355,20 @@ async function attachGlbByFile(
       }
     }
     if (mixer) mixer.update(0);
+    parent.userData["glbAnimationReady"] = !!mixer;
+    if (opts?.animationRoleLabel) {
+      const missing = [
+        parent.userData["glbRunAction"] ? "" : "run",
+        opts.idleFile && !parent.userData["glbIdleAction"] ? "idle" : "",
+        opts.attackFile && !parent.userData["glbAttackAction"] ? "attack" : "",
+        opts.deathFile && !parent.userData["glbDeathAction"] ? "death" : "",
+      ].filter(Boolean);
+      const warnKey = `${opts.animationRoleLabel}:${missing.join(",") || "all"}`;
+      if ((!mixer || missing.length > 0) && !warnedAnimationRoles.has(warnKey)) {
+        warnedAnimationRoles.add(warnKey);
+        console.warn(`[glb] ${opts.animationRoleLabel} missing animation roles: ${missing.join(", ") || "all"}`, file);
+      }
+    }
     normalizeGlbInstance(inst, targetMaxExtent);
 
     if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
@@ -388,6 +413,7 @@ export async function attachGlbForClass(
     idleFile: idleFileForClass(kind, files),
     deathFile: deathFileForClass(kind, files),
     attackPlaybackSeconds: attackPlaybackSeconds(kind),
+    ...(kind === "Swarm" || kind === "Line" ? { animationRoleLabel: kind } : {}),
   });
 }
 

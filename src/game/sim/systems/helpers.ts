@@ -1,4 +1,4 @@
-import { UNIT_MESH_SCALE_STEP, UNIT_MESH_SWARM } from "../../constants";
+import { UNIT_MESH_HEAVY, UNIT_MESH_LINE, UNIT_MESH_SWARM, UNIT_MESH_TITAN } from "../../constants";
 import type { UnitSizeClass, Vec2 } from "../../types";
 
 export function dist2(a: Vec2, b: Vec2): number {
@@ -16,13 +16,20 @@ export const TRAMPLE: Record<UnitSizeClass, Partial<Record<UnitSizeClass, number
 };
 
 /**
- * Characteristic unit footprint/max extent (world units), shared by gameplay spacing and renderer
- * GLB normalization. Do not add class-specific scale multipliers in render code unless this ladder
- * changes too: Titan should stay building-scale, then Heavy/Line/Swarm step down by 1.5×.
+ * Characteristic unit height/max extent (world units), shared by gameplay spacing and renderer
+ * GLB normalization. Scale target: Swarm 10ft, Line 20ft, Heavy 30ft, Titan 50ft.
  */
 export function unitMeshLinearSize(size: UnitSizeClass): number {
-  const t = size === "Swarm" ? 0 : size === "Line" ? 1 : size === "Heavy" ? 2 : 3;
-  return UNIT_MESH_SWARM * UNIT_MESH_SCALE_STEP ** t;
+  switch (size) {
+    case "Swarm":
+      return UNIT_MESH_SWARM;
+    case "Line":
+      return UNIT_MESH_LINE;
+    case "Heavy":
+      return UNIT_MESH_HEAVY;
+    case "Titan":
+      return UNIT_MESH_TITAN;
+  }
 }
 
 export function unitVisualScaleReport(): Record<UnitSizeClass, number> {
@@ -49,7 +56,7 @@ export function unitStatsForCatalog(size: UnitSizeClass): {
 } {
   switch (size) {
     case "Swarm":
-      return { maxHp: 28, speedPerSec: 9, range: 18, dmgPerTick: 0.12, pop: 1 };
+      return { maxHp: 28, speedPerSec: 9, range: 14, dmgPerTick: 0.12, pop: 1 };
     case "Line":
       return { maxHp: 60, speedPerSec: 6, range: 12, dmgPerTick: 0.22, pop: 2 };
     case "Heavy":

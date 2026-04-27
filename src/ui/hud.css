@@ -1359,6 +1359,10 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   color: #8ea6c8;
   font-weight: 600;
 }
+.slot-live .live-bad {
+  color: #ff7a7a;
+  font-weight: 750;
+}
 .slot.active {
   outline: 3px solid #5cff9a;
   outline-offset: 1px;
@@ -1379,6 +1383,22 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .slot.slot-ready {
   border-color: #2a5c42;
   box-shadow: inset 0 0 0 1px rgba(72, 200, 120, 0.18);
+}
+.slot.slot-need-mana:not(.slot-locked) {
+  border-color: rgba(255, 184, 107, 0.58);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 184, 107, 0.22),
+    0 0 16px rgba(255, 132, 64, 0.08);
+}
+.slot.slot-blocked:not(.slot-locked) {
+  border-color: rgba(255, 122, 122, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(255, 122, 122, 0.18);
+}
+.slot.slot-long-cooldown:not(.slot-locked) {
+  border-color: rgba(190, 132, 255, 0.62);
+  box-shadow:
+    inset 0 0 0 1px rgba(190, 132, 255, 0.22),
+    0 0 16px rgba(160, 96, 255, 0.1);
 }
 .slot.slot-locked {
   opacity: 0.38;

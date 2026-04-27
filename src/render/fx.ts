@@ -118,7 +118,7 @@ export function spawnCastFx(
     case "shatter":
       return spawnShatter(host, pos, opts?.impactRadius);
     case "fortify":
-      return spawnFortify(host, pos);
+      return spawnFortify(host, pos, opts?.impactRadius);
     case "muster":
       return spawnMuster(host, pos);
     case "line_cleave":
@@ -709,9 +709,11 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11
   group.add(scorch);
 
   const pillars: THREE.Mesh[] = [];
-  for (let i = 0; i < 5; i++) {
+  const pillarCount = Math.max(6, Math.round(radius * 0.45));
+  for (let i = 0; i < pillarCount; i++) {
+    const pillarH = Math.max(4.8, radius * 0.58);
     const pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 0.55, 4.6, 8, 1, true),
+      new THREE.CylinderGeometry(0.26, 0.72, pillarH, 8, 1, true),
       new THREE.MeshBasicMaterial({
         color: i % 2 === 0 ? 0xffdd66 : 0xff5522,
         side: THREE.DoubleSide,
@@ -721,15 +723,16 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11
         blending: THREE.AdditiveBlending,
       }),
     );
-    const ang = (i / 5) * Math.PI * 2 + 0.35;
-    const rr = radius * (i === 0 ? 0 : 0.34 + (i % 2) * 0.22);
-    pillar.position.set(Math.cos(ang) * rr, 2.1, Math.sin(ang) * rr);
+    const ang = (i / pillarCount) * Math.PI * 2 + 0.35;
+    const rr = radius * (i === 0 ? 0 : 0.28 + ((i * 7) % 5) * 0.11);
+    pillar.position.set(Math.cos(ang) * rr, pillarH * 0.47, Math.sin(ang) * rr);
     group.add(pillar);
     pillars.push(pillar);
   }
 
   const embers: { mesh: THREE.Mesh; vy: number; vx: number; vz: number }[] = [];
-  for (let i = 0; i < 22; i++) {
+  const emberCount = Math.max(24, Math.round(radius * 2.3));
+  for (let i = 0; i < emberCount; i++) {
     const g = new THREE.SphereGeometry(0.18, 6, 6);
     const m = new THREE.MeshBasicMaterial({
       color: 0xffaa44,
@@ -739,8 +742,8 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11
       blending: THREE.AdditiveBlending,
     });
     const e = new THREE.Mesh(g, m);
-    const ang = (i / 22) * Math.PI * 2 + Math.random() * 0.4;
-    const sp = 4 + Math.random() * 3;
+    const ang = (i / emberCount) * Math.PI * 2 + Math.random() * 0.4;
+    const sp = 4.5 + Math.random() * 4.5;
     e.position.set(Math.cos(ang) * 0.3, 0.3, Math.sin(ang) * 0.3);
     group.add(e);
     embers.push({
@@ -758,7 +761,7 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
     (inner.material as THREE.MeshBasicMaterial).opacity = 0.85 * (1 - p * 1.4);
     inner.scale.setScalar(1 + p * Math.max(3, radius * 0.34));
-    scorch.scale.setScalar(Math.max(0.5, radius * 0.72) * (0.7 + p * 0.45));
+    scorch.scale.setScalar(Math.max(0.5, radius * 0.78) * (0.7 + p * 0.45));
     (scorch.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.55);
     for (const pillar of pillars) {
       pillar.scale.set(1 + p * 0.7, 1 + p * 0.18, 1 + p * 0.7);
@@ -855,7 +858,7 @@ function spawnCombatBoom(
 }
 
 /** Concentric shockwave rings + crack decal for Shatter chain impacts. */
-function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 9): void {
+function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 16): void {
   const life = 1.05;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.2, pos.z);
@@ -878,8 +881,9 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 9): 
     rings.push({ mesh: r, speed: radius * (0.55 + i * 0.32) });
   }
 
+  const pillarH = Math.max(5.2, radius * 0.52);
   const pillar = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18, 0.38, Math.max(2.2, radius * 0.42), 9, 1, true),
+    new THREE.CylinderGeometry(0.22, 0.48, pillarH, 9, 1, true),
     new THREE.MeshBasicMaterial({
       color: 0xe8f6ff,
       side: THREE.DoubleSide,
@@ -889,13 +893,13 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 9): 
       blending: THREE.AdditiveBlending,
     }),
   );
-  pillar.position.y = Math.max(1.1, radius * 0.22);
+  pillar.position.y = pillarH * 0.5;
   group.add(pillar);
 
   // Crack decal — a few thin rectangles radiating.
   const cracks: THREE.Mesh[] = [];
   for (let i = 0; i < 9; i++) {
-    const g = new THREE.PlaneGeometry(0.14, radius * (0.5 + (i % 3) * 0.12));
+    const g = new THREE.PlaneGeometry(0.18, radius * (0.56 + (i % 3) * 0.14));
     const m = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
@@ -926,25 +930,46 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 9): 
 }
 
 /** Cyan hex-shield shell that expands and fades. */
-function spawnFortify(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.55;
-  const geo = new THREE.IcosahedronGeometry(1.2, 1);
+function spawnFortify(host: FxHost, pos: { x: number; z: number }, radius = 18): void {
+  const life = 0.72;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0, pos.z);
+  const geo = new THREE.IcosahedronGeometry(1.25, 1);
   const mat = new THREE.MeshBasicMaterial({
     color: 0x6ae1ff,
     wireframe: true,
     transparent: true,
     opacity: 0.85,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
   });
   const shell = new THREE.Mesh(geo, mat);
-  shell.position.set(pos.x, 2.4, pos.z);
+  shell.position.set(0, Math.max(2.7, radius * 0.2), 0);
+  group.add(shell);
 
-  spawn(host, shell, life, (t) => {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.35, 0.75, 56),
+    new THREE.MeshBasicMaterial({
+      color: 0x92f2ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.68,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  group.add(ring);
+
+  spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
-    const s = 1 + p * 2.8;
+    const s = 1 + p * Math.max(3.4, radius * 0.18);
     shell.scale.setScalar(s);
     shell.rotation.y = p * 1.8;
     (shell.material as THREE.MeshBasicMaterial).opacity = 0.85 * (1 - p);
+    ring.scale.setScalar(Math.max(1, (radius / 0.75) * (0.25 + p * 0.9)));
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.68 * (1 - p * 0.9);
   });
 }
 
@@ -1080,7 +1105,7 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
 
 /** Vanguard-style summon accent: fast outward sparks. */
 function spawnSparkBurst(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.34;
+  const life = 0.42;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.05, pos.z);
   const ring = new THREE.Mesh(
@@ -1097,18 +1122,18 @@ function spawnSparkBurst(host: FxHost, pos: { x: number; z: number }): void {
   group.add(ring);
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
-    ring.scale.setScalar(1 + p * 7);
+    ring.scale.setScalar(1 + p * 10);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
   });
 }
 
 /** Bastion-style summon accent: dusty radial crack. */
 function spawnGroundCrack(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.4;
+  const life = 0.48;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.04, pos.z);
   const crack = new THREE.Mesh(
-    new THREE.RingGeometry(0.15, 2.1, 32, 1, 0, Math.PI * 1.65),
+    new THREE.RingGeometry(0.25, 3.35, 40, 1, 0, Math.PI * 1.72),
     new THREE.MeshBasicMaterial({
       color: 0x8899aa,
       transparent: true,
@@ -1127,7 +1152,7 @@ function spawnGroundCrack(host: FxHost, pos: { x: number; z: number }): void {
 
 /** Reclaim-style summon accent: violet pulse ring. */
 function spawnReclaimPulse(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.38;
+  const life = 0.48;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.06, pos.z);
   const ring = new THREE.Mesh(
@@ -1144,7 +1169,7 @@ function spawnReclaimPulse(host: FxHost, pos: { x: number; z: number }): void {
   group.add(ring);
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
-    ring.scale.setScalar(1 + p * 4.5);
+    ring.scale.setScalar(1 + p * 6.2);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - p);
   });
 }

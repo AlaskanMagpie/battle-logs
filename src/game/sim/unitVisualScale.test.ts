@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { UNIT_MESH_TITAN } from "../constants";
+import {
+  FEET_PER_WORLD_UNIT,
+  UNIT_HEIGHT_FEET,
+  UNIT_MESH_HEAVY,
+  UNIT_MESH_LINE,
+  UNIT_MESH_SWARM,
+  UNIT_MESH_TITAN,
+} from "../constants";
 import { unitVisualScaleReport } from "./systems/helpers";
 
 describe("unit visual scale ladder", () => {
@@ -15,8 +22,13 @@ describe("unit visual scale ladder", () => {
     expect(s.Heavy).toBeLessThan(UNIT_MESH_TITAN);
     expect(s.Titan).toBe(UNIT_MESH_TITAN);
 
-    expect(s.Line / s.Swarm).toBeCloseTo(1.5, 6);
-    expect(s.Heavy / s.Line).toBeCloseTo(1.5, 6);
-    expect(s.Titan / s.Heavy).toBeCloseTo(1.5, 6);
+    expect(s.Swarm).toBeCloseTo(UNIT_MESH_SWARM, 6);
+    expect(s.Line).toBeCloseTo(UNIT_MESH_LINE, 6);
+    expect(s.Heavy).toBeCloseTo(UNIT_MESH_HEAVY, 6);
+
+    expect(s.Swarm * FEET_PER_WORLD_UNIT).toBeCloseTo(UNIT_HEIGHT_FEET.Swarm, 6);
+    expect(s.Line * FEET_PER_WORLD_UNIT).toBeCloseTo(UNIT_HEIGHT_FEET.Line, 6);
+    expect(s.Heavy * FEET_PER_WORLD_UNIT).toBeCloseTo(UNIT_HEIGHT_FEET.Heavy, 6);
+    expect(s.Titan * FEET_PER_WORLD_UNIT).toBeCloseTo(UNIT_HEIGHT_FEET.Titan, 6);
   });
 });
