@@ -161,6 +161,12 @@ export type UnitTrait = "lifesteal";
 /** Melee / breath / artillery reach bucket for combat FX. */
 export type AttackRangeBand = "close" | "medium" | "long";
 
+/** Renderer-facing spell school. Gameplay still lives in `CommandEffect`; this is the visual language. */
+export type SpellFxElement = "fire" | "lightning" | "earth" | "water" | "air" | "arcane" | "reclaim" | "shield";
+
+/** Renderer-facing spell silhouette. Keeps range/shape readable even when damage rules differ. */
+export type SpellFxShape = "aoe" | "bolt" | "chain" | "cone" | "beam" | "line" | "field" | "meteor" | "impact" | "burst";
+
 export interface StructureCatalogEntry {
   id: string;
   name: string;

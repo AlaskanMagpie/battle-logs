@@ -1170,6 +1170,12 @@ export class GameRenderer {
           strikeVariant: fxEvt.strikeVariant,
           impactRadius: fxEvt.impactRadius,
           rangeBand: fxEvt.rangeBand,
+          element: fxEvt.element,
+          secondaryElement: fxEvt.secondaryElement,
+          shape: fxEvt.shape,
+          reach: fxEvt.reach,
+          width: fxEvt.width,
+          visualSeed: fxEvt.visualSeed,
         });
         if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
       }
@@ -2811,6 +2817,7 @@ export class GameRenderer {
       const g = obj as THREE.Group;
       g.userData["unitId"] = u.id;
       g.userData["team"] = u.team;
+      g.userData["sizeClass"] = u.sizeClass;
       const visual = this.unitVisualPos.get(u.id) ?? new THREE.Vector2(u.x, u.z);
       this.unitVisualPos.set(u.id, visual);
       const attackTick = u.lastAttackTick;
@@ -3116,9 +3123,11 @@ export class GameRenderer {
     const ud = root.userData as Record<string, unknown>;
     const team = ud["team"] === "enemy" ? "enemy" : "player";
     const color = team === "enemy" ? 0xff8a70 : 0x8fdcff;
+    const titan = ud["sizeClass"] === "Titan";
     const motes: THREE.Mesh[] = [];
-    const size = Math.max(0.05, ((ud["unitHeight"] as number | undefined) ?? 1.5) * 0.035);
-    for (let i = 0; i < 4; i++) {
+    const size = Math.max(0.05, ((ud["unitHeight"] as number | undefined) ?? 1.5) * (titan ? 0.045 : 0.035));
+    const count = titan ? 6 : 4;
+    for (let i = 0; i < count; i++) {
       const mote = new THREE.Mesh(
         new THREE.IcosahedronGeometry(size * (0.75 + i * 0.08), 0),
         new THREE.MeshBasicMaterial({
@@ -3130,8 +3139,8 @@ export class GameRenderer {
         }),
       );
       const a = i * 2.399;
-      const r = 0.12 + i * 0.035;
-      mote.position.set(Math.cos(a) * r, 0.18 + i * 0.11, Math.sin(a) * r);
+      const r = (titan ? 0.22 : 0.12) + i * (titan ? 0.055 : 0.035);
+      mote.position.set(Math.cos(a) * r, (titan ? 0.32 : 0.18) + i * 0.11, Math.sin(a) * r);
       root.add(mote);
       motes.push(mote);
     }
@@ -3147,7 +3156,14 @@ export class GameRenderer {
     const label = this.unitCountLabels.get(ud["unitId"] as number);
     if (label) label.sprite.visible = false;
     const particles = this.makeDeathMotes(root);
-    const life = 0.42;
+    const titan = ud["sizeClass"] === "Titan";
+    if (titan) {
+      spawnCastFx(this.fx, "death_flash", { x: root.position.x, z: root.position.z }, {
+        impactRadius: Math.max(2.4, ((ud["unitHeight"] as number | undefined) ?? 3) * 0.36),
+        rangeBand: "long",
+      });
+    }
+    const life = titan ? 0.68 : 0.42;
     this.startGlbDeathAnimation(root);
     this.dyingUnits.push({ obj: root, timer: life, life, particles });
   }

@@ -480,4 +480,20 @@ describe("selection commands", () => {
     expect(farIdle.order).toBeUndefined();
     expect(busy.order?.x).toBe(-45);
   });
+
+  it("queues attack-move orders after the current unit command", () => {
+    const s = createInitialState(tinyMap, []);
+    const ally = unit(5200, "player", "Swarm", null);
+    ally.order = { mode: "move", x: -30, z: 2, waypoints: [], queued: [] };
+    s.units.push(ally);
+
+    applyPlayerIntents(s, [
+      { type: "select_units", unitIds: [ally.id] },
+      { type: "command_selected_units", x: -10, z: 8, mode: "attack_move", queue: true },
+    ]);
+
+    expect(ally.order?.mode).toBe("move");
+    expect(ally.order?.queued).toHaveLength(1);
+    expect(s.lastMessage).toContain("queued to attack-move");
+  });
 });

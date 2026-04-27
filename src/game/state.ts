@@ -35,6 +35,8 @@ import type {
   GamePhase,
   MapData,
   SignalType,
+  SpellFxElement,
+  SpellFxShape,
   TeamId,
   TapSlotDef,
   UnitSizeClass,
@@ -57,7 +59,8 @@ export type CastFxKind =
   | "ground_crack"
   | "reclaim_pulse"
   | "death_flash"
-  | "combat_boom";
+  | "combat_boom"
+  | "elemental_spell";
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
@@ -107,6 +110,14 @@ export interface CastFxEvent {
   /** Ground boom / shock disc radius for `combat_boom` and similar. */
   impactRadius?: number;
   rangeBand?: AttackRangeBand;
+  /** Optional renderer-only element/shape profile for reusable spell FX. */
+  element?: SpellFxElement;
+  secondaryElement?: SpellFxElement;
+  shape?: SpellFxShape;
+  /** Optional spell reach/width in world units. Falls back to impact radius / origin distance. */
+  reach?: number;
+  width?: number;
+  visualSeed?: number;
 }
 
 /** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */

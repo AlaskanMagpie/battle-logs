@@ -135,6 +135,7 @@ function roleScore(role, file, meta) {
   const hay = `${file} ${meta.animations.map((a) => a.name).join(" ")}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   const animated = Math.max(0, ...meta.animations.map((a) => a.movingTracks));
   const duration = Math.max(0, ...meta.animations.map((a) => a.duration));
+  if (animated <= 0) return 0;
   let score = 0;
   if (role === "run") {
     if (/\b(run|running|sprint|runfast|fast)\b/.test(hay)) score += 90;
@@ -144,7 +145,7 @@ function roleScore(role, file, meta) {
   } else if (role === "idle") {
     if (/\b(combat[_\s-]?stance|stance|idle|breath|ready|guard)\b/.test(hay)) score += 90;
     if (/\b(walk|walking)\b/.test(hay)) score += 28;
-    if (duration < 0.08 || animated <= 0) score -= 55;
+    if (duration < 0.08) score -= 55;
   } else if (role === "attack") {
     if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 90;
     if (/\b(combo|power|spin|charge)\b/.test(hay)) score += 8;

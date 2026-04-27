@@ -1,12 +1,19 @@
 import * as THREE from "three";
 import { FX_ABSOLUTE_MAX_LIFETIME_SEC } from "../game/constants";
 import type { AttackRangeBand, CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
+import type { SpellFxElement, SpellFxShape } from "../game/types";
 
 export type CastFxSpawnOpts = {
   from?: { x: number; z: number };
   strikeVariant?: HeroStrikeFxVariant;
   impactRadius?: number;
   rangeBand?: AttackRangeBand;
+  element?: SpellFxElement;
+  secondaryElement?: SpellFxElement;
+  shape?: SpellFxShape;
+  reach?: number;
+  width?: number;
+  visualSeed?: number;
 };
 
 /**
@@ -137,6 +144,8 @@ export function spawnCastFx(
       return spawnReclaimPulse(host, pos);
     case "death_flash":
       return spawnDeathFlash(host, pos, opts?.impactRadius ?? 1.5, opts?.rangeBand ?? "close");
+    case "elemental_spell":
+      return spawnElementalSpell(host, pos, opts);
   }
 }
 
@@ -242,6 +251,475 @@ function rnd(seed: number, i: number): number {
   return u - Math.floor(u);
 }
 
+interface ElementalPalette {
+  core: number;
+  hot: number;
+  rim: number;
+  trail: number;
+  shadow: number;
+}
+
+function spellPalette(element: SpellFxElement): ElementalPalette {
+  switch (element) {
+    case "fire":
+      return { core: 0xfff1aa, hot: 0xff6a22, rim: 0xff2400, trail: 0xffc65a, shadow: 0x7c1d10 };
+    case "lightning":
+      return { core: 0xffffff, hot: 0xaeeaff, rim: 0x4ab6ff, trail: 0xd8f6ff, shadow: 0x153d88 };
+    case "earth":
+      return { core: 0xffd7a0, hot: 0xb98955, rim: 0x5f4631, trail: 0xd1b080, shadow: 0x231910 };
+    case "water":
+      return { core: 0xe8ffff, hot: 0x52d8ff, rim: 0x187dff, trail: 0x9affee, shadow: 0x0a3155 };
+    case "air":
+      return { core: 0xd7fff2, hot: 0x8df5d3, rim: 0x59bfff, trail: 0xe8fff6, shadow: 0x244455 };
+    case "reclaim":
+      return { core: 0xf2ddff, hot: 0x8affc8, rim: 0xff66dd, trail: 0xc86bff, shadow: 0x2b1742 };
+    case "shield":
+      return { core: 0xe8fbff, hot: 0x8ff2ff, rim: 0x5f8cff, trail: 0xffdf88, shadow: 0x12365f };
+    case "arcane":
+    default:
+      return { core: 0xffffff, hot: 0xc8a8ff, rim: 0x7650ff, trail: 0xaaccff, shadow: 0x24154c };
+  }
+}
+
+function fxMat(
+  color: number,
+  opacity: number,
+  additive = true,
+  side: THREE.Side = THREE.DoubleSide,
+): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    side,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+  });
+}
+
+function lineMat(color: number, opacity: number): THREE.LineBasicMaterial {
+  return new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+}
+
+function elementalSeed(pos: { x: number; z: number }, opts?: CastFxSpawnOpts): number {
+  return opts?.visualSeed ?? pos.x * 0.173 + pos.z * 0.319 + performance.now() * 0.001;
+}
+
+function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
+  const element = opts?.element ?? "arcane";
+  const shape = opts?.shape ?? "impact";
+  const pal = spellPalette(element);
+  switch (shape) {
+    case "bolt":
+    case "chain":
+      return spawnElementalBolt(host, pos, opts, pal);
+    case "beam":
+      return spawnElementalLine(host, pos, opts, pal, true);
+    case "line":
+      return spawnElementalLine(host, pos, opts, pal, false);
+    case "cone":
+      return spawnElementalCone(host, pos, opts, pal);
+    case "field":
+      return spawnElementalField(host, pos, opts, pal);
+    case "meteor":
+      return spawnElementalMeteor(host, pos, opts, pal);
+    case "aoe":
+      return spawnElementalAoe(host, pos, opts, pal, false);
+    case "impact":
+    case "burst":
+    default:
+      return spawnElementalAoe(host, pos, opts, pal, true);
+  }
+}
+
+function spawnElementalBolt(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const life = 0.36;
+  const root = new THREE.Group();
+  const seed = elementalSeed(pos, opts);
+  const from = opts?.from;
+  const dist = from ? Math.hypot(pos.x - from.x, pos.z - from.z) : 18;
+  const segs = Math.max(7, Math.min(24, Math.round(dist * 0.7)));
+  const jitter = Math.max(0.32, Math.min(2.2, dist * 0.075));
+
+  const primaryGeo = new THREE.BufferGeometry();
+  if (from) {
+    primaryGeo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, segs, jitter, seed), 3),
+    );
+  } else {
+    const pts: number[] = [];
+    const skyY = Math.max(18, opts?.impactRadius ? opts.impactRadius * 1.6 : 22);
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const fall = 1 - t;
+      const amp = Math.sin(t * Math.PI) * jitter;
+      pts.push(
+        pos.x + (rnd(seed, i) - 0.5) * amp,
+        0.25 + skyY * fall,
+        pos.z + (rnd(seed, i + 29) - 0.5) * amp,
+      );
+    }
+    primaryGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  }
+
+  const primaryMat = lineMat(pal.core, 0.96);
+  const primary = new THREE.Line(primaryGeo, primaryMat);
+  root.add(primary);
+
+  const forks: THREE.Line[] = [];
+  const forkCount = from ? 2 : 3;
+  for (let k = 0; k < forkCount; k++) {
+    const forkGeo = new THREE.BufferGeometry();
+    if (from) {
+      forkGeo.setAttribute(
+        "position",
+        new THREE.BufferAttribute(
+          heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, Math.max(5, segs - 2), jitter * 0.72, seed + 11 + k),
+          3,
+        ),
+      );
+    } else {
+      const pts: number[] = [];
+      const len = 4.5 + rnd(seed, k + 90) * 3.5;
+      const ang = rnd(seed, k + 100) * Math.PI * 2;
+      for (let i = 0; i <= 4; i++) {
+        const t = i / 4;
+        pts.push(
+          pos.x + Math.cos(ang) * len * t + (rnd(seed, i + k * 13) - 0.5) * 0.35,
+          0.4 + (1 - t) * (4 + k * 0.7),
+          pos.z + Math.sin(ang) * len * t + (rnd(seed, i + k * 19) - 0.5) * 0.35,
+        );
+      }
+      forkGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    }
+    const fork = new THREE.Line(forkGeo, lineMat(k % 2 === 0 ? pal.hot : pal.trail, 0.6));
+    forks.push(fork);
+    root.add(fork);
+  }
+
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.78, 34), fxMat(pal.rim, 0.78));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(pos.x, 0.1, pos.z);
+  root.add(ring);
+
+  const flash = new THREE.Mesh(new THREE.CircleGeometry(1.35, 28), fxMat(pal.core, 0.58));
+  flash.rotation.x = -Math.PI / 2;
+  flash.position.set(pos.x, 0.11, pos.z);
+  root.add(flash);
+
+  spawn(host, root, life, (t) => {
+    const p = Math.min(1, t / life);
+    const snap = t < 0.16 ? 1 : Math.max(0, 1 - (t - 0.16) / (life - 0.16));
+    const flicker = 0.62 + 0.38 * Math.abs(Math.sin(t * 110));
+    primaryMat.opacity = 0.96 * snap * flicker;
+    primary.visible = primaryMat.opacity > 0.03;
+    for (const fork of forks) {
+      const m = fork.material as THREE.LineBasicMaterial;
+      m.opacity = 0.6 * snap * flicker;
+      fork.visible = m.opacity > 0.03;
+    }
+    ring.scale.setScalar(1 + p * 4.3);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.78 * (1 - p);
+    flash.scale.setScalar(1 + p * 0.85);
+    (flash.material as THREE.MeshBasicMaterial).opacity = t < 0.12 ? 0.58 * (1 - t / 0.12) : 0;
+  });
+}
+
+function spawnElementalLine(
+  host: FxHost,
+  end: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  focused: boolean,
+): void {
+  const from = opts?.from;
+  if (!from) return spawnElementalAoe(host, end, opts, pal, true);
+  const dx = end.x - from.x;
+  const dz = end.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  const L = Math.max(1, opts?.reach ?? dist);
+  if (L < 0.5) return;
+  const width = Math.max(0.45, opts?.width ?? opts?.impactRadius ?? (focused ? 1.7 : 5.5));
+  const halfW = width * 0.5;
+  const life = focused ? 0.42 : 0.68;
+  const group = new THREE.Group();
+  const ux = dx / (dist || 1);
+  const uz = dz / (dist || 1);
+  const ex = from.x + ux * L;
+  const ez = from.z + uz * L;
+  group.position.set((from.x + ex) * 0.5, 0.12, (from.z + ez) * 0.5);
+  group.rotation.y = Math.atan2(ux, uz);
+
+  const core = new THREE.Mesh(
+    new THREE.BoxGeometry(focused ? Math.max(0.24, halfW * 0.58) : halfW * 2, focused ? 0.3 : 0.18, L),
+    fxMat(focused ? pal.core : pal.hot, focused ? 0.5 : 0.12),
+  );
+  group.add(core);
+  const rim = new THREE.Mesh(
+    new THREE.BoxGeometry(halfW * (focused ? 1.7 : 2.25), 0.12, L + 0.4),
+    fxMat(focused ? pal.hot : pal.rim, focused ? 0.28 : 0.1),
+  );
+  rim.position.y = -0.01;
+  group.add(rim);
+
+  const rails: THREE.Line[] = [];
+  for (let side = -1; side <= 1; side += 2) {
+    const railGeo = new THREE.BufferGeometry();
+    const pts = new Float32Array([
+      side * halfW * 0.92,
+      0.42,
+      -L * 0.5,
+      side * halfW * 0.35,
+      0.58,
+      0,
+      side * halfW * 0.92,
+      0.42,
+      L * 0.5,
+    ]);
+    railGeo.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+    const rail = new THREE.Line(railGeo, lineMat(side < 0 ? pal.trail : pal.hot, focused ? 0.66 : 0.36));
+    rails.push(rail);
+    group.add(rail);
+  }
+
+  const seed = elementalSeed(end, opts);
+  const motes: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
+  const moteCount = focused ? 5 : Math.min(18, Math.max(7, Math.round(L * 0.18)));
+  for (let i = 0; i < moteCount; i++) {
+    const mat = fxMat(i % 2 === 0 ? pal.trail : pal.hot, 0.78);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(focused ? 0.08 : 0.12, 5, 4), mat);
+    const z = -L * 0.45 + rnd(seed, i) * L * 0.9;
+    mesh.position.set((rnd(seed, i + 10) - 0.5) * width, 0.26 + rnd(seed, i + 20) * 0.4, z);
+    motes.push({
+      mesh,
+      mat,
+      vx: (rnd(seed, i + 30) - 0.5) * 1.2,
+      vy: 1.1 + rnd(seed, i + 40) * 1.8,
+      vz: (rnd(seed, i + 50) - 0.5) * 2.2,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    const pulse = 1 + Math.sin(p * Math.PI) * (focused ? 0.08 : 0.12);
+    group.scale.set(pulse, 1, 1 + Math.sin(p * Math.PI) * 0.03);
+    (core.material as THREE.MeshBasicMaterial).opacity = (focused ? 0.5 : 0.12) * (1 - p);
+    (rim.material as THREE.MeshBasicMaterial).opacity = (focused ? 0.28 : 0.1) * (1 - p * 0.9);
+    for (const rail of rails) {
+      (rail.material as THREE.LineBasicMaterial).opacity = (focused ? 0.66 : 0.36) * (1 - p);
+    }
+    for (const m of motes) {
+      m.mesh.position.x += m.vx * dt;
+      m.mesh.position.y += m.vy * dt;
+      m.mesh.position.z += m.vz * dt;
+      m.vy -= 5.8 * dt;
+      m.mat.opacity = 0.78 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalCone(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const from = opts?.from;
+  if (!from) return spawnElementalAoe(host, pos, opts, pal, true);
+  const dx = pos.x - from.x;
+  const dz = pos.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  const reach = Math.max(2, opts?.reach ?? dist);
+  const width = Math.max(1, opts?.width ?? opts?.impactRadius ?? reach * 0.55);
+  const halfAngle = Math.max(0.16, Math.min(0.72, Math.atan2(width * 0.5, reach)));
+  const life = 0.54;
+  const group = new THREE.Group();
+  group.position.set(from.x, 0.1, from.z);
+  group.rotation.y = Math.atan2(dx, dz);
+
+  const outer = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.12, 22), fxMat(pal.rim, 0.07));
+  const inner = new THREE.Mesh(createGroundConeGeometry(halfAngle * 0.55, reach * 0.95, 0.14, 18), fxMat(pal.hot, 0.09));
+  group.add(outer, inner);
+
+  const lip = new THREE.Mesh(
+    new THREE.RingGeometry(reach * 0.82, reach * 0.98, 28, 1, -halfAngle, halfAngle * 2),
+    fxMat(pal.core, 0.2),
+  );
+  lip.rotation.x = -Math.PI / 2;
+  lip.position.y = 0.16;
+  group.add(lip);
+
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const surge = 0.88 + Math.sin(p * Math.PI) * 0.22;
+    group.scale.set(1 + p * 0.08, 1, surge);
+    (outer.material as THREE.MeshBasicMaterial).opacity = 0.07 * (1 - p);
+    (inner.material as THREE.MeshBasicMaterial).opacity = 0.09 * (1 - p * 0.9);
+    (lip.material as THREE.MeshBasicMaterial).opacity = 0.2 * (1 - p);
+  });
+}
+
+function spawnElementalField(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(3, opts?.impactRadius ?? 10);
+  const life = 0.92;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0, pos.z);
+  const shell = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(1.1, 1),
+    new THREE.MeshBasicMaterial({
+      color: pal.hot,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  shell.position.y = Math.max(2.2, radius * 0.18);
+  group.add(shell);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.9, 58), fxMat(pal.rim, 0.72));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.09;
+  group.add(ring);
+  const inner = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.38, 42), fxMat(pal.core, 0.54));
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.11;
+  group.add(inner);
+
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    shell.scale.setScalar(1 + p * Math.max(2.3, radius * 0.17));
+    shell.rotation.y = p * 2.4;
+    (shell.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - p);
+    ring.scale.setScalar(Math.max(1, (radius / 0.9) * (0.2 + p * 0.92)));
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - p * 0.88);
+    inner.scale.setScalar(1 + p * Math.max(3, radius * 0.28));
+    (inner.material as THREE.MeshBasicMaterial).opacity = 0.54 * (1 - p);
+  });
+}
+
+function spawnElementalMeteor(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(3, opts?.impactRadius ?? 9);
+  const life = 0.88;
+  const root = new THREE.Group();
+  const seed = elementalSeed(pos, opts);
+  const sx = pos.x - 5.5 + (rnd(seed, 1) - 0.5) * 2.5;
+  const sz = pos.z - 4.2 + (rnd(seed, 2) - 0.5) * 2.5;
+  const sy = Math.max(18, radius * 1.45);
+
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute("position", new THREE.Float32BufferAttribute([sx, sy, sz, pos.x, 0.35, pos.z], 3));
+  const trail = new THREE.Line(trailGeo, lineMat(pal.trail, 0.76));
+  root.add(trail);
+
+  const meteor = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), fxMat(pal.core, 0.95));
+  meteor.position.set(sx, sy, sz);
+  root.add(meteor);
+
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.8, 52), fxMat(pal.hot, 0.82));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(pos.x, 0.12, pos.z);
+  root.add(ring);
+  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, 34), fxMat(pal.shadow, 0.24, false));
+  scorch.rotation.x = -Math.PI / 2;
+  scorch.position.set(pos.x, 0.02, pos.z);
+  root.add(scorch);
+
+  spawn(host, root, life, (t) => {
+    const p = Math.min(1, t / life);
+    const fall = Math.min(1, t / 0.28);
+    const ease = fall * fall * (3 - 2 * fall);
+    meteor.position.set(sx + (pos.x - sx) * ease, sy * (1 - ease) + 0.45 * ease, sz + (pos.z - sz) * ease);
+    (meteor.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - Math.max(0, p - 0.72) / 0.28);
+    (trail.material as THREE.LineBasicMaterial).opacity = 0.76 * (1 - p);
+    const hitP = Math.max(0, (t - 0.18) / (life - 0.18));
+    ring.scale.setScalar(1 + hitP * (radius / 0.8));
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.82 * (1 - hitP);
+    scorch.scale.setScalar(radius * (0.42 + hitP * 0.42));
+    (scorch.material as THREE.MeshBasicMaterial).opacity = 0.24 * (1 - p * 0.55);
+  });
+}
+
+function spawnElementalAoe(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  compact: boolean,
+): void {
+  const radius = Math.max(1.6, opts?.impactRadius ?? (compact ? 4.5 : 9));
+  const life = compact ? 0.58 : 0.86;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.1, pos.z);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.62, compact ? 32 : 52), fxMat(pal.rim, compact ? 0.78 : 0.68));
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  const core = new THREE.Mesh(new THREE.CircleGeometry(0.58, 32), fxMat(pal.core, compact ? 0.42 : 0.34));
+  core.rotation.x = -Math.PI / 2;
+  core.position.y = 0.015;
+  group.add(core);
+  const seed = elementalSeed(pos, opts);
+  const particles: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
+  const count = compact ? 8 : Math.min(28, Math.max(12, Math.round(radius * 1.35)));
+  for (let i = 0; i < count; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.trail, compact ? 0.72 : 0.82);
+    const geom =
+      pal.shadow === 0x231910
+        ? new THREE.BoxGeometry(0.16, 0.16, 0.16)
+        : new THREE.SphereGeometry(compact ? 0.08 : 0.12, 5, 4);
+    const mesh = new THREE.Mesh(geom, mat);
+    const a = rnd(seed, i) * Math.PI * 2;
+    const sp = (compact ? 2.2 : 3.4) + rnd(seed, i + 20) * (compact ? 2.1 : 3.2);
+    mesh.position.set(Math.cos(a) * 0.3, 0.22, Math.sin(a) * 0.3);
+    particles.push({
+      mesh,
+      mat,
+      vx: Math.cos(a) * sp,
+      vz: Math.sin(a) * sp,
+      vy: 1.6 + rnd(seed, i + 40) * (compact ? 2.4 : 3.6),
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    ring.scale.setScalar(1 + p * (radius / 0.62));
+    (ring.material as THREE.MeshBasicMaterial).opacity = (compact ? 0.78 : 0.68) * (1 - p);
+    core.scale.setScalar(Math.max(0.5, radius * 0.32) * (0.45 + p * 0.36));
+    (core.material as THREE.MeshBasicMaterial).opacity = (compact ? 0.42 : 0.34) * (1 - p * 0.85);
+    for (const pt of particles) {
+      pt.mesh.position.x += pt.vx * dt;
+      pt.mesh.position.z += pt.vz * dt;
+      pt.mesh.position.y += pt.vy * dt;
+      pt.vy -= 7.2 * dt;
+      pt.mat.opacity = (compact ? 0.72 : 0.82) * (1 - p);
+    }
+  });
+}
+
 /**
  * Ground **cone** of elemental energy rooted on the attacker, opening toward the target.
  * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
@@ -326,6 +804,9 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   group.add(tracer);
 
   const extraMats: THREE.Material[] = [];
+  let titanOrb: THREE.Mesh | null = null;
+  let titanShock: THREE.Mesh | null = null;
+  let titanTrail: THREE.Line | null = null;
   if (m.sizeClass === "Swarm") {
     for (let i = 0; i < 2; i++) {
       const offset = i === 0 ? -0.16 : 0.16;
@@ -361,6 +842,65 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     extraMats.push(slam.material as THREE.Material);
     group.add(slam);
   } else if (m.sizeClass === "Titan") {
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [
+          0,
+          1.05,
+          reach * 0.08,
+          Math.sin(rnd(m.visualSeed, 201) * Math.PI * 2) * 0.28,
+          1.32,
+          reach * 0.42,
+          Math.sin(rnd(m.visualSeed, 202) * Math.PI * 2) * 0.34,
+          1.1,
+          reach * 0.78,
+        ],
+        3,
+      ),
+    );
+    const trailMat = new THREE.LineBasicMaterial({
+      color: pal.glow,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    titanTrail = new THREE.Line(trailGeo, trailMat);
+    extraMats.push(trailMat);
+    group.add(titanTrail);
+
+    titanOrb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.28, 14, 8),
+      new THREE.MeshBasicMaterial({
+        color: pal.glow,
+        transparent: true,
+        opacity: 0.64,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    titanOrb.position.set(0, 1.0, reach * 0.82);
+    extraMats.push(titanOrb.material as THREE.Material);
+    group.add(titanOrb);
+
+    titanShock = new THREE.Mesh(
+      new THREE.RingGeometry(reach * 0.16, reach * 0.3, 24),
+      new THREE.MeshBasicMaterial({
+        color: pal.rim,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    titanShock.rotation.x = -Math.PI / 2;
+    titanShock.position.set(0, 0.155, reach * 0.88);
+    extraMats.push(titanShock.material as THREE.Material);
+    group.add(titanShock);
+
     const pillar = new THREE.Mesh(
       new THREE.CylinderGeometry(0.08, 0.18, 1.5, 8, 1, true),
       new THREE.MeshBasicMaterial({
@@ -431,6 +971,19 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     (rim.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p);
     for (const mat of extraMats) {
       if ("opacity" in mat) mat.opacity = (m.sizeClass === "Titan" ? 0.32 : 0.46) * (1 - p);
+    }
+    if (titanOrb) {
+      const pulse = 1 + Math.sin(t * 46) * 0.16 * (1 - p);
+      titanOrb.scale.setScalar(pulse + p * 0.5);
+      (titanOrb.material as THREE.MeshBasicMaterial).opacity = 0.64 * (1 - p);
+    }
+    if (titanShock) {
+      titanShock.scale.setScalar(1 + p * 2.8);
+      (titanShock.material as THREE.MeshBasicMaterial).opacity = 0.48 * (1 - p);
+    }
+    if (titanTrail) {
+      const mat = titanTrail.material as THREE.LineBasicMaterial;
+      mat.opacity = 0.72 * (1 - p * 0.95);
     }
     for (const s of sparks) {
       s.mesh.position.x += s.vx * dt;

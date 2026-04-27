@@ -138,7 +138,23 @@ function safeClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
+function movingTrackCount(clip: THREE.AnimationClip): number {
+  let moving = 0;
+  for (const track of clip.tracks) {
+    if (!/\.(position|quaternion|rotation)$/i.test(track.name)) continue;
+    if (track.times.length < 2) continue;
+    const size = typeof track.getValueSize === "function" ? track.getValueSize() : 1;
+    let changed = false;
+    for (let i = size; i < track.values.length && !changed; i++) {
+      if (Math.abs(track.values[i] - track.values[i % size]) > 1e-5) changed = true;
+    }
+    if (changed) moving++;
+  }
+  return moving;
+}
+
 function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, clip: THREE.AnimationClip): number {
+  if (movingTrackCount(clip) <= 0) return 0;
   const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   let score = 0;
   if (role === "run") {
@@ -173,7 +189,7 @@ function clipForRole(
       bestScore = score;
     }
   }
-  return bestScore > 0 ? best : animations[0]!;
+  return bestScore > 0 ? best : null;
 }
 
 function rigSummary(root: THREE.Object3D): { skinnedMeshes: number; bones: number } {
@@ -434,18 +450,20 @@ async function attachGlbByFile(
     parent.userData["glbClampChecksRemaining"] = 2;
     let mixer: THREE.AnimationMixer | null = null;
     if (template.animations.length > 0) {
-      mixer = new THREE.AnimationMixer(inst);
       const clipRaw = clipForRole(template.animations, "run", file);
-      const clip = safeClip(clipRaw ?? template.animations[0]!);
-      const action = mixer.clipAction(clip);
-      action.setLoop(THREE.LoopRepeat, Infinity);
-      setLoopPlayback(action, clip, "run", file);
-      action.reset();
-      action.play();
-      parent.userData["glbMixer"] = mixer;
-      parent.userData["glbAction"] = action;
-      parent.userData["glbRunAction"] = action;
-      parent.userData["glbBaseState"] = "run";
+      if (clipRaw) {
+        mixer = new THREE.AnimationMixer(inst);
+        const clip = safeClip(clipRaw);
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        setLoopPlayback(action, clip, "run", file);
+        action.reset();
+        action.play();
+        parent.userData["glbMixer"] = mixer;
+        parent.userData["glbAction"] = action;
+        parent.userData["glbRunAction"] = action;
+        parent.userData["glbBaseState"] = "run";
+      }
     }
     if (opts?.idleFile) {
       const idleTemplate = await loadGltfTemplate(`/assets/units/${opts.idleFile}`);

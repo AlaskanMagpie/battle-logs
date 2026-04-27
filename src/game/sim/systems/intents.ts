@@ -151,10 +151,13 @@ export function orderPlayerUnits(
     if (captureTapIdx !== null) {
       s.lastMessage = `${n} unit${n === 1 ? "" : "s"} committed to capture this Mana node (fight there until it is yours or they fall).`;
     } else {
+      const action = mode === "attack_move" ? "attack-move" : "move";
       s.lastMessage =
         mode === "stay"
           ? `${n} unit${n === 1 ? "" : "s"} holding position.`
-          : `${n} unit${n === 1 ? "" : "s"} ordered to ${mode === "attack_move" ? "attack-move" : "move"}.`;
+          : queue
+            ? `${n} unit${n === 1 ? "" : "s"} queued to ${action} after current orders.`
+            : `${n} unit${n === 1 ? "" : "s"} ordered to ${action}.`;
     }
   }
 }
@@ -450,6 +453,20 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         fromZ: hz,
         impactRadius: hw * 2,
       });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: ex,
+        z: ez,
+        fromX: hx,
+        fromZ: hz,
+        element: "water",
+        secondaryElement: "reclaim",
+        shape: "line",
+        reach: L,
+        width: hw * 2,
+        impactRadius: hw * 2,
+        visualSeed: s.tick + hits * 17,
+      });
       s.lastMessage = `${cmd.name} — reclaimed a ${Math.round(L)}u line, hit ${hits}; ${castSuffix}`;
       return;
     }
@@ -469,6 +486,24 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: pos.x,
+        z: pos.z,
+        element: "fire",
+        shape: "meteor",
+        impactRadius: r,
+        visualSeed: s.tick,
+      });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: pos.x,
+        z: pos.z,
+        element: "fire",
+        shape: "aoe",
+        impactRadius: r,
+        visualSeed: s.tick + 31,
+      });
       pushFx(s, {
         kind: "combat_boom",
         x: pos.x,
@@ -495,6 +530,16 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: pos.x,
+        z: pos.z,
+        element: "shield",
+        secondaryElement: "air",
+        shape: "field",
+        impactRadius: fx.radius,
+        visualSeed: s.tick,
+      });
       pushFx(s, {
         kind: "combat_boom",
         x: pos.x,
@@ -559,6 +604,26 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         used.add(bestKey);
         pushFx(s, { kind: "lightning", x: bx, z: bz, fromX: ox, fromZ: oz });
         pushFx(s, { kind: "shatter", x: bx, z: bz, impactRadius: hop === 0 ? fx.castRadius : fx.chainRange * 0.65 });
+        pushFx(s, {
+          kind: "elemental_spell",
+          x: bx,
+          z: bz,
+          fromX: ox,
+          fromZ: oz,
+          element: "lightning",
+          shape: "bolt",
+          impactRadius: hop === 0 ? fx.castRadius * 0.42 : fx.chainRange * 0.22,
+          visualSeed: s.tick + hop * 37,
+        });
+        pushFx(s, {
+          kind: "elemental_spell",
+          x: bx,
+          z: bz,
+          element: "earth",
+          shape: "impact",
+          impactRadius: hop === 0 ? fx.castRadius * 0.72 : fx.chainRange * 0.36,
+          visualSeed: s.tick + hop * 53,
+        });
         if (bestKey.startsWith("r:")) {
           const idx = Number(bestKey.slice(2));
           const er = s.enemyRelays[idx]!;

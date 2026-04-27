@@ -304,10 +304,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       <details class="hud-dock__help-drawer">
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> command/move · hold <kbd>RMB</kbd> radial</div>
+          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> move on release · hold <kbd>RMB</kbd> orders</div>
           <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
           <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
-          <div class="hud-help-item"><kbd>R</kbd> rally then click map · <kbd>G</kbd> offense / defense</div>
+          <div class="hud-help-item"><kbd>Shift</kbd>+<kbd>RMB</kbd> queue · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> offense / defense</div>
           <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
         </div>
       </details>

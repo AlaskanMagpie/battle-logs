@@ -13,6 +13,7 @@ import {
   createInitialState,
   doctrineCardPlayability,
   placementFailureReason,
+  pushFx,
   type GameState,
 } from "./game/state";
 import { clearGameLog, logGame } from "./game/gameLog";
@@ -30,7 +31,7 @@ import {
 import { mountDoctrinePicker } from "./ui/doctrinePicker";
 import { attachDoctrineHandPeek, mountHud, updateHud } from "./ui/hud";
 import { showRulesToast } from "./ui/rulesToast";
-import { isStructureEntry } from "./game/types";
+import { isStructureEntry, type SpellFxElement, type SpellFxShape } from "./game/types";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
@@ -75,6 +76,19 @@ function isMatchSurfaceTarget(target: EventTarget | null): boolean {
 /** GLB art on by default; set `VITE_USE_UNIT_GLB=false` to force cubes only. */
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
 
+const QUICK_MATCH_DOCTRINE: (string | null)[] = [
+  "outpost",
+  "watchtower",
+  "root_bunker",
+  "menders_hut",
+  "salvage_yard",
+  "war_camp",
+  "firestorm",
+  "fortify",
+  "recycle",
+  "shatter",
+];
+
 const DRAG_REASON_ID = "drag-reason";
 const SELECT_BOX_ID = "unit-select-box";
 const RADIAL_ID = "unit-command-radial";
@@ -118,17 +132,23 @@ function showUnitCommandRadial(
   el.className = "unit-command-radial";
   el.style.left = `${clientX}px`;
   el.style.top = `${clientY}px`;
-  const buttons: Array<[string, "move" | "attack_move" | "stay", boolean, string]> = [
-    ["Move", "move", false, "Move selected and nearby idle units here"],
-    ["Attack", "attack_move", false, "Attack-move selected and nearby idle units"],
-    ["Queue", "move", true, "Queue this move for selected and nearby idle units"],
-    ["Stay", "stay", false, "Hold selected and nearby idle units in place"],
+  const center = document.createElement("div");
+  center.className = "unit-command-radial__center";
+  center.innerHTML = `<b>Orders</b><span>nearby idle units join</span>`;
+  el.appendChild(center);
+  const buttons: Array<[string, string, "move" | "attack_move" | "stay", boolean, string]> = [
+    ["Move", "Go here", "move", false, "Move selected and nearby idle units here"],
+    ["Attack", "Fight en route", "attack_move", false, "Attack-move selected and nearby idle units"],
+    ["Queue Move", "After current", "move", true, "Add this move after the current order"],
+    ["Queue Attack", "After current", "attack_move", true, "Add this attack-move after the current order"],
+    ["Hold", "Stay put", "stay", false, "Hold selected and nearby idle units in place"],
   ];
-  for (const [label, mode, queue, title] of buttons) {
+  for (const [label, sub, mode, queue, title] of buttons) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = label;
+    btn.innerHTML = `<b>${label}</b><span>${sub}</span>`;
     btn.title = title;
+    btn.className = `unit-command-radial__btn unit-command-radial__btn--${mode}${queue ? " unit-command-radial__btn--queue" : ""}`;
     btn.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -425,6 +445,14 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
     const testWindow = window as Window & {
       render_game_to_text?: () => string;
       advanceTime?: (ms: number) => void;
+      __signalWarsDebugCastSlot?: (slotIndex: number, x: number, z: number) => string | null;
+      __signalWarsDebugSpellFx?: (
+        element: SpellFxElement,
+        shape: SpellFxShape,
+        x: number,
+        z: number,
+        opts?: { fromX?: number; fromZ?: number; radius?: number; reach?: number; width?: number },
+      ) => string | null;
     };
     testWindow.render_game_to_text = () =>
       JSON.stringify({
@@ -473,6 +501,46 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
 
     const pendingIntents: PlayerIntent[] = [];
     const doctrineDragRef = { active: false };
+
+    const syncDebugFrame = (): string | null => {
+      renderer.sync(state, USE_GLB);
+      renderer.render();
+      updateHud(state);
+      return testWindow.render_game_to_text?.() ?? null;
+    };
+    testWindow.__signalWarsDebugCastSlot = (slotIndex: number, x: number, z: number): string | null => {
+      if (state.phase !== "playing") return null;
+      if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return null;
+      state.flux = Math.max(state.flux, 9999);
+      state.doctrineCooldownTicks[slotIndex] = 0;
+      pendingIntents.push({ type: "select_doctrine_slot", index: slotIndex });
+      pendingIntents.push({ type: "try_click_world", pos: { x, z }, shiftKey: false, altKey: false });
+      advanceTick(state, pendingIntents.splice(0, pendingIntents.length));
+      return syncDebugFrame();
+    };
+    testWindow.__signalWarsDebugSpellFx = (
+      element: SpellFxElement,
+      shape: SpellFxShape,
+      x: number,
+      z: number,
+      opts?: { fromX?: number; fromZ?: number; radius?: number; reach?: number; width?: number },
+    ): string | null => {
+      if (state.phase !== "playing") return null;
+      pushFx(state, {
+        kind: "elemental_spell",
+        x,
+        z,
+        fromX: opts?.fromX,
+        fromZ: opts?.fromZ,
+        element,
+        shape,
+        impactRadius: opts?.radius,
+        reach: opts?.reach,
+        width: opts?.width,
+        visualSeed: state.tick + Math.round(x * 13 + z * 7),
+      });
+      return syncDebugFrame();
+    };
 
     const keysHeld = { w: false, a: false, s: false, d: false };
     const onKeyDown = (ev: KeyboardEvent): void => {
@@ -630,6 +698,8 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       } else if (ev.code === "KeyT") {
         ev.preventDefault();
         pendingIntents.push({ type: "begin_hero_teleport" });
+      } else if (ev.key === "Escape") {
+        cancelRightHold();
       }
     });
 
@@ -648,15 +718,50 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       lastMs: number;
       startX: number;
       startY: number;
+      hitX: number;
+      hitZ: number;
+      shiftKey: boolean;
+      altKey: boolean;
+      hasSelection: boolean;
+      radialOpen: boolean;
+      dragFollow: boolean;
       radialTimer: ReturnType<typeof setTimeout> | null;
     } | null = null;
     let leftSelect: { pointerId: number; startX: number; startY: number; dragging: boolean } | null = null;
     let chordDrag: { pointerId: number; lastX: number; lastY: number } | null = null;
 
+    const cancelRightHold = (): void => {
+      if (rightHold?.radialTimer) clearTimeout(rightHold.radialTimer);
+      rightHold = null;
+      hideRadial();
+    };
+
+    const beginChordCameraDrag = (ev: PointerEvent): void => {
+      ev.preventDefault();
+      cancelRightHold();
+      leftSelect = null;
+      hideSelectBox();
+      chordDrag = { pointerId: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
+      try {
+        canvas.setPointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
+    };
+
     window.addEventListener(
       "contextmenu",
       (ev) => {
         if (isMatchSurfaceTarget(ev.target)) ev.preventDefault();
+      },
+      { capture: true },
+    );
+    window.addEventListener(
+      "pointerdown",
+      (ev) => {
+        const target = ev.target;
+        if (!(target instanceof Element)) return;
+        if (!target.closest(`#${RADIAL_ID}`)) hideRadial();
       },
       { capture: true },
     );
@@ -667,14 +772,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       // Middle = camera pan (OrbitControls); do not treat as a map click.
       if (ev.button !== 0 && ev.button !== 2) return;
       if ((ev.buttons & 1) && (ev.buttons & 2)) {
-        ev.preventDefault();
-        hideRadial();
-        chordDrag = { pointerId: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
-        try {
-          canvas.setPointerCapture(ev.pointerId);
-        } catch {
-          /* ignore */
-        }
+        beginChordCameraDrag(ev);
         return;
       }
       const rect = canvas.getBoundingClientRect();
@@ -698,38 +796,41 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
         return;
       }
 
-      // Right-click only moves the hero (middle mouse is camera orbit).
       if (ev.button === 2) {
         ev.preventDefault();
-        pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z, shiftKey: ev.shiftKey });
-        logGame("move", `RMB move → (${hit.x.toFixed(1)}, ${hit.z.toFixed(1)})`, state.tick);
         const hasSelection = state.selectedUnitIds.length > 0;
-        if (hasSelection) {
-          pendingIntents.push({
-            type: "command_selected_units",
-            x: hit.x,
-            z: hit.z,
-            mode: ev.altKey ? "attack_move" : "move",
-            queue: ev.shiftKey,
-          });
-        }
         const radialTimer = setTimeout(() => {
+          if (!rightHold || rightHold.pointerId !== ev.pointerId) return;
+          rightHold.radialOpen = true;
           showUnitCommandRadial(ev.clientX, ev.clientY, (mode, queue) => {
+            if (!rightHold) return;
             pendingIntents.push({
               type: "command_selected_units",
-              x: hit.x,
-              z: hit.z,
+              x: rightHold.hitX,
+              z: rightHold.hitZ,
               mode,
               queue,
               includeNearbyIdle: true,
             });
+            state.lastMessage =
+              mode === "stay"
+                ? "Radial: hold position."
+                : `Radial: ${queue ? "queued " : ""}${mode === "attack_move" ? "attack-move" : "move"} order.`;
+            rightHold = null;
           });
-        }, 500);
+        }, 360);
         rightHold = {
           pointerId: ev.pointerId,
           lastMs: performance.now(),
           startX: ev.clientX,
           startY: ev.clientY,
+          hitX: hit.x,
+          hitZ: hit.z,
+          shiftKey: ev.shiftKey,
+          altKey: ev.altKey,
+          hasSelection,
+          radialOpen: false,
+          dragFollow: false,
           radialTimer,
         };
         try {
@@ -789,12 +890,26 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       }
       if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
       if (rightHold && ev.pointerId === rightHold.pointerId) {
-        if (rightHold.radialTimer) clearTimeout(rightHold.radialTimer);
+        const snap = rightHold;
+        if (snap.radialTimer) clearTimeout(snap.radialTimer);
         rightHold = null;
         try {
           if (canvas.hasPointerCapture(ev.pointerId)) canvas.releasePointerCapture(ev.pointerId);
         } catch {
           /* ignore */
+        }
+        if (!snap.radialOpen && !snap.dragFollow) {
+          pendingIntents.push({ type: "hero_move", x: snap.hitX, z: snap.hitZ, shiftKey: snap.shiftKey });
+          logGame("move", `RMB move → (${snap.hitX.toFixed(1)}, ${snap.hitZ.toFixed(1)})`, state.tick);
+          if (snap.hasSelection) {
+            pendingIntents.push({
+              type: "command_selected_units",
+              x: snap.hitX,
+              z: snap.hitZ,
+              mode: snap.altKey ? "attack_move" : "move",
+              queue: snap.shiftKey,
+            });
+          }
         }
       }
     });
@@ -803,8 +918,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       if (leftSelect && ev.pointerId === leftSelect.pointerId) leftSelect = null;
       if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
       if (rightHold && ev.pointerId === rightHold.pointerId) {
-        if (rightHold.radialTimer) clearTimeout(rightHold.radialTimer);
-        rightHold = null;
+        cancelRightHold();
       }
     });
 
@@ -819,8 +933,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
         return;
       }
       if ((ev.buttons & 1) && (ev.buttons & 2)) {
-        hideRadial();
-        chordDrag = { pointerId: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
+        beginChordCameraDrag(ev);
         return;
       }
       if (leftSelect && ev.pointerId === leftSelect.pointerId) {
@@ -837,17 +950,23 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       if (rightHold && ev.pointerId === rightHold.pointerId) {
         const mdx = ev.clientX - rightHold.startX;
         const mdy = ev.clientY - rightHold.startY;
-        if (rightHold.radialTimer && mdx * mdx + mdy * mdy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+        const moved = mdx * mdx + mdy * mdy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX;
+        if (rightHold.radialTimer && moved && !rightHold.hasSelection) {
           clearTimeout(rightHold.radialTimer);
           rightHold.radialTimer = null;
         }
+        if (moved && !rightHold.hasSelection) rightHold.dragFollow = true;
         const now = performance.now();
         if (now - rightHold.lastMs >= 80) {
           rightHold.lastMs = now;
           const rectM = canvas.getBoundingClientRect();
           const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
           /** Drag-update follows cursor only (no queue append each tick). */
-          if (hitM && state.selectedUnitIds.length === 0) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
+          if (hitM) {
+            rightHold.hitX = hitM.x;
+            rightHold.hitZ = hitM.z;
+            if (rightHold.dragFollow) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
+          }
         }
         return;
       }
@@ -906,6 +1025,13 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
   });
 }
 
-mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
-  runMatch(slots, chosenMapUrl);
-});
+const params = new URLSearchParams(window.location.search);
+const quickMatch = params.get("quickMatch") === "1" || params.get("testMatch") === "1";
+if (quickMatch) {
+  pickerRoot.style.display = "none";
+  runMatch(QUICK_MATCH_DOCTRINE, params.get("map") || "/map.json");
+} else {
+  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
+    runMatch(slots, chosenMapUrl);
+  });
+}
