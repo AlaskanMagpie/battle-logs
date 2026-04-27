@@ -23,7 +23,11 @@
     "unit_019d5725-bd92-76a8-9319-10d218650e10.glb",
     "unit_019d5754-b79c-7b2b-8ebf-461625c02e37.glb",
     "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
-    "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb"
+    "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb",
+    "verdant_citadel_titan_base.glb",
+    "verdant_gatekeeper_titan_attack.glb",
+    "verdant_gatekeeper_titan_model.glb",
+    "verdant_gatekeeper_titan_run.glb"
   ],
   "animationProfiles": [
     {
@@ -63,6 +67,21 @@
         "lanternbound_line_idle.glb",
         "lanternbound_line_running.glb",
         "lanternbound_line_walking.glb"
+      ]
+    },
+    {
+      "id": "verdant_gatekeeper_titan",
+      "sizeClass": "Titan",
+      "roles": {
+        "model": "verdant_gatekeeper_titan_run.glb",
+        "run": "verdant_gatekeeper_titan_run.glb",
+        "idle": "verdant_gatekeeper_titan_run.glb",
+        "attack": "verdant_gatekeeper_titan_attack.glb"
+      },
+      "files": [
+        "verdant_gatekeeper_titan_attack.glb",
+        "verdant_gatekeeper_titan_model.glb",
+        "verdant_gatekeeper_titan_run.glb"
       ]
     }
   ],
@@ -308,6 +327,54 @@
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
+    },
+    {
+      "file": "verdant_citadel_titan_base.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "verdant_gatekeeper_titan_attack.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|mage_soell_cast_2|baselayer",
+          "duration": 3.033,
+          "tracks": 72,
+          "movingTracks": 30,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "verdant_gatekeeper_titan_model.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "verdant_gatekeeper_titan_run.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Monster_Walk|baselayer",
+          "duration": 4.133,
+          "tracks": 72,
+          "movingTracks": 32,
+          "scaleTracks": 24
+        }
+      ]
     }
   ]
 }

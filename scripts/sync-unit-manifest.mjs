@@ -49,6 +49,7 @@ const roleTokens = new Set([
   "idle",
   "inplace",
   "jump",
+  "model",
   "melee",
   "power",
   "run",
@@ -78,8 +79,8 @@ function familyId(file) {
 
 function inferSizeClass(file, clipNames) {
   const hay = `${file} ${clipNames.join(" ")}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
-  if (/\b(hero|wizard|mage|leader|champion)\b/.test(hay)) return "hero";
   if (/\b(titan|giant|colossus|boss|dragon|behemoth)\b/.test(hay)) return "Titan";
+  if (/\b(hero|wizard|mage|leader|champion)\b/.test(hay)) return "hero";
   if (/\b(heavy|brute|ogre|crusher|tank|siege)\b/.test(hay)) return "Heavy";
   if (/\b(swarm|small|scout|imp|goblin|minion|spearman|spear)\b/.test(hay)) return "Swarm";
   if (/\b(line|soldier|warrior|archer|ranger|knight|nomad)\b/.test(hay)) return "Line";

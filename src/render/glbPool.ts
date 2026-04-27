@@ -594,6 +594,10 @@ const TOWER_GLB_MANIFEST_ORDER = [
   "dragon_roost",
 ] as const;
 
+const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
+  verdant_citadel: "verdant_citadel_titan_base.glb",
+};
+
 function towerManifestIndex(catalogId: string): number {
   const i = (TOWER_GLB_MANIFEST_ORDER as readonly string[]).indexOf(catalogId);
   if (i >= 0) return i;
@@ -601,6 +605,8 @@ function towerManifestIndex(catalogId: string): number {
 }
 
 function pickTowerFile(catalogId: string, m: UnitGlbManifest): string | null {
+  const override = TOWER_GLB_OVERRIDES[catalogId];
+  if (override && m.files.includes(override)) return override;
   const towerFiles = productionArtFiles(m);
   if (!towerFiles.length) return null;
   return towerFiles[towerManifestIndex(catalogId) % towerFiles.length] ?? null;
