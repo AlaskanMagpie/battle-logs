@@ -79,6 +79,9 @@ export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
 /** Rival wizard melee — tuned slightly below player strike. */
 export const ENEMY_HERO_STRIKE_DAMAGE = 32;
 export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 22;
+/** Global enemy pressure scalars for balance passes. */
+export const ENEMY_DAMAGE_MULT = 0.75;
+export const ENEMY_PRODUCTION_RATE_MULT = 0.75;
 
 export const TAP_FLUX_PER_SEC = 1;
 export const TAP_YIELD_MAX = 250;
@@ -97,10 +100,9 @@ export const FORWARD_PLACE_RADIUS = 8;
 export const ENEMY_RELAY_MAX_HP = 520;
 
 /** Wizard Keep — permanent base structure spawned at playerStart. Acts as the
- *  player's HP anchor (lose if it dies) and slowly produces a free T1 melee
- *  swarm so the wizard always has chaff on the field. */
+ *  player's HP anchor and slowly produces a small free T1 guard trickle. */
 export const KEEP_MAX_HP = 900;
-export const KEEP_SWARM_PERIOD_SEC = 6;
+export const KEEP_SWARM_PERIOD_SEC = 12;
 export const KEEP_ID = "wizard_keep";
 
 /** Army-wide population ceiling for player and rival structure production. */
@@ -110,11 +112,24 @@ export const GLOBAL_POP_CAP = 1000;
 export const GLOBAL_POP_CAP_MAX = 9999;
 
 /**
- * Procedural unit placeholder mesh: Swarm baseline width (world units). Each tier is
- * `UNIT_MESH_SCALE_STEP`× larger (Line / Heavy / Titan) so Titan ≈ small tower footprint (~5.2u).
+ * Canonical unit footprint ladder (world units).
+ *
+ * Towers are the source of truth: Titan is anchored to the current production-tower GLB
+ * target extent (`UNIT_MESH_TITAN`, ~9.3u). This preserves existing tower size and scales
+ * units downward from there.
+ *
+ * Each class below it is exactly `UNIT_MESH_SCALE_STEP` smaller:
+ * - Swarm ≈ 2.76
+ * - Line  ≈ 4.13
+ * - Heavy ≈ 6.20
+ * - Titan ≈ 9.30
+ *
+ * Procedural fallback meshes, GLB normalization, HP bars, and separation all derive from this
+ * same ladder so art swaps do not silently change gameplay/readability scale.
  */
-export const UNIT_MESH_SWARM = 1.55;
 export const UNIT_MESH_SCALE_STEP = 1.5;
+export const UNIT_MESH_TITAN = 9.3;
+export const UNIT_MESH_SWARM = UNIT_MESH_TITAN / UNIT_MESH_SCALE_STEP ** 3;
 
 /** Spatial cell size (world XZ) for combat nearest-neighbor queries. */
 export const COMBAT_SPATIAL_CELL = 14;
@@ -153,6 +168,22 @@ export const UNIT_AOE_SPLASH_DAMAGE_MULT = 0.6;
 export const PLAYER_UNIT_STRUCTURE_DAMAGE_MULT = 0.5;
 export const ENEMY_UNIT_STRUCTURE_DAMAGE_MULT = 0.35;
 export const UNIT_TAP_ANCHOR_DAMAGE_MULT = 0.42;
+/** Normal units attack on cadence, not every sim tick. Swarms still hit fastest; big units wind up. */
+export const UNIT_ATTACK_COOLDOWN_TICKS = {
+  Swarm: 9,
+  Line: 14,
+  Heavy: 24,
+  Titan: 34,
+} as const;
+/** Per-hit lift over old per-tick DPS so slower attacks feel decisive when they land. */
+export const UNIT_ATTACK_DAMAGE_MULT = {
+  Swarm: 1.08,
+  Line: 1.2,
+  Heavy: 1.38,
+  Titan: 1.6,
+} as const;
+/** Long-RMB radial can pull in idle nearby squads even when they were not selected. */
+export const SMART_RADIAL_IDLE_RADIUS = 20;
 
 /** Commands: friendly unit or completed player structure must be within this radius of the cast point (world units). */
 export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 12;
@@ -179,8 +210,8 @@ export const FIRESTORM_DAMAGE_PER_UNIT = 38;
 
 /** Cut Back (Reclaim line spell): corridor from the Wizard toward aim; damages enemy units in the strip. */
 export const CUT_LINE_LENGTH = 40;
-export const CUT_LINE_HALF_WIDTH = 3.5;
-export const CUT_LINE_DAMAGE_PER_UNIT = 32;
+export const CUT_LINE_HALF_WIDTH = 5.5;
+export const CUT_LINE_DAMAGE_PER_UNIT = 48;
 
 /** Weapon reach thresholds for close / medium / long combat FX profiles (world units). */
 export const ATTACK_RANGE_CLOSE_MAX = 9.5;
@@ -206,12 +237,8 @@ export const CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK = 0.225;
 export const ENEMY_WAVE_EVERY_TICKS = 12 * TICK_HZ;
 /** Max living enemy units before camp waves stop adding more (stress-test scale). */
 export const ENEMY_WAVE_GLOBAL_CAP = 8000;
-/** Same cadence as camp waves: free Swarm batches from the Wizard Keep for parity with camp floods. */
-export const PLAYER_KEEP_WAVE_EVERY_TICKS = ENEMY_WAVE_EVERY_TICKS;
-/** Max living player units before keep reserve waves stop (matches enemy wave ceiling). */
-export const PLAYER_KEEP_WAVE_GLOBAL_CAP = ENEMY_WAVE_GLOBAL_CAP;
-/** Swarm count per reinforcement pulse (camps + keep both use this). */
-export const REINFORCEMENT_WAVE_BATCH = 40;
+/** Swarm count per reinforcement pulse; keep low so camp/orb bursts stay readable/perf-safe. */
+export const REINFORCEMENT_WAVE_BATCH = 4;
 
 /** Player-controlled hero. */
 export const HERO_SPEED = 11;

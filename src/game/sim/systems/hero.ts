@@ -1,7 +1,7 @@
 import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import { armTapClaimAnchor, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
+import { armTapClaimAnchor, findKeep, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 import { tryPlayerHeroStrike } from "./heroStrike";
@@ -169,4 +169,25 @@ export function heroSystem(s: GameState): void {
   if (h.attackCooldownTicksRemaining === 0) {
     tryPlayerHeroStrike(s);
   }
+}
+
+export function respawnDeadHeroAtKeep(s: GameState): void {
+  if (s.phase !== "playing") return;
+  const h = s.hero;
+  if (h.hp > 0) return;
+  const keep = findKeep(s);
+  if (!keep) return;
+  h.hp = h.maxHp;
+  h.x = keep.x;
+  h.z = keep.z;
+  h.targetX = null;
+  h.targetZ = null;
+  h.moveWaypoints.length = 0;
+  h.wasdStrafe = 0;
+  h.wasdForward = 0;
+  h.claimChannelTarget = null;
+  h.claimChannelTicksRemaining = 0;
+  h.attackCooldownTicksRemaining = 0;
+  pushFx(s, { kind: "muster", x: h.x, z: h.z });
+  s.lastMessage = "Wizard reformed at the Keep.";
 }

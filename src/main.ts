@@ -39,7 +39,8 @@ const pickerRoot = document.querySelector<HTMLElement>("#doctrine-picker")!;
 function syncCameraFollowUi(root: HTMLElement, follow: boolean): void {
   const btn = root.querySelector("#btn-camera-follow");
   if (!btn) return;
-  btn.textContent = follow ? "Camera: lock" : "Camera: free";
+  const copy = btn.querySelector<HTMLElement>(".hud-side-copy b");
+  if (copy) copy.textContent = follow ? "lock" : "free";
   btn.setAttribute("aria-pressed", follow ? "true" : "false");
 }
 
@@ -118,10 +119,10 @@ function showUnitCommandRadial(
   el.style.left = `${clientX}px`;
   el.style.top = `${clientY}px`;
   const buttons: Array<[string, "move" | "attack_move" | "stay", boolean, string]> = [
-    ["Move", "move", false, "Move selected units here"],
-    ["Attack", "attack_move", false, "Attack-move selected units"],
-    ["Queue", "move", true, "Queue this move after current order"],
-    ["Stay", "stay", false, "Hold selected units in place"],
+    ["Move", "move", false, "Move selected and nearby idle units here"],
+    ["Attack", "attack_move", false, "Attack-move selected and nearby idle units"],
+    ["Queue", "move", true, "Queue this move for selected and nearby idle units"],
+    ["Stay", "stay", false, "Hold selected and nearby idle units in place"],
   ];
   for (const [label, mode, queue, title] of buttons) {
     const btn = document.createElement("button");
@@ -506,31 +507,25 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       const maxTicksThisFrame = 48;
       let ticksThisFrame = 0;
       let first = true;
-      const camBasis =
-        state.phase === "playing" &&
-        (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)
-          ? renderer.getCameraGroundMoveBasis()
-          : null;
       while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
         ticksThisFrame += 1;
         const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
         first = false;
-        if (state.phase === "playing" && camBasis) {
-          let strafe = 0;
-          let forward = 0;
-          if (keysHeld.a) strafe -= 1;
-          if (keysHeld.d) strafe += 1;
-          if (keysHeld.w) forward += 1;
-          if (keysHeld.s) forward -= 1;
-          if (strafe !== 0 || forward !== 0) {
-            const { fx, fz, rx, rz } = camBasis;
-            chunk.push({ type: "hero_wasd", strafe, forward, camFx: fx, camFz: fz, camRx: rx, camRz: rz });
-          }
-        }
         const tickBefore = state.tick;
         advanceTick(state, chunk);
         captureReplayTick(replay, tickBefore, chunk, state);
         acc -= 1 / TICK_HZ;
+      }
+
+      if (state.phase === "playing" && (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)) {
+        let strafe = 0;
+        let forward = 0;
+        if (keysHeld.a) strafe -= 1;
+        if (keysHeld.d) strafe += 1;
+        if (keysHeld.w) forward += 1;
+        if (keysHeld.s) forward -= 1;
+        renderer.panCameraOnGround(strafe, forward, dt);
+        syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
       }
 
       if (!state.pendingPlacementCatalogId && !doctrineDragRef.active) {
@@ -604,7 +599,7 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       d.querySelector(`[data-slot-index="${index}"]`)?.classList.add("active");
     };
 
-    // G = stance; R = arm global rally; C = camera; 1–0 = doctrine slots.
+    // G = stance; R = arm global rally; C = camera; Z = selected-unit battle cam; 1–0 = doctrine slots.
     window.addEventListener("keydown", (ev: KeyboardEvent) => {
       if (ev.repeat) return;
       const tag = (ev.target as HTMLElement | null)?.tagName?.toLowerCase?.() ?? "";
@@ -624,6 +619,11 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       } else if (ev.code === "KeyC") {
         ev.preventDefault();
         applyCameraToggle();
+      } else if (ev.code === "KeyZ") {
+        ev.preventDefault();
+        const ok = renderer.zoomCameraToSelectedUnit();
+        state.lastMessage = ok ? "Battle cam: following selected unit." : "Select a unit first, then press Z for battle cam.";
+        syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
       } else if (ev.code === "KeyT") {
         ev.preventDefault();
         pendingIntents.push({ type: "begin_hero_teleport" });
@@ -710,13 +710,18 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
             queue: ev.shiftKey,
           });
         }
-        const radialTimer = hasSelection
-          ? setTimeout(() => {
-              showUnitCommandRadial(ev.clientX, ev.clientY, (mode, queue) => {
-                pendingIntents.push({ type: "command_selected_units", x: hit.x, z: hit.z, mode, queue });
-              });
-            }, 500)
-          : null;
+        const radialTimer = setTimeout(() => {
+          showUnitCommandRadial(ev.clientX, ev.clientY, (mode, queue) => {
+            pendingIntents.push({
+              type: "command_selected_units",
+              x: hit.x,
+              z: hit.z,
+              mode,
+              queue,
+              includeNearbyIdle: true,
+            });
+          });
+        }, 500);
         rightHold = {
           pointerId: ev.pointerId,
           lastMs: performance.now(),

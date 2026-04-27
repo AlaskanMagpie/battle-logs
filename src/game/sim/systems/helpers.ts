@@ -15,10 +15,23 @@ export const TRAMPLE: Record<UnitSizeClass, Partial<Record<UnitSizeClass, number
   Line: {},
 };
 
-/** Characteristic width/footprint for procedural unit placeholders (1.5× per tier from Swarm). */
+/**
+ * Characteristic unit footprint/max extent (world units), shared by gameplay spacing and renderer
+ * GLB normalization. Do not add class-specific scale multipliers in render code unless this ladder
+ * changes too: Titan should stay building-scale, then Heavy/Line/Swarm step down by 1.5×.
+ */
 export function unitMeshLinearSize(size: UnitSizeClass): number {
   const t = size === "Swarm" ? 0 : size === "Line" ? 1 : size === "Heavy" ? 2 : 3;
   return UNIT_MESH_SWARM * UNIT_MESH_SCALE_STEP ** t;
+}
+
+export function unitVisualScaleReport(): Record<UnitSizeClass, number> {
+  return {
+    Swarm: unitMeshLinearSize("Swarm"),
+    Line: unitMeshLinearSize("Line"),
+    Heavy: unitMeshLinearSize("Heavy"),
+    Titan: unitMeshLinearSize("Titan"),
+  };
 }
 
 /** Minimum center spacing in XZ so units (especially swarms) do not sit on one spot. */

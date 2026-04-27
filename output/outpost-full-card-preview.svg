@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600" role="img" aria-labelledby="title desc">
+  <title id="title">Outpost full doctrine card preview</title>
+  <desc id="desc">A recreated preview of the repository's full-size regular Outpost doctrine card using repo card data and styling cues.</desc>
+  <defs>
+    <linearGradient id="shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141820"/>
+      <stop offset=".55" stop-color="#0a0d12"/>
+      <stop offset="1" stop-color="#06080c"/>
+    </linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2=".8" y2="1">
+      <stop offset="0" stop-color="hsl(199,48%,36%)"/>
+      <stop offset="1" stop-color="hsl(239,26%,11%)"/>
+    </linearGradient>
+    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#000" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".72"/>
+    </linearGradient>
+    <linearGradient id="statBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#080b11" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#05070b" stop-opacity=".55"/>
+    </linearGradient>
+    <linearGradient id="unitPill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3c2058" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#181228" stop-opacity=".9"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".55"/>
+    </filter>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="400" height="600" fill="#020306"/>
+  <rect x="2" y="2" width="396" height="596" rx="12" fill="url(#shell)" stroke="hsla(199,52%,48%,.88)" stroke-width="4" filter="url(#shadow)"/>
+  <rect x="5" y="5" width="390" height="590" rx="9" fill="none" stroke="#000" stroke-opacity=".85" stroke-width="1"/>
+  <rect x="8" y="8" width="384" height="584" rx="8" fill="none" stroke="#fff" stroke-opacity=".06"/>
+
+  <g>
+    <clipPath id="heroClip"><rect x="8" y="8" width="384" height="200" rx="9"/></clipPath>
+    <g clip-path="url(#heroClip)">
+      <rect x="8" y="8" width="384" height="200" fill="url(#hero)"/>
+      <circle cx="296" cy="34" r="74" fill="hsl(199,70%,60%)" opacity=".08"/>
+      <circle cx="70" cy="42" r="55" fill="#ffffff" opacity=".05"/>
+      <ellipse cx="200" cy="172" rx="124" ry="24" fill="#000" opacity=".30"/>
+      <g transform="translate(0 2)" opacity=".95">
+        <rect x="151" y="118" width="98" height="56" rx="4" fill="#000" opacity=".36"/>
+        <rect x="157" y="118" width="86" height="48" rx="3" fill="#fff" opacity=".09"/>
+        <rect x="174" y="88" width="52" height="34" rx="3" fill="#fff" opacity=".14"/>
+        <rect x="162" y="105" width="10" height="14" fill="#000" opacity=".48"/>
+        <rect x="184" y="105" width="10" height="14" fill="#000" opacity=".48"/>
+        <rect x="206" y="105" width="10" height="14" fill="#000" opacity=".48"/>
+        <rect x="228" y="105" width="10" height="14" fill="#000" opacity=".48"/>
+        <path d="M198 48 L209 92 L187 92 Z" fill="#ffd28f" opacity=".52"/>
+        <rect x="194" y="82" width="10" height="40" rx="2" fill="#fff" opacity=".14"/>
+        <rect x="136" y="128" width="12" height="45" rx="2" fill="#000" opacity=".32"/>
+        <rect x="252" y="128" width="12" height="45" rx="2" fill="#000" opacity=".32"/>
+      </g>
+      <rect x="8" y="8" width="384" height="200" fill="url(#scrim)"/>
+    </g>
+
+    <circle cx="34" cy="34" r="22" fill="#0a0d10" opacity=".86" stroke="#fff" stroke-opacity=".14"/>
+    <text x="34" y="42" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="900" fill="#fff0c2">80</text>
+
+    <g transform="translate(255 18)" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="800" letter-spacing=".9">
+      <rect x="0" y="0" width="64" height="24" rx="12" fill="#080a10" opacity=".82" stroke="hsla(199,50%,52%,.52)"/>
+      <circle cx="12" cy="12" r="3" fill="hsl(199,72%,54%)"/>
+      <text x="22" y="15" fill="hsl(199,82%,90%)">LINE</text>
+      <rect x="72" y="0" width="50" height="24" rx="12" fill="#080a10" opacity=".82" stroke="rgba(100,160,255,.45)"/>
+      <circle cx="84" cy="12" r="3" fill="hsl(210,88%,62%)"/>
+      <text x="94" y="15" fill="#d4e8ff">11s</text>
+    </g>
+
+    <text x="20" y="168" font-family="Georgia, 'Times New Roman', serif" font-size="26" font-weight="700" letter-spacing="1.1" fill="#f7f9ff">OUTPOST</text>
+    <text x="21" y="190" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="2.1" fill="#b8c1d4">
+      <tspan fill="hsl(48,85%,62%)">DOCTRINE</tspan><tspan opacity=".55">  •  </tspan><tspan fill="#d5dded">STRUCTURE</tspan>
+    </text>
+  </g>
+
+  <g transform="translate(8 208)">
+    <rect width="384" height="62" fill="url(#statBg)"/>
+    <line x1="0" y1="62" x2="384" y2="62" stroke="#fff" stroke-opacity=".06"/>
+    <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+      <text x="48" y="28" font-size="20" font-weight="800" fill="#ff6b6b">260</text>
+      <text x="48" y="47" font-size="9" font-weight="700" letter-spacing="1.2" fill="#8c9bb4">HP</text>
+      <line x1="96" y1="12" x2="96" y2="50" stroke="#fff" stroke-opacity=".1"/>
+      <text x="144" y="28" font-size="20" font-weight="800" fill="#7ecbff">12s</text>
+      <text x="144" y="47" font-size="9" font-weight="700" letter-spacing="1.2" fill="#8c9bb4">BUILD</text>
+      <line x1="192" y1="12" x2="192" y2="50" stroke="#fff" stroke-opacity=".1"/>
+      <text x="240" y="28" font-size="20" font-weight="800" fill="#ffd966">22s</text>
+      <text x="240" y="47" font-size="9" font-weight="700" letter-spacing="1.2" fill="#8c9bb4">PROD</text>
+      <line x1="288" y1="12" x2="288" y2="50" stroke="#fff" stroke-opacity=".1"/>
+      <text x="336" y="28" font-size="20" font-weight="800" fill="#c9a6ff">3/12</text>
+      <text x="336" y="47" font-size="9" font-weight="700" letter-spacing="1.2" fill="#8c9bb4">POP / CAP</text>
+    </g>
+  </g>
+
+  <g transform="translate(18 284)" font-family="Arial, Helvetica, sans-serif">
+    <g>
+      <rect width="364" height="31" rx="8" fill="#fff" opacity=".03"/>
+      <text x="38" y="20" font-size="10" font-weight="600" letter-spacing=".6" fill="#96a5be">SIGNAL</text>
+      <path d="M15 6 v13 h5 l-8 10 v-13 h-5 z" fill="hsl(48,90%,62%)" opacity=".88" transform="scale(.72) translate(10 2)"/>
+      <text x="348" y="20" text-anchor="end" font-size="12" font-weight="700" fill="rgba(200,210,230,.65)">-</text>
+    </g>
+    <g transform="translate(0 39)">
+      <rect width="364" height="31" rx="8" fill="#fff" opacity=".03"/>
+      <text x="38" y="20" font-size="10" font-weight="600" letter-spacing=".6" fill="#96a5be">UNLOCK</text>
+      <rect x="11" y="10" width="12" height="10" rx="2" fill="#aab9d2" opacity=".75"/>
+      <path d="M14 10 v-3 a3 3 0 0 1 6 0 v3" fill="none" stroke="#aab9d2" stroke-width="2" opacity=".75"/>
+      <text x="348" y="20" text-anchor="end" font-size="12" font-weight="700" fill="#eef3ff">Wizard Tier 1</text>
+    </g>
+    <g transform="translate(0 84)">
+      <rect width="364" height="46" rx="10" fill="url(#unitPill)" stroke="rgba(140,90,200,.35)"/>
+      <text x="16" y="29" font-size="17" fill="#d4b8ff">⚔</text>
+      <text x="42" y="29" font-size="13" font-weight="800" letter-spacing=".2" fill="#e8d8ff">Generic garrison</text>
+    </g>
+    <g transform="translate(0 144)">
+      <rect width="364" height="62" rx="10" fill="url(#unitPill)" opacity=".8" stroke="rgba(255,255,255,.08)"/>
+      <rect x="14" y="13" width="3" height="36" rx="2" fill="url(#hero)"/>
+      <text x="30" y="25" font-size="12" font-style="italic" fill="rgba(170,182,205,.92)">Generic garrison (no signal requirement)</text>
+      <text x="30" y="45" font-size="11" fill="rgba(170,182,205,.72)">Regular baseline structure card.</text>
+    </g>
+  </g>
+
+  <text x="200" y="580" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="9" letter-spacing=".6" fill="#fff" opacity=".22">outpost</text>
+</svg>

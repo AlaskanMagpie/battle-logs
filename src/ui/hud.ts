@@ -212,26 +212,27 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   const { onRematch, onEditDoctrine, onCameraFollowToggle, pushIntent } = api;
   root.innerHTML = `
     <header class="hud-chrome" aria-label="Match status">
-      <div class="hud-chrome__row hud-chrome__row--primary">
+      <div class="hud-brand" aria-hidden="true"><span class="hud-brand__mark">A</span></div>
+      <div class="hud-chrome__cluster hud-chrome__cluster--main">
         <div class="hud-chrome__stats">
-          <span class="hud-stat hud-stat--econ">Mana <strong id="flux">0</strong></span>
-          <span class="hud-stat hud-stat--econ">Salvage <strong id="salvage">0</strong></span>
-          <span class="hud-stat hud-stat--econ">Pop <strong id="pop">0</strong></span>
-          <span class="hud-stat hud-stat--field">Nodes <strong id="nodes">0</strong></span>
-          <span class="hud-stat hud-stat--mode">Mode <strong id="mode">idle</strong></span>
+          <span class="hud-stat hud-stat--econ hud-stat--mana"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Mana</span><strong id="flux">0</strong></span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--salvage"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Salvage</span><strong id="salvage">0</strong></span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--pop"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Pop</span><strong id="pop">0</strong></span></span>
+          <span class="hud-stat hud-stat--field hud-stat--nodes"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Nodes</span><strong id="nodes">0</strong></span></span>
+          <span class="hud-stat hud-stat--mode"><span class="hud-stat__txt"><span>Mode</span><strong id="mode">idle</strong></span></span>
         </div>
         <div class="hud-chrome__phase" id="phase">playing · tick 0</div>
       </div>
-      <div class="hud-chrome__row hud-chrome__row--secondary">
-        <div class="hud-chrome__readout" id="hud-readout" aria-label="Enemy intelligence"></div>
+      <div class="hud-chrome__cluster hud-chrome__cluster--status">
+        <div class="hud-chrome__readout hud-status-card hud-status-card--hostiles" id="hud-readout" aria-label="Enemy intelligence"></div>
         <div class="hud-chrome__vitals">
-          <div class="hud-vital" id="hud-hero-hp"><span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
-          <div class="hud-vital" id="hud-keep-hp"><span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
+          <div class="hud-vital hud-status-card" id="hud-hero-hp"><span class="hud-vital__ico" aria-hidden="true">W</span><span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
+          <div class="hud-vital hud-status-card" id="hud-keep-hp"><span class="hud-vital__ico" aria-hidden="true">K</span><span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
         </div>
       </div>
       <div class="hud-chrome__objective" id="hud-objective" hidden role="status">
-        <span class="hud-chrome__objective-k">Next</span>
-        <span class="hud-chrome__objective-t" id="hud-objective-text"></span>
+        <span class="hud-chrome__objective-icon" aria-hidden="true"></span>
+        <span class="hud-chrome__objective-body"><span class="hud-chrome__objective-k">Next</span><span class="hud-chrome__objective-t" id="hud-objective-text"></span></span>
       </div>
       <div class="hud-select-tag" id="hud-select-tag" hidden></div>
     </header>
@@ -248,10 +249,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     <footer class="hud-dock hud-dock--overlay" id="hud-dock">
       <aside class="hud-match-side-controls" aria-label="Rally, stance, camera, and log">
         <button class="hud-btn hud-btn--ghost" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
-          Rally…
+          <span class="hud-side-ico" aria-hidden="true">R</span><span class="hud-side-copy"><span>Rally</span><b>Map</b></span>
         </button>
         <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
-          Stance: Offense
+          <span class="hud-side-ico" aria-hidden="true">X</span><span class="hud-side-copy"><span>Stance</span><b>Offense</b></span>
         </button>
         <button
           class="hud-btn hud-btn--ghost"
@@ -260,10 +261,10 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-pressed="true"
           title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
         >
-          Camera: lock
+          <span class="hud-side-ico" aria-hidden="true">C</span><span class="hud-side-copy"><span>Camera</span><b>lock</b></span>
         </button>
         <button class="hud-btn hud-btn--ghost" id="btn-teleport" type="button" aria-pressed="false" title="Teleport Wizard squad (T). Click your half; carries nearby friendly troops.">
-          Teleport
+          <span class="hud-side-ico" aria-hidden="true">T</span><span class="hud-side-copy"><span>Teleport</span><b>Ready</b></span>
         </button>
         <details class="hud-gamelog" id="hud-gamelog">
           <summary>Log</summary>
@@ -273,8 +274,8 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       <details class="hud-dock__help-drawer">
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> move (camera-relative) · <kbd>RMB</kbd> move · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue waypoints</div>
-          <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> / Camera = follow wizard on/off</div>
+          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> command/move · hold <kbd>RMB</kbd> radial</div>
+          <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
           <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
           <div class="hud-help-item"><kbd>R</kbd> rally then click map · <kbd>G</kbd> offense / defense</div>
           <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
@@ -419,7 +420,8 @@ export function updateHud(state: GameState): void {
   const stanceBtn = document.querySelector<HTMLButtonElement>("#btn-stance");
   if (stanceBtn) {
     const def = state.armyStance === "defense";
-    stanceBtn.textContent = def ? "Stance: Defense" : "Stance: Offense";
+    const copy = stanceBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    if (copy) copy.textContent = def ? "Defense" : "Offense";
     stanceBtn.setAttribute("aria-pressed", def ? "true" : "false");
     stanceBtn.classList.toggle("hud-btn--stance-defense", def);
   }
@@ -445,7 +447,8 @@ export function updateHud(state: GameState): void {
 
   const rallyBtn = document.querySelector<HTMLButtonElement>("#btn-rally");
   if (rallyBtn) {
-    rallyBtn.textContent = state.rallyClickPending ? "Rally: click map" : "Rally map…";
+    const copy = rallyBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    if (copy) copy.textContent = state.rallyClickPending ? "Click map" : "Map";
     rallyBtn.setAttribute("aria-pressed", state.rallyClickPending ? "true" : "false");
     rallyBtn.classList.toggle("hud-btn--armed", state.rallyClickPending);
   }
@@ -454,7 +457,8 @@ export function updateHud(state: GameState): void {
   if (teleportBtn) {
     const cd = heroTeleportCooldownSeconds(state);
     const cooling = state.heroTeleportCooldownTicks > 0;
-    teleportBtn.textContent = cooling ? `Teleport ${cd}s` : state.teleportClickPending ? "Teleport: click" : "Teleport";
+    const copy = teleportBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    if (copy) copy.textContent = cooling ? `${cd}s` : state.teleportClickPending ? "Click" : "Ready";
     teleportBtn.disabled = cooling;
     teleportBtn.setAttribute("aria-pressed", state.teleportClickPending ? "true" : "false");
     teleportBtn.classList.toggle("hud-btn--armed", state.teleportClickPending);
@@ -464,11 +468,11 @@ export function updateHud(state: GameState): void {
   if (readout) {
     const coreLine = campCoreSummary(state);
     const n = enemyCount(state);
-    readout.innerHTML = `<span class="hud-readout__hostiles">Hostiles <strong class="hud-ink-hostile">${n}</strong> alive</span>${
+    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><span class="hud-readout__body"><span class="hud-readout__hostiles">Hostiles <strong class="hud-ink-hostile">${n}</strong> alive</span>${
       coreLine
         ? ` <span class="hud-readout__sep" aria-hidden="true">·</span> <span class="hud-readout__camps"><span class="hud-readout__camps-k">Enemy camps</span> ${coreLine}</span>`
         : ""
-    }`;
+    }</span>`;
   }
 
   const logBody = document.querySelector("#hud-gamelog-body");

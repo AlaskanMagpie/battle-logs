@@ -1,5 +1,18 @@
 {
   "files": [
+    "azure_spear_swarm_attack_spin.glb",
+    "azure_spear_swarm_dying.glb",
+    "azure_spear_swarm_idle.glb",
+    "azure_spear_swarm_run_fast.glb",
+    "azure_spear_swarm_running.glb",
+    "azure_spear_swarm_walking.glb",
+    "lanternbound_line_attack_triple_combo.glb",
+    "lanternbound_line_bow_charge.glb",
+    "lanternbound_line_combat_stance.glb",
+    "lanternbound_line_dying.glb",
+    "lanternbound_line_idle.glb",
+    "lanternbound_line_running.glb",
+    "lanternbound_line_walking.glb",
     "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
     "unit_019d52a3-d2f8-7a51-b535-c938ad8c9658.glb",
     "unit_019d52a3-fcd5-7a59-b02f-1ddf2759467d.glb",

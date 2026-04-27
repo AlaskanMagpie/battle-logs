@@ -1,5 +1,5 @@
 import { getCatalogEntry } from "../../catalog";
-import { GLOBAL_POP_CAP, TICK_HZ } from "../../constants";
+import { ENEMY_DAMAGE_MULT, ENEMY_PRODUCTION_RATE_MULT, GLOBAL_POP_CAP, TICK_HZ } from "../../constants";
 import {
   dominantSignal,
   effectiveGlobalPopCap,
@@ -53,27 +53,31 @@ function pushSpawnedUnit(
   s: GameState,
   st: StructureRuntime,
   team: "player" | "enemy",
-  spawnIndex: number,
-  batchCount: number,
+  squadCount: number,
 ): void {
   const def = getCatalogEntry(st.catalogId);
   if (!def || !isStructureEntry(def)) return;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
-  const angle = (spawnIndex / Math.max(1, batchCount)) * Math.PI * 2 + rand(s) * 0.22;
-  const radius = SPAWN_JITTER * (0.62 + spawnIndex * 0.08 + rand(s) * 0.25);
+  const count = Math.max(1, Math.floor(squadCount));
+  const angle = rand(s) * Math.PI * 2;
+  const radius = SPAWN_JITTER * (0.62 + rand(s) * 0.25);
+  const hp = stStats.maxHp * count;
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
     structureId: st.id,
     x: st.x + Math.cos(angle) * radius,
     z: st.z + Math.sin(angle) * radius,
-    hp: stStats.maxHp,
-    maxHp: stStats.maxHp,
+    hp,
+    maxHp: hp,
     sizeClass: def.producedSizeClass,
-    pop: stStats.pop,
+    squadCount: count,
+    squadMaxCount: count,
+    singleMaxHp: stStats.maxHp,
+    pop: stStats.pop * count,
     speedPerSec: stStats.speedPerSec,
     range: stStats.range,
-    dmgPerTick: stStats.dmgPerTick,
+    dmgPerTick: team === "enemy" ? stStats.dmgPerTick * ENEMY_DAMAGE_MULT : stStats.dmgPerTick,
     visualSeed: randU32(s),
     antiClass: def.producedAntiClass,
     trait: def.unitTrait,
@@ -85,21 +89,33 @@ function pushSpawnedUnit(
     vzImpulse: 0,
   };
   s.units.push(u);
-  if (team === "player") s.stats.unitsProduced += 1;
+  if (team === "player") s.stats.unitsProduced += count;
   pushFx(s, { kind: spawnFxKindForUnit(def.producedSizeClass), x: u.x, z: u.z });
 }
 
 export function spawnPlayerUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  for (let i = 0; i < n; i++) pushSpawnedUnit(s, st, "player", i, n);
+  if (n > 0) pushSpawnedUnit(s, st, "player", n);
   return n;
 }
 
 export function spawnEnemyUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  for (let i = 0; i < n; i++) pushSpawnedUnit(s, st, "enemy", i, n);
+  if (n > 0) pushSpawnedUnit(s, st, "enemy", n);
   if (n > 0) s.stats.enemyUnitsSpawned += n;
   return n;
+}
+
+function productionTicksForStructure(st: StructureRuntime): number {
+  const def = getCatalogEntry(st.catalogId);
+  if (!def || !isStructureEntry(def)) return 1;
+  const baseTicks = def.productionSeconds * TICK_HZ;
+  const teamRate = st.team === "enemy" ? ENEMY_PRODUCTION_RATE_MULT : 1;
+  return Math.max(1, Math.round(baseTicks / teamRate));
+}
+
+function resetProductionTimer(st: StructureRuntime): void {
+  st.productionTicksRemaining = productionTicksForStructure(st);
 }
 
 export function buildProgress(s: GameState): void {
@@ -112,6 +128,11 @@ export function buildProgress(s: GameState): void {
       const def = getCatalogEntry(st.catalogId);
       if (def && isStructureEntry(def) && typeof def.structureLocalPopCapBonus === "number") {
         st.localPopCapBonus = def.structureLocalPopCapBonus;
+      }
+      const spawned = st.team === "player" ? spawnPlayerUnit(s, st) : spawnEnemyUnit(s, st);
+      resetProductionTimer(st);
+      if (spawned > 0 && def && isStructureEntry(def)) {
+        s.lastMessage = `${def.name} doors burst open — ${spawned} ${def.producedSizeClass}${spawned === 1 ? "" : "s"} charge out.`;
       }
     }
   }
@@ -130,7 +151,7 @@ export function production(s: GameState): void {
     const spawned = spawnPlayerUnit(s, st);
     if (spawned > 0) {
       s.lastMessage = `${def.name} produced ${spawned} ${def.producedSizeClass}${spawned === 1 ? "" : "s"}.`;
-      st.productionTicksRemaining = Math.round(def.productionSeconds * TICK_HZ);
+      st.productionTicksRemaining = productionTicksForStructure(st);
     } else {
       st.productionTicksRemaining = 1;
     }
@@ -146,6 +167,6 @@ export function production(s: GameState): void {
     if (st.productionTicksRemaining > 0) continue;
 
     const spawned = spawnEnemyUnit(s, st);
-    st.productionTicksRemaining = spawned > 0 ? Math.round(def.productionSeconds * TICK_HZ) : 1;
+    st.productionTicksRemaining = spawned > 0 ? productionTicksForStructure(st) : 1;
   }
 }

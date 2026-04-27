@@ -9,8 +9,9 @@ import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
 import { applyPlayerIntents } from "./systems/intents";
 import { buildProgress, production } from "./systems/production";
-import { maybeEnemyReinforcements, maybePlayerKeepReinforcements } from "./systems/waves";
+import { maybeEnemyReinforcements } from "./systems/waves";
 import { loseCheck, winCheck } from "./systems/winlose";
+import { respawnDeadHeroAtKeep } from "./systems/hero";
 
 export { applyPlayerIntents } from "./systems/intents";
 
@@ -30,12 +31,12 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   auras(s);
   wakeCamps(s);
   maybeEnemyReinforcements(s);
-  maybePlayerKeepReinforcements(s);
   heroSystem(s);
   enemyHeroSystem(s);
   movement(s);
   combat(s);
   cleanupDead(s);
+  respawnDeadHeroAtKeep(s);
   loseCheck(s);
   winCheck(s);
   s.tick += 1;

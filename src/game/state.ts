@@ -3,6 +3,7 @@ import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
+  ENEMY_DAMAGE_MULT,
   ENEMY_RELAY_MAX_HP,
   ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
@@ -55,10 +56,13 @@ export type CastFxKind =
   | "spark_burst"
   | "ground_crack"
   | "reclaim_pulse"
+  | "death_flash"
   | "combat_boom";
 
 /** One throttled combat telegraph: wedge rooted on attacker, opening toward target. */
 export interface CombatHitMark {
+  /** Runtime id of the squad that committed this hit (for attack animation triggers). */
+  attackerId?: number;
   ax: number;
   az: number;
   tx: number;
@@ -248,6 +252,12 @@ export interface UnitRuntime {
   hp: number;
   maxHp: number;
   sizeClass: UnitSizeClass;
+  /** Number of visual/combat models represented by this shared-movement squad. */
+  squadCount?: number;
+  /** Original squad size for display/stat accounting. */
+  squadMaxCount?: number;
+  /** HP for one model inside this squad; live count degrades as pooled HP crosses this threshold. */
+  singleMaxHp?: number;
   pop: number;
   speedPerSec: number;
   range: number;
@@ -265,9 +275,27 @@ export interface UnitRuntime {
   /** Knockback velocity XZ (world units/sec), decayed in movement. */
   vxImpulse: number;
   vzImpulse: number;
+  /** Normal attacks are event-based; when positive this squad is winding up/recovering. */
+  attackCooldownTicksRemaining?: number;
+  /** Last sim tick this squad committed a normal attack, consumed by renderer animations. */
+  lastAttackTick?: number;
+}
+
+export function maxSquadCount(u: UnitRuntime): number {
+  return Math.max(1, Math.round(u.squadMaxCount ?? u.squadCount ?? 1));
+}
+
+export function liveSquadCount(u: UnitRuntime): number {
+  if (u.hp <= 0) return 0;
+  const maxCount = maxSquadCount(u);
+  const singleMaxHp = Math.max(1, u.singleMaxHp ?? u.maxHp / maxCount);
+  return Math.max(1, Math.min(maxCount, Math.ceil(u.hp / singleMaxHp)));
 }
 
 export type UnitOrderMode = "move" | "attack_move" | "stay";
+
+/** Sentinel used only in selection arrays so marquee select can include the Wizard. */
+export const HERO_SELECTION_ID = -1;
 
 export interface UnitOrderRuntime {
   mode: UnitOrderMode;
@@ -329,7 +357,7 @@ export interface GameState {
   selectedStructureId: number | null;
   /** Primary friendly unit picked for range preview (compat). */
   selectedUnitId: number | null;
-  /** Current RTS selection; can include any player-controlled friendly unit. */
+  /** Current RTS selection; can include friendly units plus `HERO_SELECTION_ID` for the Wizard. */
   selectedUnitIds: number[];
   selectedUnitBox: { x1: number; z1: number; x2: number; z2: number } | null;
   /** After T / teleport button: next valid map click blinks the Wizard squad. */
@@ -699,7 +727,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   }));
 
   const hpMult = map.difficulty?.enemyHpMult ?? 1;
-  const dmgMult = map.difficulty?.enemyDmgMult ?? 1;
+  const dmgMult = (map.difficulty?.enemyDmgMult ?? 1) * ENEMY_DAMAGE_MULT;
 
   /** Plan: spawn at first player relay slot when the map defines one; else `playerStart` (with Keep). */
   const relay0 = mapResolved.playerRelaySlots[0];

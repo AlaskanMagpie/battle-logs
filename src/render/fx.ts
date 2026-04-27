@@ -112,11 +112,11 @@ export function spawnCastFx(
 ): void {
   switch (kind) {
     case "firestorm":
-      return spawnFirestorm(host, pos);
+      return spawnFirestorm(host, pos, opts?.impactRadius);
     case "combat_boom":
       return spawnCombatBoom(host, pos, opts?.impactRadius ?? 8, opts?.rangeBand ?? "medium");
     case "shatter":
-      return spawnShatter(host, pos);
+      return spawnShatter(host, pos, opts?.impactRadius);
     case "fortify":
       return spawnFortify(host, pos);
     case "muster":
@@ -135,6 +135,8 @@ export function spawnCastFx(
       return spawnGroundCrack(host, pos);
     case "reclaim_pulse":
       return spawnReclaimPulse(host, pos);
+    case "death_flash":
+      return spawnDeathFlash(host, pos, opts?.impactRadius ?? 1.5, opts?.rangeBand ?? "close");
   }
 }
 
@@ -275,9 +277,9 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     default:
       break;
   }
-  const halfAngle = (m.wide ? 0.42 : 0.19) * Math.PI * classAngle;
-  const seg = Math.max(12, Math.round((m.wide ? 28 : 22) * Math.min(1.15, classAngle)));
-  const life = 0.44 * classLife;
+  const halfAngle = (m.wide ? 0.34 : 0.15) * Math.PI * classAngle;
+  const seg = Math.max(8, Math.round((m.wide ? 16 : 12) * Math.min(1.1, classAngle)));
+  const life = 0.28 * classLife;
   const pal = elementalCombatPalette(m);
   const group = new THREE.Group();
   group.position.set(m.ax, 0.08, m.az);
@@ -301,11 +303,9 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     return mesh;
   };
 
-  const outer = mkCone(1.18, 0.22, 0.02);
-  const mid = mkCone(1, 0.38, 0);
-  const core = mkCone(0.52, 0.55, -0.03);
-  group.add(outer);
-  group.add(mid);
+  const mid = mkCone(1, m.sizeClass === "Swarm" ? 0.16 : 0.24, 0);
+  const core = mkCone(0.52, m.sizeClass === "Swarm" ? 0.24 : 0.36, -0.03);
+  if (m.sizeClass !== "Swarm") group.add(mid);
   group.add(core);
 
   const tracerHeight =
@@ -318,12 +318,64 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   const tracerMat = new THREE.LineBasicMaterial({
     color: m.sizeClass === "Swarm" ? pal.spark : m.sizeClass === "Line" ? pal.glow : pal.rim,
     transparent: true,
-    opacity: m.sizeClass === "Titan" ? 0.95 : 0.72,
+    opacity: m.sizeClass === "Titan" ? 0.62 : 0.46,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
   const tracer = new THREE.Line(tracerGeo, tracerMat);
   group.add(tracer);
+
+  const extraMats: THREE.Material[] = [];
+  if (m.sizeClass === "Swarm") {
+    for (let i = 0; i < 2; i++) {
+      const offset = i === 0 ? -0.16 : 0.16;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute([offset, 0.28, reach * 0.08, offset * -0.35, 0.34, reach * 0.72], 3),
+      );
+      const mat = new THREE.LineBasicMaterial({
+        color: pal.spark,
+        transparent: true,
+        opacity: 0.52,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      extraMats.push(mat);
+      group.add(new THREE.Line(g, mat));
+    }
+  } else if (m.sizeClass === "Heavy") {
+    const slam = new THREE.Mesh(
+      new THREE.RingGeometry(reach * 0.2, reach * 0.36, 12),
+      new THREE.MeshBasicMaterial({
+        color: pal.rim,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    slam.rotation.x = -Math.PI / 2;
+    slam.position.set(0, 0.14, reach * 0.72);
+    extraMats.push(slam.material as THREE.Material);
+    group.add(slam);
+  } else if (m.sizeClass === "Titan") {
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.18, 1.5, 8, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: pal.glow,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.32,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    pillar.position.set(0, 0.75, reach * 0.76);
+    extraMats.push(pillar.material as THREE.Material);
+    group.add(pillar);
+  }
 
   const rimGeo = new THREE.RingGeometry(reach * 0.88, reach * 1.02, seg, 1, -halfAngle, halfAngle * 2);
   const rim = new THREE.Mesh(
@@ -332,7 +384,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
       color: pal.rim,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.32,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     }),
@@ -342,28 +394,28 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   group.add(rim);
 
   const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
-  const nSpark = Math.max(6, Math.round((m.wide ? 22 : 12) * classSpark));
+  const nSpark = Math.max(2, Math.round((m.wide ? 6 : 3) * classSpark));
   for (let i = 0; i < nSpark; i++) {
     const u = rnd(m.visualSeed, i + 3);
     const v = rnd(m.visualSeed, i + 19);
     const ang = -halfAngle + u * (2 * halfAngle);
     const rad = reach * (0.15 + v * 0.82);
-    const g = new THREE.SphereGeometry(0.06 + (m.wide ? 0.04 : 0), 5, 5);
+    const g = new THREE.SphereGeometry(0.045 + (m.wide ? 0.025 : 0), 4, 3);
     const mat = new THREE.MeshBasicMaterial({
       color: i % 3 === 0 ? pal.spark : pal.glow,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.62,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     const mesh = new THREE.Mesh(g, mat);
     mesh.position.set(Math.sin(ang) * rad * 0.35, 0.2 + v * 0.35, Math.cos(ang) * rad * 0.35);
-    const burst = 2.2 + rnd(m.visualSeed, i + 40) * 3.5;
+    const burst = 1.2 + rnd(m.visualSeed, i + 40) * 2.1;
     sparks.push({
       mesh,
       vx: Math.sin(ang) * burst,
       vz: Math.cos(ang) * burst,
-      vy: 1.8 + rnd(m.visualSeed, i + 60) * 2.2,
+      vy: 1.1 + rnd(m.visualSeed, i + 60) * 1.5,
       mat,
     });
     group.add(mesh);
@@ -373,18 +425,65 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     const p = Math.min(1, t / life);
     const breathe = 1 + Math.sin(t * 28) * 0.04 * (1 - p);
     group.scale.setScalar(breathe);
-    (outer.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
-    (mid.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p * 0.92);
-    (core.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p * 0.85);
-    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.95 : 0.72) * (1 - p * 0.82);
-    (rim.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p);
+    (mid.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.16 : 0.24) * (1 - p * 0.92);
+    (core.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.24 : 0.36) * (1 - p * 0.85);
+    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.62 : 0.46) * (1 - p * 0.82);
+    (rim.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p);
+    for (const mat of extraMats) {
+      if ("opacity" in mat) mat.opacity = (m.sizeClass === "Titan" ? 0.32 : 0.46) * (1 - p);
+    }
     for (const s of sparks) {
       s.mesh.position.x += s.vx * dt;
       s.mesh.position.z += s.vz * dt;
       s.mesh.position.y += s.vy * dt;
-      s.vy -= 7 * dt;
-      s.mat.opacity = 0.95 * (1 - p);
+      s.vy -= 6 * dt;
+      s.mat.opacity = 0.62 * (1 - p);
     }
+  });
+}
+
+/** Compact unit/structure death cue: visible silhouette pop without the cost of a full spell burst. */
+function spawnDeathFlash(host: FxHost, pos: { x: number; z: number }, impactRadius: number, band: AttackRangeBand): void {
+  const life = 0.38;
+  const pal = boomPalette(band);
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.12, pos.z);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.18, 0.36, 18),
+    new THREE.MeshBasicMaterial({
+      color: pal.hot,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.11, Math.max(0.8, impactRadius * 0.75), 6, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: pal.rim,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  beam.position.y = Math.max(0.4, impactRadius * 0.38);
+  group.add(beam);
+
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const s = 1 + p * impactRadius;
+    ring.scale.setScalar(s);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - p);
+    beam.scale.set(1 + p * 0.45, 1 + p * 0.2, 1 + p * 0.45);
+    (beam.material as THREE.MeshBasicMaterial).opacity = 0.34 * (1 - p);
   });
 }
 
@@ -562,9 +661,9 @@ function spawnHeroStrike(
   });
 }
 
-/** Expanding red ring + 12 ember billboards. */
-function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.7;
+/** Expanding red ring + ember surge. */
+function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11): void {
+  const life = 0.95;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.12, pos.z);
 
@@ -595,8 +694,42 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
   inner.rotation.x = -Math.PI / 2;
   group.add(inner);
 
+  const scorch = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 36),
+    new THREE.MeshBasicMaterial({
+      color: 0x8a1f10,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  scorch.rotation.x = -Math.PI / 2;
+  scorch.position.y = -0.015;
+  group.add(scorch);
+
+  const pillars: THREE.Mesh[] = [];
+  for (let i = 0; i < 5; i++) {
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.55, 4.6, 8, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: i % 2 === 0 ? 0xffdd66 : 0xff5522,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.32,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    const ang = (i / 5) * Math.PI * 2 + 0.35;
+    const rr = radius * (i === 0 ? 0 : 0.34 + (i % 2) * 0.22);
+    pillar.position.set(Math.cos(ang) * rr, 2.1, Math.sin(ang) * rr);
+    group.add(pillar);
+    pillars.push(pillar);
+  }
+
   const embers: { mesh: THREE.Mesh; vy: number; vx: number; vz: number }[] = [];
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 22; i++) {
     const g = new THREE.SphereGeometry(0.18, 6, 6);
     const m = new THREE.MeshBasicMaterial({
       color: 0xffaa44,
@@ -606,7 +739,7 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
       blending: THREE.AdditiveBlending,
     });
     const e = new THREE.Mesh(g, m);
-    const ang = (i / 16) * Math.PI * 2 + Math.random() * 0.4;
+    const ang = (i / 22) * Math.PI * 2 + Math.random() * 0.4;
     const sp = 4 + Math.random() * 3;
     e.position.set(Math.cos(ang) * 0.3, 0.3, Math.sin(ang) * 0.3);
     group.add(e);
@@ -618,14 +751,19 @@ function spawnFirestorm(host: FxHost, pos: { x: number; z: number }): void {
     });
   }
 
-  const maxRadius = 11;
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const rOuter = 0.6 + p * maxRadius;
+    const rOuter = 0.6 + p * radius;
     ring.scale.setScalar(rOuter / 0.6);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
     (inner.material as THREE.MeshBasicMaterial).opacity = 0.85 * (1 - p * 1.4);
-    inner.scale.setScalar(1 + p * 3);
+    inner.scale.setScalar(1 + p * Math.max(3, radius * 0.34));
+    scorch.scale.setScalar(Math.max(0.5, radius * 0.72) * (0.7 + p * 0.45));
+    (scorch.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.55);
+    for (const pillar of pillars) {
+      pillar.scale.set(1 + p * 0.7, 1 + p * 0.18, 1 + p * 0.7);
+      (pillar.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p);
+    }
     for (const e of embers) {
       e.mesh.position.x += e.vx * dt;
       e.mesh.position.z += e.vz * dt;
@@ -716,33 +854,48 @@ function spawnCombatBoom(
   });
 }
 
-/** Two concentric shockwave rings at different speeds + a crack decal. */
-function spawnShatter(host: FxHost, pos: { x: number; z: number }): void {
-  const life = 0.9;
+/** Concentric shockwave rings + crack decal for Shatter chain impacts. */
+function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 9): void {
+  const life = 1.05;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.2, pos.z);
 
   const rings: { mesh: THREE.Mesh; speed: number }[] = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 3; i++) {
     const r = new THREE.Mesh(
       new THREE.RingGeometry(0.2, 0.55, 40),
       new THREE.MeshBasicMaterial({
-        color: i === 0 ? 0x8fd6ff : 0xc8b3ff,
+        color: i === 0 ? 0xffffff : i === 1 ? 0x8fd6ff : 0xc8b3ff,
         side: THREE.DoubleSide,
         transparent: true,
         opacity: 0.95,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
       }),
     );
     r.rotation.x = -Math.PI / 2;
     group.add(r);
-    rings.push({ mesh: r, speed: 8 + i * 6 });
+    rings.push({ mesh: r, speed: radius * (0.55 + i * 0.32) });
   }
+
+  const pillar = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.38, Math.max(2.2, radius * 0.42), 9, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xe8f6ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  pillar.position.y = Math.max(1.1, radius * 0.22);
+  group.add(pillar);
 
   // Crack decal — a few thin rectangles radiating.
   const cracks: THREE.Mesh[] = [];
-  for (let i = 0; i < 6; i++) {
-    const g = new THREE.PlaneGeometry(0.12, 3.4);
+  for (let i = 0; i < 9; i++) {
+    const g = new THREE.PlaneGeometry(0.14, radius * (0.5 + (i % 3) * 0.12));
     const m = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
@@ -751,7 +904,7 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }): void {
     });
     const c = new THREE.Mesh(g, m);
     c.rotation.x = -Math.PI / 2;
-    c.rotation.z = (i / 6) * Math.PI * 2;
+    c.rotation.z = (i / 9) * Math.PI * 2;
     c.position.y = 0.01;
     group.add(c);
     cracks.push(c);
@@ -764,6 +917,8 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }): void {
       r.mesh.scale.setScalar(outer / 0.55);
       (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - p);
     }
+    pillar.scale.set(1 + p * 0.5, 1 + p * 0.22, 1 + p * 0.5);
+    (pillar.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p);
     for (const c of cracks) {
       (c.material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - p * 0.8);
     }

@@ -1,6 +1,14 @@
 import { getCatalogEntry } from "../../catalog";
 import { SALVAGE_RETURN_STRUCTURE_FRAC } from "../../constants";
-import type { GameState, StructureRuntime } from "../../state";
+import {
+  maxSquadCount,
+  HERO_SELECTION_ID,
+  pushFx,
+  type AttackRangeBand,
+  type GameState,
+  type StructureRuntime,
+  type UnitRuntime,
+} from "../../state";
 import type { Vec2 } from "../../types";
 import { isStructureEntry } from "../../types";
 import { dist2 } from "./helpers";
@@ -37,20 +45,47 @@ function salvageFromDeadStructures(s: GameState, dead: StructureRuntime[]): void
   }
 }
 
+function deathFxForUnit(u: UnitRuntime): { radius: number; band: AttackRangeBand } {
+  switch (u.sizeClass) {
+    case "Swarm":
+      return { radius: 0.8, band: "close" };
+    case "Line":
+      return { radius: 1.15, band: "medium" };
+    case "Heavy":
+      return { radius: 1.65, band: "long" };
+    case "Titan":
+      return { radius: 2.25, band: "long" };
+    default:
+      return { radius: 1, band: "close" };
+  }
+}
+
 export function cleanupDead(s: GameState): void {
   const deadUnits = s.units.filter((u) => u.hp <= 0);
+  let deathFxCount = 0;
   for (const u of deadUnits) {
-    if (u.team === "player") s.stats.unitsLost += 1;
-    else s.stats.enemyKills += 1;
+    const count = maxSquadCount(u);
+    if (u.team === "player") s.stats.unitsLost += count;
+    else s.stats.enemyKills += count;
+    if (deathFxCount < 10) {
+      const fx = deathFxForUnit(u);
+      pushFx(s, { kind: "death_flash", x: u.x, z: u.z, impactRadius: fx.radius, rangeBand: fx.band });
+      deathFxCount++;
+    }
   }
   s.units = s.units.filter((u) => u.hp > 0);
   if (s.selectedUnitId !== null && !s.units.some((u) => u.id === s.selectedUnitId)) {
     s.selectedUnitId = null;
   }
-  s.selectedUnitIds = s.selectedUnitIds.filter((id) => s.units.some((u) => u.id === id && u.team === "player"));
+  s.selectedUnitIds = s.selectedUnitIds.filter(
+    (id) => id === HERO_SELECTION_ID || s.units.some((u) => u.id === id && u.team === "player"),
+  );
 
   const deadStructs = s.structures.filter((st) => st.hp <= 0);
   salvageFromDeadStructures(s, deadStructs);
+  for (const st of deadStructs.slice(0, 4)) {
+    pushFx(s, { kind: "death_flash", x: st.x, z: st.z, impactRadius: 2.8, rangeBand: "long" });
+  }
   for (const st of s.structures) {
     if (st.hp <= 0) st.hp = 0;
   }

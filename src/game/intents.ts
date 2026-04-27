@@ -21,6 +21,7 @@ export type PlayerIntent =
       z: number;
       mode: "move" | "attack_move" | "stay";
       queue?: boolean;
+      includeNearbyIdle?: boolean;
     }
   | { type: "toggle_structure_orders"; structureId: number }
   | { type: "set_army_stance"; stance: ArmyStance }

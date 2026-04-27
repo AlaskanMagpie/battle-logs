@@ -3,20 +3,13 @@ import { findKeep, type GameState } from "../../state";
 /**
  * Defeat conditions (any of):
  *   - The Wizard Keep has been destroyed (no live keep structure exists).
- *   - The Wizard himself has dropped to 0 HP.
  */
 export function loseCheck(s: GameState): void {
   if (s.phase !== "playing") return;
   const keep = findKeep(s);
-  const wizardDead = s.hero.hp <= 0;
   if (!keep) {
     s.phase = "lose";
     s.lastMessage = "Defeat — the Wizard Keep has fallen.";
-    return;
-  }
-  if (wizardDead) {
-    s.phase = "lose";
-    s.lastMessage = "Defeat — the Wizard has perished.";
   }
 }
 

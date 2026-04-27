@@ -5,11 +5,12 @@ import {
   ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE,
   ENEMY_AI_CLAIM_RESERVE_TAP_GOAL,
   ENEMY_AI_MIN_BUILD_SEP,
+  ENEMY_DAMAGE_MULT,
   ENEMY_HERO_STRIKE_COOLDOWN_TICKS,
   ENEMY_HERO_STRIKE_DAMAGE,
   ENEMY_HERO_STRIKE_SWARM_MULT,
+  ENEMY_PRODUCTION_RATE_MULT,
   ENEMY_TAP_WEDGE_MARGIN_X,
-  FORWARD_BUILD_TIME_MULT,
   FORWARD_STRUCTURE_HP_MULT,
   HERO_ATTACK_RANGE,
   HERO_CLAIM_FLUX_FEE,
@@ -165,8 +166,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
   if (!def || !isStructureEntry(def)) return false;
   s.enemyFlux -= def.fluxCost;
   const placementForward = !nearEnemyInfra(s, pos) && inEnemyTerritory(s, pos);
-  let buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
-  if (placementForward) buildTicks = Math.round(buildTicks * FORWARD_BUILD_TIME_MULT);
+  const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
   const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
   const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const keep = findKeep(s);
@@ -189,7 +189,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
     buildTicksRemaining: buildTicks,
     buildTotalTicks: buildTicks,
     complete: false,
-    productionTicksRemaining: Math.round(def.productionSeconds * TICK_HZ),
+    productionTicksRemaining: Math.round((def.productionSeconds * TICK_HZ) / ENEMY_PRODUCTION_RATE_MULT),
     doctrineSlotIndex: -1,
     rallyX: pos.x + rdx * rallyLead,
     rallyZ: pos.z + rdz * rallyLead,
@@ -370,7 +370,7 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
-    s.hero.hp = Math.max(0, s.hero.hp - ENEMY_HERO_STRIKE_DAMAGE);
+    s.hero.hp = Math.max(0, s.hero.hp - ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: s.hero.x, z: s.hero.z }, from, "rival_vs_hero");
     return;
@@ -388,7 +388,7 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
-    bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE * swarmMult;
+    bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * swarmMult;
     applyAttackImpulse(bestU, from, 2.1 * swarmMult);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "rival_vs_unit");
@@ -408,7 +408,7 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestTap) {
     const cur = bestTap.anchorHp ?? 0;
-    bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * 0.42);
+    bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * 0.42);
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "rival_vs_anchor");
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
@@ -417,7 +417,7 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const keep = findKeep(s);
   if (keep && dist2(h, keep) <= r2) {
-    keep.hp -= ENEMY_HERO_STRIKE_DAMAGE * 0.45;
+    keep.hp -= ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * 0.45;
     h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
     emitHeroStrikeFx(s, { x: keep.x, z: keep.z }, from, "rival_vs_keep");
   }

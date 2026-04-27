@@ -2,13 +2,13 @@ import { getCatalogEntry } from "../../catalog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
-  FORWARD_BUILD_TIME_MULT,
   FORWARD_STRUCTURE_HP_MULT,
   HERO_MAP_OBSTACLE_RADIUS,
   HERO_MOVE_WAYPOINT_CAP,
   HERO_TELEPORT_DEST_RADIUS,
   HERO_TELEPORT_UNIT_RADIUS,
   SHATTER_TARGET_RADIUS,
+  SMART_RADIAL_IDLE_RADIUS,
   SPELL_KNOCKBACK_SPEED,
   TAP_UNIT_ORDER_SNAP_RADIUS,
   TICK_HZ,
@@ -21,11 +21,14 @@ import {
   canUseDoctrineSlot,
   classifyAttackRangeBand,
   heroTeleportCooldownSeconds,
+  HERO_SELECTION_ID,
+  liveSquadCount,
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
   pushFx,
   resetHeroTeleportCooldown,
+  shatterTapAnchor,
   type CastFxKind,
   type GameState,
   type StructureRuntime,
@@ -41,6 +44,51 @@ import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 const ALT_HOLD_PICK_RADIUS = 6;
 
 const PICK_STRUCTURE = 5;
+
+function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includeNearbyIdle: boolean): number[] {
+  const out = new Set(ids.filter((id) => id !== HERO_SELECTION_ID));
+  if (!includeNearbyIdle) return [...out];
+  const r2 = SMART_RADIAL_IDLE_RADIUS * SMART_RADIAL_IDLE_RADIUS;
+  for (const u of s.units) {
+    if (u.team !== "player" || u.hp <= 0) continue;
+    if (out.has(u.id)) continue;
+    if (dist2(u, pos) > r2) continue;
+    if (u.order && u.order.mode !== "stay") continue;
+    out.add(u.id);
+  }
+  return [...out];
+}
+
+function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
+  s.teleportClickPending = false;
+  const half = s.map.world.halfExtents;
+  const x = Math.max(-half, Math.min(half, pos.x));
+  const z = Math.max(-half, Math.min(half, pos.z));
+  const h = s.hero;
+  if (h.claimChannelTarget !== null) {
+    h.claimChannelTarget = null;
+    h.claimChannelTicksRemaining = 0;
+  }
+  if (shiftKey) {
+    if (h.targetX !== null && h.targetZ !== null) {
+      if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
+        s.lastMessage = `Waypoint queue full (max ${HERO_MOVE_WAYPOINT_CAP}).`;
+      } else {
+        h.moveWaypoints.push({ x, z });
+        logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+      }
+    } else {
+      h.targetX = x;
+      h.targetZ = z;
+      logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+    }
+  } else {
+    h.moveWaypoints.length = 0;
+    h.targetX = x;
+    h.targetZ = z;
+    logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+  }
+}
 
 function tapIndexNearForCaptureOrder(s: GameState, pos: Vec2): number | null {
   const r2 = TAP_UNIT_ORDER_SNAP_RADIUS * TAP_UNIT_ORDER_SNAP_RADIUS;
@@ -64,15 +112,18 @@ export function orderPlayerUnits(
   pos: Vec2,
   mode: UnitOrderMode,
   queue = false,
+  includeNearbyIdle = false,
 ): void {
   const chosen = ids.length ? ids : s.selectedUnitIds;
-  if (chosen.length === 0) {
-    s.lastMessage = "No units selected.";
+  const commandIds = commandUnitIdsForContext(s, chosen, pos, includeNearbyIdle);
+  if (commandIds.length === 0) {
+    if (chosen.includes(HERO_SELECTION_ID)) return;
+    s.lastMessage = includeNearbyIdle ? "No selected or nearby idle units." : "No units selected.";
     return;
   }
   const captureTapIdx = !queue && mode !== "stay" ? tapIndexNearForCaptureOrder(s, pos) : null;
   let n = 0;
-  for (const id of chosen) {
+  for (const id of commandIds) {
     const u = s.units.find((x) => x.id === id && x.team === "player" && x.hp > 0);
     if (!u) continue;
     n++;
@@ -190,8 +241,7 @@ function tryPlaceStructure(
   s.flux -= def.fluxCost;
   const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
   const placementForward = !infra && nearFriendlyForward(s, pos);
-  let buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
-  if (placementForward) buildTicks = Math.round(buildTicks * FORWARD_BUILD_TIME_MULT);
+  const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
   const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
   const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const st: StructureRuntime = {
@@ -223,7 +273,7 @@ function tryPlaceStructure(
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
-  s.lastMessage = `${def.name} summoned${placementForward ? " (forward — slower build, fragile)" : ""} — lightning crackles.`;
+  s.lastMessage = `${def.name} zaps down${placementForward ? " (forward — fragile)" : ""} — charging up.`;
 }
 
 function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEntry): void {
@@ -358,21 +408,38 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       const hx = s.hero.x;
       const hz = s.hero.z;
       const { ux, uz } = aimUnitFromHero(hx, hz, pos.x, pos.z);
-      const L = fx.length;
+      const aimDist = Math.hypot(pos.x - hx, pos.z - hz);
+      const L = Math.max(fx.length, aimDist + fx.length * 0.25);
       const ex = hx + ux * L;
       const ez = hz + uz * L;
       const hw = fx.halfWidth;
+      let hits = 0;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
-        u.hp -= fx.damage;
+        u.hp -= fx.damage * liveSquadCount(u);
         const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
         applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED);
+        hits++;
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
         if (!pointInCorridor(er.x, er.z, hx, hz, ex, ez, hw)) continue;
-        er.hp -= fx.damage * 0.35;
+        er.hp -= fx.damage * 0.65;
+        hits++;
+      }
+      for (const st of s.structures) {
+        if (st.team !== "enemy" || st.hp <= 0) continue;
+        if (!pointInCorridor(st.x, st.z, hx, hz, ex, ez, hw)) continue;
+        st.hp -= fx.damage * 0.65;
+        hits++;
+      }
+      for (const t of s.taps) {
+        if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
+        if (!pointInCorridor(t.x, t.z, hx, hz, ex, ez, hw)) continue;
+        t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - fx.damage * 0.55);
+        if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
+        hits++;
       }
       consumeCommandSlot(s, slotIdx, cmd);
       const mx = (hx + ex) * 0.5;
@@ -387,7 +454,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         fromZ: hz,
         impactRadius: hw * 2,
       });
-      s.lastMessage = `${cmd.name} — cleaving ${L}u; ${castSuffix}`;
+      s.lastMessage = `${cmd.name} — reclaimed a ${Math.round(L)}u line, hit ${hits}; ${castSuffix}`;
       return;
     }
     case "aoe_damage": {
@@ -396,7 +463,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
-        u.hp -= fx.damage;
+        u.hp -= fx.damage * liveSquadCount(u);
         applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED);
       }
       for (const er of s.enemyRelays) {
@@ -405,7 +472,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
-      emitFx(s, "firestorm", pos);
+      pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
       pushFx(s, {
         kind: "combat_boom",
         x: pos.x,
@@ -495,7 +562,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         const dmg = fx.damage * Math.pow(fx.chainDamageFalloff, hop);
         used.add(bestKey);
         pushFx(s, { kind: "lightning", x: bx, z: bz, fromX: ox, fromZ: oz });
-        if (hop === 0) emitFx(s, "shatter", { x: bx, z: bz });
+        pushFx(s, { kind: "shatter", x: bx, z: bz, impactRadius: hop === 0 ? fx.castRadius : fx.chainRange * 0.65 });
         if (bestKey.startsWith("r:")) {
           const idx = Number(bestKey.slice(2));
           const er = s.enemyRelays[idx]!;
@@ -516,7 +583,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           const uid = Number(bestKey.slice(2));
           const u = s.units.find((x) => x.id === uid);
           if (u) {
-            u.hp -= dmg;
+            u.hp -= dmg * liveSquadCount(u);
             applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
           }
         }
@@ -697,13 +764,33 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "try_click_world") {
       handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true, it.pickedUnitId);
     } else if (it.type === "select_units") {
-      const ids = it.unitIds.filter((id) => s.units.some((u) => u.id === id && u.team === "player" && u.hp > 0));
+      const ids = it.unitIds.filter(
+        (id) =>
+          (id === HERO_SELECTION_ID && s.hero.hp > 0) ||
+          s.units.some((u) => u.id === id && u.team === "player" && u.hp > 0),
+      );
       s.selectedUnitIds = ids;
-      s.selectedUnitId = ids[0] ?? null;
+      s.selectedUnitId = ids.find((id) => id !== HERO_SELECTION_ID) ?? null;
       s.selectedStructureId = null;
-      if (ids.length > 0) s.lastMessage = `${ids.length} unit${ids.length === 1 ? "" : "s"} selected.`;
+      if (ids.length > 0) {
+        const heroSelected = ids.includes(HERO_SELECTION_ID);
+        const unitCount = ids.filter((id) => id !== HERO_SELECTION_ID).length;
+        s.lastMessage = heroSelected
+          ? `Wizard${unitCount > 0 ? ` + ${unitCount} unit${unitCount === 1 ? "" : "s"}` : ""} selected.`
+          : `${unitCount} unit${unitCount === 1 ? "" : "s"} selected.`;
+      }
     } else if (it.type === "command_selected_units") {
-      orderPlayerUnits(s, s.selectedUnitIds, { x: it.x, z: it.z }, it.mode, it.queue === true);
+      if (s.selectedUnitIds.includes(HERO_SELECTION_ID) && it.mode !== "stay") {
+        commandHeroMove(s, { x: it.x, z: it.z }, it.queue === true);
+      }
+      orderPlayerUnits(
+        s,
+        s.selectedUnitIds,
+        { x: it.x, z: it.z },
+        it.mode,
+        it.queue === true,
+        it.includeNearbyIdle === true,
+      );
     } else if (it.type === "toggle_structure_orders") {
       const st = s.structures.find((x) => x.id === it.structureId);
       if (st && st.team === "player") {
@@ -728,35 +815,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
           : "Stance: Offense — army seeks out foes.";
     } else if (it.type === "hero_move") {
       if (s.selectedUnitIds.length > 0) continue;
-      s.teleportClickPending = false;
-      const half = s.map.world.halfExtents;
-      const x = Math.max(-half, Math.min(half, it.x));
-      const z = Math.max(-half, Math.min(half, it.z));
-      const h = s.hero;
-      if (h.claimChannelTarget !== null) {
-        h.claimChannelTarget = null;
-        h.claimChannelTicksRemaining = 0;
-      }
-      const shift = it.shiftKey === true;
-      if (shift) {
-        if (h.targetX !== null && h.targetZ !== null) {
-          if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
-            s.lastMessage = `Waypoint queue full (max ${HERO_MOVE_WAYPOINT_CAP}).`;
-          } else {
-            h.moveWaypoints.push({ x, z });
-            logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
-          }
-        } else {
-          h.targetX = x;
-          h.targetZ = z;
-          logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
-        }
-      } else {
-        h.moveWaypoints.length = 0;
-        h.targetX = x;
-        h.targetZ = z;
-        logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
-      }
+      commandHeroMove(s, { x: it.x, z: it.z }, it.shiftKey === true);
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));
