@@ -618,7 +618,7 @@ export class GameRenderer {
   private readonly unitPrevHp = new Map<number, number>();
   private readonly unitPrevAttackTick = new Map<number, number>();
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
-  private readonly dyingUnits: { obj: THREE.Object3D; timer: number }[] = [];
+  private readonly dyingUnits: { obj: THREE.Object3D; timer: number; life: number; particles: THREE.Mesh[] }[] = [];
   private readonly structurePrevHp = new Map<number, number>();
   private readonly relayPrevHp = new Map<string, number>();
   /** Seconds of forward lunge after a wizard strike FX. */
@@ -2756,10 +2756,7 @@ export class GameRenderer {
     const alive = new Set(state.units.map((u) => u.id));
     for (const [id, obj] of this.unitMeshes) {
       if (!alive.has(id)) {
-        if (!this.startGlbDeathAnimation(obj)) {
-          this.entities.remove(obj);
-          this.disposeObject(obj);
-        }
+        this.startUnitDeathVisual(obj);
         this.unitMeshes.delete(id);
         this.unitCountLabels.delete(id);
         this.unitPrevAttackTick.delete(id);
@@ -2784,9 +2781,11 @@ export class GameRenderer {
       obj.position.set(u.x, 0, u.z);
       const g = obj as THREE.Group;
       g.userData["unitId"] = u.id;
+      g.userData["team"] = u.team;
       const hpFrac = u.maxHp > 0 ? u.hp / u.maxHp : 0;
       const selected = state.selectedUnitIds.includes(u.id);
       const h = unitMeshLinearSize(u.sizeClass) * 1.22;
+      g.userData["unitHeight"] = h;
       const fg = u.team === "player" ? 0x7ec8ff : 0xff8888;
       const pair = this.ensureHpBarPair(g, "u", h, fg);
       this.setHpBarFrac(pair, hpFrac);
@@ -2924,6 +2923,18 @@ export class GameRenderer {
     for (let i = this.dyingUnits.length - 1; i >= 0; i--) {
       const d = this.dyingUnits[i]!;
       tick(d.obj, false);
+      const p = 1 - Math.max(0, Math.min(1, d.timer / d.life));
+      this.applyUnitDissolve(d.obj, p);
+      for (let j = 0; j < d.particles.length; j++) {
+        const mote = d.particles[j]!;
+        const mat = mote.material as THREE.MeshBasicMaterial;
+        const drift = 0.05 + j * 0.018;
+        mote.position.y += (0.38 + j * 0.08) * dt;
+        mote.position.x += Math.sin(p * Math.PI + j * 1.7) * drift * dt;
+        mote.position.z += Math.cos(p * Math.PI + j * 1.3) * drift * dt;
+        mote.scale.setScalar(Math.max(0.02, 1 - p * 0.7));
+        mat.opacity = 0.42 * (1 - p);
+      }
       d.timer -= dt;
       if (d.timer > 0) continue;
       this.entities.remove(d.obj);
@@ -2998,23 +3009,88 @@ export class GameRenderer {
     ud["glbClampChecksRemaining"] = Math.max((ud["glbClampChecksRemaining"] as number | undefined) ?? 0, 1);
   }
 
-  private startGlbDeathAnimation(root: THREE.Object3D): boolean {
+  private cloneMaterialsForDissolve(root: THREE.Object3D): void {
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      if (mesh.userData["dissolveMaterialCloned"]) return;
+      if (Array.isArray(mesh.material)) mesh.material = mesh.material.map((m) => m.clone());
+      else mesh.material = mesh.material.clone();
+      mesh.userData["dissolveMaterialCloned"] = true;
+    });
+  }
+
+  private applyUnitDissolve(root: THREE.Object3D, p: number): void {
+    const opacity = Math.max(0, 1 - p);
+    const squash = Math.max(0.58, 1 - p * 0.24);
+    root.scale.set(1 + p * 0.08, squash, 1 + p * 0.08);
+    root.position.y = -p * 0.08;
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const raw of mats) {
+        const mat = raw as THREE.Material & { opacity?: number; transparent?: boolean; depthWrite?: boolean };
+        if (typeof mat.opacity !== "number") continue;
+        mat.transparent = true;
+        mat.depthWrite = false;
+        mat.opacity = opacity;
+      }
+    });
+  }
+
+  private makeDeathMotes(root: THREE.Object3D): THREE.Mesh[] {
+    const ud = root.userData as Record<string, unknown>;
+    const team = ud["team"] === "enemy" ? "enemy" : "player";
+    const color = team === "enemy" ? 0xff8a70 : 0x8fdcff;
+    const motes: THREE.Mesh[] = [];
+    const size = Math.max(0.05, ((ud["unitHeight"] as number | undefined) ?? 1.5) * 0.035);
+    for (let i = 0; i < 4; i++) {
+      const mote = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(size * (0.75 + i * 0.08), 0),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.42,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      const a = i * 2.399;
+      const r = 0.12 + i * 0.035;
+      mote.position.set(Math.cos(a) * r, 0.18 + i * 0.11, Math.sin(a) * r);
+      root.add(mote);
+      motes.push(mote);
+    }
+    return motes;
+  }
+
+  private startUnitDeathVisual(root: THREE.Object3D): void {
+    const ud = root.userData as Record<string, unknown>;
+    if (ud["unitDying"]) return;
+    ud["unitDying"] = true;
+    this.cloneMaterialsForDissolve(root);
+    this.setHpBarPairVisible(root, "u", false);
+    const label = this.unitCountLabels.get(ud["unitId"] as number);
+    if (label) label.sprite.visible = false;
+    const particles = this.makeDeathMotes(root);
+    const life = 0.42;
+    this.startGlbDeathAnimation(root);
+    this.dyingUnits.push({ obj: root, timer: life, life, particles });
+  }
+
+  private startGlbDeathAnimation(root: THREE.Object3D): void {
     const ud = root.userData as Record<string, unknown>;
     const death = ud["glbDeathAction"] as THREE.AnimationAction | undefined;
-    if (!death) return false;
+    if (!death) return;
     for (const key of ["glbRunAction", "glbIdleAction", "glbAttackAction"] as const) {
       const a = ud[key] as THREE.AnimationAction | undefined;
       if (a) a.stop();
     }
-    this.setHpBarPairVisible(root, "u", false);
-    const label = this.unitCountLabels.get(ud["unitId"] as number);
-    if (label) label.sprite.visible = false;
     death.enabled = true;
     death.reset();
     death.setEffectiveWeight(1);
     death.play();
-    this.dyingUnits.push({ obj: root, timer: Math.max(0.25, (ud["glbDeathDuration"] as number | undefined) ?? 0.9) });
-    return true;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {

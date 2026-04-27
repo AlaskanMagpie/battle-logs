@@ -376,11 +376,12 @@ async function attachGlbByFile(
   const url = `/assets/units/${file}`;
   const parent = placeholder.parent as THREE.Group | null;
   if (!parent) return;
-  if (parent.userData["glbRoot"] || parent.userData["glbPending"]) return;
+  if (parent.userData["unitDying"] || parent.userData["glbRoot"] || parent.userData["glbPending"]) return;
   parent.userData["glbPending"] = true;
 
   try {
     const template = await loadGltfTemplate(url);
+    if (parent.userData["unitDying"]) return;
     const rig = rigSummary(template.root);
     if (opts?.animationRoleLabel && (rig.skinnedMeshes === 0 || rig.bones === 0 || template.animations.length === 0)) {
       const warnKey = `${opts.animationRoleLabel}:unrigged:${file}`;
