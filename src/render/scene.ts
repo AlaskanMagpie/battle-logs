@@ -606,7 +606,6 @@ export class GameRenderer {
   private lastRenderFrameMs = performance.now();
   private readonly composer: EffectComposer;
   private readonly bloomPass: UnrealBloomPass;
-  private bloomEnabled = false;
   private rollingFps = 60;
   private bloomDecisionMs = 0;
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
@@ -3178,11 +3177,8 @@ export class GameRenderer {
     this.bloomDecisionMs = now;
     const state = this.currentState;
     const unitCount = state?.units.length ?? 0;
-    const coarseInput = navigator.maxTouchPoints > 0 && Math.min(window.innerWidth, window.innerHeight) < 760;
-    const mobileUA = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const heavyLoad = unitCount >= 700;
-    const lowFps = this.rollingFps < 46;
-    this.bloomEnabled = !!state && !coarseInput && !mobileUA && !heavyLoad && !lowFps;
+    // Keep post-processing parameters stable. Switching between composer and raw renderer
+    // mid-match reads as global dark/light flicker when bright FX or unit counts change.
     this.bloomPass.strength = unitCount > 420 ? 0.08 : 0.16;
     this.bloomPass.radius = unitCount > 420 ? 0.22 : 0.32;
     this.bloomPass.threshold = 0.88;
@@ -3200,8 +3196,7 @@ export class GameRenderer {
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    if (this.bloomEnabled) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    this.composer.render();
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }
