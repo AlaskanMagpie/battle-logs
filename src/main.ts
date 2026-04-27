@@ -453,7 +453,9 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       });
     testWindow.advanceTime = (ms: number) => {
       const steps = Math.max(1, Math.round(ms / (1000 / TICK_HZ)));
-      for (let i = 0; i < steps; i++) advanceTick(state, []);
+      if (!renderer.isMatchIntroActive()) {
+        for (let i = 0; i < steps; i++) advanceTick(state, []);
+      }
       renderer.sync(state, USE_GLB);
       renderer.render();
       updateHud(state);
@@ -504,17 +506,21 @@ function runMatch(initialDoctrine: (string | null)[], mapUrl: string): void {
       const maxTicksThisFrame = 48;
       let ticksThisFrame = 0;
       let first = true;
-      while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
-        ticksThisFrame += 1;
-        const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
-        first = false;
-        const tickBefore = state.tick;
-        advanceTick(state, chunk);
-        captureReplayTick(replay, tickBefore, chunk, state);
-        acc -= 1 / TICK_HZ;
+      if (renderer.isMatchIntroActive()) {
+        acc = 0;
+      } else {
+        while (acc >= 1 / TICK_HZ && ticksThisFrame < maxTicksThisFrame) {
+          ticksThisFrame += 1;
+          const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
+          first = false;
+          const tickBefore = state.tick;
+          advanceTick(state, chunk);
+          captureReplayTick(replay, tickBefore, chunk, state);
+          acc -= 1 / TICK_HZ;
+        }
       }
 
-      if (state.phase === "playing" && (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)) {
+      if (state.phase === "playing" && !renderer.isMatchIntroActive() && (keysHeld.a || keysHeld.d || keysHeld.w || keysHeld.s)) {
         let strafe = 0;
         let forward = 0;
         if (keysHeld.a) strafe -= 1;

@@ -44,8 +44,8 @@ import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbP
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 /** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
 const CAMERA_HERO_PIVOT_Y = 1.38;
-/** Match start: overhead map view eases into the default framed camera over this many seconds. */
-const MATCH_INTRO_CAMERA_SEC = 3;
+/** Match start: high orbit flyover before sim time begins. */
+const MATCH_INTRO_CAMERA_SEC = 5.4;
 /** If a unit's visual moves more than this, it must be in run/move animation. */
 const UNIT_VISUAL_RUN_EPS = 0.035;
 /** Per-frame catch-up while running; keeps fixed sim steps from looking like tiny teleports. */
@@ -644,6 +644,7 @@ export class GameRenderer {
   private readonly introEndPos = new THREE.Vector3();
   private readonly introEndTgt = new THREE.Vector3();
   private readonly introScratchCam = new THREE.Vector3();
+  private introOrbitStartAngle = 0;
   /** Orbit / pan allowed (e.g. false while dragging a doctrine card). */
   private controlsUserDesiredEnabled = true;
 
@@ -859,11 +860,15 @@ export class GameRenderer {
     return this.cameraFollowHero;
   }
 
+  isMatchIntroActive(): boolean {
+    return this.introCinematicStartMs !== null;
+  }
+
   /** Snap orbit pivot to the player wizard (used when re-enabling follow mode). */
   setCameraFollowHero(follow: boolean): void {
     this.cameraFollowHero = follow;
     if (follow) this.cameraFollowUnitId = null;
-    if (follow) this.snapCameraPivotToPlayerHero();
+    if (follow && this.introCinematicStartMs === null) this.snapCameraPivotToPlayerHero();
   }
 
   /** @returns new follow state */
@@ -938,34 +943,33 @@ export class GameRenderer {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Default match opening rig (orbit target + camera) — same framing as pre-intro gameplay. */
-  private getDefaultFramedCameraRig(state: GameState): { pos: THREE.Vector3; tgt: THREE.Vector3 } {
-    const home = findKeep(state) ?? state.map.playerStart ?? state.hero;
+  private getHeroIntroEndCameraRig(state: GameState): { pos: THREE.Vector3; tgt: THREE.Vector3 } {
+    const h = state.hero;
     const enemy = state.map.enemyStart ?? state.enemyHero;
-    let dx = enemy.x - home.x;
-    let dz = enemy.z - home.z;
+    let dx = enemy.x - h.x;
+    let dz = enemy.z - h.z;
     const len = Math.hypot(dx, dz) || 1;
     dx /= len;
     dz /= len;
     const half = state.map.world.halfExtents;
-    const lead = Math.max(46, Math.min(120, half * 0.24));
-    const back = Math.max(32, Math.min(88, half * 0.16));
-    const height = Math.max(40, Math.min(84, half * 0.15));
     const targetY = CAMERA_HERO_PIVOT_Y;
-    const tgt = new THREE.Vector3(home.x + dx * lead, targetY, home.z + dz * lead);
-    const pos = new THREE.Vector3(home.x - dx * back, targetY + height, home.z - dz * back);
+    const back = Math.max(18, Math.min(34, half * 0.09));
+    const height = Math.max(26, Math.min(46, half * 0.13));
+    const tgt = new THREE.Vector3(h.x, targetY, h.z);
+    const pos = new THREE.Vector3(h.x - dx * back, targetY + height, h.z - dz * back);
     return { pos, tgt };
   }
 
-  /** Top-down start, then ease into `getDefaultFramedCameraRig` with a horizontal half-turn mid-flight. */
+  /** High map orbit, then continuous landing over the player hero. */
   private startMatchIntroCinematic(state: GameState): void {
-    const { pos: endPos, tgt: endTgt } = this.getDefaultFramedCameraRig(state);
+    const { pos: endPos, tgt: endTgt } = this.getHeroIntroEndCameraRig(state);
     this.introEndPos.copy(endPos);
     this.introEndTgt.copy(endTgt);
     const half = state.map.world.halfExtents;
-    const H = Math.max(half * 2.55, 230);
+    const H = Math.max(half * 2.1, 210);
     this.introStartTgt.set(0, 0, 0);
     this.introStartPos.set(0, H, 0);
+    this.introOrbitStartAngle = Math.atan2(endPos.z - endTgt.z, endPos.x - endTgt.x) - Math.PI * 2.15;
     this.controls.target.copy(this.introStartTgt);
     this.camera.position.copy(this.introStartPos);
     this.camera.lookAt(this.introStartTgt);
@@ -979,21 +983,31 @@ export class GameRenderer {
 
   private tickMatchIntroCinematic(): void {
     if (this.introCinematicStartMs === null) return;
+    const state = this.cameraFramedState;
+    if (!state) return;
     const elapsed = (performance.now() - this.introCinematicStartMs) / 1000;
     const u = Math.max(0, Math.min(1, elapsed / MATCH_INTRO_CAMERA_SEC));
-    const s = u * u * (3 - 2 * u);
-    this.controls.target.copy(this.introStartTgt).lerp(this.introEndTgt, s);
-    this.introScratchCam.copy(this.introStartPos).lerp(this.introEndPos, s);
-    const ox = this.introScratchCam.x - this.controls.target.x;
-    const oy = this.introScratchCam.y - this.controls.target.y;
-    const oz = this.introScratchCam.z - this.controls.target.z;
-    const hr = Math.hypot(ox, oz);
-    const a = Math.atan2(oz, ox) + Math.sin(s * Math.PI) * Math.PI;
+    const half = state.map.world.halfExtents;
+    const endRadius = Math.hypot(this.introEndPos.x - this.introEndTgt.x, this.introEndPos.z - this.introEndTgt.z);
+    const mapRadius = Math.max(half * 0.95, 110);
+    const settle = Math.max(0, Math.min(1, (u - 0.64) / 0.36));
+    const settleEase = 1 - Math.pow(1 - settle, 3);
+    const heroPull = Math.max(0, Math.min(1, (u - 0.42) / 0.58));
+    const heroEase = heroPull * heroPull;
+    this.controls.target.copy(this.introStartTgt).lerp(this.introEndTgt, heroEase);
+
+    const angle = this.introOrbitStartAngle + u * Math.PI * 2.15;
+    const radius = mapRadius + (endRadius - mapRadius) * settleEase;
+    const highY = Math.max(half * 1.15, 125);
+    const midY = Math.max(half * 0.62, 72);
+    const flyY = highY + (midY - highY) * Math.min(1, u * 1.35);
+    const y = flyY + (this.introEndPos.y - flyY) * settleEase;
     this.camera.position.set(
-      this.controls.target.x + Math.cos(a) * hr,
-      this.controls.target.y + oy,
-      this.controls.target.z + Math.sin(a) * hr,
+      this.controls.target.x + Math.cos(angle) * radius,
+      y,
+      this.controls.target.z + Math.sin(angle) * radius,
     );
+    if (settleEase > 0) this.camera.position.lerp(this.introEndPos, settleEase * settleEase);
     this.camera.lookAt(this.controls.target);
     this.controls.update();
     if (u >= 1) {
@@ -1001,6 +1015,8 @@ export class GameRenderer {
       this.camera.position.copy(this.introEndPos);
       this.controls.update();
       this.introCinematicStartMs = null;
+      this.cameraFollowHero = true;
+      this.cameraFollowUnitId = null;
       this.refreshControlsEnabledFromIntro();
     }
   }
