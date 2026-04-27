@@ -25,6 +25,8 @@
     "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
     "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb",
     "verdant_citadel_titan_base.glb",
+    "verdant_gatekeeper_reference_running.glb",
+    "verdant_gatekeeper_reference_walking.glb",
     "verdant_gatekeeper_titan_attack.glb",
     "verdant_gatekeeper_titan_model.glb",
     "verdant_gatekeeper_titan_run.glb"
@@ -67,6 +69,18 @@
         "lanternbound_line_idle.glb",
         "lanternbound_line_running.glb",
         "lanternbound_line_walking.glb"
+      ]
+    },
+    {
+      "id": "verdant_gatekeeper_reference",
+      "roles": {
+        "model": "verdant_gatekeeper_reference_running.glb",
+        "run": "verdant_gatekeeper_reference_running.glb",
+        "idle": "verdant_gatekeeper_reference_walking.glb"
+      },
+      "files": [
+        "verdant_gatekeeper_reference_running.glb",
+        "verdant_gatekeeper_reference_walking.glb"
       ]
     },
     {
@@ -333,6 +347,34 @@
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
+    },
+    {
+      "file": "verdant_gatekeeper_reference_running.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|running|baselayer",
+          "duration": 0.667,
+          "tracks": 72,
+          "movingTracks": 29,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "verdant_gatekeeper_reference_walking.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|walking_man|baselayer",
+          "duration": 1.067,
+          "tracks": 72,
+          "movingTracks": 31,
+          "scaleTracks": 24
+        }
+      ]
     },
     {
       "file": "verdant_gatekeeper_titan_attack.glb",
