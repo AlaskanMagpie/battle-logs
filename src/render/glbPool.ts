@@ -113,6 +113,23 @@ function attackPlaybackSeconds(kind: UnitSizeClass | "hero"): number | undefined
   return undefined;
 }
 
+function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, file: string): number {
+  const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (role === "run") {
+    // Meshy run exports are often 0.5-0.7s loops, which reads frantic at this scale.
+    // Stretch short loops into a calm jog cadence while keeping already-slower clips authored.
+    const target = /\b(fast|sprint|runfast)\b/.test(hay) ? 0.95 : 1.08;
+    return Math.max(clip.duration, target);
+  }
+  const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
+  return Math.max(clip.duration, target);
+}
+
+function setLoopPlayback(action: THREE.AnimationAction, clip: THREE.AnimationClip, role: "run" | "idle", file: string): void {
+  const playback = loopPlaybackSeconds(role, clip, file);
+  action.timeScale = clip.duration / Math.max(0.05, playback);
+}
+
 function safeClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   // Meshy exports often include scale keys that fight our class-based GLB normalization.
   // Keep bone position tracks: these clips use them heavily for hips/limbs, so stripping
@@ -413,6 +430,7 @@ async function attachGlbByFile(
       const clip = safeClip(clipRaw ?? template.animations[0]!);
       const action = mixer.clipAction(clip);
       action.setLoop(THREE.LoopRepeat, Infinity);
+      setLoopPlayback(action, clip, "run", file);
       action.reset();
       action.play();
       parent.userData["glbMixer"] = mixer;
@@ -425,8 +443,10 @@ async function attachGlbByFile(
       const clipRaw = clipForRole(idleTemplate.animations, "idle", opts.idleFile);
       if (clipRaw) {
         mixer ??= new THREE.AnimationMixer(inst);
-        const action = mixer.clipAction(safeClip(clipRaw));
+        const clip = safeClip(clipRaw);
+        const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopRepeat, Infinity);
+        setLoopPlayback(action, clip, "idle", opts.idleFile);
         action.enabled = false;
         action.setEffectiveWeight(0);
         parent.userData["glbMixer"] = mixer;

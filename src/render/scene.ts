@@ -48,6 +48,8 @@ const CAMERA_HERO_PIVOT_Y = 1.38;
 const MATCH_INTRO_CAMERA_SEC = 3;
 /** If a unit's visual moves more than this, it must be in run/move animation. */
 const UNIT_VISUAL_RUN_EPS = 0.035;
+/** Per-frame catch-up while running; keeps fixed sim steps from looking like tiny teleports. */
+const UNIT_VISUAL_RUN_CATCHUP = 0.42;
 
 function makeGroundOverlayTexture(): THREE.CanvasTexture {
   const size = 512;
@@ -2812,7 +2814,13 @@ export class GameRenderer {
         if (attack) attack.fadeOut(0.06);
         delete g.userData["glbAttackTimer"];
       }
-      if (!attackActive || forceRunCatchup) visual.set(u.x, u.z);
+      if (forceRunCatchup) visual.set(u.x, u.z);
+      else if (!attackActive && shouldRun) {
+        visual.x += simDx * UNIT_VISUAL_RUN_CATCHUP;
+        visual.y += simDz * UNIT_VISUAL_RUN_CATCHUP;
+      } else if (!attackActive) {
+        visual.set(u.x, u.z);
+      }
       obj.position.set(visual.x, 0, visual.y);
       const faceTarget = attackTargets.get(u.id) ?? (shouldRun ? undefined : this.unitFaceTargets.get(u.id));
       this.faceUnitForState(g, u, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);
