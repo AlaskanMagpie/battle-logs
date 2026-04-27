@@ -24,8 +24,9 @@ import {
   territorySources,
   liveSquadCount,
   type GameState,
+  type UnitRuntime,
 } from "../game/state";
-import type { SignalType, StructureCatalogEntry, UnitSizeClass } from "../game/types";
+import type { SignalType, StructureCatalogEntry, UnitSizeClass, Vec2 } from "../game/types";
 import { isStructureEntry } from "../game/types";
 import {
   clearFx,
@@ -45,6 +46,8 @@ const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 const CAMERA_HERO_PIVOT_Y = 1.38;
 /** Match start: overhead map view eases into the default framed camera over this many seconds. */
 const MATCH_INTRO_CAMERA_SEC = 3;
+/** If a unit's visual moves more than this, it must be in run/move animation. */
+const UNIT_VISUAL_RUN_EPS = 0.035;
 
 function makeGroundOverlayTexture(): THREE.CanvasTexture {
   const size = 512;
@@ -618,6 +621,8 @@ export class GameRenderer {
   private readonly unitPrevHp = new Map<number, number>();
   private readonly unitPrevAttackTick = new Map<number, number>();
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
+  private readonly unitVisualPos = new Map<number, THREE.Vector2>();
+  private readonly unitFaceTargets = new Map<number, Vec2>();
   private readonly dyingUnits: { obj: THREE.Object3D; timer: number; life: number; particles: THREE.Mesh[] }[] = [];
   private readonly structurePrevHp = new Map<number, number>();
   private readonly relayPrevHp = new Map<string, number>();
@@ -2754,6 +2759,12 @@ export class GameRenderer {
 
   private syncUnits(state: GameState): void {
     const alive = new Set(state.units.map((u) => u.id));
+    const attackTargets = new Map<number, Vec2>();
+    for (const mark of state.combatHitMarks) {
+      const target = { x: mark.tx, z: mark.tz };
+      attackTargets.set(mark.attackerId, target);
+      this.unitFaceTargets.set(mark.attackerId, target);
+    }
     for (const [id, obj] of this.unitMeshes) {
       if (!alive.has(id)) {
         this.startUnitDeathVisual(obj);
@@ -2761,6 +2772,8 @@ export class GameRenderer {
         this.unitCountLabels.delete(id);
         this.unitPrevAttackTick.delete(id);
         this.unitPrevPos.delete(id);
+        this.unitVisualPos.delete(id);
+        this.unitFaceTargets.delete(id);
       }
     }
 
@@ -2778,10 +2791,31 @@ export class GameRenderer {
           }
         }
       }
-      obj.position.set(u.x, 0, u.z);
       const g = obj as THREE.Group;
       g.userData["unitId"] = u.id;
       g.userData["team"] = u.team;
+      const visual = this.unitVisualPos.get(u.id) ?? new THREE.Vector2(u.x, u.z);
+      this.unitVisualPos.set(u.id, visual);
+      const attackTick = u.lastAttackTick;
+      const prevAttackTick = this.unitPrevAttackTick.get(u.id);
+      const isNewAttack = attackTick !== undefined && attackTick !== prevAttackTick;
+      if (isNewAttack) this.playGlbAttackAnimation(g);
+      if (attackTick !== undefined) this.unitPrevAttackTick.set(u.id, attackTick);
+      const simDx = u.x - visual.x;
+      const simDz = u.z - visual.y;
+      const simMoveDist = Math.hypot(simDx, simDz);
+      const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
+      const forceRunCatchup = simMoveDist > 0.45;
+      const shouldRun = simMoveDist > UNIT_VISUAL_RUN_EPS && (!attackActive || forceRunCatchup);
+      if (shouldRun && attackActive) {
+        const attack = g.userData["glbAttackAction"] as THREE.AnimationAction | undefined;
+        if (attack) attack.fadeOut(0.06);
+        delete g.userData["glbAttackTimer"];
+      }
+      if (!attackActive || forceRunCatchup) visual.set(u.x, u.z);
+      obj.position.set(visual.x, 0, visual.y);
+      const faceTarget = attackTargets.get(u.id) ?? (shouldRun ? undefined : this.unitFaceTargets.get(u.id));
+      this.faceUnitForState(g, u, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);
       const hpFrac = u.maxHp > 0 ? u.hp / u.maxHp : 0;
       const selected = state.selectedUnitIds.includes(u.id);
       const h = unitMeshLinearSize(u.sizeClass) * 1.22;
@@ -2814,14 +2848,30 @@ export class GameRenderer {
         (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
       }
       this.unitPrevHp.set(u.id, u.hp);
-      const attackTick = u.lastAttackTick;
-      const prevAttackTick = this.unitPrevAttackTick.get(u.id);
-      if (attackTick !== undefined && attackTick !== prevAttackTick) this.playGlbAttackAnimation(g);
-      if (attackTick !== undefined) this.unitPrevAttackTick.set(u.id, attackTick);
-      const useIdle = u.order?.mode === "stay";
-      this.setGlbMoveAnimation(g, !useIdle);
+      this.setGlbMoveAnimation(g, shouldRun);
       this.unitPrevPos.set(u.id, new THREE.Vector2(u.x, u.z));
     }
+  }
+
+  private faceUnitForState(root: THREE.Object3D, u: UnitRuntime, attackTarget: Vec2 | undefined, moveDelta: Vec2 | null): void {
+    const px = root.position.x;
+    const pz = root.position.z;
+    let dx = 0;
+    let dz = 0;
+    if (attackTarget) {
+      dx = attackTarget.x - px;
+      dz = attackTarget.z - pz;
+    }
+    if (Math.hypot(dx, dz) <= 0.001 && moveDelta) {
+      dx = moveDelta.x;
+      dz = moveDelta.z;
+    }
+    if (Math.hypot(dx, dz) <= 0.001 && u.order && u.order.mode !== "stay") {
+      dx = u.order.x - px;
+      dz = u.order.z - pz;
+    }
+    if (Math.hypot(dx, dz) <= 0.001) return;
+    root.rotation.y = Math.atan2(dx, dz);
   }
 
   private orientHpBars(): void {
