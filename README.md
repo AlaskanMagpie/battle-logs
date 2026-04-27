@@ -36,9 +36,11 @@ Meshes live under `public/assets/units/` as `unit_<id>.glb` and are tracked with
 - **Default:** GLB art is **on** — units use Meshy GLBs with a stable per-class mapping: manifest indices **0–4** are `Swarm`, `Line`, `Heavy`, `Titan`, and `hero` (see `src/render/glbPool.ts`). Towers map to manifest indices **0–9** by structure catalog id.
 - **Cubes only:** add `.env.local` with `VITE_USE_UNIT_GLB=false` and restart the dev server.
 
-`public/assets/units/manifest.json` lists the filenames the loader uses. After adding or renaming GLBs, run **`npm run assets:sync-manifest`** to regenerate it from every `*.glb` in that folder.
+`public/assets/units/manifest.json` lists every GLB plus inferred animation profiles. After adding or renaming GLBs, run **`npm run assets:sync-manifest`** to regenerate it from every `*.glb` in that folder. The sync step reads filenames and GLB clip names to group Meshy exports into `run`, `idle`, `attack`, and `death` roles.
 
-If assets start in chat/Downloads, save them under **`incoming/`** (see `incoming/README.md`) and ask Cursor to copy them into `public/assets/units/` — the project rule **chat-assets-ingest** tells the agent to place files and sync the manifest, not only describe usage.
+If assets start in chat/Downloads, drag them under **`incoming/`** (see `incoming/README.md`) and run **`npm run assets:import-meshy`**. It recursively copies GLBs into `public/assets/units/`, keeps useful source/folder names, then refreshes the manifest. If you only drop files named `Meshy_AI_model.glb`, put each one in a descriptive folder like `frost_heavy_run/` or `ember_swarm_attack/` so the importer has enough context.
+
+Use **`npm run assets:inspect-glbs`** when animation looks wrong. It reports which profiles were inferred, whether files contain skinned meshes/bones, and whether clips have moving bone tracks.
 
 ## Copy GLBs from Meshy export folders (optional)
 

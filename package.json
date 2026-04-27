@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs"
+    "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs",
+    "assets:import-meshy": "node scripts/import-meshy-assets.mjs incoming",
+    "assets:inspect-glbs": "node scripts/inspect-unit-glbs.mjs"
   },
   "dependencies": {
     "react": "^19.2.5",

@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "files": [
     "azure_spear_swarm_attack_spin.glb",
     "azure_spear_swarm_dying.glb",
@@ -23,5 +24,290 @@
     "unit_019d5754-b79c-7b2b-8ebf-461625c02e37.glb",
     "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
     "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb"
+  ],
+  "animationProfiles": [
+    {
+      "id": "azure_spear_swarm",
+      "sizeClass": "Swarm",
+      "roles": {
+        "model": "azure_spear_swarm_run_fast.glb",
+        "run": "azure_spear_swarm_run_fast.glb",
+        "idle": "azure_spear_swarm_walking.glb",
+        "attack": "azure_spear_swarm_attack_spin.glb",
+        "death": "azure_spear_swarm_dying.glb"
+      },
+      "files": [
+        "azure_spear_swarm_attack_spin.glb",
+        "azure_spear_swarm_dying.glb",
+        "azure_spear_swarm_idle.glb",
+        "azure_spear_swarm_run_fast.glb",
+        "azure_spear_swarm_running.glb",
+        "azure_spear_swarm_walking.glb"
+      ]
+    },
+    {
+      "id": "lanternbound_line",
+      "sizeClass": "Line",
+      "roles": {
+        "model": "lanternbound_line_running.glb",
+        "run": "lanternbound_line_running.glb",
+        "idle": "lanternbound_line_combat_stance.glb",
+        "attack": "lanternbound_line_attack_triple_combo.glb",
+        "death": "lanternbound_line_dying.glb"
+      },
+      "files": [
+        "lanternbound_line_attack_triple_combo.glb",
+        "lanternbound_line_bow_charge.glb",
+        "lanternbound_line_combat_stance.glb",
+        "lanternbound_line_dying.glb",
+        "lanternbound_line_idle.glb",
+        "lanternbound_line_running.glb",
+        "lanternbound_line_walking.glb"
+      ]
+    }
+  ],
+  "inspections": [
+    {
+      "file": "azure_spear_swarm_attack_spin.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|360_Power_Spin_Jump|baselayer",
+          "duration": 3.1,
+          "tracks": 72,
+          "movingTracks": 46,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "azure_spear_swarm_dying.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|dying_backwards|baselayer",
+          "duration": 2.267,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "azure_spear_swarm_idle.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "azure_spear_swarm_run_fast.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|RunFast|baselayer",
+          "duration": 0.5,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "azure_spear_swarm_running.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|running|baselayer",
+          "duration": 0.667,
+          "tracks": 72,
+          "movingTracks": 32,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "azure_spear_swarm_walking.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|walking_man|baselayer",
+          "duration": 1.067,
+          "tracks": 72,
+          "movingTracks": 33,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_attack_triple_combo.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Triple_Combo_Attack|baselayer",
+          "duration": 4.367,
+          "tracks": 72,
+          "movingTracks": 44,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_bow_charge.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Female_Bow_Charge_Left_Hand_inplace|baselayer",
+          "duration": 0.533,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_combat_stance.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Combat_Stance|baselayer",
+          "duration": 1.7,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_dying.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|dying_backwards|baselayer",
+          "duration": 2.267,
+          "tracks": 72,
+          "movingTracks": 35,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_idle.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_running.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|running|baselayer",
+          "duration": 0.667,
+          "tracks": 72,
+          "movingTracks": 33,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "lanternbound_line_walking.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|walking_man|baselayer",
+          "duration": 1.067,
+          "tracks": 72,
+          "movingTracks": 28,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d52a3-d2f8-7a51-b535-c938ad8c9658.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d52a3-fcd5-7a59-b02f-1ddf2759467d.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d52bf-a84c-7d9b-8954-b14bb09d832d.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d52c1-8465-7dc8-9a06-cd2e141b7c9c.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d52e0-45f9-75c0-81d9-bc1d41b7e040.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d5725-bd92-76a8-9319-10d218650e10.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d5754-b79c-7b2b-8ebf-461625c02e37.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    }
   ]
 }

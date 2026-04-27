@@ -6,8 +6,20 @@ import { getCatalogEntry } from "../game/catalog";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
 
-let manifest: string[] | undefined;
-let manifestPromise: Promise<string[]> | null = null;
+type UnitAnimationRole = "model" | "run" | "idle" | "attack" | "death";
+type UnitAnimationProfile = {
+  id: string;
+  sizeClass?: UnitSizeClass | "hero";
+  roles?: Partial<Record<UnitAnimationRole, string>>;
+  files?: string[];
+};
+type UnitGlbManifest = {
+  files: string[];
+  animationProfiles?: UnitAnimationProfile[];
+};
+
+let manifest: UnitGlbManifest | undefined;
+let manifestPromise: Promise<UnitGlbManifest> | null = null;
 const loader = new GLTFLoader();
 type GltfTemplate = { root: THREE.Object3D; animations: THREE.AnimationClip[] };
 /** Cached *template* GLTF data (never added to scene). */
@@ -36,17 +48,47 @@ function isPreviewUnitFile(file: string): boolean {
   return isAzureSpearSwarmFile(file) || file.startsWith(LANTERNBOUND_LINE_PREFIX);
 }
 
-function productionArtFiles(files: string[]): string[] {
-  return files.filter((f) => !isPreviewUnitFile(f));
+function animatedProfileFiles(m: UnitGlbManifest): Set<string> {
+  const out = new Set<string>();
+  for (const p of m.animationProfiles ?? []) {
+    for (const f of p.files ?? []) out.add(f);
+    for (const f of Object.values(p.roles ?? {})) {
+      if (f) out.add(f);
+    }
+  }
+  return out;
 }
 
-function attackFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
+function productionArtFiles(m: UnitGlbManifest): string[] {
+  const animatedFiles = animatedProfileFiles(m);
+  return m.files.filter((f) => !animatedFiles.has(f) && !isPreviewUnitFile(f));
+}
+
+function animationProfileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): UnitAnimationProfile | null {
+  const profiles = m.animationProfiles ?? [];
+  const exact = profiles.find((p) => p.sizeClass === kind && p.roles?.model);
+  if (exact) return exact;
+  return null;
+}
+
+function roleFileForClass(kind: UnitSizeClass | "hero", role: UnitAnimationRole, m: UnitGlbManifest): string | null {
+  const profile = animationProfileForClass(kind, m);
+  return profile?.roles?.[role] ?? null;
+}
+
+function attackFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): string | null {
+  const profileFile = roleFileForClass(kind, "attack", m);
+  if (profileFile) return profileFile;
+  const files = m.files;
   if (kind === "Swarm") return files.includes(AZURE_SPEAR_SWARM_ATTACK_FILE) ? AZURE_SPEAR_SWARM_ATTACK_FILE : null;
   if (kind === "Line") return files.includes(LANTERNBOUND_LINE_ATTACK_FILE) ? LANTERNBOUND_LINE_ATTACK_FILE : null;
   return null;
 }
 
-function idleFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
+function idleFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): string | null {
+  const profileFile = roleFileForClass(kind, "idle", m);
+  if (profileFile) return profileFile;
+  const files = m.files;
   if (kind === "Swarm") {
     if (files.includes(AZURE_SPEAR_SWARM_IDLE_FILE)) return AZURE_SPEAR_SWARM_IDLE_FILE;
     return files.includes(AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE) ? AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE : null;
@@ -55,7 +97,10 @@ function idleFileForClass(kind: UnitSizeClass | "hero", files: string[]): string
   return null;
 }
 
-function deathFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
+function deathFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): string | null {
+  const profileFile = roleFileForClass(kind, "death", m);
+  if (profileFile) return profileFile;
+  const files = m.files;
   if (kind === "Swarm") return files.includes(AZURE_SPEAR_SWARM_DEATH_FILE) ? AZURE_SPEAR_SWARM_DEATH_FILE : null;
   if (kind === "Line") return files.includes(LANTERNBOUND_LINE_DEATH_FILE) ? LANTERNBOUND_LINE_DEATH_FILE : null;
   return null;
@@ -74,6 +119,55 @@ function safeClip(clip: THREE.AnimationClip): THREE.AnimationClip {
   // them makes runs and attacks look like a single held frame instead of a full sequence.
   const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+
+function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, clip: THREE.AnimationClip): number {
+  const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  let score = 0;
+  if (role === "run") {
+    if (/\b(run|running|sprint|runfast|fast)\b/.test(hay)) score += 100;
+    if (/\b(walk|walking)\b/.test(hay)) score += 30;
+  } else if (role === "idle") {
+    if (/\b(combat[_\s-]?stance|stance|idle|ready|guard)\b/.test(hay)) score += 100;
+    if (/\b(walk|walking)\b/.test(hay)) score += 25;
+    if (clip.duration < 0.08) score -= 60;
+  } else if (role === "attack") {
+    if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 100;
+  } else if (role === "death") {
+    if (/\b(death|die|dying|fall|falling)\b/.test(hay)) score += 100;
+  }
+  if (score <= 0) return 0;
+  if (clip.tracks.some((t) => /\.(position|quaternion|rotation)$/i.test(t.name))) score += 5;
+  return score;
+}
+
+function clipForRole(
+  animations: THREE.AnimationClip[],
+  role: Exclude<UnitAnimationRole, "model">,
+  file: string,
+): THREE.AnimationClip | null {
+  if (!animations.length) return null;
+  let best = animations[0]!;
+  let bestScore = clipRoleScore(role, file, best);
+  for (const clip of animations.slice(1)) {
+    const score = clipRoleScore(role, file, clip);
+    if (score > bestScore) {
+      best = clip;
+      bestScore = score;
+    }
+  }
+  return bestScore > 0 ? best : animations[0]!;
+}
+
+function rigSummary(root: THREE.Object3D): { skinnedMeshes: number; bones: number } {
+  let skinnedMeshes = 0;
+  let bones = 0;
+  root.traverse((o) => {
+    const skinned = o as THREE.SkinnedMesh;
+    if (skinned.isSkinnedMesh) skinnedMeshes++;
+    if ((o as THREE.Bone).isBone) bones++;
+  });
+  return { skinnedMeshes, bones };
 }
 
 function visibleMeshBounds(root: THREE.Object3D, relativeTo?: THREE.Object3D): THREE.Box3 {
@@ -160,17 +254,20 @@ export function hashStringToSeed(s: string): number {
   return h >>> 0;
 }
 
-async function loadManifest(): Promise<string[]> {
+async function loadManifest(): Promise<UnitGlbManifest> {
   if (manifest !== undefined) return manifest;
   if (!manifestPromise) {
-    manifestPromise = (async (): Promise<string[]> => {
+    manifestPromise = (async (): Promise<UnitGlbManifest> => {
       try {
         const res = await fetch("/assets/units/manifest.json", { cache: "no-store" });
-        if (!res.ok) return [];
-        const j = (await res.json()) as { files?: string[] };
-        return j.files ?? [];
+        if (!res.ok) return { files: [] };
+        const j = (await res.json()) as UnitGlbManifest;
+        return {
+          files: j.files ?? [],
+          animationProfiles: j.animationProfiles ?? [],
+        };
       } catch {
-        return [];
+        return { files: [] };
       }
     })()
       .then((files) => {
@@ -189,14 +286,17 @@ function pickFile(seed: number, files: string[]): string | null {
   return files[seed % files.length] ?? null;
 }
 
-function pickFileForClass(kind: UnitSizeClass | "hero", files: string[]): string | null {
+function pickFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): string | null {
+  const profileFile = roleFileForClass(kind, "model", m) ?? roleFileForClass(kind, "run", m);
+  if (profileFile) return profileFile;
+  const files = m.files;
   if (kind === "Swarm") {
     return files.includes(AZURE_SPEAR_SWARM_RUN_FILE) ? AZURE_SPEAR_SWARM_RUN_FILE : null;
   }
   if (kind === "Line") {
     return files.includes(LANTERNBOUND_LINE_RUN_FILE) ? LANTERNBOUND_LINE_RUN_FILE : null;
   }
-  const classFiles = productionArtFiles(files);
+  const classFiles = productionArtFiles(m);
   if (!classFiles.length) return null;
   const idx = CLASS_INDEX[kind] ?? 0;
   return classFiles[idx % classFiles.length] ?? classFiles[0] ?? null;
@@ -281,6 +381,17 @@ async function attachGlbByFile(
 
   try {
     const template = await loadGltfTemplate(url);
+    const rig = rigSummary(template.root);
+    if (opts?.animationRoleLabel && (rig.skinnedMeshes === 0 || rig.bones === 0 || template.animations.length === 0)) {
+      const warnKey = `${opts.animationRoleLabel}:unrigged:${file}`;
+      if (!warnedAnimationRoles.has(warnKey)) {
+        warnedAnimationRoles.add(warnKey);
+        console.warn(
+          `[glb] ${opts.animationRoleLabel} has no usable runtime rig/animation in ${file} ` +
+            `(skinned=${rig.skinnedMeshes}, bones=${rig.bones}, clips=${template.animations.length})`,
+        );
+      }
+    }
     const inst = cloneSkeleton(template.root);
     setShadowRecursive(inst, true, true);
 
@@ -297,7 +408,8 @@ async function attachGlbByFile(
     let mixer: THREE.AnimationMixer | null = null;
     if (template.animations.length > 0) {
       mixer = new THREE.AnimationMixer(inst);
-      const clip = safeClip(template.animations[0]!);
+      const clipRaw = clipForRole(template.animations, "run", file);
+      const clip = safeClip(clipRaw ?? template.animations[0]!);
       const action = mixer.clipAction(clip);
       action.setLoop(THREE.LoopRepeat, Infinity);
       action.reset();
@@ -309,7 +421,7 @@ async function attachGlbByFile(
     }
     if (opts?.idleFile) {
       const idleTemplate = await loadGltfTemplate(`/assets/units/${opts.idleFile}`);
-      const clipRaw = idleTemplate.animations[0];
+      const clipRaw = clipForRole(idleTemplate.animations, "idle", opts.idleFile);
       if (clipRaw) {
         mixer ??= new THREE.AnimationMixer(inst);
         const action = mixer.clipAction(safeClip(clipRaw));
@@ -322,7 +434,7 @@ async function attachGlbByFile(
     }
     if (opts?.attackFile) {
       const attackTemplate = await loadGltfTemplate(`/assets/units/${opts.attackFile}`);
-      const clipRaw = attackTemplate.animations[0];
+      const clipRaw = clipForRole(attackTemplate.animations, "attack", opts.attackFile);
       if (clipRaw) {
         mixer ??= new THREE.AnimationMixer(inst);
         const clip = safeClip(clipRaw);
@@ -340,7 +452,7 @@ async function attachGlbByFile(
     }
     if (opts?.deathFile) {
       const deathTemplate = await loadGltfTemplate(`/assets/units/${opts.deathFile}`);
-      const clipRaw = deathTemplate.animations[0];
+      const clipRaw = clipForRole(deathTemplate.animations, "death", opts.deathFile);
       if (clipRaw) {
         mixer ??= new THREE.AnimationMixer(inst);
         const clip = safeClip(clipRaw);
@@ -391,8 +503,8 @@ export async function attachGlbFromManifest(
   placeholder: THREE.Mesh,
   targetMaxExtent: number,
 ): Promise<void> {
-  const files = await loadManifest();
-  const file = pickFile(seed, productionArtFiles(files));
+  const m = await loadManifest();
+  const file = pickFile(seed, productionArtFiles(m));
   if (!file) return;
   await attachGlbByFile(file, placeholder, targetMaxExtent);
 }
@@ -404,16 +516,16 @@ export async function attachGlbForClass(
   targetMaxExtent: number,
   teamTint?: TeamId,
 ): Promise<void> {
-  const files = await loadManifest();
-  const file = pickFileForClass(kind, files);
+  const m = await loadManifest();
+  const file = pickFileForClass(kind, m);
   if (!file) return;
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
     ...(teamTint ? { teamTint } : {}),
-    attackFile: attackFileForClass(kind, files),
-    idleFile: idleFileForClass(kind, files),
-    deathFile: deathFileForClass(kind, files),
+    attackFile: attackFileForClass(kind, m),
+    idleFile: idleFileForClass(kind, m),
+    deathFile: deathFileForClass(kind, m),
     attackPlaybackSeconds: attackPlaybackSeconds(kind),
-    ...(kind === "Swarm" || kind === "Line" ? { animationRoleLabel: kind } : {}),
+    animationRoleLabel: kind,
   });
 }
 
@@ -458,27 +570,27 @@ function towerManifestIndex(catalogId: string): number {
   return hashStringToSeed(catalogId) % TOWER_GLB_MANIFEST_ORDER.length;
 }
 
-function pickTowerFile(catalogId: string, files: string[]): string | null {
-  const towerFiles = productionArtFiles(files);
+function pickTowerFile(catalogId: string, m: UnitGlbManifest): string | null {
+  const towerFiles = productionArtFiles(m);
   if (!towerFiles.length) return null;
   return towerFiles[towerManifestIndex(catalogId) % towerFiles.length] ?? null;
 }
 
 /** Root-relative GLB URL for doctrine card thumbnail (structures only — spells use SVG art). */
 export async function getCatalogPreviewAssetUrl(catalogId: string): Promise<string | null> {
-  const files = await loadManifest();
-  if (!files.length) return null;
+  const m = await loadManifest();
+  if (!m.files.length) return null;
   const entry = getCatalogEntry(catalogId);
   if (!entry) return null;
   if (isCommandEntry(entry)) return null;
-  const file = pickTowerFile(catalogId, files);
+  const file = pickTowerFile(catalogId, m);
   return file ? `/assets/units/${file}` : null;
 }
 
 /** Load tower art from the same unit manifest; hides procedural silhouette on success. */
 export async function requestGlbForTower(catalogId: string, placeholder: THREE.Mesh): Promise<void> {
-  const files = await loadManifest();
-  const file = pickTowerFile(catalogId, files);
+  const m = await loadManifest();
+  const file = pickTowerFile(catalogId, m);
   if (!file) return;
   await attachGlbByFile(file, placeholder, TOWER_GLB_TARGET_EXTENT, {
     hideSilhouetteUserDataKey: "structureSilhouette",
