@@ -338,6 +338,14 @@ function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
   });
 }
 
+function cloneInstanceMaterials(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.material) return;
+    m.material = Array.isArray(m.material) ? m.material.map((mat) => mat.clone()) : m.material.clone();
+  });
+}
+
 function setShadowRecursive(root: THREE.Object3D, cast: boolean, receive: boolean): void {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -411,6 +419,7 @@ async function attachGlbByFile(
       }
     }
     const inst = cloneSkeleton(template.root);
+    cloneInstanceMaterials(inst);
     setShadowRecursive(inst, true, true);
 
     inst.traverse((o) => {
