@@ -1,7 +1,10 @@
 {
   "version": 2,
   "mapId": "mesa_badlands",
-  "world": { "halfExtents": 165, "groundY": 0 },
+  "world": {
+    "halfExtents": 165,
+    "groundY": 0
+  },
   "useAuthorTapSlots": true,
   "visual": {
     "groundPreset": "mesa_band",
@@ -13,84 +16,351 @@
     "sunHex": 16770475
   },
   "tapSlots": [
-    { "id": "tap_ms_w0", "x": -116, "z": 50 },
-    { "id": "tap_ms_w1", "x": -126, "z": 16 },
-    { "id": "tap_ms_w2", "x": -100, "z": -24 },
-    { "id": "tap_ms_w3", "x": -84, "z": 64 },
-    { "id": "tap_ms_w4", "x": -66, "z": -64 },
-    { "id": "tap_ms_w5", "x": -48, "z": 26 },
-    { "id": "tap_ms_w6", "x": -134, "z": -44 },
-    { "id": "tap_ms_w7", "x": -88, "z": -90 },
-    { "id": "tap_ms_e0", "x": 100, "z": 46 },
-    { "id": "tap_ms_e1", "x": 124, "z": 10 },
-    { "id": "tap_ms_e2", "x": 102, "z": -30 },
-    { "id": "tap_ms_e3", "x": 86, "z": 70 },
-    { "id": "tap_ms_e4", "x": 70, "z": -66 },
-    { "id": "tap_ms_e5", "x": 50, "z": 20 },
-    { "id": "tap_ms_e6", "x": 132, "z": -50 },
-    { "id": "tap_ms_e7", "x": 92, "z": -94 }
+    {
+      "id": "tap_ms_p_00",
+      "x": -140,
+      "z": -82
+    },
+    {
+      "id": "tap_ms_p_01",
+      "x": -140,
+      "z": -28
+    },
+    {
+      "id": "tap_ms_p_02",
+      "x": -140,
+      "z": 28
+    },
+    {
+      "id": "tap_ms_p_03",
+      "x": -140,
+      "z": 82
+    },
+    {
+      "id": "tap_ms_p_04",
+      "x": -110,
+      "z": -106
+    },
+    {
+      "id": "tap_ms_p_05",
+      "x": -110,
+      "z": -58
+    },
+    {
+      "id": "tap_ms_p_06",
+      "x": -110,
+      "z": 56
+    },
+    {
+      "id": "tap_ms_p_07",
+      "x": -110,
+      "z": 104
+    },
+    {
+      "id": "tap_ms_p_08",
+      "x": -82,
+      "z": -84
+    },
+    {
+      "id": "tap_ms_p_09",
+      "x": -82,
+      "z": 84
+    },
+    {
+      "id": "tap_ms_p_10",
+      "x": -46,
+      "z": -110
+    },
+    {
+      "id": "tap_ms_p_11",
+      "x": -46,
+      "z": -66
+    },
+    {
+      "id": "tap_ms_p_12",
+      "x": -46,
+      "z": -20
+    },
+    {
+      "id": "tap_ms_p_13",
+      "x": -46,
+      "z": 24
+    },
+    {
+      "id": "tap_ms_p_14",
+      "x": -46,
+      "z": 68
+    },
+    {
+      "id": "tap_ms_p_15",
+      "x": -46,
+      "z": 112
+    },
+    {
+      "id": "tap_ms_e_00",
+      "x": 140,
+      "z": -82
+    },
+    {
+      "id": "tap_ms_e_01",
+      "x": 140,
+      "z": -28
+    },
+    {
+      "id": "tap_ms_e_02",
+      "x": 140,
+      "z": 28
+    },
+    {
+      "id": "tap_ms_e_03",
+      "x": 140,
+      "z": 82
+    },
+    {
+      "id": "tap_ms_e_04",
+      "x": 110,
+      "z": -106
+    },
+    {
+      "id": "tap_ms_e_05",
+      "x": 110,
+      "z": -58
+    },
+    {
+      "id": "tap_ms_e_06",
+      "x": 110,
+      "z": 56
+    },
+    {
+      "id": "tap_ms_e_07",
+      "x": 110,
+      "z": 104
+    },
+    {
+      "id": "tap_ms_e_08",
+      "x": 82,
+      "z": -84
+    },
+    {
+      "id": "tap_ms_e_09",
+      "x": 82,
+      "z": 84
+    },
+    {
+      "id": "tap_ms_e_10",
+      "x": 46,
+      "z": -110
+    },
+    {
+      "id": "tap_ms_e_11",
+      "x": 46,
+      "z": -66
+    },
+    {
+      "id": "tap_ms_e_12",
+      "x": 46,
+      "z": -20
+    },
+    {
+      "id": "tap_ms_e_13",
+      "x": 46,
+      "z": 24
+    },
+    {
+      "id": "tap_ms_e_14",
+      "x": 46,
+      "z": 68
+    },
+    {
+      "id": "tap_ms_e_15",
+      "x": 46,
+      "z": 112
+    }
   ],
   "playerRelaySlots": [
-    { "id": "p_relay_1", "x": -156, "z": 0 },
-    { "id": "p_relay_2", "x": -148, "z": 58 },
-    { "id": "p_relay_3", "x": -150, "z": -52 },
-    { "id": "p_relay_4", "x": -140, "z": 28 }
+    {
+      "id": "p_relay_1",
+      "x": -156,
+      "z": 0
+    },
+    {
+      "id": "p_relay_2",
+      "x": -148,
+      "z": 58
+    },
+    {
+      "id": "p_relay_3",
+      "x": -150,
+      "z": -52
+    },
+    {
+      "id": "p_relay_4",
+      "x": -140,
+      "z": 28
+    }
   ],
   "enemyRelaySlots": [
-    { "id": "e_relay_1", "x": 156, "z": 0 },
-    { "id": "e_relay_2", "x": 148, "z": 56 }
+    {
+      "id": "e_relay_1",
+      "x": 156,
+      "z": 0
+    },
+    {
+      "id": "e_relay_2",
+      "x": 148,
+      "z": 56
+    }
   ],
-  "playerStart": { "x": -152, "z": 10 },
-  "enemyStart": { "x": 150, "z": -10 },
+  "playerStart": {
+    "x": -152,
+    "z": 10
+  },
+  "enemyStart": {
+    "x": 150,
+    "z": -10
+  },
   "enemyCamps": [
     {
       "id": "camp_butte",
-      "origin": { "x": 56, "z": 36 },
+      "origin": {
+        "x": 56,
+        "z": 36
+      },
       "aggroRadius": 19,
       "wakeRadius": 36,
       "coreMaxHp": 360,
       "roster": [
-        { "sizeClass": "Swarm", "offset": { "x": 3, "z": 2 } },
-        { "sizeClass": "Swarm", "offset": { "x": -3, "z": 2 } },
-        { "sizeClass": "Line", "offset": { "x": 0, "z": -4 } }
+        {
+          "sizeClass": "Swarm",
+          "offset": {
+            "x": 3,
+            "z": 2
+          }
+        },
+        {
+          "sizeClass": "Swarm",
+          "offset": {
+            "x": -3,
+            "z": 2
+          }
+        },
+        {
+          "sizeClass": "Line",
+          "offset": {
+            "x": 0,
+            "z": -4
+          }
+        }
       ]
     },
     {
       "id": "camp_arroyo",
-      "origin": { "x": 70, "z": -30 },
+      "origin": {
+        "x": 70,
+        "z": -30
+      },
       "aggroRadius": 19,
       "wakeRadius": 36,
       "roster": [
-        { "sizeClass": "Line", "offset": { "x": 3, "z": 0 } },
-        { "sizeClass": "Line", "offset": { "x": -2, "z": 3 } },
-        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -3 } }
+        {
+          "sizeClass": "Line",
+          "offset": {
+            "x": 3,
+            "z": 0
+          }
+        },
+        {
+          "sizeClass": "Line",
+          "offset": {
+            "x": -2,
+            "z": 3
+          }
+        },
+        {
+          "sizeClass": "Heavy",
+          "offset": {
+            "x": 0,
+            "z": -3
+          }
+        }
       ]
     },
     {
       "id": "camp_spire",
-      "origin": { "x": 104, "z": 4 },
+      "origin": {
+        "x": 104,
+        "z": 4
+      },
       "aggroRadius": 19,
       "wakeRadius": 36,
       "roster": [
-        { "sizeClass": "Heavy", "offset": { "x": 2, "z": 1 } },
-        { "sizeClass": "Swarm", "offset": { "x": -4, "z": 2 } },
-        { "sizeClass": "Swarm", "offset": { "x": 4, "z": -2 } },
-        { "sizeClass": "Line", "offset": { "x": 0, "z": 4 } }
+        {
+          "sizeClass": "Heavy",
+          "offset": {
+            "x": 2,
+            "z": 1
+          }
+        },
+        {
+          "sizeClass": "Swarm",
+          "offset": {
+            "x": -4,
+            "z": 2
+          }
+        },
+        {
+          "sizeClass": "Swarm",
+          "offset": {
+            "x": 4,
+            "z": -2
+          }
+        },
+        {
+          "sizeClass": "Line",
+          "offset": {
+            "x": 0,
+            "z": 4
+          }
+        }
       ]
     },
     {
       "id": "camp_plateau",
-      "origin": { "x": 124, "z": 42 },
+      "origin": {
+        "x": 124,
+        "z": 42
+      },
       "aggroRadius": 19,
       "wakeRadius": 36,
       "roster": [
-        { "sizeClass": "Heavy", "offset": { "x": 0, "z": 0 } },
-        { "sizeClass": "Heavy", "offset": { "x": -3, "z": 2 } },
-        { "sizeClass": "Titan", "offset": { "x": 3, "z": -3 } }
+        {
+          "sizeClass": "Heavy",
+          "offset": {
+            "x": 0,
+            "z": 0
+          }
+        },
+        {
+          "sizeClass": "Heavy",
+          "offset": {
+            "x": -3,
+            "z": 2
+          }
+        },
+        {
+          "sizeClass": "Titan",
+          "offset": {
+            "x": 3,
+            "z": -3
+          }
+        }
       ]
     }
   ],
-  "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
+  "difficulty": {
+    "enemyHpMult": 1,
+    "enemyDmgMult": 1
+  },
   "decor": [
     {
       "kind": "box",
@@ -145,9 +415,143 @@
       "blocksMovement": true,
       "color": 7040512
     },
-    { "kind": "box", "x": 108, "z": 26, "w": 26, "h": 16, "d": 26, "rotYDeg": 28, "color": 7040512 },
-    { "kind": "box", "x": -108, "z": -38, "w": 26, "h": 16, "d": 26, "rotYDeg": -22, "color": 5260324 },
-    { "kind": "box", "x": -18, "z": 8, "w": 20, "h": 6, "d": 12, "rotYDeg": 12, "color": 7040512 },
-    { "kind": "cylinder", "x": -36, "z": -42, "radius": 2.8, "h": 5.5, "color": 5592405 }
+    {
+      "kind": "box",
+      "x": 108,
+      "z": 26,
+      "w": 26,
+      "h": 16,
+      "d": 26,
+      "rotYDeg": 28,
+      "color": 7040512
+    },
+    {
+      "kind": "box",
+      "x": -108,
+      "z": -38,
+      "w": 26,
+      "h": 16,
+      "d": 26,
+      "rotYDeg": -22,
+      "color": 5260324
+    },
+    {
+      "kind": "box",
+      "x": -18,
+      "z": 8,
+      "w": 20,
+      "h": 6,
+      "d": 12,
+      "rotYDeg": 12,
+      "color": 7040512
+    },
+    {
+      "kind": "cylinder",
+      "x": -36,
+      "z": -42,
+      "radius": 2.8,
+      "h": 5.5,
+      "color": 5592405
+    },
+    {
+      "kind": "box",
+      "x": 0,
+      "z": 159.0,
+      "w": 306.0,
+      "h": 12,
+      "d": 8,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 8019008
+    },
+    {
+      "kind": "box",
+      "x": 0,
+      "z": -159.0,
+      "w": 306.0,
+      "h": 12,
+      "d": 8,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 8019008
+    },
+    {
+      "kind": "box",
+      "x": 159.0,
+      "z": 0,
+      "w": 8,
+      "h": 12,
+      "d": 306.0,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 8019008
+    },
+    {
+      "kind": "box",
+      "x": -159.0,
+      "z": 0,
+      "w": 8,
+      "h": 12,
+      "d": 306.0,
+      "rotYDeg": 0,
+      "blocksMovement": true,
+      "color": 8019008
+    },
+    {
+      "kind": "box",
+      "x": -56.1,
+      "z": 46.2,
+      "w": 28,
+      "h": 5.5,
+      "d": 16,
+      "rotYDeg": 22,
+      "color": 9333836
+    },
+    {
+      "kind": "box",
+      "x": 56.1,
+      "z": 46.2,
+      "w": 28,
+      "h": 5.5,
+      "d": 16,
+      "rotYDeg": -22,
+      "color": 9333836
+    },
+    {
+      "kind": "cylinder",
+      "x": -34.78,
+      "z": -36.3,
+      "radius": 6.2,
+      "h": 5.2,
+      "color": 9333836
+    },
+    {
+      "kind": "cylinder",
+      "x": 34.78,
+      "z": -36.3,
+      "radius": 6.2,
+      "h": 5.2,
+      "color": 9333836
+    },
+    {
+      "kind": "box",
+      "x": -12.34,
+      "z": 9.9,
+      "w": 18,
+      "h": 4.6,
+      "d": 12,
+      "rotYDeg": -14,
+      "color": 9333836
+    },
+    {
+      "kind": "box",
+      "x": 12.34,
+      "z": 9.9,
+      "w": 18,
+      "h": 4.6,
+      "d": 12,
+      "rotYDeg": 14,
+      "color": 9333836
+    }
   ]
 }

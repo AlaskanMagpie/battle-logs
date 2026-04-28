@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { MapData } from "./types";
-import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
+import {
+  circleOverlapsMapObstacles,
+  planChainedPathAroundMapObstacles,
+  resolveCircleAgainstMapObstacles,
+  segmentHitsMapObstacles,
+} from "./mapObstacles";
 
 describe("mapObstacles", () => {
   const map: MapData = {
@@ -39,5 +44,30 @@ describe("mapObstacles", () => {
     };
     expect(circleOverlapsMapObstacles(m2, { x: 0, z: 0 }, 1)).toBe(true);
     expect(circleOverlapsMapObstacles(m2, { x: 20, z: 0 }, 1)).toBe(false);
+  });
+
+  it("chained path yields obstacle-free legs around a blocking box", () => {
+    const from = { x: -30, z: 0 };
+    const to = { x: 30, z: 0 };
+    const agentR = 1.2;
+    const path = planChainedPathAroundMapObstacles(map, from, to, agentR);
+    expect(path.length).toBeGreaterThanOrEqual(1);
+    let cur = { ...from };
+    for (const wp of path) {
+      expect(segmentHitsMapObstacles(map, cur, wp, agentR)).toBe(false);
+      cur = wp;
+    }
+  });
+
+  it("accepts dynamic footprints for live structure blockers", () => {
+    const emptyMap = { ...map, decor: [] };
+    const extra = [{ kind: "disc" as const, cx: 0, cz: 0, r: 5 }];
+    expect(circleOverlapsMapObstacles(emptyMap, { x: 0, z: 0 }, 1, extra)).toBe(true);
+    const path = planChainedPathAroundMapObstacles(emptyMap, { x: -20, z: 0 }, { x: 20, z: 0 }, 1, extra);
+    let cur = { x: -20, z: 0 };
+    for (const wp of path) {
+      expect(segmentHitsMapObstacles(emptyMap, cur, wp, 1, extra)).toBe(false);
+      cur = wp;
+    }
   });
 });

@@ -8,6 +8,10 @@ type DiscObs = { cx: number; cz: number; r: number };
 /** OBB in XZ: center, half-extents along local X/Z, rotation θ (CCW) matching `lx = dx·cos + dz·sin`, `lz = −dx·sin + dz·cos`. */
 type BoxObs = { cx: number; cz: number; hx: number; hz: number; c: number; s: number };
 
+export type MapObstacleFootprint =
+  | { kind: "disc"; cx: number; cz: number; r: number }
+  | { kind: "box"; cx: number; cz: number; hx: number; hz: number; c: number; s: number };
+
 function collectFromDecor(decor: MapDecorDef[] | undefined): { discs: DiscObs[]; boxes: BoxObs[] } {
   const discs: DiscObs[] = [];
   const boxes: BoxObs[] = [];
@@ -32,16 +36,17 @@ function collectFromDecor(decor: MapDecorDef[] | undefined): { discs: DiscObs[];
   return { discs, boxes };
 }
 
-function obstacleSets(map: MapData): { discs: DiscObs[]; boxes: BoxObs[] } {
-  return collectFromDecor(map.decor);
+function obstacleSets(map: MapData, extra: MapObstacleFootprint[] = []): { discs: DiscObs[]; boxes: BoxObs[] } {
+  const sets = collectFromDecor(map.decor);
+  for (const fp of extra) {
+    if (fp.kind === "disc") sets.discs.push(fp);
+    else sets.boxes.push(fp);
+  }
+  return sets;
 }
 
-export type MapObstacleFootprint =
-  | { kind: "disc"; cx: number; cz: number; r: number }
-  | { kind: "box"; cx: number; cz: number; hx: number; hz: number; c: number; s: number };
-
-export function mapObstacleFootprints(map: MapData): MapObstacleFootprint[] {
-  const { discs, boxes } = obstacleSets(map);
+export function mapObstacleFootprints(map: MapData, extra: MapObstacleFootprint[] = []): MapObstacleFootprint[] {
+  const { discs, boxes } = obstacleSets(map, extra);
   return [
     ...discs.map((d) => ({ kind: "disc" as const, ...d })),
     ...boxes.map((b) => ({ kind: "box" as const, ...b })),
@@ -108,8 +113,13 @@ function pushFromBox(px: number, pz: number, box: BoxObs, agentR: number, out: V
  * After moving in XZ, slide `pos` out of any `blocksMovement` decor so a circle of radius `agentR`
  * stays outside solid obstacles.
  */
-export function resolveCircleAgainstMapObstacles(map: MapData, pos: Vec2, agentR: number): void {
-  const { discs, boxes } = obstacleSets(map);
+export function resolveCircleAgainstMapObstacles(
+  map: MapData,
+  pos: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): void {
+  const { discs, boxes } = obstacleSets(map, extra);
   if (discs.length === 0 && boxes.length === 0) return;
   for (let pass = 0; pass < RESOLVE_PASSES; pass++) {
     let moved = false;
@@ -135,8 +145,13 @@ export function resolveCircleAgainstMapObstacles(map: MapData, pos: Vec2, agentR
 }
 
 /** True if a circle at `pos` with radius `agentR` intersects any blocking decor. */
-export function circleOverlapsMapObstacles(map: MapData, pos: Vec2, agentR: number): boolean {
-  const { discs, boxes } = obstacleSets(map);
+export function circleOverlapsMapObstacles(
+  map: MapData,
+  pos: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): boolean {
+  const { discs, boxes } = obstacleSets(map, extra);
   for (const o of discs) {
     const dx = pos.x - o.cx;
     const dz = pos.z - o.cz;
@@ -189,8 +204,14 @@ function segmentHitsBox(a: Vec2, b: Vec2, box: BoxObs, pad: number): boolean {
   return clip(-dx, la.lx + hx) && clip(dx, hx - la.lx) && clip(-dz, la.lz + hz) && clip(dz, hz - la.lz);
 }
 
-function firstBlockingFootprint(map: MapData, from: Vec2, to: Vec2, agentR: number): MapObstacleFootprint | null {
-  const { discs, boxes } = obstacleSets(map);
+function firstBlockingFootprint(
+  map: MapData,
+  from: Vec2,
+  to: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): MapObstacleFootprint | null {
+  const { discs, boxes } = obstacleSets(map, extra);
   let best: MapObstacleFootprint | null = null;
   let bestD = Infinity;
   for (const d of discs) {
@@ -242,18 +263,24 @@ function detourCandidates(o: MapObstacleFootprint, pad: number): Vec2[] {
  * Small, deterministic local planner for wall maps. It returns one or more corner detours
  * when the direct segment intersects blocking decor; callers still resolve each step.
  */
-export function planPathAroundMapObstacles(map: MapData, from: Vec2, to: Vec2, agentR: number): Vec2[] {
-  const direct = firstBlockingFootprint(map, from, to, agentR);
+export function planPathAroundMapObstacles(
+  map: MapData,
+  from: Vec2,
+  to: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): Vec2[] {
+  const direct = firstBlockingFootprint(map, from, to, agentR, extra);
   if (!direct) return [clampWorld(map, to)];
   const pad = Math.max(agentR + 3.2, 6);
   const candidates = detourCandidates(direct, pad)
     .map((p) => clampWorld(map, p))
-    .filter((p) => !circleOverlapsMapObstacles(map, p, agentR));
+    .filter((p) => !circleOverlapsMapObstacles(map, p, agentR, extra));
   let best: Vec2[] | null = null;
   let bestScore = Infinity;
   for (const c of candidates) {
-    const first = firstBlockingFootprint(map, from, c, agentR);
-    const second = firstBlockingFootprint(map, c, to, agentR);
+    const first = firstBlockingFootprint(map, from, c, agentR, extra);
+    const second = firstBlockingFootprint(map, c, to, agentR, extra);
     if (first || second) continue;
     const score = Math.hypot(c.x - from.x, c.z - from.z) + Math.hypot(to.x - c.x, to.z - c.z);
     if (score < bestScore) {
@@ -262,5 +289,67 @@ export function planPathAroundMapObstacles(map: MapData, from: Vec2, to: Vec2, a
     }
   }
   if (best) return best;
-  return [...candidates.slice(0, 2), clampWorld(map, to)];
+  for (const c of candidates) {
+    if (firstBlockingFootprint(map, from, c, agentR, extra)) continue;
+    if (firstBlockingFootprint(map, c, to, agentR, extra)) continue;
+    return [c, clampWorld(map, to)];
+  }
+  for (const c of candidates) {
+    if (!firstBlockingFootprint(map, from, c, agentR, extra)) return [c, clampWorld(map, to)];
+  }
+  return [clampWorld(map, to)];
+}
+
+const MAX_PATH_CHAIN = 72;
+
+/** True if the open segment `a`→`b` intersects expanded blocking decor for an agent of radius `agentR`. */
+export function segmentHitsMapObstacles(
+  map: MapData,
+  a: Vec2,
+  b: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): boolean {
+  return firstBlockingFootprint(map, a, b, agentR, extra) !== null;
+}
+
+/**
+ * Polyline of waypoints from `from` toward `to`, chaining {@link planPathAroundMapObstacles}
+ * so units can navigate multiple walls/boxes instead of a single detour.
+ */
+export function planChainedPathAroundMapObstacles(
+  map: MapData,
+  from: Vec2,
+  to: Vec2,
+  agentR: number,
+  extra: MapObstacleFootprint[] = [],
+): Vec2[] {
+  const goal = clampWorld(map, to);
+  const out: Vec2[] = [];
+  let cur: Vec2 = { ...from };
+
+  for (let hop = 0; hop < MAX_PATH_CHAIN; hop++) {
+    if (!firstBlockingFootprint(map, cur, goal, agentR, extra)) {
+      if (Math.hypot(goal.x - cur.x, goal.z - cur.z) > 0.35) out.push(goal);
+      return out;
+    }
+
+    const piece = planPathAroundMapObstacles(map, cur, goal, agentR, extra);
+    if (piece.length === 0) {
+      out.push(goal);
+      return out;
+    }
+
+    const nxt = piece[0]!;
+    if (Math.hypot(nxt.x - cur.x, nxt.z - cur.z) < 0.06) {
+      out.push(goal);
+      return out;
+    }
+
+    out.push(nxt);
+    cur = nxt;
+  }
+
+  if (Math.hypot(goal.x - cur.x, goal.z - cur.z) > 0.35) out.push(goal);
+  return out;
 }

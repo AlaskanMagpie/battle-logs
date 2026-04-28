@@ -2,14 +2,13 @@ import * as THREE from "three";
 import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getControlProfile, type ControlProfile } from "../controlProfile";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
+  PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  STRUCTURE_MESH_VISUAL_SCALE,
   TAP_YIELD_MAX,
   TERRITORY_RADIUS,
   TICK_HZ,
@@ -29,7 +28,14 @@ import {
   type GameState,
   type UnitRuntime,
 } from "../game/state";
-import type { SignalType, StructureCatalogEntry, UnitSizeClass, Vec2 } from "../game/types";
+import type {
+  CommandEffect,
+  MapGroundPreset,
+  SignalType,
+  StructureCatalogEntry,
+  UnitSizeClass,
+  Vec2,
+} from "../game/types";
 import { isStructureEntry } from "../game/types";
 import {
   clearFx,
@@ -40,7 +46,6 @@ import {
   stepFx,
   type FxHost,
 } from "./fx";
-import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 import {
   glbBoxExtentRef,
   requestGlbForHero,
@@ -48,6 +53,24 @@ import {
   requestGlbForUnit,
   type GlbExtentBasis,
 } from "./glbPool";
+import {
+  createManaNodeGroundBand,
+  disposeManaNodeBand,
+  loadManaNodeSpinTexture,
+  loadManaNodeTextures,
+  syncManaNodeBandTexture,
+  syncManaNodeSpinTint,
+  type ManaNodeGroundBand,
+  type ManaNodeTextureSet,
+} from "./manaNodeGround";
+import {
+  createTapBandMeshes,
+  disposeTapBandMeshes,
+  setSharedBandGeometry,
+  syncTapBandColors,
+  type TapBandMeshes,
+} from "./tapRingVisual";
+import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 /** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 /** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
@@ -61,17 +84,33 @@ const UNIT_VISUAL_RUN_CATCHUP = 0.42;
 
 /** Same equirect asset / path as the doctrine prematch room (`CardBinderEngine` nebula sky). */
 const MATCH_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
+/** Match readability wins over panorama mood: sky equirects shimmer/darken badly at low camera angles. */
+const MATCH_SKYBOX_ENABLED = false;
+
+/** Ground / drag preview art for the four doctrine spells (PNG under `public/assets/spell-reticles/`). */
+type SpellReticleEffectType = Extract<
+  CommandEffect["type"],
+  "aoe_line_damage" | "aoe_tactics_field" | "aoe_damage" | "aoe_shatter_chain"
+>;
+
+const SPELL_RETICLE_URLS: Record<SpellReticleEffectType, string> = {
+  aoe_line_damage: "/assets/spell-reticles/cut_back.png",
+  aoe_tactics_field: "/assets/spell-reticles/fortify.png",
+  aoe_damage: "/assets/spell-reticles/firestorm.png",
+  aoe_shatter_chain: "/assets/spell-reticles/shatter.png",
+};
+
+function isSpellReticleEffectType(t: CommandEffect["type"] | null | undefined): t is SpellReticleEffectType {
+  return (
+    t === "aoe_line_damage" ||
+    t === "aoe_tactics_field" ||
+    t === "aoe_damage" ||
+    t === "aoe_shatter_chain"
+  );
+}
 const MATCH_SKYBOX_PLACEMENT_STORAGE_KEY = "signalWarsMatchSkyboxPlacement.v1";
 export type MatchSkyboxPlacement = { x: number; y: number; z: number };
 const DEFAULT_MATCH_SKYBOX_PLACEMENT: MatchSkyboxPlacement = { x: 0, y: -120, z: 0 };
-/** Fog color lerp toward neutral grey when the arena equirect sky is active. */
-const MATCH_SKYBOX_FOG_DECK = 0xb9c2ce;
-const MATCH_SKYBOX_FOG_LERP = 0.36;
-const MATCH_SKYBOX_FOG_NEAR_MULT = 1.14;
-const MATCH_SKYBOX_FOG_FAR_MULT = 1.32;
-/** Default ground tint when arena equirect sky is on. */
-const MATCH_SKYBOX_GROUND_HEX = 0xa8b2bd;
-
 function readMatchSkyboxPlacement(): MatchSkyboxPlacement {
   try {
     const raw = window.localStorage.getItem(MATCH_SKYBOX_PLACEMENT_STORAGE_KEY);
@@ -95,56 +134,320 @@ function writeMatchSkyboxPlacement(p: MatchSkyboxPlacement): void {
   }
 }
 
-function makeGroundOverlayTexture(): THREE.CanvasTexture {
+function makeGroundOverlayTexture(preset: MapGroundPreset): THREE.CanvasTexture {
   const size = 512;
   const c = document.createElement("canvas");
   c.width = size;
   c.height = size;
   const ctx = c.getContext("2d")!;
   ctx.clearRect(0, 0, size, size);
-  ctx.strokeStyle = "rgba(130, 190, 255, 0.16)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= size; i += 32) {
+
+  let seed = hashTag(`ground-overlay:${preset}`) || 1;
+  const rnd = (): number => {
+    seed = (1664525 * seed + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const tint =
+    preset === "ember_wastes"
+      ? { blob: "rgba(255,150,82,0.18)", crack: "rgba(255,220,160,0.22)" }
+      : preset === "glacier_grid"
+        ? { blob: "rgba(155,220,255,0.16)", crack: "rgba(235,252,255,0.2)" }
+        : preset === "mesa_band"
+          ? { blob: "rgba(255,190,116,0.17)", crack: "rgba(255,225,170,0.18)" }
+          : { blob: "rgba(155,205,255,0.12)", crack: "rgba(210,235,255,0.16)" };
+
+  // Soft blotches only; repeated lines shimmer badly at shallow camera angles.
+  for (let i = 0; i < 52; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const r = 18 + rnd() * 72;
+    const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, tint.blob);
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gr;
     ctx.beginPath();
-    ctx.moveTo(i, 0);
-    ctx.lineTo(i, size);
-    ctx.stroke();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = tint.crack;
+  ctx.lineWidth = 1.75;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (let i = 0; i < 17; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const ang = rnd() * Math.PI * 2;
+    const len = 30 + rnd() * 72;
+    const bend = (rnd() - 0.5) * 42;
     ctx.beginPath();
-    ctx.moveTo(0, i);
-    ctx.lineTo(size, i);
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(
+      x + Math.cos(ang + 0.65) * len * 0.45,
+      y + Math.sin(ang + 0.65) * len * 0.45 + bend,
+      x + Math.cos(ang) * len,
+      y + Math.sin(ang) * len,
+    );
     ctx.stroke();
   }
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
-  ctx.lineWidth = 2;
-  for (let i = 0; i < 12; i++) {
-    const y = 70 + i * 34;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.bezierCurveTo(size * 0.28, y - 26, size * 0.66, y + 30, size, y - 8);
-    ctx.stroke();
-  }
+
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(3.5, 3.5);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.repeat.set(2.15, 2.15);
+  tex.anisotropy = 4;
   return tex;
+}
+
+function hashTag(tag: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < tag.length; i++) {
+    h ^= tag.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeDecorWrapTexture(preset: MapGroundPreset, tag: string): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d")!;
+
+  const pal =
+    preset === "ember_wastes"
+      ? { a: "#a58272", b: "#6f4635", light: "rgba(255,235,205,0.28)", dark: "rgba(24,10,7,0.42)" }
+      : preset === "glacier_grid"
+        ? { a: "#b5d0da", b: "#638596", light: "rgba(255,255,255,0.28)", dark: "rgba(12,24,34,0.4)" }
+        : preset === "mesa_band"
+          ? { a: "#b89670", b: "#735339", light: "rgba(255,230,190,0.26)", dark: "rgba(35,18,9,0.38)" }
+          : { a: "#9ba9b8", b: "#5a6674", light: "rgba(235,245,255,0.22)", dark: "rgba(12,16,20,0.36)" };
+
+  const grad = ctx.createRadialGradient(size * 0.38, size * 0.32, 12, size * 0.5, size * 0.5, size * 0.72);
+  grad.addColorStop(0, pal.a);
+  grad.addColorStop(1, pal.b);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  let s = hashTag(`${preset}:${tag}`) || 1;
+  const rnd = (): number => {
+    s = (1664525 * s + 1013904223) >>> 0;
+    return s / 0xffffffff;
+  };
+
+  for (let i = 0; i < 18; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const r = 14 + rnd() * 46;
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, pal.light);
+    rg.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = rg;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = pal.dark;
+  for (let i = 0; i < 850; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const d = 0.4 + rnd() * 1.4;
+    ctx.fillRect(x, y, d, d);
+  }
+  ctx.strokeStyle = pal.dark;
+  ctx.lineWidth = 1.1;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 26; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const a = rnd() * Math.PI * 2;
+    const len = 10 + rnd() * 34;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(
+      x + Math.cos(a + 0.7) * len * 0.45,
+      y + Math.sin(a + 0.7) * len * 0.45,
+      x + Math.cos(a) * len,
+      y + Math.sin(a) * len,
+    );
+    ctx.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+const DECOR_ROCK_VERT = /* glsl */ `
+out vec3 vWorldPos;
+out vec3 vNormal;
+void main() {
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldPos = wp.xyz;
+  vNormal = normalize(mat3(modelMatrix) * normal);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const DECOR_ROCK_FRAG = /* glsl */ `
+in vec3 vWorldPos;
+in vec3 vNormal;
+out vec4 fragColor;
+uniform vec3 uDark;
+uniform vec3 uBase;
+uniform vec3 uLight;
+uniform vec3 uAccent;
+uniform float uScale;
+uniform float uSeed;
+uniform float uBlockiness;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float a = hash(i + uSeed);
+  float b = hash(i + vec2(1.0, 0.0) + uSeed);
+  float c = hash(i + vec2(0.0, 1.0) + uSeed);
+  float d = hash(i + vec2(1.0, 1.0) + uSeed);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  for (int i = 0; i < 5; i++) {
+    v += a * noise(p);
+    p = p * 2.02 + vec2(37.0, 19.0);
+    a *= 0.5;
+  }
+  return v;
+}
+
+float ridge(float v) {
+  return 1.0 - abs(v * 2.0 - 1.0);
+}
+
+void main() {
+  vec3 n = normalize(vNormal);
+  vec2 sideUv = vec2(vWorldPos.x + vWorldPos.z * 0.37, vWorldPos.y * 1.28) * uScale;
+  vec2 topUv = vWorldPos.xz * uScale;
+  float top = smoothstep(0.42, 0.88, abs(n.y));
+  vec2 uv = mix(sideUv, topUv, top);
+
+  float macro = fbm(uv * 0.72 + vec2(uSeed, 0.0));
+  float grain = fbm(uv * 4.8 + vec2(11.0, 23.0));
+  float strata = 0.5 + 0.5 * sin(vWorldPos.y * (1.55 + uBlockiness) + macro * 5.2 + uSeed);
+  float crackA = pow(ridge(fbm(uv * 5.2 + vec2(17.0, 41.0))), 5.0);
+  float crackB = pow(ridge(fbm(uv.yx * 4.4 + vec2(53.0, 7.0))), 6.0);
+  float cracks = smoothstep(0.48, 0.82, max(crackA, crackB)) * (0.5 + 0.5 * grain);
+
+  vec2 blockCell = abs(fract(vec2(vWorldPos.x * 0.17 + vWorldPos.z * 0.11, vWorldPos.y * 0.62) + uSeed) - 0.5);
+  float mortar = smoothstep(0.455, 0.49, max(blockCell.x, blockCell.y)) * uBlockiness * (1.0 - top * 0.65);
+
+  vec3 color = mix(uDark, uBase, 0.38 + 0.44 * macro);
+  color = mix(color, uLight, smoothstep(0.52, 0.9, strata) * 0.38);
+  color *= 0.78 + 0.34 * grain;
+  color = mix(color, uAccent, cracks * 0.28);
+  color = mix(color, uDark * 0.52, max(cracks * 0.58, mortar * 0.72));
+
+  float lit = clamp(dot(n, normalize(vec3(-0.38, 0.82, 0.46))) * 0.5 + 0.56, 0.32, 1.18);
+  color *= lit + top * 0.08;
+  fragColor = vec4(color, 1.0);
+}
+`;
+
+function decorRockPalette(preset: MapGroundPreset): {
+  dark: number;
+  base: number;
+  light: number;
+  accent: number;
+  scale: number;
+  blockiness: number;
+} {
+  switch (preset) {
+    case "ember_wastes":
+      return { dark: 0x221715, base: 0x5e4036, light: 0xa98268, accent: 0xd06a34, scale: 0.13, blockiness: 0.72 };
+    case "glacier_grid":
+      return { dark: 0x152331, base: 0x4f6d7a, light: 0xb2cbd2, accent: 0x8ed8ff, scale: 0.12, blockiness: 0.56 };
+    case "mesa_band":
+      return { dark: 0x2d2019, base: 0x75543c, light: 0xb78b5d, accent: 0xd89a50, scale: 0.115, blockiness: 0.82 };
+    default:
+      return { dark: 0x1d2228, base: 0x555e67, light: 0x9fa9ad, accent: 0x7a8790, scale: 0.12, blockiness: 0.7 };
+  }
+}
+
+function makeDecorRockMaterial(preset: MapGroundPreset, tag: string, shade = 1): THREE.ShaderMaterial {
+  const p = decorRockPalette(preset);
+  const seed = (hashTag(`${preset}:rock:${tag}`) % 997) / 997;
+  const tint = (hex: number): THREE.Vector3 => {
+    const c = new THREE.Color(hex).multiplyScalar(shade);
+    return new THREE.Vector3(c.r, c.g, c.b);
+  };
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uDark: { value: tint(p.dark) },
+      uBase: { value: tint(p.base) },
+      uLight: { value: tint(p.light) },
+      uAccent: { value: tint(p.accent) },
+      uScale: { value: p.scale },
+      uSeed: { value: seed },
+      uBlockiness: { value: p.blockiness },
+    },
+    vertexShader: DECOR_ROCK_VERT,
+    fragmentShader: DECOR_ROCK_FRAG,
+    glslVersion: THREE.GLSL3,
+  });
 }
 
 function structureDims(entry: StructureCatalogEntry | null): { w: number; h: number; d: number } {
   const H = unitMeshLinearSize("Titan");
-  if (!entry) return { w: 4.8, h: H, d: 4.8 };
-  const signals = entry.signalTypes;
-  const isBastion = signals.filter((s) => s === "Bastion").length >= 2;
-  const isVanguard = signals.filter((s) => s === "Vanguard").length >= 1;
-  const isReclaim = signals.filter((s) => s === "Reclaim").length >= 1;
-  if (entry.producedSizeClass === "Titan") return { w: 6.2, h: H, d: 6.2 };
-  if (entry.producedSizeClass === "Heavy" && isBastion) return { w: 6.4, h: H, d: 6.4 };
-  if (entry.producedSizeClass === "Heavy") return { w: 5.6, h: H, d: 5.6 };
-  if (isBastion) return { w: 6.2, h: H, d: 6.2 };
-  if (isVanguard && isReclaim) return { w: 5.1, h: H, d: 5.1 };
-  if (isVanguard) return { w: 4.5, h: H, d: 4.5 };
-  if (isReclaim) return { w: 5.2, h: H, d: 5.2 };
-  return { w: 4.8, h: H, d: 4.8 };
+  const S = STRUCTURE_MESH_VISUAL_SCALE;
+  let w: number;
+  let d: number;
+  if (!entry) {
+    w = 4.8;
+    d = 4.8;
+  } else {
+    const signals = entry.signalTypes;
+    const isBastion = signals.filter((s) => s === "Bastion").length >= 2;
+    const isVanguard = signals.filter((s) => s === "Vanguard").length >= 1;
+    const isReclaim = signals.filter((s) => s === "Reclaim").length >= 1;
+    if (entry.producedSizeClass === "Titan") {
+      w = 6.2;
+      d = 6.2;
+    } else if (entry.producedSizeClass === "Heavy" && isBastion) {
+      w = 6.4;
+      d = 6.4;
+    } else if (entry.producedSizeClass === "Heavy") {
+      w = 5.6;
+      d = 5.6;
+    } else if (isBastion) {
+      w = 6.2;
+      d = 6.2;
+    } else if (isVanguard && isReclaim) {
+      w = 5.1;
+      d = 5.1;
+    } else if (isVanguard) {
+      w = 4.5;
+      d = 4.5;
+    } else if (isReclaim) {
+      w = 5.2;
+      d = 5.2;
+    } else {
+      w = 4.8;
+      d = 4.8;
+    }
+  }
+  return { w: w * S, h: H * S, d: d * S };
 }
 
 function hsl(hex: number, dl: number): THREE.Color {
@@ -186,9 +489,10 @@ function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, tea
           ? 0xff8f2e
           : 0xad7dff,
   );
-  basis.lerp(new THREE.Color(signalColorHex(signal)), 0.26);
-  if (team === "player") basis.lerp(new THREE.Color(0x58b4ff), 0.2);
-  else basis.lerp(new THREE.Color(0xff2f82), 0.42);
+  basis.lerp(new THREE.Color(signalColorHex(signal)), 0.18);
+  /** Strong team anchor so LOD / far-zoom placeholders never read as “all green”. */
+  if (team === "player") basis.lerp(new THREE.Color(0x3a9dff), 0.55);
+  else basis.lerp(new THREE.Color(0xff3358), 0.62);
   return basis.getHex();
 }
 
@@ -537,6 +841,16 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   return g;
 }
 
+function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
+  const ud = g.userData as Record<string, unknown>;
+  const silhouette = ud["structureSilhouette"] as THREE.Object3D | undefined;
+  const body = ud["bodyMesh"] as THREE.Object3D | undefined;
+  const plinth = ud["plinthMesh"] as THREE.Object3D | undefined;
+  if (silhouette) silhouette.visible = visible;
+  if (body) body.visible = visible;
+  if (plinth) plinth.visible = visible;
+}
+
 function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy", size: UnitSizeClass): THREE.Group {
   const g = new THREE.Group();
   const L = unitMeshLinearSize(size);
@@ -575,16 +889,18 @@ export class GameRenderer {
   private unitMeshes = new Map<number, THREE.Object3D>();
   private unitCountLabels = new Map<number, LabelSprite>();
   private structureMeshes = new Map<number, THREE.Object3D>();
-  private tapMeshes = new Map<string, THREE.Mesh>();
-  private tapYieldArcs = new Map<string, THREE.Mesh>();
-  private tapClaimArcs = new Map<string, THREE.Mesh>();
+  private tapMeshes = new Map<string, TapBandMeshes | ManaNodeGroundBand>();
+  private tapYieldArcs = new Map<string, TapBandMeshes>();
+  private tapClaimArcs = new Map<string, TapBandMeshes>();
   /** Destructible claim pillar on owned Mana nodes. */
   private tapAnchorRoots = new Map<string, THREE.Group>();
   private tapAnchorPrevHp = new Map<string, number>();
   /** Floating "Stand to claim" / "Depleted" label sprites keyed by tap defId. */
   private tapLabels = new Map<string, LabelSprite>();
+  private manaNodeTextures: ManaNodeTextureSet | null = null;
+  private manaSpinTexture: THREE.Texture | null = null;
   /** "Next node" highlight ring on the nearest unclaimed tap to the hero. */
-  private nearestTapRing: THREE.Mesh | null = null;
+  private nearestTapRing: TapBandMeshes | null = null;
   private territoryGroup = new THREE.Group();
   private territoryField: THREE.Mesh | null = null;
   private enemyTerritoryField: THREE.Mesh | null = null;
@@ -623,22 +939,28 @@ export class GameRenderer {
   private tacticsFieldRings = new Map<string, THREE.Mesh>();
   private portalRoots = new Map<"exit" | "return", { root: THREE.Group; label: LabelSprite }>();
   private decorBuilt = false;
+  private readonly decorTextureCache = new Map<string, THREE.CanvasTexture>();
 
   private ghost: THREE.Mesh | null = null;
   private cmdGhost: THREE.Mesh | null = null;
   private cmdGhostCore: THREE.Mesh | null = null;
   /** Line-strip preview for aimed cleave spells (Cut Back). */
   private cmdGhostLine: THREE.Mesh | null = null;
+  /** `"rings"` = procedural ring geometry; `"tex"` = textured ground plane for spell reticle PNGs. */
+  private cmdGhostDiscKind: "rings" | "tex" = "rings";
+  /** `"box"` = procedural corridor; `"tex"` = textured plane along the cleave corridor. */
+  private cmdGhostLineKind: "box" | "tex" = "box";
+  private cmdGhostRingMaterial: THREE.MeshBasicMaterial | null = null;
+  private cmdGhostDiscTexMaterial: THREE.MeshBasicMaterial | null = null;
+  private cmdGhostLineTexMaterial: THREE.MeshBasicMaterial | null = null;
+  private cmdGhostLineBoxMaterial: THREE.MeshBasicMaterial | null = null;
+  private readonly spellReticleTextures: Partial<Record<SpellReticleEffectType, THREE.Texture>> = {};
   private formationGhostLine: THREE.Mesh | null = null;
   private formationGhostSlots: THREE.InstancedMesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
   /** Animation/render delta must not use `clock.getDelta()` because sync code calls `getElapsedTime()` for pulses. */
   private lastRenderFrameMs = performance.now();
-  private readonly composer: EffectComposer;
-  private readonly bloomPass: UnrealBloomPass;
-  private rollingFps = 60;
-  private bloomDecisionMs = 0;
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
   private readonly camGroundFwd = new THREE.Vector3();
   private readonly camGroundRight = new THREE.Vector3();
@@ -650,6 +972,8 @@ export class GameRenderer {
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
+  private terrainSlabHalf = 0;
+  private terrainSlab: THREE.Group | null = null;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
   private terrainHits: THREE.Object3D[] = [];
@@ -723,10 +1047,10 @@ export class GameRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, controlProfile.maxPixelRatio));
     this.renderer.shadowMap.enabled = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.04;
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.toneMappingExposure = 1;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0e1116);
+    this.scene.background = new THREE.Color(0x10131a);
 
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
@@ -740,7 +1064,7 @@ export class GameRenderer {
     this.sunLight.castShadow = false;
     this.scene.add(this.sunLight);
 
-    const groundMat = new THREE.MeshStandardMaterial({ color: 0x1b2430, roughness: 0.92, metalness: 0.04 });
+    const groundMat = new THREE.MeshBasicMaterial({ color: 0x343941 });
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 240), groundMat);
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = false;
@@ -748,16 +1072,16 @@ export class GameRenderer {
     this.groundOverlay = new THREE.Mesh(
       new THREE.PlaneGeometry(240, 240),
       new THREE.MeshBasicMaterial({
-        map: makeGroundOverlayTexture(),
+        map: makeGroundOverlayTexture("solid"),
         transparent: true,
-        opacity: 0.24,
+        opacity: 0.07,
         depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
       }),
     );
     this.groundOverlay.rotation.x = -Math.PI / 2;
     this.groundOverlay.position.y = 0.018;
-    this.scene.add(this.groundOverlay);
+    this.groundOverlay.visible = false;
 
     this.territoryGroup.name = "territory";
     /** Floor decal only: lives on `scene` (not `root`) so opaque decor/units fill the depth buffer first; tint uses polygon offset so vertical meshes win Z-tests. */
@@ -765,9 +1089,21 @@ export class GameRenderer {
     this.root.add(this.decor, this.markers, this.entities);
     this.scene.add(this.root);
 
-    void this._loadMatchSkybox();
+    if (MATCH_SKYBOX_ENABLED) void this._loadMatchSkybox();
 
     this.fx = createFxHost(this.scene);
+
+    const manaLoader = new THREE.TextureLoader();
+    void Promise.all([loadManaNodeTextures(manaLoader), loadManaNodeSpinTexture(manaLoader)])
+      .then(([nodeSet, spin]) => {
+        this.manaNodeTextures = nodeSet;
+        this.manaSpinTexture = spin;
+      })
+      .catch((e) => {
+        console.warn("[mana nodes] decal texture load failed — fallback rings", e);
+      });
+
+    this.loadSpellReticleTextures();
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 0, 0);
@@ -789,11 +1125,6 @@ export class GameRenderer {
       MIDDLE: MOUSE.PAN,
       RIGHT: -1,
     };
-
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.16, 0.32, 0.88);
-    this.composer.addPass(this.bloomPass);
   }
 
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
@@ -827,7 +1158,7 @@ export class GameRenderer {
       this.matchSkyboxTexture.dispose();
       this.matchSkyboxTexture = null;
     }
-    this.scene.background = new THREE.Color(0x0e1116);
+    this.scene.background = new THREE.Color(0x10131a);
     this.scene.backgroundRotation.set(0, 0, 0);
     this.scene.backgroundBlurriness = 0;
     this.scene.backgroundIntensity = 1;
@@ -838,6 +1169,11 @@ export class GameRenderer {
     this.scene.remove(this.territoryGroup);
     this.disposeObject(this.root);
     if (this.terrainRoot) this.disposeObject(this.terrainRoot);
+    if (this.terrainSlab) {
+      this.scene.remove(this.terrainSlab);
+      this.disposeObject(this.terrainSlab);
+      this.terrainSlab = null;
+    }
     this.ground.geometry.dispose();
     const groundMat = this.ground.material;
     if (Array.isArray(groundMat)) groundMat.forEach((m) => m.dispose());
@@ -846,13 +1182,69 @@ export class GameRenderer {
     const overlayMat = this.groundOverlay.material;
     if (Array.isArray(overlayMat)) overlayMat.forEach((m) => m.dispose());
     else overlayMat.dispose();
-    this.composer.dispose();
+    for (const tex of this.decorTextureCache.values()) tex.dispose();
+    this.decorTextureCache.clear();
+    this.disposeSpellReticleResources();
+    if (this.cmdGhostRingMaterial) {
+      this.cmdGhostRingMaterial.dispose();
+      this.cmdGhostRingMaterial = null;
+    }
+    if (this.cmdGhostLineBoxMaterial) {
+      this.cmdGhostLineBoxMaterial.dispose();
+      this.cmdGhostLineBoxMaterial = null;
+    }
     this.renderer.dispose();
+  }
+
+  private loadSpellReticleTextures(): void {
+    const loader = new THREE.TextureLoader();
+    const maxA = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    for (const key of Object.keys(SPELL_RETICLE_URLS) as SpellReticleEffectType[]) {
+      const url = SPELL_RETICLE_URLS[key];
+      loader.load(
+        url,
+        (tex) => {
+          if (this.rendererDisposed) {
+            tex.dispose();
+            return;
+          }
+          tex.colorSpace = THREE.SRGBColorSpace;
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.anisotropy = maxA;
+          tex.needsUpdate = true;
+          this.spellReticleTextures[key] = tex;
+        },
+        undefined,
+        () => {
+          console.warn("[spell reticle] load failed:", url);
+        },
+      );
+    }
+  }
+
+  private disposeSpellReticleResources(): void {
+    if (this.cmdGhostDiscTexMaterial) {
+      this.cmdGhostDiscTexMaterial.map = null;
+      this.cmdGhostDiscTexMaterial.dispose();
+      this.cmdGhostDiscTexMaterial = null;
+    }
+    if (this.cmdGhostLineTexMaterial) {
+      this.cmdGhostLineTexMaterial.map = null;
+      this.cmdGhostLineTexMaterial.dispose();
+      this.cmdGhostLineTexMaterial = null;
+    }
+    for (const key of Object.keys(SPELL_RETICLE_URLS) as SpellReticleEffectType[]) {
+      const tex = this.spellReticleTextures[key];
+      if (tex) {
+        tex.dispose();
+        delete this.spellReticleTextures[key];
+      }
+    }
   }
 
   setSize(w: number, h: number): void {
     this.renderer.setSize(w, h, false);
-    this.composer.setSize(w, h);
     const aspect = w / Math.max(1, h);
     this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
@@ -1240,6 +1632,7 @@ export class GameRenderer {
     this.currentState = state;
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
+    this.syncTerrainSlab(state);
     this.syncCameraLimits(state.map.world.halfExtents);
     if (this.cameraFramedState !== state) {
       if (state.portal.enteredViaPortal) this.frameCameraImmediatelyOnHero(state);
@@ -1313,7 +1706,8 @@ export class GameRenderer {
       return;
     }
     if (!this.ghost) {
-      const geo = new THREE.CylinderGeometry(2.6, 2.6, 0.3, 24);
+      const r = 2.6 * STRUCTURE_MESH_VISUAL_SCALE;
+      const geo = new THREE.CylinderGeometry(r, r, 0.3, 24);
       const mat = new THREE.MeshStandardMaterial({
         color: 0x57a8ff,
         roughness: 0.8,
@@ -1333,17 +1727,85 @@ export class GameRenderer {
     mat.color.set(valid ? 0x57a8ff : 0xf26464);
   }
 
+  private ensureCmdGhostRingMaterial(): THREE.MeshBasicMaterial {
+    if (!this.cmdGhostRingMaterial) {
+      this.cmdGhostRingMaterial = new THREE.MeshBasicMaterial({
+        color: 0xd87bff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+    }
+    return this.cmdGhostRingMaterial;
+  }
+
+  private ensureCmdGhostLineBoxMaterial(): THREE.MeshBasicMaterial {
+    if (!this.cmdGhostLineBoxMaterial) {
+      this.cmdGhostLineBoxMaterial = new THREE.MeshBasicMaterial({
+        color: 0xc8ffe8,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+    }
+    return this.cmdGhostLineBoxMaterial;
+  }
+
+  private ensureCmdGhostDiscTexMaterial(tex: THREE.Texture): THREE.MeshBasicMaterial {
+    if (!this.cmdGhostDiscTexMaterial) {
+      this.cmdGhostDiscTexMaterial = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.88,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+    } else {
+      this.cmdGhostDiscTexMaterial.map = tex;
+      this.cmdGhostDiscTexMaterial.needsUpdate = true;
+    }
+    return this.cmdGhostDiscTexMaterial;
+  }
+
+  private ensureCmdGhostLineTexMaterial(tex: THREE.Texture): THREE.MeshBasicMaterial {
+    if (!this.cmdGhostLineTexMaterial) {
+      this.cmdGhostLineTexMaterial = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+    } else {
+      this.cmdGhostLineTexMaterial.map = tex;
+      this.cmdGhostLineTexMaterial.needsUpdate = true;
+    }
+    return this.cmdGhostLineTexMaterial;
+  }
+
   /**
    * Ground ring + inner dot shown while dragging a command card so the player
    * can see where the spell will land (and, when relevant, the effect radius).
    * Pass `radius = null` for point-target commands; a small marker is drawn.
    * When `line` is set, `pos` is the aim point and a corridor from `line.from*` toward `pos` is shown.
+   * When `spellEffectType` matches a shipped spell reticle and its PNG has loaded, a textured decal is used instead of procedural rings/box.
    */
   setCommandGhost(
     pos: { x: number; z: number } | null,
     radius: number | null,
     valid: boolean,
     line?: { fromX: number; fromZ: number; length: number; halfWidth: number } | null,
+    spellEffectType?: CommandEffect["type"] | null,
   ): void {
     if (!pos) {
       if (this.cmdGhost) this.cmdGhost.visible = false;
@@ -1373,26 +1835,65 @@ export class GameRenderer {
       const cz = (line.fromZ + ez) * 0.5;
       const hw = line.halfWidth;
 
+      const texLine = this.spellReticleTextures.aoe_line_damage;
+      const useTexLine = spellEffectType === "aoe_line_damage" && texLine;
+
+      if (useTexLine) {
+        if (!this.cmdGhostLine) {
+          this.cmdGhostLine = new THREE.Mesh(
+            new THREE.PlaneGeometry(1, 1),
+            this.ensureCmdGhostLineTexMaterial(texLine),
+          );
+          this.cmdGhostLine.position.y = 0.11;
+          this.scene.add(this.cmdGhostLine);
+          this.cmdGhostLineKind = "tex";
+        } else if (this.cmdGhostLineKind !== "tex") {
+          this.cmdGhostLine.geometry.dispose();
+          this.cmdGhostLine.geometry = new THREE.PlaneGeometry(1, 1);
+          this.cmdGhostLine.material = this.ensureCmdGhostLineTexMaterial(texLine);
+          this.cmdGhostLine.position.y = 0.11;
+          this.cmdGhostLineKind = "tex";
+        } else {
+          this.cmdGhostLine.material = this.ensureCmdGhostLineTexMaterial(texLine);
+        }
+        const mesh = this.cmdGhostLine;
+        mesh.visible = true;
+        mesh.position.set(cx, 0.11, cz);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.rotation.y = Math.atan2(ex - line.fromX, ez - line.fromZ);
+        mesh.rotation.z = 0;
+        mesh.scale.set(hw * 2, L, 1);
+        const m = mesh.material as THREE.MeshBasicMaterial;
+        m.color.set(valid ? 0xffffff : 0xffc0c8);
+        m.opacity = valid ? 0.9 : 0.58;
+        return;
+      }
+
+      if (this.cmdGhostLine && this.cmdGhostLineKind === "tex") {
+        this.cmdGhostLine.geometry.dispose();
+        this.cmdGhostLine.geometry = new THREE.BoxGeometry(1, 0.14, 1);
+        this.cmdGhostLine.material = this.ensureCmdGhostLineBoxMaterial();
+        this.cmdGhostLine.rotation.set(0, 0, 0);
+        this.cmdGhostLine.position.y = 0.1;
+        this.cmdGhostLineKind = "box";
+      }
+
       if (!this.cmdGhostLine) {
-        const mat = new THREE.MeshBasicMaterial({
-          color: 0xc8ffe8,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.42,
-          depthWrite: false,
-          depthTest: false,
-          blending: THREE.AdditiveBlending,
-        });
-        this.cmdGhostLine = new THREE.Mesh(new THREE.BoxGeometry(1, 0.14, 1), mat);
+        this.cmdGhostLine = new THREE.Mesh(
+          new THREE.BoxGeometry(1, 0.14, 1),
+          this.ensureCmdGhostLineBoxMaterial(),
+        );
         this.cmdGhostLine.position.y = 0.1;
         this.scene.add(this.cmdGhostLine);
+        this.cmdGhostLineKind = "box";
       }
       const mesh = this.cmdGhostLine;
       mesh.visible = true;
       mesh.position.set(cx, 0.1, cz);
       mesh.rotation.y = Math.atan2(ex - line.fromX, ez - line.fromZ);
-      (mesh.material as THREE.MeshBasicMaterial).color.set(valid ? 0xc8ffe8 : 0xffb0b8);
-      (mesh.material as THREE.MeshBasicMaterial).opacity = valid ? 0.42 : 0.36;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.set(valid ? 0xc8ffe8 : 0xffb0b8);
+      mat.opacity = valid ? 0.42 : 0.36;
       mesh.geometry.dispose();
       mesh.geometry = new THREE.BoxGeometry(hw * 2, 0.14, L);
       return;
@@ -1400,20 +1901,61 @@ export class GameRenderer {
 
     if (this.cmdGhostLine) this.cmdGhostLine.visible = false;
 
+    const reticleKey =
+      spellEffectType && isSpellReticleEffectType(spellEffectType) ? spellEffectType : null;
+    const texDisc = reticleKey ? this.spellReticleTextures[reticleKey] : undefined;
+    const useTexDisc = radius != null && texDisc != null && reticleKey != null;
+
+    if (useTexDisc) {
+      if (!this.cmdGhost) {
+        this.cmdGhost = new THREE.Mesh(
+          new THREE.PlaneGeometry(1, 1),
+          this.ensureCmdGhostDiscTexMaterial(texDisc),
+        );
+        this.cmdGhost.position.y = 0.1;
+        this.scene.add(this.cmdGhost);
+        this.cmdGhostDiscKind = "tex";
+      } else if (this.cmdGhostDiscKind !== "tex") {
+        this.cmdGhost.geometry.dispose();
+        this.cmdGhost.geometry = new THREE.PlaneGeometry(1, 1);
+        this.cmdGhost.material = this.ensureCmdGhostDiscTexMaterial(texDisc);
+        this.cmdGhost.scale.setScalar(1);
+        this.cmdGhost.position.y = 0.1;
+        this.cmdGhostDiscKind = "tex";
+      } else {
+        this.cmdGhost.material = this.ensureCmdGhostDiscTexMaterial(texDisc);
+      }
+      if (this.cmdGhostCore) this.cmdGhostCore.visible = false;
+
+      const r = Math.max(1, radius ?? 1.5);
+      this.cmdGhost.rotation.x = -Math.PI / 2;
+      this.cmdGhost.rotation.y = 0;
+      this.cmdGhost.rotation.z = 0;
+      this.cmdGhost.scale.set(r * 2, r * 2, 1);
+      this.cmdGhost.position.set(pos.x, 0.1, pos.z);
+      this.cmdGhost.visible = true;
+      const mat = this.cmdGhost.material as THREE.MeshBasicMaterial;
+      mat.color.set(valid ? 0xffffff : 0xffc0c8);
+      mat.opacity = valid ? 0.9 : 0.58;
+      return;
+    }
+
+    if (this.cmdGhost && this.cmdGhostDiscKind === "tex") {
+      this.cmdGhost.geometry.dispose();
+      this.cmdGhost.geometry = new THREE.RingGeometry(0.1, 0.2, 48);
+      this.cmdGhost.material = this.ensureCmdGhostRingMaterial();
+      this.cmdGhost.rotation.set(-Math.PI / 2, 0, 0);
+      this.cmdGhost.scale.setScalar(1);
+      this.cmdGhost.position.y = 0.08;
+      this.cmdGhostDiscKind = "rings";
+    }
+
     if (!this.cmdGhost) {
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xd87bff,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.35,
-        depthWrite: false,
-        depthTest: false,
-        blending: THREE.AdditiveBlending,
-      });
-      this.cmdGhost = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.2, 48), mat);
+      this.cmdGhost = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.2, 48), this.ensureCmdGhostRingMaterial());
       this.cmdGhost.rotation.x = -Math.PI / 2;
       this.cmdGhost.position.y = 0.08;
       this.scene.add(this.cmdGhost);
+      this.cmdGhostDiscKind = "rings";
     }
     if (!this.cmdGhostCore) {
       const coreMat = new THREE.MeshBasicMaterial({
@@ -1554,26 +2096,7 @@ export class GameRenderer {
 
     for (let idx = 0; idx < state.taps.length; idx++) {
       const t = state.taps[idx]!;
-      let m = this.tapMeshes.get(t.defId);
-      if (!m) {
-        const geo = new THREE.RingGeometry(ringIn, ringOut, 32);
-        const mat = new THREE.MeshBasicMaterial({
-          color: 0x666666,
-          side: THREE.DoubleSide,
-          transparent: true,
-          opacity: 0.9,
-          depthWrite: false,
-          depthTest: false,
-          blending: THREE.AdditiveBlending,
-        });
-        m = new THREE.Mesh(geo, mat);
-        m.rotation.x = -Math.PI / 2;
-        m.position.y = 0.05;
-        this.markers.add(m);
-        this.tapMeshes.set(t.defId, m);
-      }
-      m.position.set(t.x, 0.05, t.z);
-      const mat = m.material as THREE.MeshBasicMaterial;
+      let band = this.tapMeshes.get(t.defId);
       const nodeR2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
       const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && dist2(u, t) <= nodeR2);
       const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && dist2(u, t) <= nodeR2);
@@ -1582,20 +2105,119 @@ export class GameRenderer {
       const enemyTerritory = inEnemyTerritory(state, t);
       const enemyChanneling = state.enemyHero.claimChannelTarget === idx;
       const playerChanneling = hero.claimChannelTarget === idx;
-      if (contested) mat.color.set(0xffd36a);
-      else if (t.active && t.ownerTeam === "player") mat.color.set(0x54c7ff);
-      else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xff6b6b);
-      else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x7d8895);
-      else if (enemyChanneling) mat.color.set(0xff8a8a);
-      else if (playerChanneling) mat.color.set(0x6ae1ff);
-      else if (playerTerritory && !enemyTerritory) mat.color.set(0x54c7ff);
-      else if (enemyTerritory && !playerTerritory) mat.color.set(0xff6b6b);
-      else if (t.active) mat.color.set(0x52b0ff);
-      else mat.color.set(0xc1ccd8);
-      mat.opacity = contested ? 1 : t.active ? 0.92 : 0.72;
+
+      const manaReady = this.manaNodeTextures !== null && this.manaSpinTexture !== null;
+
+      if (manaReady) {
+        if (band && band.group.userData["tapGfx"] !== "mana") {
+          this.markers.remove(band.group);
+          disposeTapBandMeshes(band as TapBandMeshes);
+          this.tapMeshes.delete(t.defId);
+          band = undefined;
+        }
+        if (!band) {
+          const mb = createManaNodeGroundBand(
+            this.manaNodeTextures!,
+            this.manaSpinTexture!,
+            this.manaNodeTextures!.neutral,
+          );
+          this.markers.add(mb.group);
+          this.tapMeshes.set(t.defId, mb);
+          band = mb;
+        }
+        const mb = band as ManaNodeGroundBand;
+
+        let manaTex = this.manaNodeTextures!.neutral;
+        let decalOpacity = 0.74;
+        const spinRgb = new THREE.Color(0xffffff);
+
+        if (contested) {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.92;
+          spinRgb.setHex(0xffc878);
+        } else if (t.active && t.ownerTeam === "player") {
+          if (t.yieldRemaining <= 0) {
+            manaTex = this.manaNodeTextures!.neutral;
+            decalOpacity = 0.52;
+            spinRgb.setHex(0x8a99aa);
+          } else {
+            manaTex = this.manaNodeTextures!.friendly;
+            decalOpacity = 0.94;
+            spinRgb.setHex(0x6ae1ff);
+          }
+        } else if (t.active && t.ownerTeam === "enemy") {
+          if (t.yieldRemaining <= 0 || (t.anchorHp ?? 0) <= 0) {
+            manaTex = this.manaNodeTextures!.neutral;
+            decalOpacity = 0.52;
+            spinRgb.setHex(0xaa7777);
+          } else {
+            manaTex = this.manaNodeTextures!.hostile;
+            decalOpacity = 0.94;
+            spinRgb.setHex(0xff7766);
+          }
+        } else if (enemyChanneling) {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.88;
+          spinRgb.setHex(0xff9a9a);
+        } else if (playerChanneling) {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.88;
+          spinRgb.setHex(0x88ddff);
+        } else if (playerTerritory && !enemyTerritory) {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.78;
+          spinRgb.setHex(0x88ccff);
+        } else if (enemyTerritory && !playerTerritory) {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.78;
+          spinRgb.setHex(0xff8888);
+        } else if (t.active) {
+          manaTex = this.manaNodeTextures!.friendly;
+          decalOpacity = 0.85;
+          spinRgb.setHex(0x66c8ff);
+        } else {
+          manaTex = this.manaNodeTextures!.neutral;
+          decalOpacity = 0.72;
+          spinRgb.setHex(0xffffff);
+        }
+
+        syncManaNodeBandTexture(mb, manaTex, decalOpacity);
+        syncManaNodeSpinTint(mb, spinRgb);
+        mb.group.position.set(t.x, 0, t.z);
+        mb.spinLayer.rotation.z = this.clock.getElapsedTime() * 0.18 + idx * 0.91;
+      } else {
+        if (band && band.group.userData["tapGfx"] === "mana") {
+          this.markers.remove(band.group);
+          disposeManaNodeBand(band as ManaNodeGroundBand);
+          this.tapMeshes.delete(t.defId);
+          band = undefined;
+        }
+        let ringBand = this.tapMeshes.get(t.defId);
+        if (!ringBand) {
+          const geo = new THREE.RingGeometry(ringIn, ringOut, 32);
+          ringBand = createTapBandMeshes(geo);
+          this.markers.add(ringBand.group);
+          this.tapMeshes.set(t.defId, ringBand);
+        }
+        ringBand.group.position.set(t.x, 0.05, t.z);
+
+        let ringColor = 0xc1ccd8;
+        if (contested) ringColor = 0xffd36a;
+        else if (t.active && t.ownerTeam === "player") ringColor = 0x54c7ff;
+        else if (t.active && t.ownerTeam === "enemy") ringColor = 0xff6b6b;
+        else if (t.active && t.yieldRemaining <= 0) ringColor = 0x7d8895;
+        else if (enemyChanneling) ringColor = 0xff8a8a;
+        else if (playerChanneling) ringColor = 0x6ae1ff;
+        else if (playerTerritory && !enemyTerritory) ringColor = 0x54c7ff;
+        else if (enemyTerritory && !playerTerritory) ringColor = 0xff6b6b;
+        else if (t.active) ringColor = 0x52b0ff;
+
+        const ringOpacity = contested ? 1 : t.active ? 0.92 : 0.72;
+        syncTapBandColors(ringBand, ringColor, ringOpacity);
+      }
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
-      let claimArc = this.tapClaimArcs.get(t.defId);
+      let claimBand = this.tapClaimArcs.get(t.defId);
       const channeling = playerChanneling || enemyChanneling;
       if (channeling) {
         const isEnemyChannel = enemyChanneling;
@@ -1606,33 +2228,20 @@ export class GameRenderer {
         const frac = isEnemyChannel
           ? Math.max(0, Math.min(1, 1 - state.enemyHero.claimChannelTicksRemaining / total))
           : Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
-        if (!claimArc) {
-          claimArc = new THREE.Mesh(
-            new THREE.RingGeometry(chIn, chOut, 48, 1, 0, 0.0001),
-            new THREE.MeshBasicMaterial({
-              color: state.enemyHero.claimChannelTarget === idx ? 0xff8a8a : 0x6ae1ff,
-              side: THREE.DoubleSide,
-              transparent: true,
-              opacity: 0.95,
-              depthWrite: false,
-              depthTest: false,
-              blending: THREE.AdditiveBlending,
-            }),
-          );
-          claimArc.rotation.x = -Math.PI / 2;
-          claimArc.position.y = 0.07;
-          this.markers.add(claimArc);
-          this.tapClaimArcs.set(t.defId, claimArc);
+        if (!claimBand) {
+          const geo = new THREE.RingGeometry(chIn, chOut, 48, 1, 0, 0.0001);
+          claimBand = createTapBandMeshes(geo);
+          this.markers.add(claimBand.group);
+          this.tapClaimArcs.set(t.defId, claimBand);
         }
-        claimArc.position.set(t.x, 0.07, t.z);
+        claimBand.group.position.set(t.x, 0.07, t.z);
         const channelKey = isEnemyChannel
           ? `e:${state.enemyHero.claimChannelTicksRemaining}`
           : `p:${hero.claimChannelTicksRemaining}`;
-        const ud = claimArc.userData as Record<string, unknown>;
+        const ud = claimBand.group.userData as Record<string, unknown>;
         if (ud["channelGeomKey"] !== channelKey) {
           ud["channelGeomKey"] = channelKey;
-          claimArc.geometry.dispose();
-          claimArc.geometry = new THREE.RingGeometry(
+          const newGeo = new THREE.RingGeometry(
             chIn,
             chOut,
             48,
@@ -1640,12 +2249,13 @@ export class GameRenderer {
             -Math.PI / 2,
             Math.max(0.0001, frac * Math.PI * 2),
           );
+          setSharedBandGeometry(claimBand, newGeo);
         }
-        claimArc.visible = true;
-        (claimArc.material as THREE.MeshBasicMaterial).color.set(isEnemyChannel ? 0xff8a8a : 0x6ae1ff);
-      } else if (claimArc) {
-        claimArc.visible = false;
-        (claimArc.userData as Record<string, unknown>)["channelGeomKey"] = undefined;
+        claimBand.group.visible = true;
+        syncTapBandColors(claimBand, isEnemyChannel ? 0xff8a8a : 0x6ae1ff, 0.95);
+      } else if (claimBand) {
+        claimBand.group.visible = false;
+        (claimBand.group.userData as Record<string, unknown>)["channelGeomKey"] = undefined;
       }
 
       // Floating label: "Stand to claim — 20 Mana" on unclaimed taps, "Depleted"
@@ -1681,35 +2291,22 @@ export class GameRenderer {
         label.sprite.visible = false;
       }
 
-      let arc = this.tapYieldArcs.get(t.defId);
+      let arcBand = this.tapYieldArcs.get(t.defId);
       const active = t.active && t.yieldRemaining > 0 && (t.anchorHp ?? 0) > 0;
       if (active) {
         const frac = Math.max(0, Math.min(1, t.yieldRemaining / TAP_YIELD_MAX));
-        if (!arc) {
-          arc = new THREE.Mesh(
-            new THREE.RingGeometry(yIn, yOut, 48, 1, 0, Math.PI * 2),
-            new THREE.MeshBasicMaterial({
-              color: 0x6ab8ff,
-              side: THREE.DoubleSide,
-              transparent: true,
-              opacity: 0.9,
-              depthWrite: false,
-              depthTest: false,
-              blending: THREE.AdditiveBlending,
-            }),
-          );
-          arc.rotation.x = -Math.PI / 2;
-          arc.position.y = 0.07;
-          this.markers.add(arc);
-          this.tapYieldArcs.set(t.defId, arc);
+        if (!arcBand) {
+          const geo = new THREE.RingGeometry(yIn, yOut, 48, 1, 0, Math.PI * 2);
+          arcBand = createTapBandMeshes(geo);
+          this.markers.add(arcBand.group);
+          this.tapYieldArcs.set(t.defId, arcBand);
         }
-        arc.position.set(t.x, 0.07, t.z);
+        arcBand.group.position.set(t.x, 0.07, t.z);
         const yieldKey = `${t.ownerTeam}:${t.yieldRemaining}`;
-        const arcUd = arc.userData as Record<string, unknown>;
+        const arcUd = arcBand.group.userData as Record<string, unknown>;
         if (arcUd["yieldGeomKey"] !== yieldKey) {
           arcUd["yieldGeomKey"] = yieldKey;
-          arc.geometry.dispose();
-          arc.geometry = new THREE.RingGeometry(
+          const newGeo = new THREE.RingGeometry(
             yIn,
             yOut,
             48,
@@ -1717,14 +2314,13 @@ export class GameRenderer {
             Math.PI / 2 - frac * Math.PI,
             Math.max(0.0001, frac * Math.PI * 2),
           );
+          setSharedBandGeometry(arcBand, newGeo);
         }
-        (arc.material as THREE.MeshBasicMaterial).color.set(
-          t.ownerTeam === "enemy" ? 0xff7070 : 0x6ab8ff,
-        );
-        arc.visible = true;
-      } else if (arc) {
-        arc.visible = false;
-        (arc.userData as Record<string, unknown>)["yieldGeomKey"] = undefined;
+        syncTapBandColors(arcBand, t.ownerTeam === "enemy" ? 0xff7070 : 0x6ab8ff, 0.9);
+        arcBand.group.visible = true;
+      } else if (arcBand) {
+        arcBand.group.visible = false;
+        (arcBand.group.userData as Record<string, unknown>)["yieldGeomKey"] = undefined;
       }
     }
 
@@ -1782,30 +2378,20 @@ export class GameRenderer {
     if (nearestId !== null) {
       const t = state.taps.find((x) => x.defId === nearestId)!;
       if (!this.nearestTapRing) {
-        this.nearestTapRing = new THREE.Mesh(
-          new THREE.RingGeometry(nhIn, nhOut, 48),
-          new THREE.MeshBasicMaterial({
-            color: 0x6ae1ff,
-            side: THREE.DoubleSide,
-            transparent: true,
-            opacity: 0.85,
-            depthWrite: false,
-            depthTest: false,
-            blending: THREE.AdditiveBlending,
-          }),
-        );
-        this.nearestTapRing.rotation.x = -Math.PI / 2;
-        this.markers.add(this.nearestTapRing);
+        const geo = new THREE.RingGeometry(nhIn, nhOut, 48);
+        this.nearestTapRing = createTapBandMeshes(geo);
+        this.markers.add(this.nearestTapRing.group);
       }
       const elapsed = this.clock.getElapsedTime();
       const pulse = 0.5 + 0.5 * Math.sin(elapsed * 3.2);
-      this.nearestTapRing.position.set(t.x, 0.06, t.z);
+      this.nearestTapRing.group.position.set(t.x, 0.06, t.z);
       const s = 1 + pulse * 0.18;
-      this.nearestTapRing.scale.set(s, s, s);
-      (this.nearestTapRing.material as THREE.MeshBasicMaterial).opacity = 0.55 + 0.4 * pulse;
-      this.nearestTapRing.visible = true;
+      this.nearestTapRing.group.scale.set(s, s, s);
+      const pulseOp = 0.55 + 0.4 * pulse;
+      syncTapBandColors(this.nearestTapRing, 0x6ae1ff, pulseOp);
+      this.nearestTapRing.group.visible = true;
     } else if (this.nearestTapRing) {
-      this.nearestTapRing.visible = false;
+      this.nearestTapRing.group.visible = false;
     }
   }
 
@@ -1829,17 +2415,18 @@ export class GameRenderer {
       const id = `e:${er.defId}`;
       let m = this.relayMeshes.get(id);
       if (!m) {
-        const geo = new THREE.CylinderGeometry(1.2, 1.4, 2.4, 16);
+        const S = STRUCTURE_MESH_VISUAL_SCALE;
+        const geo = new THREE.CylinderGeometry(1.2 * S, 1.4 * S, 2.4 * S, 16);
         const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
         m = new THREE.Mesh(geo, mat);
-        m.position.y = 1.2;
+        m.position.y = 1.2 * S;
         m.castShadow = true;
         m.receiveShadow = true;
         m.userData["bodyMesh"] = m;
         this.markers.add(m);
         this.relayMeshes.set(id, m);
       }
-      m.position.set(er.x, 1.2, er.z);
+      m.position.set(er.x, 1.2 * STRUCTURE_MESH_VISUAL_SCALE, er.z);
       const mat = m.material as THREE.MeshStandardMaterial;
       const built = er.hp > 0;
       if (built) {
@@ -1852,7 +2439,7 @@ export class GameRenderer {
       }
       const s = built ? 1 : 0.55;
       m.scale.set(s, s, s);
-      const pair = this.ensureHpBarPair(m, "relay", 1.95, 0xff7a6a);
+      const pair = this.ensureHpBarPair(m, "relay", 1.95 * STRUCTURE_MESH_VISUAL_SCALE, 0xff7a6a);
       this.setHpBarFrac(pair, er.maxHp > 0 ? Math.max(0, er.hp / er.maxHp) : 0);
       const prevHp = this.relayPrevHp.get(id);
       if (prevHp !== undefined && er.hp < prevHp - 0.5) {
@@ -1983,8 +2570,18 @@ export class GameRenderer {
     });
   }
 
+  private getDecorWrapTexture(preset: MapGroundPreset, tag: string): THREE.CanvasTexture {
+    const key = `${preset}:${tag}`;
+    const ex = this.decorTextureCache.get(key);
+    if (ex) return ex;
+    const tex = makeDecorWrapTexture(preset, tag);
+    this.decorTextureCache.set(key, tex);
+    return tex;
+  }
+
   private syncKeepMarker(state: GameState): void {
     const keep = findKeep(state);
+    const S = STRUCTURE_MESH_VISUAL_SCALE;
     if (!keep) {
       if (this.keepRing) this.keepRing.visible = false;
       if (this.keepHpArc) this.keepHpArc.visible = false;
@@ -1992,7 +2589,7 @@ export class GameRenderer {
     }
     if (!this.keepRing) {
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(3.6, 4.4, 56),
+        new THREE.RingGeometry(3.6 * S, 4.4 * S, 56),
         new THREE.MeshBasicMaterial({
           color: 0xb58bff,
           side: THREE.DoubleSide,
@@ -2010,7 +2607,7 @@ export class GameRenderer {
     const frac = Math.max(0, Math.min(1, keep.maxHp > 0 ? keep.hp / keep.maxHp : 0));
     if (!this.keepHpArc) {
       const arc = new THREE.Mesh(
-        new THREE.RingGeometry(4.5, 4.9, 64, 1, 0, Math.PI * 2),
+        new THREE.RingGeometry(4.5 * S, 4.9 * S, 64, 1, 0, Math.PI * 2),
         new THREE.MeshBasicMaterial({
           color: 0xd9b7ff,
           side: THREE.DoubleSide,
@@ -2037,8 +2634,8 @@ export class GameRenderer {
       arcUd["keepArcFracKey"] = fracKey;
       this.keepHpArc.geometry.dispose();
       this.keepHpArc.geometry = new THREE.RingGeometry(
-        4.5,
-        4.9,
+        4.5 * S,
+        4.9 * S,
         64,
         1,
         Math.PI / 2 - frac * Math.PI,
@@ -2073,11 +2670,13 @@ export class GameRenderer {
         this.entities.add(g);
         this.structureMeshes.set(st.id, g);
         if (this.useGlb) {
+          setStructureFallbackVisible(g, false);
           const ph = g.userData["bodyMesh"] as THREE.Mesh | undefined;
           if (ph) void requestGlbForTower(st.catalogId, ph);
         }
       }
       const g = obj as THREE.Group;
+      if (this.useGlb) setStructureFallbackVisible(g, false);
       g.position.set(st.x, 0, st.z);
       const buildT = st.complete ? 1 : 0.35 + 0.65 * (1 - st.buildTicksRemaining / Math.max(1, st.buildTotalTicks));
       g.scale.set(1, buildT, 1);
@@ -2095,7 +2694,7 @@ export class GameRenderer {
 
       const dims = structureDims(structEntry);
       const fg = st.team === "player" ? 0x7ec8ff : 0xff8a7a;
-      const pair = this.ensureHpBarPair(g, "st", dims.h * buildT + 0.9, fg);
+      const pair = this.ensureHpBarPair(g, "st", dims.h * buildT + 0.9 * STRUCTURE_MESH_VISUAL_SCALE, fg);
       this.setHpBarFrac(pair, st.maxHp > 0 ? st.hp / st.maxHp : 0);
       const prevHp = this.structurePrevHp.get(st.id);
       if (prevHp !== undefined && st.hp < prevHp - 0.25) {
@@ -2148,7 +2747,7 @@ export class GameRenderer {
         const entry = getCatalogEntry(st.catalogId);
         const dims = structureDims(entry && isStructureEntry(entry) ? entry : null);
         const hover = 0.2 * Math.sin(elapsed * 3);
-        cube.position.set(st.x, dims.h + 1.4 + hover, st.z);
+        cube.position.set(st.x, dims.h + 1.4 * STRUCTURE_MESH_VISUAL_SCALE + hover, st.z);
         cube.rotation.y = elapsed * 0.9;
         cube.visible = true;
       } else if (cube) {
@@ -2232,8 +2831,9 @@ export class GameRenderer {
 
     if (st && st.team === "player") {
       if (!this.selectHalo) {
+        const S = STRUCTURE_MESH_VISUAL_SCALE;
         this.selectHalo = new THREE.Mesh(
-          new THREE.RingGeometry(2.8, 3.4, 48),
+          new THREE.RingGeometry(2.8 * S, 3.4 * S, 48),
           new THREE.MeshBasicMaterial({
             color: 0x62b6ff,
             side: THREE.DoubleSide,
@@ -2372,6 +2972,16 @@ export class GameRenderer {
     this.groundVisualKey = "";
   }
 
+  /** Keep any old terrain slab cleared; world bounds clamp play without a duplicate visual wall. */
+  private syncTerrainSlab(_state: GameState): void {
+    if (this.terrainSlab) {
+      this.scene.remove(this.terrainSlab);
+      this.disposeObject(this.terrainSlab);
+      this.terrainSlab = null;
+    }
+    this.terrainSlabHalf = 0;
+  }
+
   /**
    * Match sky: same as doctrine prematch — `Scene.background` equirect (no sky sphere; avoids custom UV).
    * `matchSkyboxPlacement` is still persisted for `?skyboxAdjust` but does not affect `Scene.background`.
@@ -2405,7 +3015,7 @@ export class GameRenderer {
     }
   }
 
-  /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
+  /** Match readability pass: ignore authored color grading so maps cannot wash the scene green. */
   private applyMapVisual(state: GameState): void {
     const v = state.map.visual;
     const preset = v?.groundPreset ?? "solid";
@@ -2447,6 +3057,26 @@ export class GameRenderer {
         disposeGroundMat();
         this.ground.material = createGroundShaderMaterial(preset);
       }
+
+      const overlayMat = this.groundOverlay.material as THREE.MeshBasicMaterial;
+      const oldOverlay = overlayMat.map;
+      overlayMat.map = makeGroundOverlayTexture(preset);
+      oldOverlay?.dispose();
+      if (preset === "ember_wastes") {
+        overlayMat.color.setHex(0xffb07a);
+        overlayMat.opacity = 0.16;
+      } else if (preset === "glacier_grid") {
+        overlayMat.color.setHex(0xb6eaff);
+        overlayMat.opacity = 0.135;
+      } else if (preset === "mesa_band") {
+        overlayMat.color.setHex(0xffd4a4);
+        overlayMat.opacity = 0.15;
+      } else {
+        overlayMat.color.setHex(0xb9d8ff);
+        overlayMat.opacity = 0.1;
+      }
+      overlayMat.blending = THREE.NormalBlending;
+      overlayMat.needsUpdate = true;
     }
     this.groundOverlay.visible = true;
   }
@@ -2509,40 +3139,52 @@ export class GameRenderer {
   private syncMapDecor(state: GameState): void {
     if (this.decorBuilt) return;
     this.decorBuilt = true;
-    const blockingColor = (() => {
-      switch (state.map.visual?.groundPreset) {
-        case "ember_wastes":
-          return 0x723f2c;
-        case "glacier_grid":
-          return 0x466b7f;
-        case "mesa_band":
-          return 0x806044;
-        default:
-          return 0x3a4657;
-      }
-    })();
+    const preset = state.map.visual?.groundPreset ?? "solid";
     for (const d of state.map.decor ?? []) {
       let mesh: THREE.Mesh | null = null;
-      const color = d.blocksMovement ? blockingColor : d.color;
+      const color = d.color;
       const baseColor = color ?? 0x3a4657;
-      const accentMat = new THREE.MeshStandardMaterial({
-        color: hsl(baseColor, d.blocksMovement ? 0.12 : 0.08),
-        roughness: 0.7,
-        metalness: d.blocksMovement ? 0.16 : 0.08,
-      });
-      const shadowMat = new THREE.MeshStandardMaterial({
-        color: hsl(baseColor, -0.16),
-        roughness: 0.95,
-        metalness: 0.02,
-      });
+      const decorate = (mat: THREE.MeshStandardMaterial, tag: string): THREE.MeshStandardMaterial => {
+        mat.map = this.getDecorWrapTexture(preset, tag);
+        // Keep the authored biome tint, but lift it enough that the texture map is actually visible.
+        mat.color.lerp(new THREE.Color(0xffffff), 0.32);
+        mat.needsUpdate = true;
+        return mat;
+      };
+      const blockMat = (tag: string, shade = 1): THREE.ShaderMaterial => makeDecorRockMaterial(preset, tag, shade);
+      const accentMat: THREE.Material = d.blocksMovement
+        ? blockMat("block_accent", 1.08)
+        : decorate(
+            new THREE.MeshStandardMaterial({
+              color: hsl(baseColor, 0.08),
+              roughness: 0.7,
+              metalness: 0.08,
+            }),
+            "detail_accent",
+          );
+      const shadowMat: THREE.Material = d.blocksMovement
+        ? blockMat("block_shadow", 0.72)
+        : decorate(
+            new THREE.MeshStandardMaterial({
+              color: hsl(baseColor, -0.16),
+              roughness: 0.95,
+              metalness: 0.02,
+            }),
+            "detail_shadow",
+          );
       if (d.kind === "box") {
         mesh = new THREE.Mesh(
           new THREE.BoxGeometry(d.w * 0.96, d.h, d.d * 0.96),
-          new THREE.MeshStandardMaterial({
-            color: baseColor,
-            roughness: 0.9,
-            metalness: 0.04,
-          }),
+          d.blocksMovement
+            ? blockMat("box_block")
+            : decorate(
+                new THREE.MeshStandardMaterial({
+                  color: baseColor,
+                  roughness: 0.9,
+                  metalness: 0.04,
+                }),
+                "box_detail",
+              ),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
@@ -2562,11 +3204,16 @@ export class GameRenderer {
       } else if (d.kind === "cylinder") {
         mesh = new THREE.Mesh(
           new THREE.CylinderGeometry(d.radius, d.radius, d.h, 18),
-          new THREE.MeshStandardMaterial({
-            color: color ?? 0x4a4d5f,
-            roughness: 0.85,
-            metalness: 0.05,
-          }),
+          d.blocksMovement
+            ? blockMat("cyl_block")
+            : decorate(
+                new THREE.MeshStandardMaterial({
+                  color: color ?? 0x4a4d5f,
+                  roughness: 0.85,
+                  metalness: 0.05,
+                }),
+                "cyl_detail",
+              ),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         const ring = new THREE.Mesh(new THREE.TorusGeometry(d.radius * 1.02, Math.max(0.035, d.radius * 0.06), 8, 28), accentMat);
@@ -2578,11 +3225,16 @@ export class GameRenderer {
         const cy = d.y ?? r;
         mesh = new THREE.Mesh(
           new THREE.SphereGeometry(r, 20, 16),
-          new THREE.MeshStandardMaterial({
-            color: color ?? 0x5a6270,
-            roughness: 0.78,
-            metalness: 0.12,
-          }),
+          d.blocksMovement
+            ? blockMat("sphere_block")
+            : decorate(
+                new THREE.MeshStandardMaterial({
+                  color: color ?? 0x5a6270,
+                  roughness: 0.78,
+                  metalness: 0.12,
+                }),
+                "sphere_detail",
+              ),
         );
         mesh.position.set(d.x, cy, d.z);
         const chip = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 0.28, 0), accentMat);
@@ -2591,11 +3243,16 @@ export class GameRenderer {
       } else if (d.kind === "cone") {
         mesh = new THREE.Mesh(
           new THREE.ConeGeometry(d.radius, d.h, 14),
-          new THREE.MeshStandardMaterial({
-            color: color ?? 0x4d5a68,
-            roughness: 0.88,
-            metalness: 0.06,
-          }),
+          d.blocksMovement
+            ? blockMat("cone_block")
+            : decorate(
+                new THREE.MeshStandardMaterial({
+                  color: color ?? 0x4d5a68,
+                  roughness: 0.88,
+                  metalness: 0.06,
+                }),
+                "cone_detail",
+              ),
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
@@ -2605,11 +3262,16 @@ export class GameRenderer {
       } else if (d.kind === "torus") {
         mesh = new THREE.Mesh(
           new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
-          new THREE.MeshStandardMaterial({
-            color: color ?? 0x3d4555,
-            roughness: 0.8,
-            metalness: 0.18,
-          }),
+          d.blocksMovement
+            ? blockMat("torus_block")
+            : decorate(
+                new THREE.MeshStandardMaterial({
+                  color: color ?? 0x3d4555,
+                  roughness: 0.8,
+                  metalness: 0.18,
+                }),
+                "torus_detail",
+              ),
         );
         mesh.rotation.x = -Math.PI / 2;
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
@@ -3165,6 +3827,7 @@ export class GameRenderer {
       g.userData["unitId"] = u.id;
       g.userData["team"] = u.team;
       g.userData["sizeClass"] = u.sizeClass;
+      g.userData["producedUnitId"] = u.producedUnitId;
       const visual = this.unitVisualPos.get(u.id) ?? new THREE.Vector2(u.x, u.z);
       this.unitVisualPos.set(u.id, visual);
       const attackTick = u.lastAttackTick;
@@ -3414,10 +4077,16 @@ export class GameRenderer {
         return;
       }
       delete ud!["glbAttackTimer"];
-      const attack = ud?.["glbAttackAction"] as THREE.AnimationAction | undefined;
+      const activeStrike = ud?.["glbStrikeActive"] as THREE.AnimationAction | undefined;
+      const attackDefault = ud?.["glbAttackAction"] as THREE.AnimationAction | undefined;
       const titan = ud?.["sizeClass"] === "Titan";
       const atkFade = titan ? 0.3 : 0.24;
-      if (attack) attack.fadeOut(atkFade);
+      if (activeStrike) {
+        activeStrike.fadeOut(atkFade);
+        delete ud!["glbStrikeActive"];
+      } else if (attackDefault) {
+        attackDefault.fadeOut(atkFade);
+      }
       if (root) this.setGlbBaseActionWeight(root, ud?.["glbBaseState"] === "idle" ? "idle" : "run", 1);
     };
     for (const g of this.unitMeshes.values()) tick(g, true);
@@ -3506,13 +4175,23 @@ export class GameRenderer {
 
   private playGlbAttackAnimation(root: THREE.Object3D): void {
     const ud = root.userData as Record<string, unknown>;
-    const attack = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
+    const attackDefault = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
+    const strikePool = ud["glbHeroStrikeActions"] as THREE.AnimationAction[] | undefined;
+    const strikeDurs = ud["glbHeroStrikeDurations"] as number[] | undefined;
+    const isHero = ud["sizeClass"] === "hero";
+    const attack =
+      isHero && strikePool && strikePool.length > 0
+        ? strikePool[Math.floor(Math.random() * strikePool.length)]!
+        : attackDefault;
     if (!attack) return;
     if (ud["glbAttackTimer"] !== undefined) return;
     const titan = ud["sizeClass"] === "Titan";
-    const minDuration =
-      ud["sizeClass"] === "hero"
-        ? 0.95
+    const producedId = ud["producedUnitId"] as string | undefined;
+    const geodeMonks = producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS;
+    const minDuration = geodeMonks
+      ? 2.02
+      : ud["sizeClass"] === "hero"
+        ? 1.28
         : ud["sizeClass"] === "Swarm"
           ? 3.1
           : ud["sizeClass"] === "Line"
@@ -3520,10 +4199,20 @@ export class GameRenderer {
             : titan
               ? 3.35
               : 3.05;
-    const duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
-    const inFade = titan ? 0.18 : 0.14;
-    const baseUnderlay = titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    let duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
+    if (isHero && strikePool && strikePool.length > 0) {
+      const idx = strikePool.indexOf(attack);
+      if (idx >= 0 && strikeDurs && strikeDurs[idx] !== undefined) {
+        duration = Math.max(minDuration, strikeDurs[idx]!);
+      }
+    }
+    const inFade = geodeMonks ? 0.11 : titan ? 0.18 : ud["sizeClass"] === "hero" ? 0.16 : 0.14;
+    const baseUnderlay = geodeMonks ? 0.5 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
     this.setGlbBaseActionWeight(root, ud["glbBaseState"] === "idle" ? "idle" : "run", baseUnderlay);
+    if (attackDefault && attack !== attackDefault) {
+      attackDefault.fadeOut(0.08);
+    }
+    ud["glbStrikeActive"] = attack;
     attack.enabled = true;
     attack.reset();
     attack.setEffectiveWeight(1);
@@ -3654,28 +4343,10 @@ export class GameRenderer {
     ud["glbBaseState"] = next;
   }
 
-  private updateAdaptiveBloom(dt: number): void {
-    if (dt > 0.001) {
-      const fps = 1 / dt;
-      this.rollingFps = this.rollingFps * 0.94 + fps * 0.06;
-    }
-    const now = performance.now();
-    if (now - this.bloomDecisionMs < 500) return;
-    this.bloomDecisionMs = now;
-    const state = this.currentState;
-    const unitCount = state?.units.length ?? 0;
-    // Keep post-processing parameters stable. Switching between composer and raw renderer
-    // mid-match reads as global dark/light flicker when bright FX or unit counts change.
-    this.bloomPass.strength = unitCount > 420 ? 0.08 : 0.16;
-    this.bloomPass.radius = unitCount > 420 ? 0.22 : 0.32;
-    this.bloomPass.threshold = 0.88;
-  }
-
   render(): void {
     const now = performance.now();
     const dt = Math.min(0.1, Math.max(0, (now - this.lastRenderFrameMs) / 1000));
     this.lastRenderFrameMs = now;
-    this.updateAdaptiveBloom(dt);
     this.tickMatchIntroCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();
@@ -3683,7 +4354,7 @@ export class GameRenderer {
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    this.composer.render();
+    this.renderer.render(this.scene, this.camera);
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

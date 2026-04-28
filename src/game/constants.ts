@@ -285,10 +285,12 @@ export const HERO_WASD_SPEED = 11;
 export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
 /** Structure ghost center must stay outside blocking decor by at least this radius. */
 export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
-/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~0.8s wall time). */
+/** Uniform scale for structure meshes in the battle view (silhouettes, tower GLBs, Keep/relay props). Gameplay radii unchanged. */
+export const STRUCTURE_MESH_VISUAL_SCALE = 4;
+/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~1.4s wall time — deliberate swings). */
 export const HERO_ATTACK_RANGE = 18;
-export const HERO_ATTACK_DAMAGE = 48;
-export const HERO_ATTACK_COOLDOWN_TICKS = 14;
+export const HERO_ATTACK_DAMAGE = 96;
+export const HERO_ATTACK_COOLDOWN_TICKS = 28;
 /** Tactical recall/blink: moves Wizard plus nearby friendly troops, never into the enemy half. */
 export const HERO_TELEPORT_COOLDOWN_SEC = 30;
 export const HERO_TELEPORT_UNIT_RADIUS = 16;
@@ -298,6 +300,14 @@ export const HERO_ATTACK_SWARM_MULT = 1.7;
 /** Rival strike vs Swarm (below player Swarm mult for parity). */
 export const ENEMY_HERO_STRIKE_SWARM_MULT = 1.45;
 
+/** Auto arcane sweep (Cut-Back–style corridor) every N successful strikes when enemies cluster. */
+export const HERO_ARCANE_SWEEP_EVERY_STRIKES = 3;
+export const HERO_ARCANE_SWEEP_CLUSTER_RADIUS = 14;
+export const HERO_ARCANE_SWEEP_MIN_CLUSTER = 2;
+export const HERO_ARCANE_SWEEP_LENGTH = 50;
+export const HERO_ARCANE_SWEEP_HALF_WIDTH = 6.5;
+export const HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT = 34;
+
 /** Forward-placed structures use this fraction of catalog maxHp (snowball: faster to kill than claiming deep nodes). */
 export const FORWARD_STRUCTURE_HP_MULT = 0.58;
 /** Hero strike damage vs enemy structures within this radius of an enemy-owned tap anchor (tower-on-node). */
@@ -305,7 +315,7 @@ export const HERO_STRIKE_NEAR_ENEMY_TAP_RADIUS = 22;
 export const HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT = 1.42;
 
 /** Procedural Mana nodes per match (each side). */
-export const TAP_NODES_PER_SIDE = 10;
+export const TAP_NODES_PER_SIDE = 4;
 /** Minimum spacing between procedurally placed Mana nodes (world units). */
 export const TAP_GENERATION_MIN_SEP = 36;
 

@@ -648,6 +648,83 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
 </div>`;
 }
 
+type SlotBadgeTone = "hp" | "build" | "prod" | "batch" | "mana" | "cd" | "salv" | "uses" | "effect";
+
+function slotInfoBadge(value: string, label: string, tone: SlotBadgeTone, title?: string): string {
+  const tip = title ? ` title="${escapeHtml(title)}"` : "";
+  return `<span class="slot-card-stat slot-card-stat--${tone}"${tip}><b>${escapeHtml(value)}</b><small>${escapeHtml(label)}</small></span>`;
+}
+
+function commandSlotEffectLabel(e: CommandCatalogEntry): string {
+  switch (e.effect.type) {
+    case "aoe_damage":
+      return "AOE";
+    case "aoe_line_damage":
+      return "LINE";
+    case "aoe_shatter_chain":
+      return "CHAIN";
+    case "aoe_tactics_field":
+      return "FIELD";
+    case "noop":
+      return "SPELL";
+  }
+}
+
+function slotCardStatBadges(e: CatalogEntry): string {
+  if (isCommandEntry(e)) {
+    return [
+      slotInfoBadge(`${e.chargeCooldownSeconds}s`, "CD", "cd", "Per-slot cooldown after casting"),
+      slotInfoBadge(`${e.salvagePctOnCast}%`, "SALV", "salv", "Mana cost converted into Salvage"),
+      slotInfoBadge(String(e.maxCharges), "USES", "uses", "Per-match uses before long cooldown"),
+      slotInfoBadge(commandSlotEffectLabel(e), "FX", "effect", commandSpellTooltipSummary(e)),
+    ].join("");
+  }
+  return [
+    slotInfoBadge(String(e.maxHp), "HP", "hp", "Structure health"),
+    slotInfoBadge(`${e.buildSeconds}s`, "BUILD", "build", "Build time"),
+    slotInfoBadge(`${e.productionSeconds}s`, "PROD", "prod", "Production cadence"),
+    slotInfoBadge(structurePopCapLine(e), "BATCH", "batch", structureProductionLine(e)),
+  ].join("");
+}
+
+/** Full-preview doctrine face for clickable hand slots: art first, rules reduced to overlaid stat badges. */
+export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deckSlotIndex?: number): string {
+  const e = getCatalogEntry(catalogId);
+  if (!e) {
+    return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact tcg--unknown tcg--preview-type-unknown" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:210"><div class="slot-card-shell"><div class="slot-card-art slot-card-art--empty"><span class="dm-empty">?</span></div><div class="slot-card-title">Unknown</div></div></div>`;
+  }
+  const hue = catalogPreviewTypeHue(e);
+  const previewTypeClass = catalogPreviewTypeClass(e);
+  const cmd = isCommandEntry(e);
+  const sizeClass = cmd ? "" : e.producedSizeClass;
+  const sizeMod = cmd ? "" : ` tcg--size-${sizeClass}`;
+  const classTag = cmd ? "Spell" : e.producedSizeClass;
+  const manaVal = String(e.fluxCost);
+  const svgKey = deckSlotIndex != null ? `${catalogId}_slot${deckSlotIndex}_hand` : `${catalogId}_${variant}_hand`;
+  const portrait = catalogPortraitSvg(catalogId, hue, cmd, svgKey);
+  const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
+  const cdSec = e.chargeCooldownSeconds;
+  const cdShow = cdSec > 0 ? `${cdSec}s` : "—";
+  const art = dmHeroArt(catalogId, portrait, true, cmd ? e : undefined);
+  const subtitle = cmd ? commandSlotEffectLabel(e) : structureProductionLine(e);
+  const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)}`;
+
+  return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact ${kindClass} ${previewTypeClass} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
+  <div class="slot-card-shell" title="${escapeHtml(title)}">
+    <div class="slot-card-art">
+      ${art}
+      <div class="slot-card-scrim" aria-hidden="true"></div>
+      <span class="slot-card-mana" title="Mana cost">${escapeHtml(manaVal)}</span>
+      <span class="slot-card-type" title="${cmd ? "Command spell" : "Produced unit class"}">${escapeHtml(classTag)}</span>
+      <span class="slot-card-cd" title="${escapeHtml(dmCdTitle(cmd))}">${escapeHtml(cdShow)}</span>
+      <div class="slot-card-stats" aria-label="Key card stats">${slotCardStatBadges(e)}</div>
+    </div>
+    <div class="slot-card-title" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</div>
+    <div class="slot-card-subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>
+  </div>
+</div>`;
+}
+
 export type TcgCardFullOpts = {
   /** Full-screen detail overlay (scales to viewport). */
   detailPop?: boolean;
@@ -744,16 +821,33 @@ export function doctrineCardGhostSummary(catalogId: string): string {
   return `<div class="ghost-tcg ${typeCls}" style="--tcg-h:${hue}"><span class="ghost-tcg-mono">${escapeHtml(initials(e.name))}</span><span class="ghost-title">${escapeHtml(e.name)}</span><span class="ghost-tag">${escapeHtml(tag)}</span><span class="ghost-flux">${e.fluxCost}</span></div>`;
 }
 
-/** HUD tray slot body (compact). In-match faces omit deck index — slot is obvious from grid position. */
-export function doctrineCardBody(slotIndex: number, catalogId: string | null): string {
+/** HUD / picker tray slot body. Slot faces omit deck index — the hotkey badge supplies position. */
+export function doctrineCardBody(
+  slotIndex: number,
+  catalogId: string | null,
+  variant: TcgCardVariant = "hud",
+): string {
   if (!catalogId) {
-    return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact tcg--empty" data-slot-index="${slotIndex}">
-      <div class="dm-shell dm-shell--compact dm-shell--empty">
-        <div class="dm-art dm-art--empty"><span class="dm-empty">—</span></div>
-        <div class="dm-name dm-name--muted">Empty</div>
-        <div class="dm-stats dm-stats--muted">Locked or unused</div>
+    return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact tcg--empty" data-slot-index="${slotIndex}">
+      <div class="slot-card-shell slot-card-shell--empty">
+        <div class="slot-card-art slot-card-art--empty"><span class="dm-empty">—</span></div>
+        <div class="slot-card-title slot-card-title--muted">Empty</div>
+        <div class="slot-card-subtitle slot-card-subtitle--muted">Locked or unused</div>
       </div>
     </div>`;
   }
-  return tcgCardCompactHtml(catalogId, "picker");
+  return tcgCardSlotHtml(catalogId, variant, slotIndex);
+}
+
+export function doctrineSlotButtonInnerHtml(
+  slotIndex: number,
+  catalogId: string | null,
+  opts?: {
+    variant?: TcgCardVariant;
+    liveIdPrefix?: string;
+  },
+): string {
+  const hotkey = slotIndex === 9 ? "0" : String(slotIndex + 1);
+  const livePrefix = opts?.liveIdPrefix ?? "slot-live";
+  return `<span class="slot-hotkey">${hotkey}</span>${doctrineCardBody(slotIndex, catalogId, opts?.variant ?? "hud")}<div class="slot-live" id="${escapeHtml(livePrefix)}-${slotIndex}"></div>`;
 }

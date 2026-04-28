@@ -36,6 +36,7 @@ import {
   type UnitOrderMode,
   type UnitRuntime,
 } from "../../state";
+import { structureObstacleFootprints } from "../../structureObstacles";
 import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { applyAttackImpulse } from "./combat";
@@ -209,7 +210,12 @@ function orderPlayerUnitsFormation(
   for (const u of units) {
     const raw = byId.get(u.id) ?? to;
     const target = { x: raw.x, z: raw.z };
-    resolveCircleAgainstMapObstacles(s.map, target, unitSeparationRadiusXZ(u.sizeClass, u.flying));
+    resolveCircleAgainstMapObstacles(
+      s.map,
+      target,
+      unitSeparationRadiusXZ(u.sizeClass, u.flying),
+      structureObstacleFootprints(s),
+    );
     setUnitOrderTarget(u, target, mode, queue);
   }
 
@@ -225,7 +231,7 @@ function canTeleportHeroTo(s: GameState, pos: Vec2): string | null {
     return `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
   }
   if (pos.x > 0) return "Teleport can only target your half of the map.";
-  if (circleOverlapsMapObstacles(s.map, pos, HERO_TELEPORT_DEST_RADIUS)) {
+  if (circleOverlapsMapObstacles(s.map, pos, HERO_TELEPORT_DEST_RADIUS, structureObstacleFootprints(s))) {
     return "Teleport destination is blocked.";
   }
   return null;
@@ -254,7 +260,7 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   s.hero.moveWaypoints.length = 0;
   s.hero.claimChannelTarget = null;
   s.hero.claimChannelTicksRemaining = 0;
-  resolveCircleAgainstMapObstacles(s.map, s.hero, HERO_MAP_OBSTACLE_RADIUS);
+  resolveCircleAgainstMapObstacles(s.map, s.hero, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
   for (const u of carried) {
     u.x += dx;
     u.z += dz;

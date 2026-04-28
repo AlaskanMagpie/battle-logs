@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { KEEP_ID } from "../game/constants";
+import { KEEP_ID, STRUCTURE_MESH_VISUAL_SCALE } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
@@ -152,7 +152,8 @@ function pickFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | 
   return classFiles[idx % classFiles.length] ?? classFiles[0] ?? null;
 }
 
-function attackPlaybackSeconds(kind: UnitSizeClass | "hero"): number | undefined {
+function attackPlaybackSeconds(kind: UnitSizeClass | "hero", producedUnitId?: string): number | undefined {
+  if (producedUnitId === "amber_geode_monks") return 2.12;
   // Never compress attack clips to sim cooldowns. Short Meshy attacks need extra
   // visual recovery so anticipation/release/follow-through can read on screen.
   switch (kind) {
@@ -165,7 +166,7 @@ function attackPlaybackSeconds(kind: UnitSizeClass | "hero"): number | undefined
     case "Titan":
       return 3.35;
     case "hero":
-      return 1.1;
+      return 1.48;
   }
 }
 
@@ -179,6 +180,9 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
     // Verdant Titan locomotion GLB is authored as Monster_Walk; stretch slightly for a heavier field read.
     if (file.includes("verdant_gatekeeper_titan_run")) playback *= 1.1;
     if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.45);
+    if (file.includes("starbound_arcanist_hero")) {
+      playback = Math.max(playback, 1.1);
+    }
     return playback;
   }
   const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
@@ -192,12 +196,40 @@ function setLoopPlayback(action: THREE.AnimationAction, clip: THREE.AnimationCli
   action.timeScale = clip.duration / Math.max(0.05, playback);
 }
 
-function safeClip(clip: THREE.AnimationClip): THREE.AnimationClip {
-  // Meshy exports often include scale keys that fight our class-based GLB normalization.
-  // Keep bone position tracks: these clips use them heavily for hips/limbs, so stripping
-  // them makes runs and attacks look like a single held frame instead of a full sequence.
-  const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
+/** Last path segment for `BoneName.position` / nested bone tracks. */
+function boneLeafFromPositionTrack(trackName: string): string {
+  const path = trackName.replace(/\.position$/i, "");
+  const dot = path.lastIndexOf(".");
+  return dot >= 0 ? path.slice(dot + 1) : path;
+}
+
+/**
+ * Run/walk clips often bake root translation on **Hips.position** (forward/side drift in place).
+ * We already drive world XY from the sim; keeping those keys fights the unit root and reads as
+ * horizontal jitter (especially Line / Meshy exports).
+ * Preserve Y so vertical bounce from the authored cycle remains.
+ */
+function stripHipsHorizontalTranslation(clip: THREE.AnimationClip): THREE.AnimationClip {
+  const tracks = clip.tracks.map((track) => {
+    if (!track.name.endsWith(".position")) return track;
+    if (!/hips$/i.test(boneLeafFromPositionTrack(track.name))) return track;
+    if (!(track instanceof THREE.VectorKeyframeTrack)) return track;
+    const values = Float32Array.from(track.values);
+    for (let i = 0; i < values.length; i += 3) {
+      values[i] = 0;
+      values[i + 2] = 0;
+    }
+    return new THREE.VectorKeyframeTrack(track.name, Array.from(track.times), Array.from(values));
+  });
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+
+function safeClip(clip: THREE.AnimationClip, stripHipsRootXZ = false): THREE.AnimationClip {
+  // Meshy exports often include scale keys that fight our class-based GLB normalization.
+  const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
+  let out = new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  if (stripHipsRootXZ) out = stripHipsHorizontalTranslation(out);
+  return out;
 }
 
 function movingTrackCount(clip: THREE.AnimationClip): number {
@@ -218,14 +250,24 @@ function movingTrackCount(clip: THREE.AnimationClip): number {
 function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, clip: THREE.AnimationClip): number {
   if (movingTrackCount(clip) <= 0) return 0;
   const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const starbound = file.includes("starbound_arcanist_hero");
   let score = 0;
   if (role === "run") {
-    if (/\b(run|running|sprint|runfast|fast)\b/.test(hay)) score += 100;
+    if (/\b(run|running|sprint|runfast|fast|jog)\b/.test(hay)) score += 100;
     if (/\b(walk|walking)\b/.test(hay)) score += 30;
+    if (starbound) {
+      if (/\b(kick|spell|mage|cast|dance|flip|jump|spin|taunt|wave|celebrate|yoga|stretch)\b/.test(hay)) score -= 260;
+      if (/\b(attack|slash|strike|combo|fireball|magic)\b/.test(hay)) score -= 200;
+      if (/\b(idle|stance|guard)\b/.test(hay)) score -= 120;
+    }
   } else if (role === "idle") {
     if (/\b(combat[_\s-]?stance|stance|idle|ready|guard)\b/.test(hay)) score += 100;
     if (/\b(walk|walking)\b/.test(hay)) score += 25;
     if (clip.duration < 0.08) score -= 60;
+    if (starbound) {
+      if (/\b(run|running|sprint|jog)\b/.test(hay)) score -= 140;
+      if (/\b(kick|spell|mage|cast|dance|flip|jump|attack|slash)\b/.test(hay)) score -= 180;
+    }
   } else if (role === "attack") {
     if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 100;
     if (file.includes("starbound_arcanist_hero") && /\b(mage|spell|soell|cast)\b/.test(hay)) score += 180;
@@ -253,6 +295,54 @@ function clipForRole(
     }
   }
   return bestScore > 0 ? best : null;
+}
+
+const STARBOUND_HERO_MARKER = "starbound_arcanist_hero";
+
+function isStarboundHeroFile(file: string): boolean {
+  return file.toLowerCase().includes(STARBOUND_HERO_MARKER);
+}
+
+/** Spell / kick / dance flourishes for strike roulette — excludes plain locomotion clips by name. */
+function isHeroStrikeRouletteClip(clip: THREE.AnimationClip): boolean {
+  if (movingTrackCount(clip) < 2) return false;
+  const hay = clip.name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (/\b(death|die|dying|fall|falling)\b/.test(hay)) return false;
+  const loco = /\b(walk|walking|run|running|sprint|jog)\b/.test(hay);
+  const flourish =
+    /\b(spell|cast|mage|magic|kick|flip|jump|attack|slash|strike|combo|dance|spin|fire|wave|summon|portal)\b/.test(hay);
+  if (loco && !flourish) return false;
+  return true;
+}
+
+function registerStarboundHeroStrikePool(
+  parent: THREE.Object3D,
+  mixer: THREE.AnimationMixer,
+  animations: THREE.AnimationClip[],
+  file: string,
+  excludedClipNames: Set<string>,
+  attackPlaybackFloor: number,
+): void {
+  if (!isStarboundHeroFile(file) || !animations.length) return;
+  const strikeActions: THREE.AnimationAction[] = [];
+  const strikeDurations: number[] = [];
+  for (const raw of animations) {
+    if (excludedClipNames.has(raw.name)) continue;
+    if (!isHeroStrikeRouletteClip(raw)) continue;
+    const clip = safeClip(raw);
+    const action = mixer.clipAction(clip);
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = false;
+    action.enabled = false;
+    action.setEffectiveWeight(0);
+    const playback = Math.max(clip.duration, attackPlaybackFloor, 1.32);
+    action.timeScale = clip.duration / Math.max(0.05, playback);
+    strikeActions.push(action);
+    strikeDurations.push(playback);
+  }
+  if (!strikeActions.length) return;
+  parent.userData["glbHeroStrikeActions"] = strikeActions;
+  parent.userData["glbHeroStrikeDurations"] = strikeDurations;
 }
 
 function rigSummary(root: THREE.Object3D): { skinnedMeshes: number; bones: number } {
@@ -408,25 +498,46 @@ function pickFile(seed: number, files: string[]): string | null {
   return files[seed % files.length] ?? null;
 }
 
-/** Team albedo push so GLBs keep an immediate blue-vs-red read (multiply + slight anchor lerp). */
+/**
+ * Strong blue-vs-red team read on unit GLBs (works at long zoom where albedo alone mushes together).
+ * Touches any mesh material with a `color` (Standard/Physical/Phong/Lambert/Toon/Basic/Matcap),
+ * not only MeshStandardMaterial — many exports use Basic or Toon and were skipping tint entirely.
+ */
+function applyTeamTintToMaterial(mat: THREE.Material, team: TeamId): void {
+  if (mat instanceof THREE.ShaderMaterial) return;
+  const m = mat as THREE.MeshBasicMaterial & {
+    emissive?: THREE.Color;
+    emissiveIntensity?: number;
+  };
+  if (!m.color?.isColor) return;
+
+  const mul =
+    team === "enemy"
+      ? new THREE.Color(1.48, 0.35, 0.52)
+      : new THREE.Color(0.45, 0.92, 1.48);
+  const anchor = team === "enemy" ? new THREE.Color(0xff2438) : new THREE.Color(0x1f8fff);
+  const lerpAmt = team === "enemy" ? 0.52 : 0.44;
+
+  m.color.multiply(mul);
+  m.color.lerp(anchor, lerpAmt);
+
+  if (m.emissive?.isColor) {
+    const emTarget = team === "enemy" ? new THREE.Color(0x4a0a18) : new THREE.Color(0x082a52);
+    m.emissive.lerp(emTarget, team === "enemy" ? 0.42 : 0.34);
+    if (typeof m.emissiveIntensity === "number") {
+      m.emissiveIntensity = Math.max(m.emissiveIntensity, team === "enemy" ? 0.16 : 0.14);
+    }
+  }
+}
+
 function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
-  const mul = team === "enemy" ? new THREE.Color(1.22, 0.62, 0.82) : new THREE.Color(0.82, 0.96, 1.08);
-  const anchor = team === "enemy" ? new THREE.Color(0xff3f7f) : new THREE.Color(0x6ec9ff);
-  const lerp = team === "enemy" ? 0.24 : 0.13;
   root.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh || !m.material) return;
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const raw of mats) {
-      const mat = raw as THREE.MeshStandardMaterial;
-      if (mat.isMeshStandardMaterial && mat.color) {
-        mat.color.multiply(mul);
-        mat.color.lerp(anchor, lerp);
-        if (team === "enemy" && mat.emissive) {
-          mat.emissive.lerp(new THREE.Color(0x6c1234), 0.22);
-          mat.emissiveIntensity = Math.max(mat.emissiveIntensity ?? 0, 0.08);
-        }
-      }
+      if (!raw) continue;
+      applyTeamTintToMaterial(raw, team);
     }
   });
 }
@@ -534,12 +645,14 @@ async function attachGlbByFile(
     parent.userData["glbExtentBasis"] = extentBasis;
     parent.userData["glbTriangleCount"] = template.triangleCount;
     parent.userData["glbClampChecksRemaining"] = 2;
+    const strikeExcludeClipNames = new Set<string>();
     let mixer: THREE.AnimationMixer | null = null;
     if (template.animations.length > 0) {
       const clipRaw = clipForRole(template.animations, "run", file);
       if (clipRaw) {
+        strikeExcludeClipNames.add(clipRaw.name);
         mixer = new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw);
+        const clip = safeClip(clipRaw, true);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopRepeat, Infinity);
         setLoopPlayback(action, clip, "run", file);
@@ -559,8 +672,9 @@ async function attachGlbByFile(
       const idleTemplate = idleFile === file ? template : await loadGltfTemplate(`/assets/units/${idleFile}`);
       const clipRaw = clipForRole(idleTemplate.animations, "idle", idleFile);
       if (clipRaw) {
+        strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw);
+        const clip = safeClip(clipRaw, true);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopRepeat, Infinity);
         setLoopPlayback(action, clip, "idle", idleFile);
@@ -570,10 +684,12 @@ async function attachGlbByFile(
         parent.userData["glbIdleAction"] = action;
       }
     }
+    const attackPlaybackFloor = Math.max(opts?.attackPlaybackSeconds ?? 1.48, 1.48);
     if (opts?.attackFile) {
       const attackTemplate = await loadGltfTemplate(`/assets/units/${opts.attackFile}`);
       const clipRaw = clipForRole(attackTemplate.animations, "attack", opts.attackFile);
       if (clipRaw) {
+        strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
         const clip = safeClip(clipRaw);
         const action = mixer.clipAction(clip);
@@ -581,7 +697,7 @@ async function attachGlbByFile(
         action.clampWhenFinished = false;
         action.enabled = false;
         action.setEffectiveWeight(0);
-        const playback = Math.max(clip.duration, opts.attackPlaybackSeconds ?? clip.duration);
+        const playback = Math.max(clip.duration, attackPlaybackFloor);
         action.timeScale = clip.duration / Math.max(0.05, playback);
         parent.userData["glbMixer"] = mixer;
         parent.userData["glbAttackAction"] = action;
@@ -592,6 +708,7 @@ async function attachGlbByFile(
       const deathTemplate = await loadGltfTemplate(`/assets/units/${opts.deathFile}`);
       const clipRaw = clipForRole(deathTemplate.animations, "death", opts.deathFile);
       if (clipRaw) {
+        strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
         const clip = safeClip(clipRaw);
         const action = mixer.clipAction(clip);
@@ -603,6 +720,9 @@ async function attachGlbByFile(
         parent.userData["glbDeathAction"] = action;
         parent.userData["glbDeathDuration"] = Math.min(clip.duration, 1.25);
       }
+    }
+    if (mixer && isStarboundHeroFile(file) && template.animations.length) {
+      registerStarboundHeroStrikePool(parent, mixer, template.animations, file, strikeExcludeClipNames, attackPlaybackFloor);
     }
     if (mixer) mixer.update(0);
     parent.userData["glbAnimationReady"] = !!mixer;
@@ -661,6 +781,7 @@ export async function attachGlbForClass(
   const parent = placeholder.parent ?? placeholder;
   parent.userData["sizeClass"] = kind;
   if (teamTint) parent.userData["team"] = teamTint;
+  if (producedUnitId) parent.userData["producedUnitId"] = producedUnitId;
   const roleLabel =
     producedUnitId !== undefined && producedUnitId.length > 0 ? `${kind}:${producedUnitId}` : kind;
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
@@ -668,7 +789,7 @@ export async function attachGlbForClass(
     attackFile: attackFileForUnit(kind, producedUnitId, m),
     idleFile: idleFileForUnit(kind, producedUnitId, m),
     deathFile: deathFileForUnit(kind, producedUnitId, m),
-    attackPlaybackSeconds: attackPlaybackSeconds(kind),
+    attackPlaybackSeconds: attackPlaybackSeconds(kind, producedUnitId),
     animationRoleLabel: roleLabel,
     keepPlaceholderHidden: true,
   });
@@ -689,8 +810,8 @@ export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = 
   await attachGlbForClass("hero", placeholder, 3.0, team);
 }
 
-/** Player towers: canonical max extent. Titan units use the same target, lower classes step down. */
-export const TOWER_GLB_TARGET_EXTENT = unitMeshLinearSize("Titan");
+/** Player towers: canonical max extent (matches `structureDims` battle scale). */
+export const TOWER_GLB_TARGET_EXTENT = unitMeshLinearSize("Titan") * STRUCTURE_MESH_VISUAL_SCALE;
 
 /**
  * First 10 structure catalog ids map 1:1 to `manifest.json` `files[0..9]` once the
@@ -747,6 +868,7 @@ export async function requestGlbForTower(catalogId: string, placeholder: THREE.M
   if (!file) return;
   await attachGlbByFile(file, placeholder, TOWER_GLB_TARGET_EXTENT, {
     hideSilhouetteUserDataKey: "structureSilhouette",
+    keepPlaceholderHidden: true,
   });
 }
 

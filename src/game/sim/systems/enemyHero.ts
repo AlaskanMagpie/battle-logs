@@ -47,6 +47,7 @@ import {
 } from "../../state";
 import { isStructureEntry } from "../../types";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
+import { structureObstacleFootprints } from "../../structureObstacles";
 import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap, claimFluxRewardForTap } from "./homeDistance";
@@ -80,7 +81,7 @@ function moveEnemyHeroToward(s: GameState): void {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
-  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
 }
 
 /** In-range inactive tap for channeling; prefers enemy wedge when tied in radius. */

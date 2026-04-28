@@ -45,6 +45,17 @@ html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn {
 * {
   box-sizing: border-box;
 }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 :root {
   /* In-match doctrine tray — taller cap so compact cards read more like previews. */
   --doctrine-tray-h: clamp(168px, min(52dvh, calc(28vw + 96px)), 460px);
@@ -500,11 +511,11 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex-wrap: nowrap;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
   max-width: none;
-  margin: 0 0 3px;
-  padding: 0 0 4px;
+  margin: 0 0 10px;
+  padding: 0 0 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   overflow-x: auto;
   overflow-y: hidden;
@@ -517,11 +528,11 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex: 0 0 auto;
   width: auto;
   min-width: 0;
-  min-height: 72px;
+  min-height: 48px;
   justify-content: center;
   text-align: center;
-  padding-left: clamp(4px, 1vmin, 8px);
-  padding-right: clamp(4px, 1vmin, 8px);
+  padding-left: clamp(3px, 0.8vmin, 6px);
+  padding-right: clamp(3px, 0.8vmin, 6px);
 }
 
 .hud-chrome > .hud-match-side-controls .hud-btn--ghost {
@@ -572,11 +583,12 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 8px 9px 7px;
-  min-width: 76px;
-  max-width: 84px;
-  border-radius: 12px;
+  gap: 3px;
+  padding: 4px 6px 4px;
+  min-width: 54px;
+  max-width: 72px;
+  min-height: 48px;
+  border-radius: 10px;
 }
 .hud-dock__msg {
   flex: 1 1 160px;
@@ -745,37 +757,155 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  background: rgba(6, 10, 16, 0.62);
-  backdrop-filter: blur(3px);
+  padding: clamp(10px, 2vmin, 24px);
+  background:
+    radial-gradient(80% 80% at 50% 50%, rgba(32, 52, 72, 0.22), transparent 62%),
+    rgba(2, 5, 9, 0.78);
+  backdrop-filter: blur(5px) saturate(1.08);
+  -webkit-backdrop-filter: blur(5px) saturate(1.08);
 }
 .hud-endgame[hidden] {
   display: none !important;
 }
 .hud-endgame-panel {
-  width: min(420px, 100%);
-  border-radius: 14px;
-  padding: 22px 22px 18px;
-  background: linear-gradient(165deg, #1a2230, #121820);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 48px #000a;
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: min(92vmin, 1024px);
+  max-width: calc(100vw - 20px);
+  max-height: calc(100dvh - 20px);
+  padding: 0;
+  border-radius: clamp(18px, 2.6vmin, 34px);
+  background: transparent;
+  border: 0;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
 }
-.hud-endgame-title {
-  margin: 0 0 10px;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+.hud-endgame-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 .hud-endgame-stats {
-  margin: 0 0 18px;
-  font-size: 0.95rem;
-  line-height: 1.45;
-  opacity: 0.92;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  color: #f3eadc;
+  font-family: Georgia, "Times New Roman", serif;
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 10px rgba(122, 190, 255, 0.24);
+  pointer-events: none;
+}
+.hud-endgame-stat {
+  position: absolute;
+  left: 54%;
+  width: 34%;
+  height: 3.75%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+.hud-endgame-stat dt {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.hud-endgame-stat dd {
+  margin: 0;
+  font-size: clamp(13px, 2.35vmin, 25px);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #f8f2e6;
+}
+.hud-endgame--lose .hud-endgame-stat dd {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 10px rgba(255, 104, 76, 0.24);
+}
+.hud-endgame-stat--time {
+  top: 22.5%;
+}
+.hud-endgame-stat--score {
+  top: 28.0%;
+}
+.hud-endgame-stat--best {
+  top: 33.5%;
+}
+.hud-endgame-stat--structures-built {
+  top: 39.0%;
+}
+.hud-endgame-stat--structures-lost {
+  top: 44.5%;
+}
+.hud-endgame-stat--units-produced {
+  top: 50.0%;
+}
+.hud-endgame-stat--units-lost {
+  top: 55.5%;
+}
+.hud-endgame-stat--enemy-kills {
+  top: 61.0%;
+}
+.hud-endgame-stat--commands-cast {
+  top: 66.5%;
+}
+.hud-endgame-stat--salvage-recovered {
+  top: 72.0%;
 }
 .hud-endgame-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.hud-endgame-action {
+  position: absolute;
+  /* Inset to match the inner lit plates on end-victory / end-defeat art (frames are wider/taller). */
+  top: 84.15%;
+  height: 7.45%;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.hud-endgame-action--rematch {
+  left: 11.65%;
+  width: 35.45%;
+}
+.hud-endgame-action--edit {
+  left: 52.75%;
+  width: 35.45%;
+}
+.hud-endgame-action:focus-visible {
+  outline: 2px solid rgba(122, 205, 255, 0.98);
+  outline-offset: 4px;
+  box-shadow: 0 0 22px rgba(76, 172, 255, 0.55);
+}
+.hud-endgame-action:hover {
+  background: rgba(122, 205, 255, 0.08);
+}
+.hud-endgame--lose .hud-endgame-action:hover {
+  background: rgba(255, 110, 82, 0.08);
 }
 .hud-btn--primary {
   font-weight: 650;
@@ -1014,6 +1144,8 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 
 .doctrine-track--rail .slot-hotkey {
+  left: 50%;
+  transform: translateX(-50%);
   font-size: 11px;
   padding: 2px 6px;
 }
@@ -1497,6 +1629,257 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 .doctrine-card-compact.tcg {
   flex: 0 0 auto;
+}
+
+.tcg--slot-preview {
+  aspect-ratio: var(--tcg-card-aspect);
+  color: #eef6ff;
+  filter: saturate(1.06) contrast(1.03);
+}
+
+.tcg--slot-preview .slot-card-shell {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(3px, 3.6cqi, 7px);
+  border-radius: clamp(8px, 8cqi, 14px);
+  background:
+    linear-gradient(180deg, hsla(var(--tcg-h), 70%, 46%, 0.32), transparent 28%),
+    radial-gradient(110% 72% at 50% 0%, #26334a 0%, #111722 58%, #06080d 100%);
+  border: 1px solid hsla(var(--tcg-h), 64%, 66%, 0.48);
+  box-shadow:
+    0 9px 20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.tcg--slot-preview .slot-card-shell::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background: linear-gradient(124deg, rgba(255, 255, 255, 0.18), transparent 34%, transparent 70%, rgba(255, 255, 255, 0.06));
+  mix-blend-mode: screen;
+  opacity: 0.48;
+  z-index: 9;
+}
+
+.tcg--slot-preview .slot-card-art {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: clamp(6px, 6cqi, 12px);
+  overflow: hidden;
+  background: #080b11;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.7);
+}
+
+.tcg--slot-preview .slot-card-art > .dm-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.tcg--slot-preview .slot-card-art .tcg-card-preview-img,
+.tcg--slot-preview .slot-card-art .tcg-portrait-fallback,
+.tcg--slot-preview .slot-card-art .tcg-portrait-svg,
+.tcg--slot-preview .slot-card-art .tcg-portrait-fallback--spell,
+.tcg--slot-preview .slot-card-art .spell-card-portrait-under,
+.tcg--slot-preview .slot-card-art .spell-card-viz {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tcg--slot-preview .slot-card-art .tcg-card-preview-img {
+  object-fit: cover;
+  z-index: 2;
+}
+
+.tcg--slot-preview .slot-card-art .tcg-portrait-fallback {
+  min-height: 0;
+}
+
+.tcg--slot-preview .slot-card-scrim {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background:
+    radial-gradient(80% 48% at 50% 50%, rgba(3, 5, 10, 0.12), rgba(3, 5, 10, 0.44) 72%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.36), transparent 26%, transparent 58%, rgba(0, 0, 0, 0.66));
+}
+
+.slot-card-mana,
+.slot-card-type,
+.slot-card-cd,
+.slot-card-stat {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.78);
+  pointer-events: none;
+}
+
+.slot-card-mana {
+  left: clamp(4px, 4.2cqi, 8px);
+  top: clamp(4px, 4.2cqi, 8px);
+  min-width: clamp(20px, 20cqi, 34px);
+  height: clamp(18px, 18cqi, 30px);
+  padding: 0 clamp(5px, 5cqi, 9px);
+  border-radius: 999px;
+  font-size: clamp(9px, 11cqi, 14px);
+  font-weight: 950;
+  color: #fff7d9;
+  background:
+    radial-gradient(circle at 34% 24%, #fff4a8, hsl(var(--tcg-h), 74%, 42%) 54%, #06070c 100%);
+  border: 1px solid rgba(255, 245, 170, 0.7);
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+}
+
+.slot-card-type,
+.slot-card-cd {
+  right: clamp(4px, 4.2cqi, 8px);
+  padding: 2px clamp(5px, 5cqi, 9px);
+  border-radius: 999px;
+  border: 1px solid rgba(220, 235, 255, 0.36);
+  background: rgba(5, 8, 15, 0.72);
+  color: #eaf5ff;
+  font-size: clamp(6px, 7.4cqi, 10px);
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.slot-card-type {
+  top: clamp(4px, 4.2cqi, 8px);
+}
+
+.slot-card-cd {
+  top: clamp(24px, 24cqi, 38px);
+  color: #d9e7ff;
+}
+
+.slot-card-stats {
+  position: absolute;
+  z-index: 6;
+  left: clamp(5px, 5.2cqi, 10px);
+  right: clamp(5px, 5.2cqi, 10px);
+  top: 49%;
+  transform: translateY(-50%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(2px, 2.4cqi, 5px);
+  pointer-events: none;
+}
+
+.slot-card-stat {
+  position: relative;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding: clamp(2px, 2.8cqi, 5px) clamp(2px, 3cqi, 6px);
+  border-radius: clamp(5px, 5cqi, 9px);
+  border: 1px solid rgba(245, 250, 255, 0.28);
+  background: rgba(4, 7, 12, 0.72);
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.slot-card-stat b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(8px, 9.2cqi, 13px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.slot-card-stat small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: clamp(5px, 5.4cqi, 8px);
+  line-height: 1;
+  opacity: 0.82;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+}
+
+.slot-card-stat--hp b,
+.slot-card-stat--mana b {
+  color: #bfffd2;
+}
+.slot-card-stat--build b,
+.slot-card-stat--cd b {
+  color: #cfe0ff;
+}
+.slot-card-stat--prod b,
+.slot-card-stat--salv b {
+  color: #ffd58a;
+}
+.slot-card-stat--batch b,
+.slot-card-stat--uses b,
+.slot-card-stat--effect b {
+  color: #f4d5ff;
+}
+
+.slot-card-title,
+.slot-card-subtitle {
+  position: relative;
+  z-index: 6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.slot-card-title {
+  margin-top: clamp(3px, 3cqi, 6px);
+  color: #f7fbff;
+  font-size: clamp(9px, 12cqi, 16px);
+  font-weight: 950;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.slot-card-subtitle {
+  margin-top: 1px;
+  color: rgba(215, 229, 255, 0.86);
+  font-size: clamp(5.5px, 6.4cqi, 9px);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.slot-card-shell--empty {
+  justify-content: center;
+  filter: saturate(0.56) brightness(0.72);
+}
+
+.slot-card-art--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  color: rgba(220, 230, 245, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055) 0 10px, transparent 10px 20px),
+    #080b11;
 }
 
 .tcg-plate {
@@ -6210,23 +6593,29 @@ button.hud-btn--armed::after {
 .hud-chrome {
   display: grid;
   grid-template-columns: minmax(310px, 0.9fr) minmax(580px, 1.35fr);
+  grid-template-rows: auto auto auto;
   align-items: start;
   gap: 8px 10px;
   overflow: visible;
 }
 
 .hud-chrome__cluster--main {
+  grid-column: 1;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-width: 0;
+  align-items: stretch;
 }
 
 .hud-chrome__cluster--status {
+  grid-column: 2;
+  grid-row: 2;
   display: grid;
   grid-template-columns: minmax(170px, 0.46fr) minmax(390px, 1fr);
   gap: 7px;
-  align-items: stretch;
+  align-items: start;
   min-width: 0;
 }
 
@@ -6262,6 +6651,7 @@ button.hud-btn--armed::after {
 .hud-chrome__objective,
 .hud-select-tag {
   grid-column: 1 / -1;
+  grid-row: 3;
 }
 
 @media (max-width: 1120px) {
@@ -6272,12 +6662,15 @@ button.hud-btn--armed::after {
     width: auto;
     max-width: none;
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
     gap: clamp(3px, 0.85vmin, 7px);
     align-items: stretch;
     font-size: clamp(10px, 2.5vmin, 13px);
   }
 
   .hud-chrome__cluster--main {
+    grid-column: 1;
+    grid-row: 2;
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
@@ -6308,11 +6701,18 @@ button.hud-btn--armed::after {
 
   /* Hostiles + Wizard/Keep on one row so the stack stays short and pinned to the top. */
   .hud-chrome__cluster--status {
+    grid-column: 1;
+    grid-row: 3;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
     gap: clamp(3px, 0.85vmin, 6px);
-    align-items: stretch;
+    align-items: start;
     min-width: 0;
+  }
+
+  .hud-chrome__objective,
+  .hud-select-tag {
+    grid-row: 4;
   }
 
   .hud-chrome__readout {
@@ -6377,20 +6777,20 @@ button.hud-btn--armed::after {
   }
 }
 
-/* Match rail: large clean command buttons (public/assets/hud). Functionality unchanged; dynamic line is `.hud-side-copy b`. */
+/* Match rail: compact command tiles (public/assets/hud). Dynamic line is `.hud-side-copy b`. */
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 8px 9px 7px;
-  min-width: 76px;
-  min-height: 72px;
-  max-width: 84px;
+  gap: 3px;
+  padding: 5px 6px 4px;
+  min-width: 58px;
+  min-height: 52px;
+  max-width: 72px;
   background: rgba(6, 12, 22, 0.88);
   border: 1px solid rgba(120, 190, 255, 0.5);
-  border-radius: 12px;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.34);
 }
 
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art.hud-btn--ghost {
@@ -6403,8 +6803,8 @@ button.hud-btn--armed::after {
 
 .hud-chrome > .hud-match-side-controls .hud-side-sprite {
   display: block;
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   aspect-ratio: 1;
   flex: 0 0 auto;
   margin: 0 auto;
@@ -6444,10 +6844,10 @@ button.hud-btn--armed::after {
   width: 100%;
   min-width: 0;
   margin: 0;
-  padding: 0 1px;
+  padding: 0;
   text-align: center;
-  font-size: 10px;
-  line-height: 1.08;
+  font-size: 9px;
+  line-height: 1.06;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(214, 228, 248, 0.92);
@@ -6465,4 +6865,256 @@ button.hud-btn--armed::after {
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art:focus-visible {
   outline: 2px solid rgba(126, 200, 255, 0.85);
   outline-offset: 2px;
+}
+
+/* Match HUD compact override: keep chrome readable without swallowing the battlefield. */
+.hud-chrome {
+  left: max(6px, env(safe-area-inset-left, 0px));
+  right: max(6px, env(safe-area-inset-right, 0px));
+  top: max(5px, env(safe-area-inset-top, 0px));
+  width: auto;
+  max-width: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 34vw) minmax(320px, 1fr);
+  grid-template-rows: auto auto auto;
+  gap: 4px 8px;
+  align-items: start;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  pointer-events: none;
+}
+
+.hud-chrome > * {
+  pointer-events: auto;
+}
+
+.hud-brand {
+  display: none;
+}
+
+.hud-chrome > .hud-match-side-controls {
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  max-width: 100%;
+  max-height: 44px;
+  margin: 0;
+  padding: 0;
+  gap: 4px;
+  border: 0;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+
+.hud-chrome > .hud-match-side-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn,
+.hud-chrome > .hud-match-side-controls #btn-captain {
+  width: clamp(36px, 4.3vw, 46px);
+  min-width: clamp(36px, 4.3vw, 46px);
+  max-width: clamp(36px, 4.3vw, 46px);
+  min-height: 42px;
+  max-height: 42px;
+  padding: 3px 2px;
+  border-radius: 7px;
+  gap: 1px;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-side-sprite {
+  width: 23px;
+  height: 23px;
+  margin: 0;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-side-copy b {
+  font-size: 8.5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-side-ico {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+}
+
+.hud-chrome__cluster--main {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  min-width: 0;
+  align-items: center;
+}
+
+.hud-chrome__stats {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hud-stat {
+  min-width: 38px;
+  min-height: 22px;
+  padding: 2px 5px;
+  gap: 3px;
+  border-radius: 6px;
+}
+
+.hud-stat__ico {
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+}
+
+.hud-stat__ico::before {
+  font-size: 8px;
+}
+
+.hud-stat__txt {
+  font-size: 6.5px;
+  line-height: 1;
+}
+
+.hud-stat strong {
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.hud-chrome__phase {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0 6px;
+  font-size: 8.5px;
+  border-radius: 6px;
+}
+
+.hud-chrome__cluster--status {
+  grid-column: 2;
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.42fr) minmax(250px, 1fr);
+  gap: 5px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.hud-chrome__readout {
+  min-height: 26px;
+  padding: 4px 7px;
+  gap: 5px;
+  border-radius: 7px;
+}
+
+.hud-status-card__ico,
+.hud-vital__ico {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+  font-size: 8px;
+}
+
+.hud-readout__hostiles {
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.hud-readout__camps {
+  display: none;
+}
+
+.hud-chrome__vitals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(124px, 1fr));
+  gap: 5px;
+}
+
+.hud-vital {
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 6px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  column-gap: 5px;
+  border-radius: 7px;
+}
+
+.hud-vital__lbl {
+  font-size: 7px;
+}
+
+.hud-vital .bar {
+  height: 5px;
+}
+
+.hud-vital strong {
+  min-width: 4.5em;
+  font-size: 9px;
+}
+
+.hud-chrome__objective,
+.hud-select-tag {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.hud-chrome__objective {
+  min-height: 23px;
+  margin: 0;
+  padding: 4px 8px;
+  gap: 6px;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.hud-chrome__objective-icon {
+  display: none;
+}
+
+.hud-chrome__objective-body {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.hud-chrome__objective-k {
+  margin: 0;
+  font-size: 7.5px;
+}
+
+.hud-chrome__objective-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+}
+
+@media (max-width: 900px) {
+  .hud-chrome {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .hud-chrome__cluster--status {
+    grid-column: 1;
+    grid-row: 3;
+    grid-template-columns: minmax(120px, 0.38fr) minmax(220px, 1fr);
+  }
+
+  .hud-chrome__objective,
+  .hud-select-tag {
+    grid-row: 4;
+  }
 }

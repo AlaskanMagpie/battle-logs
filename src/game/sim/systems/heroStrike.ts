@@ -1,14 +1,22 @@
 import {
+  HERO_ARCANE_SWEEP_CLUSTER_RADIUS,
+  HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT,
+  HERO_ARCANE_SWEEP_EVERY_STRIKES,
+  HERO_ARCANE_SWEEP_HALF_WIDTH,
+  HERO_ARCANE_SWEEP_LENGTH,
+  HERO_ARCANE_SWEEP_MIN_CLUSTER,
   HERO_ATTACK_COOLDOWN_TICKS,
   HERO_ATTACK_DAMAGE,
   HERO_ATTACK_RANGE,
   HERO_ATTACK_SWARM_MULT,
   HERO_STRIKE_NEAR_ENEMY_TAP_RADIUS,
   HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT,
+  SPELL_KNOCKBACK_SPEED,
 } from "../../constants";
 import { logGame } from "../../gameLog";
 import {
   emitHeroStrikeFx,
+  pushFx,
   recordDamageDealtBy,
   shatterTapAnchor,
   type GameState,
@@ -51,6 +59,165 @@ function emitPlayerHeroStrikeFx(
   emitHeroStrikeFx(s, target, from, strikeVariant, s.hero.strikeSequence);
 }
 
+/** Corridor test (same geometry as doctrine line / Cut Back) — duplicated to avoid importing `intents`. */
+function heroPointInCorridor(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  halfW: number,
+): boolean {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const ab2 = abx * abx + abz * abz;
+  const t = ab2 < 1e-8 ? 0 : Math.max(0, Math.min(1, (apx * abx + apz * abz) / ab2));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  const ddx = px - cx;
+  const ddz = pz - cz;
+  return ddx * ddx + ddz * ddz <= halfW * halfW;
+}
+
+function heroAimFromHero(hx: number, hz: number, aimX: number, aimZ: number): { ux: number; uz: number } {
+  let dx = aimX - hx;
+  let dz = aimZ - hz;
+  const d = Math.hypot(dx, dz);
+  if (d < 0.25) {
+    return { ux: 1, uz: 0 };
+  }
+  return { ux: dx / d, uz: dz / d };
+}
+
+function heroCorridorKnockNormal(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): { nx: number; nz: number } {
+  const abx = bx - ax;
+  const abz = bz - az;
+  const apx = px - ax;
+  const apz = pz - az;
+  const ab2 = abx * abx + abz * abz;
+  const t = ab2 < 1e-8 ? 0 : Math.max(0, Math.min(1, (apx * abx + apz * abz) / ab2));
+  const cx = ax + abx * t;
+  const cz = az + abz * t;
+  let nx = px - cx;
+  let nz = pz - cz;
+  const nlen = Math.hypot(nx, nz) || 1;
+  nx /= nlen;
+  nz /= nlen;
+  return { nx, nz };
+}
+
+function collectEnemyClusterNear(
+  s: GameState,
+  anchor: { x: number; z: number },
+  radius: number,
+): (typeof s.units)[0][] {
+  const r2 = radius * radius;
+  const out: (typeof s.units)[0][] = [];
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (dist2(u, anchor) <= r2) out.push(u);
+  }
+  return out;
+}
+
+/** Arcane corridor from the Wizard through the cluster centroid (Cut-Back–style). */
+function runHeroArcaneLineSweep(
+  s: GameState,
+  from: Vec2,
+  cluster: (typeof s.units)[0][],
+): void {
+  const h = s.hero;
+  let cx = 0;
+  let cz = 0;
+  for (const u of cluster) {
+    cx += u.x;
+    cz += u.z;
+  }
+  cx /= cluster.length;
+  cz /= cluster.length;
+  const hx = from.x;
+  const hz = from.z;
+  const { ux, uz } = heroAimFromHero(hx, hz, cx, cz);
+  const L = HERO_ARCANE_SWEEP_LENGTH;
+  const ex = hx + ux * L;
+  const ez = hz + uz * L;
+  const hw = HERO_ARCANE_SWEEP_HALF_WIDTH;
+
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (!heroPointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
+    const swarmMult = u.sizeClass === "Swarm" ? HERO_ATTACK_SWARM_MULT : 1;
+    const dealt = HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT * swarmMult;
+    u.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
+    const { nx, nz } = heroCorridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
+    applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED * 0.85);
+  }
+
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    if (!heroPointInCorridor(er.x, er.z, hx, hz, ex, ez, hw)) continue;
+    const dealt = HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT * 0.65;
+    er.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
+  }
+
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || st.hp <= 0) continue;
+    if (!heroPointInCorridor(st.x, st.z, hx, hz, ex, ez, hw)) continue;
+    const nearTapMult = enemyStructureNearEnemyOwnedTap(s, st) ? HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT : 1;
+    const dealt = HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT * 0.45 * nearTapMult;
+    st.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
+  }
+
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
+    if (!heroPointInCorridor(t.x, t.z, hx, hz, ex, ez, hw)) continue;
+    const dealt = HERO_ARCANE_SWEEP_DAMAGE_PER_UNIT * 0.42;
+    t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - dealt);
+    recordDamageDealtBy(s, "player", dealt);
+    if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
+  }
+
+  h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
+  emitPlayerHeroStrikeFx(s, { x: ex, z: ez }, from, "player_arcane_sweep");
+  pushFx(s, {
+    kind: "line_cleave",
+    x: ex,
+    z: ez,
+    fromX: hx,
+    fromZ: hz,
+    impactRadius: hw * 2,
+  });
+  pushFx(s, {
+    kind: "elemental_spell",
+    x: ex,
+    z: ez,
+    fromX: hx,
+    fromZ: hz,
+    element: "arcane",
+    secondaryElement: "air",
+    shape: "line",
+    reach: L,
+    width: hw * 2,
+    impactRadius: hw * 2,
+    visualSeed: s.tick + cluster.length * 19,
+  });
+  logGame("attack", `Wizard arcane sweep — ${cluster.length} clustered foes, line ${Math.round(L)}u`, s.tick);
+}
+
 /**
  * Player wizard strike resolution (auto-fire each tick when off cooldown). Caller must ensure
  * `s.hero.attackCooldownTicksRemaining === 0` before calling.
@@ -72,6 +239,18 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
       bestU = u;
     }
   }
+
+  const nextStrikeSeq = s.hero.strikeSequence + 1;
+  const sweepWindow =
+    nextStrikeSeq % HERO_ARCANE_SWEEP_EVERY_STRIKES === 0 && nextStrikeSeq >= HERO_ARCANE_SWEEP_EVERY_STRIKES;
+  if (sweepWindow && bestU) {
+    const cluster = collectEnemyClusterNear(s, bestU, HERO_ARCANE_SWEEP_CLUSTER_RADIUS);
+    if (cluster.length >= HERO_ARCANE_SWEEP_MIN_CLUSTER) {
+      runHeroArcaneLineSweep(s, from, cluster);
+      return { ok: true, tag: "unit" };
+    }
+  }
+
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? HERO_ATTACK_SWARM_MULT : 1;
     const dealt = HERO_ATTACK_DAMAGE * swarmMult;

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { FX_ABSOLUTE_MAX_LIFETIME_SEC } from "../game/constants";
+import { FX_ABSOLUTE_MAX_LIFETIME_SEC, PRODUCED_UNIT_AMBER_GEODE_MONKS } from "../game/constants";
 import type { AttackRangeBand, CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
 import type { SpellFxElement, SpellFxShape } from "../game/types";
 
@@ -721,10 +721,101 @@ function spawnElementalAoe(
 }
 
 /**
+ * Amber Geode Monks: sequential ground annuli along the strike line — reads as a rolling AoE shock, not a cone wedge.
+ */
+function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
+  const dx = m.tx - m.ax;
+  const dz = m.tz - m.az;
+  const dist = Math.hypot(dx, dz) || 1;
+  const reach = Math.max(1.05, Math.min(m.range * 1.08, dist + 0.55) * (m.wide ? 1.14 : 0.98));
+  const pal = elementalCombatPalette(m);
+  const seed = m.visualSeed;
+  const group = new THREE.Group();
+  group.position.set(m.ax, 0.07, m.az);
+  group.rotation.y = Math.atan2(dx, dz);
+
+  const ringCount = m.wide ? 7 : 5;
+  const rings: { mesh: THREE.Mesh; z: number; mat: THREE.MeshBasicMaterial }[] = [];
+  for (let i = 0; i < ringCount; i++) {
+    const t = (i + 1) / (ringCount + 1.25);
+    const z = reach * t * 0.94 + 0.38;
+    const outer = 0.48 + t * 1.62 + (m.wide ? 0.62 : 0.38) + rnd(seed, i + 11) * 0.2;
+    const inner = outer * 0.74;
+    const geo = new THREE.RingGeometry(inner, outer, 40);
+    const mat = new THREE.MeshBasicMaterial({
+      color: i % 2 === 0 ? pal.core : pal.glow,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(0, 0.04, z);
+    rings.push({ mesh, z, mat });
+    group.add(mesh);
+  }
+
+  const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
+  const nSpark = m.wide ? 14 : 10;
+  for (let i = 0; i < nSpark; i++) {
+    const u = rnd(seed, i + 90);
+    const v = rnd(seed, i + 190);
+    const z0 = 0.4 + u * reach * 0.92;
+    const ang = v * Math.PI * 2;
+    const rad = 0.15 + rnd(seed, i + 290) * (0.55 + (m.wide ? 0.45 : 0.25));
+    const g = new THREE.SphereGeometry(0.038 + rnd(seed, i + 390) * 0.04, 4, 3);
+    const mat = new THREE.MeshBasicMaterial({
+      color: i % 3 === 0 ? pal.spark : pal.rim,
+      transparent: true,
+      opacity: 0.55,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.position.set(Math.sin(ang) * rad, 0.16 + rnd(seed, i + 490) * 0.35, z0 + Math.cos(ang) * rad * 0.25);
+    const burst = 0.85 + rnd(seed, i + 590) * 1.6;
+    sparks.push({
+      mesh,
+      vx: Math.sin(ang) * burst * 0.35,
+      vz: burst * (0.55 + rnd(seed, i + 690) * 0.55),
+      vy: 0.9 + rnd(seed, i + 790) * 1.1,
+      mat,
+    });
+    group.add(mesh);
+  }
+
+  const life = 0.56;
+  const sigma2 = reach * reach * (m.wide ? 0.034 : 0.028) + 0.02;
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    const wave = p * (reach + 0.65);
+    for (const r of rings) {
+      const d = wave - r.z;
+      const bell = Math.exp(-(d * d) / sigma2);
+      r.mat.opacity = (m.wide ? 0.36 : 0.4) * bell * (1 - p * 0.38);
+    }
+    for (const s of sparks) {
+      s.mesh.position.x += s.vx * dt;
+      s.mesh.position.z += s.vz * dt;
+      s.mesh.position.y += s.vy * dt;
+      s.vy -= 5.5 * dt;
+      const sp = Math.min(1, t / life);
+      s.mat.opacity = 0.55 * (1 - sp * 0.92);
+    }
+  });
+}
+
+/**
  * Ground **cone** of elemental energy rooted on the attacker, opening toward the target.
  * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
  */
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
+  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS) {
+    spawnGeodeMonkForwardRings(host, m);
+    return;
+  }
   const dx = m.tx - m.ax;
   const dz = m.tz - m.az;
   const dist = Math.hypot(dx, dz);
@@ -1096,6 +1187,8 @@ function heroStrikeElementalPalette(v: HeroStrikeFxVariant | undefined, visualSe
   switch (v) {
     case "player_vs_unit":
       return { core: 0xb8a0ff, rim: 0xffffff, bolt: 0xf0e8ff, fork: 0xaaddff, cone: 0x8866ff };
+    case "player_arcane_sweep":
+      return { core: 0x66ccff, rim: 0xe8ffff, bolt: 0xffffff, fork: 0x44aaff, cone: 0x2266dd };
     case "player_vs_rival":
       return { core: 0xffaac8, rim: 0xffffff, bolt: 0xffeef8, fork: 0xff88cc, cone: 0xff4488 };
     case "player_vs_fortress":

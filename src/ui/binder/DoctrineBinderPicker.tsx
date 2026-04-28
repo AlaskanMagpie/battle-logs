@@ -6,6 +6,7 @@ import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
+import { QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
 import {
   buildReturnPortalUrlForPrematch,
   buildVibeJamExitUrlForPrematch,
@@ -18,7 +19,7 @@ import {
   onDoctrineCardPreviewHoverLeave,
   showDoctrineCardDetail,
 } from "../cardDetailPop";
-import { doctrineCardBody, tcgCardCompactHtml } from "../doctrineCard";
+import { doctrineSlotButtonInnerHtml, tcgCardSlotHtml } from "../doctrineCard";
 import { attachDoctrineHandPeek } from "../hud";
 import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
@@ -31,8 +32,15 @@ import {
   type CodexPointerDragEvent,
 } from "./CardBinderEngine";
 import { BinderLayoutCalibratePanel } from "./BinderLayoutCalibratePanel";
+import { BINDER_PREMATCH_GOALS_HTML, MATCH_HELP_INNER_HTML } from "../matchHelpContent";
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
 import "./binderPicker.css";
+
+/** Dev-only: 3D room layout sliders. No in-app entry point unless `?binderCalibrate=1` is in the URL. */
+function isBinderLayoutCalibrateMode(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("binderCalibrate") === "1";
+}
 
 const FULL_ART_STRUCTURE_CARD_IDS = [
   "outpost",
@@ -48,6 +56,8 @@ const LEGACY_MAP_URL_STORAGE_KEY = "signalWarsMapUrl";
 const validIds = new Set(BINDER_GRID_CATALOG_IDS);
 const validMapUrls = new Set(MAP_REGISTRY.map((m) => m.url));
 const MIN_FILLED = 4;
+/** Long-press on the tome hint strip to open goals + controls without resizing the 3D view. */
+const BINDER_HOWTO_HOLD_MS = 480;
 const QUICK_PICK_IDS: readonly string[] = [
   "outpost",
   "watchtower",
@@ -147,11 +157,8 @@ export function DoctrineBinderPicker({
     [portalContext],
   );
   const controlProfile = useMemo(() => getControlProfile(), []);
-  /** Sliders for codex + Vibe portal — open from match select, or land with `?binderCalibrate=1`. */
-  const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return new URLSearchParams(window.location.search).get("binderCalibrate") === "1";
-  });
+  const layoutCalibrateAllowed = useMemo(isBinderLayoutCalibrateMode, []);
+  const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(isBinderLayoutCalibrateMode);
 
   const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
   const initialPicker = useMemo(() => loadDoctrinePickerState(), []);
@@ -196,6 +203,11 @@ export function DoctrineBinderPicker({
   const [dragOverHandZone, setDragOverHandZone] = useState(false);
   const [portalTransitioning, setPortalTransitioning] = useState(false);
   const [portalExitConfirmOpen, setPortalExitConfirmOpen] = useState(false);
+  const [binderHowToOpen, setBinderHowToOpen] = useState(false);
+  const [tomeHintPressed, setTomeHintPressed] = useState(false);
+  const binderHowToOpenRef = useRef(false);
+  binderHowToOpenRef.current = binderHowToOpen;
+  const binderHowToHoldTimerRef = useRef<number | null>(null);
 
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
@@ -210,9 +222,55 @@ export function DoctrineBinderPicker({
     resetCardArtManifestCache();
   }, []);
 
+  const clearBinderHowToHoldTimer = useCallback(() => {
+    if (binderHowToHoldTimerRef.current != null) {
+      window.clearTimeout(binderHowToHoldTimerRef.current);
+      binderHowToHoldTimerRef.current = null;
+    }
+  }, []);
+
+  const onTomeHintPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (loading || binderHowToOpenRef.current) return;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      setTomeHintPressed(true);
+      clearBinderHowToHoldTimer();
+      binderHowToHoldTimerRef.current = window.setTimeout(() => {
+        binderHowToHoldTimerRef.current = null;
+        setTomeHintPressed(false);
+        setBinderHowToOpen(true);
+      }, BINDER_HOWTO_HOLD_MS);
+    },
+    [loading, clearBinderHowToHoldTimer],
+  );
+
+  const onTomeHintPointerEnd = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      setTomeHintPressed(false);
+      clearBinderHowToHoldTimer();
+    },
+    [clearBinderHowToHoldTimer],
+  );
+
+  useEffect(() => () => clearBinderHowToHoldTimer(), [clearBinderHowToHoldTimer]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
+        if (binderHowToOpenRef.current) {
+          e.preventDefault();
+          setBinderHowToOpen(false);
+          return;
+        }
         engineRef.current?.clearCodexCatalogSelection();
         setActiveDoctrineSlot(null);
         return;
@@ -461,7 +519,7 @@ export function DoctrineBinderPicker({
       b.querySelector(".slot-dup-count")?.remove();
 
       const hotkey = i === 9 ? "0" : String(i + 1);
-      b.innerHTML = `<span class="slot-hotkey">${hotkey}</span>${doctrineCardBody(i, id)}<div class="slot-live" id="picker-slot-live-${i}"></div>`;
+      b.innerHTML = doctrineSlotButtonInnerHtml(i, id, { variant: "picker", liveIdPrefix: "picker-slot-live" });
 
       if (!id) {
         b.classList.add("slot-empty");
@@ -729,8 +787,13 @@ export function DoctrineBinderPicker({
   }, []);
 
   const pickForMe = useCallback(() => {
-    const ids = QUICK_PICK_IDS.map((id) => (validIds.has(id) ? id : null));
-    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(ids));
+    const pool = QUICK_PICK_IDS.filter((id) => validIds.has(id));
+    if (!pool.length) return;
+    const filled: (string | null)[] = [];
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      filled.push(pool[i % pool.length]!);
+    }
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(filled));
     setActiveDoctrineSlot(null);
     setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
     setSlots(norm);
@@ -760,6 +823,34 @@ export function DoctrineBinderPicker({
       onStart(norm, mapUrl);
     })();
   }, [slots, binderSlotPick, onStart, mapUrl]);
+
+  const quickMatchAndStart = useCallback(() => {
+    if (loading || portalTransitioning) return;
+    const raw = padDoctrineSlotsLocal([...QUICK_MATCH_DOCTRINE_SLOTS]);
+    const norm = normalizeDoctrineSlotsForMatch(raw);
+    if (norm.filter(Boolean).length < MIN_FILLED) return;
+    const emptyPick = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null as number | null);
+    const sorted = sortPickerHandByFluxCost(norm, emptyPick);
+    const finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
+    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    setActiveDoctrineSlot(null);
+    setBinderSlotPick(sorted.binderPick);
+    setSlots(finalSlots);
+    setMapUrl(mapPick.url);
+    saveDoctrinePickerState(finalSlots, sorted.binderPick);
+    try {
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setPrematchSetupOpen(false);
+    setPortalTransitioning(true);
+    void (async () => {
+      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+      onStart(finalSlots, mapPick.url);
+    })();
+  }, [loading, portalTransitioning, onStart]);
   useEffect(() => {
     if (loading) return;
     let shouldPlay = false;
@@ -786,15 +877,6 @@ export function DoctrineBinderPicker({
               Loading…
             </div>
           ) : null}
-          {!loading ? (
-            <div
-              className="binder-picker-tome-hint"
-              role="status"
-              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB looks around the portal room within a small range. Double-click for full rules. Match select: Prev/Next."
-            >
-              Tap card · Esc / empty page clears · drag to hand · edges turn pages
-            </div>
-          ) : null}
           <canvas
             ref={canvasRef}
             className="binder-picker-canvas"
@@ -813,36 +895,258 @@ export function DoctrineBinderPicker({
             }}
             onContextMenu={(e) => e.preventDefault()}
           />
+          {!loading ? (
+            <>
+              <div
+                className={[
+                  "binder-picker-tome-hint",
+                  tomeHintPressed ? "binder-picker-tome-hint--pressed" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                role="button"
+                tabIndex={0}
+                aria-haspopup="dialog"
+                aria-expanded={binderHowToOpen}
+                title="Codex: tap a card for outline; Esc or empty page clears. Drag to the bottom hand; cards sort by cost. Hold ~0.4s on a card to lift. Page peel on outer strips; RMB/MMB looks around the room. Hold this strip for match goals and controls."
+                onPointerDown={onTomeHintPointerDown}
+                onPointerUp={onTomeHintPointerEnd}
+                onPointerCancel={onTomeHintPointerEnd}
+                onPointerLeave={onTomeHintPointerEnd}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setBinderHowToOpen(true);
+                  }
+                }}
+              >
+                Tap card · Esc / empty page clears · drag to hand · edges turn pages · Hold here for how to play
+              </div>
+              {binderHowToOpen ? (
+                <div
+                  className="binder-picker-howto-overlay"
+                  role="presentation"
+                  onClick={() => setBinderHowToOpen(false)}
+                >
+                  <div
+                    className="binder-picker-howto-overlay__panel"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="binder-howto-title"
+                    onClick={(ev) => ev.stopPropagation()}
+                  >
+                    <div className="binder-picker-howto-overlay__head">
+                      <h2 id="binder-howto-title" className="binder-picker-howto-overlay__title">
+                        How to play
+                      </h2>
+                      <button
+                        type="button"
+                        className="binder-picker-howto-overlay__close"
+                        aria-label="Close"
+                        onClick={() => setBinderHowToOpen(false)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div
+                      className="binder-help-goals-wrap"
+                      dangerouslySetInnerHTML={{ __html: BINDER_PREMATCH_GOALS_HTML }}
+                    />
+                    <h3 className="binder-picker-howto-overlay__sub">Controls</h3>
+                    <div
+                      className="binder-help-controls-wrap"
+                      dangerouslySetInnerHTML={{ __html: MATCH_HELP_INNER_HTML }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : null}
         </div>
 
         {!loading ? (
-          <div
-            ref={doctrineStripHitRef}
-            className={[
-              "doctrine-wrap doctrine-wrap--rail binder-picker-doctrine-wrap",
-              dragOverHandZone ? "binder-picker-doctrine-hand--drag-over" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            <div className="binder-picker-hand-zone">
-              <div className="doctrine-view">
-                <div
-                  ref={handTrackRef}
-                  className="doctrine-track doctrine-track--hand doctrine-track--deck10 doctrine-track--rail"
-                  id="doctrine-picker-hand-track"
-                  role="grid"
-                  aria-label="Doctrine hand — drop codex cards anywhere in this bottom strip; cards sort by cost"
-                  aria-rowcount={1}
-                >
+          <div className="binder-picker-prematch-bottom">
+            <div
+              ref={doctrineStripHitRef}
+              className={[
+                "doctrine-wrap doctrine-wrap--rail binder-picker-doctrine-hand-rail",
+                dragOverHandZone ? "binder-picker-doctrine-hand--drag-over" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <div className="binder-picker-hand-zone">
+                <div className="doctrine-view">
                   <div
-                    ref={handRowRef}
-                    className="doctrine-hand doctrine-hand--match"
-                    role="row"
-                    aria-rowindex={1}
-                  />
+                    ref={handTrackRef}
+                    className="doctrine-track doctrine-track--hand doctrine-track--deck10 doctrine-track--rail"
+                    id="doctrine-picker-hand-track"
+                    role="grid"
+                    aria-label="Doctrine hand — drop codex cards anywhere in this bottom strip; cards sort by cost"
+                    aria-rowcount={1}
+                  >
+                    <div
+                      ref={handRowRef}
+                      className="doctrine-hand doctrine-hand--match"
+                      role="row"
+                      aria-rowindex={1}
+                    />
+                  </div>
                 </div>
               </div>
+            </div>
+            <div className="binder-picker-rail-actions">
+              <div className="binder-picker-rail-actions__stack">
+                <button
+                  type="button"
+                  className="binder-picker-quickmatch"
+                  disabled={loading || portalTransitioning}
+                  title="Fill all doctrine slots with a starter mix of towers and spells, pick a random battlefield, and start"
+                  onClick={quickMatchAndStart}
+                >
+                  Quickmatch
+                </button>
+                <button
+                  type="button"
+                  className="binder-picker-setup-toggle binder-picker-setup-toggle--rail"
+                  aria-expanded={prematchSetupOpen}
+                  aria-controls="binder-prematch-setup-panel"
+                  id="binder-prematch-setup-trigger"
+                  title="Match select: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
+                  onClick={() => setPrematchSetupOpen((o) => !o)}
+                >
+                  Match select
+                </button>
+              </div>
+              <div className="binder-picker-vibejam-insert">
+                {prematchReturnHref ? (
+                  <a
+                    className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
+                    href={prematchReturnHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Return to the page that linked you here (portal continuity)"
+                  >
+                    ← Return
+                  </a>
+                ) : null}
+                <a
+                  className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
+                  href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={
+                    portalContext.enteredViaPortal
+                      ? "Exit to Vibe Jam with continuity params"
+                      : "Vibe Jam 2026"
+                  }
+                >
+                  🎮 Vibe Jam 2026
+                </a>
+              </div>
+              {prematchSetupOpen ? (
+                <aside
+                  className="binder-picker-setup-panel"
+                  id="binder-prematch-setup-panel"
+                  role="dialog"
+                  aria-labelledby="binder-prematch-setup-trigger"
+                  aria-modal="true"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="binder-picker-setup-panel__inner">
+                    <p className="binder-picker-setup-catalog-hint">
+                      Codex mixes <strong>structures</strong> (towers, production you place on the map) and{" "}
+                      <strong>spells / commands</strong> (one-shot effects, Mana, and per-slot cooldown after casting).
+                    </p>
+                    <div className="binder-picker-nav">
+                        <button
+                          type="button"
+                          className="binder-picker-btn"
+                          title={page.c > 0 ? "Previous spread" : "First spread"}
+                          disabled={page.c <= 0}
+                          onClick={() => engineRef.current?.flipPrev()}
+                        >
+                          Prev
+                        </button>
+                        <span className="binder-picker-nav-page">
+                          {page.c + 1} / {page.t}
+                        </span>
+                        <button
+                          type="button"
+                          className="binder-picker-btn"
+                          title={page.c < page.t - 1 ? "Next spread" : "Last spread"}
+                          disabled={page.c >= page.t - 1}
+                          onClick={() => engineRef.current?.flipNext()}
+                        >
+                          Next
+                        </button>
+                        <button
+                          type="button"
+                          className="binder-picker-btn"
+                          title="Reset camera"
+                          onClick={() => engineRef.current?.resetCam()}
+                        >
+                          View
+                        </button>
+                        {layoutCalibrateAllowed ? (
+                          <button
+                            type="button"
+                            className="binder-picker-btn"
+                            title="Dev: open prematch layout sliders (`?binderCalibrate=1` only). Saves in this browser; copy TS into CardBinderEngine to ship."
+                            onClick={() => {
+                              setRoomLayoutTunerOpen((o) => {
+                                const next = !o;
+                                if (next) setPrematchSetupOpen(true);
+                                return next;
+                              });
+                            }}
+                          >
+                            {roomLayoutTunerOpen ? "Hide layout" : "Tune layout"}
+                          </button>
+                        ) : null}
+                      </div>
+                    <div className="binder-picker-toolbar-map">
+                      <label htmlFor="binder-map">Battlefield</label>
+                      <select
+                        id="binder-map"
+                        disabled={loading}
+                        value={mapUrl}
+                        onChange={(ev) => setMapUrl(ev.target.value)}
+                      >
+                        {MAP_REGISTRY.map((m) => (
+                          <option key={m.id} value={m.url}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="binder-picker-toolbar-main">
+                      <div className="binder-picker-toolbar-actions">
+                        <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
+                          Reset
+                        </button>
+                        <button type="button" className="binder-picker-btn" disabled={loading} onClick={pickForMe}>
+                          Pick for me
+                        </button>
+                        <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="binder-picker-btn binder-picker-btn--primary"
+                          disabled={loading || !canStart || portalTransitioning}
+                          onClick={() => {
+                            setPrematchSetupOpen(false);
+                            startMatch();
+                          }}
+                        >
+                          {portalTransitioning ? "Starting…" : "Start"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </aside>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -857,7 +1161,7 @@ export function DoctrineBinderPicker({
         >
           <div
             className="binder-picker-codex-ghost__inner"
-            dangerouslySetInnerHTML={{ __html: tcgCardCompactHtml(codexDrag.catalogId, "picker") }}
+            dangerouslySetInnerHTML={{ __html: tcgCardSlotHtml(codexDrag.catalogId, "picker") }}
           />
         </div>
       ) : null}
@@ -906,148 +1210,7 @@ export function DoctrineBinderPicker({
         />
       ) : null}
 
-      <div className="binder-picker-setup-fab">
-        <button
-          type="button"
-          className="binder-picker-setup-toggle"
-          aria-expanded={prematchSetupOpen}
-          aria-controls="binder-prematch-setup-panel"
-          id="binder-prematch-setup-trigger"
-          title="Match select: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
-          onClick={() => setPrematchSetupOpen((o) => !o)}
-        >
-          match select
-        </button>
-        {prematchSetupOpen ? (
-          <aside
-            className="binder-picker-setup-panel"
-            id="binder-prematch-setup-panel"
-            role="dialog"
-            aria-labelledby="binder-prematch-setup-trigger"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="binder-picker-setup-panel__inner">
-              <p className="binder-picker-setup-catalog-hint">
-                Codex mixes <strong>structures</strong> (towers, production you place on the map) and{" "}
-                <strong>spells / commands</strong> (one-shot effects, Mana, and per-slot cooldown after casting).
-              </p>
-              {!loading ? (
-                <div className="binder-picker-nav">
-                  <button
-                    type="button"
-                    className="binder-picker-btn"
-                    title={page.c > 0 ? "Previous spread" : "First spread"}
-                    disabled={page.c <= 0}
-                    onClick={() => engineRef.current?.flipPrev()}
-                  >
-                    Prev
-                  </button>
-                  <span className="binder-picker-nav-page">
-                    {page.c + 1} / {page.t}
-                  </span>
-                  <button
-                    type="button"
-                    className="binder-picker-btn"
-                    title={page.c < page.t - 1 ? "Next spread" : "Last spread"}
-                    disabled={page.c >= page.t - 1}
-                    onClick={() => engineRef.current?.flipNext()}
-                  >
-                    Next
-                  </button>
-                  <button
-                    type="button"
-                    className="binder-picker-btn"
-                    title="Reset camera"
-                    onClick={() => engineRef.current?.resetCam()}
-                  >
-                    View
-                  </button>
-                  <button
-                    type="button"
-                    className="binder-picker-btn"
-                    title="Move the codex and the Vibe Jam portal in 3D; saves in this browser (copy TS to bake into the repo)"
-                    onClick={() => {
-                      setRoomLayoutTunerOpen((o) => {
-                        const next = !o;
-                        if (next) setPrematchSetupOpen(true);
-                        return next;
-                      });
-                    }}
-                  >
-                    {roomLayoutTunerOpen ? "Hide layout" : "Tune layout"}
-                  </button>
-                </div>
-              ) : null}
-              <div className="binder-picker-toolbar-map">
-                <label htmlFor="binder-map">Battlefield</label>
-                <select
-                  id="binder-map"
-                  disabled={loading}
-                  value={mapUrl}
-                  onChange={(ev) => setMapUrl(ev.target.value)}
-                >
-                  {MAP_REGISTRY.map((m) => (
-                    <option key={m.id} value={m.url}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="binder-picker-toolbar-main">
-                <div className="binder-picker-toolbar-actions">
-                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
-                    Reset
-                  </button>
-                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={pickForMe}>
-                    Pick for me
-                  </button>
-                  <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    className="binder-picker-btn binder-picker-btn--primary"
-                    disabled={loading || !canStart || portalTransitioning}
-                    onClick={() => {
-                      setPrematchSetupOpen(false);
-                      startMatch();
-                    }}
-                  >
-                    {portalTransitioning ? "Starting…" : "Start"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </aside>
-        ) : null}
-        {prematchReturnHref ? (
-          <a
-            className="binder-picker-vibejam-link"
-            href={prematchReturnHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Return to the page that linked you here (portal continuity)"
-          >
-            ← Return
-          </a>
-        ) : null}
-        <a
-          className="binder-picker-vibejam-link"
-          href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={
-            portalContext.enteredViaPortal
-              ? "Exit to Vibe Jam with continuity params"
-              : "Vibe Jam 2026"
-          }
-        >
-          🎮 Vibe Jam 2026
-        </a>
-      </div>
-
-      {roomLayoutTunerOpen ? (
+      {layoutCalibrateAllowed && roomLayoutTunerOpen ? (
         <BinderLayoutCalibratePanel
           engine={binderEngineForUi}
           visible={!loading && binderEngineForUi != null}

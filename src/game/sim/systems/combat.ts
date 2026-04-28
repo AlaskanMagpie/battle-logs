@@ -145,6 +145,7 @@ function pushAttackMark(
   markAttackers.add(attacker.id);
   s.combatHitMarks.push({
     attackerId: attacker.id,
+    producedUnitId: attacker.producedUnitId,
     ax: attacker.x,
     az: attacker.z,
     tx: target.x,

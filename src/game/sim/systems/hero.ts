@@ -1,7 +1,8 @@
 import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
-import { planPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
+import { planChainedPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { armTapClaimAnchor, findKeep, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
+import { structureObstacleFootprints } from "../../structureObstacles";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
 import { tryPlayerHeroStrike } from "./heroStrike";
@@ -43,7 +44,13 @@ export function setHeroMovePath(s: GameState, target: { x: number; z: number }):
     x: Math.max(-half, Math.min(half, target.x)),
     z: Math.max(-half, Math.min(half, target.z)),
   };
-  const path = planPathAroundMapObstacles(s.map, h, clamped, HERO_MAP_OBSTACLE_RADIUS);
+  const path = planChainedPathAroundMapObstacles(
+    s.map,
+    h,
+    clamped,
+    HERO_MAP_OBSTACLE_RADIUS,
+    structureObstacleFootprints(s),
+  );
   const first = path.shift() ?? clamped;
   h.targetX = first.x;
   h.targetZ = first.z;
@@ -74,7 +81,7 @@ function moveHeroToward(s: GameState): void {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
-  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
 }
 
 function applyWasd(s: GameState): boolean {
@@ -95,7 +102,7 @@ function applyWasd(s: GameState): boolean {
   const half = s.map.world.halfExtents;
   h.x = Math.max(-half, Math.min(half, h.x));
   h.z = Math.max(-half, Math.min(half, h.z));
-  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS);
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
   h.targetX = null;
   h.targetZ = null;
   h.moveWaypoints.length = 0;

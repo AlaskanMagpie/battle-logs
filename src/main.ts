@@ -7,6 +7,7 @@ import {
 import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
 import { loadMapMerged } from "./game/loadMap";
+import { QUICK_MATCH_DOCTRINE_SLOTS } from "./game/quickMatchDoctrine";
 import { recordLocalLeaderboardResult } from "./game/leaderboard";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
 import {
@@ -23,7 +24,7 @@ import { advanceTick } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
 import { GameRenderer } from "./render/scene";
 import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
-import { tcgCardCompactHtml } from "./ui/doctrineCard";
+import { tcgCardSlotHtml } from "./ui/doctrineCard";
 import {
   destroyDragGhost,
   DRAG_THRESHOLD_PX,
@@ -240,19 +241,6 @@ function markFirstInteractiveOnce(state: GameState): void {
 /** GLB art on by default; set `VITE_USE_UNIT_GLB=false` to force cubes only. */
 const USE_GLB = import.meta.env.VITE_USE_UNIT_GLB !== "false";
 
-const QUICK_MATCH_DOCTRINE: (string | null)[] = [
-  "outpost",
-  "watchtower",
-  "root_bunker",
-  "menders_hut",
-  "salvage_yard",
-  "war_camp",
-  "firestorm",
-  "fortify",
-  "recycle",
-  "shatter",
-];
-
 const DRAG_REASON_ID = "drag-reason";
 const SELECT_BOX_ID = "unit-select-box";
 
@@ -412,7 +400,7 @@ function wireDoctrineDragToMap(
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       renderer.setControlsEnabled(false);
       session.ghost = makeDragGhost(
-        `<div class="doctrine-drag-ghost-card-face-inner">${session.sourceCardHtml ?? tcgCardCompactHtml(session.catalogId, "picker")}</div>`,
+        `<div class="doctrine-drag-ghost-card-face-inner">${session.sourceCardHtml ?? tcgCardSlotHtml(session.catalogId, "picker")}</div>`,
       );
       session.ghost.classList.add("doctrine-drag-ghost--card-face");
       hydrateCardPreviewImages(session.ghost);
@@ -470,9 +458,9 @@ function wireDoctrineDragToMap(
           fromZ: st.hero.z,
           length: linePrev.length,
           halfWidth: linePrev.halfWidth,
-        });
+        }, entry.effect.type);
       } else {
-        renderer.setCommandGhost(hit, radius, valid);
+        renderer.setCommandGhost(hit, radius, valid, undefined, entry.effect.type);
       }
     } else {
       renderer.setCommandGhost(null, null, false);
@@ -1400,9 +1388,9 @@ function runMatch(
             fromZ: state.hero.z,
             length: linePrev.length,
             halfWidth: linePrev.halfWidth,
-          });
+          }, entry.effect.type);
         } else {
-          renderer.setCommandGhost(hit, commandEffectRadius(entry), valid);
+          renderer.setCommandGhost(hit, commandEffectRadius(entry), valid, undefined, entry.effect.type);
         }
         return;
       }
@@ -1432,7 +1420,7 @@ function stripLegacyPrematchCalibrateParams(): void {
   try {
     const url = new URL(window.location.href);
     let changed = false;
-    /** Keep `?binderCalibrate=1` — prematch layout tuning panel reads it (see `BinderLayoutCalibratePanel`). */
+    /** Keep `?binderCalibrate=1` — dev-only prematch layout panel (see `DoctrineBinderPicker` / `BinderLayoutCalibratePanel`). */
     if (url.searchParams.get("calibrate") === "1") {
       url.searchParams.delete("calibrate");
       changed = true;
@@ -1463,7 +1451,7 @@ const mountPortalPicker = (): void => {
 };
 if (quickMatch) {
   pickerRoot.style.display = "none";
-  runMatch(QUICK_MATCH_DOCTRINE, params.get("map") || "/map.json", mountPortalPicker, portalContext);
+  runMatch([...QUICK_MATCH_DOCTRINE_SLOTS], params.get("map") || "/map.json", mountPortalPicker, portalContext);
 } else {
   mountPortalPicker();
 }

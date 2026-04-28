@@ -25,7 +25,7 @@ import {
 } from "./cardDetailPop";
 import type { ControlProfile } from "../controlProfile";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
-import { doctrineCardBody } from "./doctrineCard";
+import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
 import { doctrineSlotHudTone } from "./doctrineSlotHudTone";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
@@ -303,26 +303,27 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     </header>
     <div class="hud-endgame" id="hud-endgame" hidden>
       <div class="hud-endgame-panel">
-        <h2 class="hud-endgame-title" id="hud-endgame-title">Match over</h2>
-        <p class="hud-endgame-stats" id="hud-endgame-stats"></p>
+        <img class="hud-endgame-art" id="hud-endgame-art" src="/assets/hud/end-victory.png" alt="" />
+        <h2 class="hud-endgame-title sr-only" id="hud-endgame-title">Match over</h2>
+        <dl class="hud-endgame-stats" id="hud-endgame-stats" aria-label="Match results">
+          <div class="hud-endgame-stat hud-endgame-stat--time"><dt>Time</dt><dd id="hud-endgame-stat-time">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--score"><dt>Score</dt><dd id="hud-endgame-stat-score">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--best"><dt>Best local</dt><dd id="hud-endgame-stat-best">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Structures built</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--structures-lost"><dt>Structures lost</dt><dd id="hud-endgame-stat-structures-lost">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--units-produced"><dt>Units produced</dt><dd id="hud-endgame-stat-units-produced">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--units-lost"><dt>Units lost</dt><dd id="hud-endgame-stat-units-lost">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--enemy-kills"><dt>Enemy kills</dt><dd id="hud-endgame-stat-enemy-kills">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--commands-cast"><dt>Commands cast</dt><dd id="hud-endgame-stat-commands-cast">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--salvage-recovered"><dt>Salvage recovered</dt><dd id="hud-endgame-stat-salvage-recovered">—</dd></div>
+        </dl>
         <div class="hud-endgame-actions">
-          <button class="hud-btn hud-btn--primary" type="button" id="btn-rematch">Rematch</button>
-          <button class="hud-btn" type="button" id="btn-edit-doctrine">Edit doctrine</button>
+          <button class="hud-endgame-action hud-endgame-action--rematch" type="button" id="btn-rematch">Rematch</button>
+          <button class="hud-endgame-action hud-endgame-action--edit" type="button" id="btn-edit-doctrine">Edit doctrine</button>
         </div>
       </div>
     </div>
     <footer class="hud-dock hud-dock--overlay" id="hud-dock">
-      <details class="hud-dock__help-drawer">
-        <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
-        <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item hud-help-item--desktop"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> move · drag <kbd>RMB</kbd> formation</div>
-          <div class="hud-help-item hud-help-item--mobile"><strong>Mobile:</strong> tap ground to move/attack-move · dock bar for formation, rally, stance · drag cards to summon</div>
-          <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
-          <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
-          <div class="hud-help-item"><kbd>V</kbd> formation · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue/wide · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> stance</div>
-          <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
-        </div>
-      </details>
       <div class="hud-dock__bar hud-dock__bar--message-only">
         <p class="hud-dock__msg" id="msg"></p>
       </div>
@@ -356,7 +357,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     const hotkey = i === 9 ? "0" : String(i + 1);
     b.setAttribute("aria-label", `Doctrine slot ${i + 1}, key ${hotkey}`);
     const catalogId = initial.doctrineSlotCatalogIds[i] ?? null;
-    b.innerHTML = `<span class="slot-hotkey">${hotkey}</span>${doctrineCardBody(i, catalogId)}<div class="slot-live" id="slot-live-${i}"></div>`;
+    b.innerHTML = doctrineSlotButtonInnerHtml(i, catalogId, { variant: "hud", liveIdPrefix: "slot-live" });
     doctrineHand.appendChild(b);
   }
 
@@ -611,32 +612,37 @@ export function updateHud(state: GameState): void {
 
   const end = document.querySelector("#hud-endgame") as HTMLElement | null;
   const endTitle = document.querySelector("#hud-endgame-title");
+  const endArt = document.querySelector<HTMLImageElement>("#hud-endgame-art");
   const endStats = document.querySelector("#hud-endgame-stats");
-  if (end && endTitle && endStats) {
+  if (end && endTitle && endStats && endArt) {
     if (state.phase === "playing") {
       end.hidden = true;
+      end.classList.remove("hud-endgame--win", "hud-endgame--lose");
       endTitle.textContent = "Match over";
-      endStats.innerHTML = "";
     } else {
+      const won = state.phase === "win";
       end.hidden = false;
-      endTitle.textContent = state.phase === "win" ? "Victory" : "Defeat";
+      end.classList.toggle("hud-endgame--win", won);
+      end.classList.toggle("hud-endgame--lose", !won);
+      endTitle.textContent = won ? "Victory" : "Defeat";
+      endArt.src = won ? "/assets/hud/end-victory.png" : "/assets/hud/end-defeat.png";
       const mins = (state.tick / TICK_HZ / 60).toFixed(1);
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
-      endStats.innerHTML = [
-        ["Time", `${mins} min`],
-        ["Score", scoreMatchResult(state)],
-        ["Best local", best ? best.score : "—"],
-        ["Structures built", st.structuresBuilt],
-        ["Structures lost", st.structuresLost],
-        ["Units produced", st.unitsProduced],
-        ["Units lost", st.unitsLost],
-        ["Enemy kills", st.enemyKills],
-        ["Commands cast", st.commandsCast],
-        ["Salvage recovered", Math.floor(st.salvageRecovered)],
-      ]
-        .map(([k, v]) => `<div><span>${k}</span><strong>${v}</strong></div>`)
-        .join("");
+      const setStat = (id: string, value: string | number): void => {
+        const el = document.querySelector<HTMLElement>(`#hud-endgame-stat-${id}`);
+        if (el) el.textContent = String(value);
+      };
+      setStat("time", `${mins} min`);
+      setStat("score", scoreMatchResult(state));
+      setStat("best", best ? best.score : "—");
+      setStat("structures-built", st.structuresBuilt);
+      setStat("structures-lost", st.structuresLost);
+      setStat("units-produced", st.unitsProduced);
+      setStat("units-lost", st.unitsLost);
+      setStat("enemy-kills", st.enemyKills);
+      setStat("commands-cast", st.commandsCast);
+      setStat("salvage-recovered", Math.floor(st.salvageRecovered));
     }
   }
 

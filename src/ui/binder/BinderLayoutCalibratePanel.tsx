@@ -128,10 +128,10 @@ export function BinderLayoutCalibratePanel({
         ) : null}
       </div>
       <p className="binder-layout-calibrate__hint">
-        Open from <strong>match select → Tune layout</strong>, or add <code>?binderCalibrate=1</code> to the URL. Drag
-        sliders; values save to <code>localStorage</code> for this site. To ship for everyone, copy the TS
-        below into <code>CardBinderEngine.ts</code> (replace <code>DEFAULT_*</code> + migration <code>LEGACY_*</code>{" "}
-        as needed) and commit.
+        This panel is <strong>dev-only</strong>: load the prematch screen with <code>?binderCalibrate=1</code> in the URL.
+        Drag sliders; values save to <code>localStorage</code> for this site. To ship for everyone, copy the TS below into{" "}
+        <code>CardBinderEngine.ts</code> (replace <code>DEFAULT_*</code> + migration <code>LEGACY_*</code> as needed) and
+        commit.
       </p>
 
       <div className="binder-layout-calibrate__section">

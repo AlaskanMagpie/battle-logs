@@ -47,6 +47,7 @@ import type {
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
+import { structureObstacleFootprints } from "./structureObstacles";
 
 export type CastFxKind =
   | "firestorm"
@@ -68,6 +69,8 @@ export type CastFxKind =
 export interface CombatHitMark {
   /** Runtime id of the unit that committed this hit (for attack animation triggers). */
   attackerId?: number;
+  /** When set, renderer may swap wedge FX (e.g. geode monks → traveling ring shock). */
+  producedUnitId?: ProducedUnitId;
   ax: number;
   az: number;
   tx: number;
@@ -90,6 +93,7 @@ export interface CombatHitMark {
 /** Wizard melee burst palette (both heroes). */
 export type HeroStrikeFxVariant =
   | "player_vs_unit"
+  | "player_arcane_sweep"
   | "player_vs_rival"
   | "player_vs_fortress"
   | "player_vs_structure"
@@ -704,9 +708,66 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
 }
 
 /** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
+function pickReadableTapSlots(slots: TapSlotDef[], halfExtents: number): TapSlotDef[] {
+  const perSide = TAP_NODES_PER_SIDE;
+  if (slots.length <= perSide * 2) return slots;
+
+  const targets = [
+    { p: 0.24, z: 0 },
+    { p: 0.5, z: -0.42 },
+    { p: 0.5, z: 0.42 },
+    { p: 0.82, z: 0 },
+  ];
+  const pickSide = (sideSlots: TapSlotDef[], side: "player" | "enemy"): TapSlotDef[] => {
+    const picked: TapSlotDef[] = [];
+    const used = new Set<string>();
+    for (const target of targets.slice(0, perSide)) {
+      let best: TapSlotDef | null = null;
+      let bestScore = Infinity;
+      for (const slot of sideSlots) {
+        if (used.has(slot.id)) continue;
+        const p = side === "player" ? (slot.x + halfExtents) / halfExtents : (halfExtents - slot.x) / halfExtents;
+        const z = halfExtents > 0 ? slot.z / halfExtents : 0;
+        const score = Math.abs(p - target.p) * 1.8 + Math.abs(z - target.z);
+        if (score < bestScore) {
+          bestScore = score;
+          best = slot;
+        }
+      }
+      if (best) {
+        picked.push(best);
+        used.add(best.id);
+      }
+    }
+    return picked;
+  };
+
+  const player = slots.filter((s) => s.x < 0);
+  const enemy = slots.filter((s) => s.x >= 0);
+  if (player.length === 0 || enemy.length === 0) return slots.slice(0, perSide * 2);
+  return [...pickSide(player, "player"), ...pickSide(enemy, "enemy")];
+}
+
+function isAuthorBoundaryDecor(map: MapData, decor: NonNullable<MapData["decor"]>[number]): boolean {
+  if (decor.kind !== "box" || !decor.blocksMovement) return false;
+  const half = map.world.halfExtents;
+  const edgeTol = Math.max(10, half * 0.04);
+  const longSpan = half * 1.6;
+  const thinSpan = 18;
+  const nearEastWest = Math.abs(Math.abs(decor.x) - half) <= edgeTol && decor.d >= longSpan && decor.w <= thinSpan;
+  const nearNorthSouth = Math.abs(Math.abs(decor.z) - half) <= edgeTol && decor.w >= longSpan && decor.d <= thinSpan;
+  return nearEastWest || nearNorthSouth;
+}
+
+function stripAuthorBoundaryDecor(map: MapData): MapData {
+  if (!map.decor?.length) return map;
+  const decor = map.decor.filter((d) => !isAuthorBoundaryDecor(map, d));
+  return decor.length === map.decor.length ? map : { ...map, decor };
+}
+
 export function mapWithRuntimeTapSlots(map: MapData, taps: TapRuntime[]): MapData {
   const tapSlots: TapSlotDef[] = taps.map((t) => ({ id: t.defId, x: t.x, z: t.z }));
-  return { ...map, tapSlots };
+  return stripAuthorBoundaryDecor({ ...map, tapSlots });
 }
 
 function spawnKeep(state: GameState): void {
@@ -764,7 +825,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
   const taps: TapRuntime[] =
     map.useAuthorTapSlots && map.tapSlots.length > 0
-      ? map.tapSlots.map((ts) => ({
+      ? pickReadableTapSlots(map.tapSlots, map.world.halfExtents).map((ts) => ({
           defId: ts.id,
           x: ts.x,
           z: ts.z,
@@ -1188,7 +1249,7 @@ export function doctrineCardPlayability(
     if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
       return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
     }
-    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
       return blocked("terrain", "Blocked by terrain — try another spot.", "Blocked");
     }
   }
@@ -1250,7 +1311,7 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
       return "Too close to Wizard Keep.";
     }
   }
-  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS)) {
+  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
     return "Blocked by terrain.";
   }
   return null;
