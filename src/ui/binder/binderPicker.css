@@ -446,3 +446,117 @@
   font-size: 13px;
   color: #2c2820;
 }
+
+/* --- ?binderCalibrate=1 — prematch binder + vibe portal XYZ (dev) --- */
+.binder-layout-calibrate {
+  position: fixed;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  top: max(44px, env(safe-area-inset-top, 0px));
+  z-index: 60020;
+  width: min(360px, calc(100vw - 16px));
+  max-height: min(520px, calc(100dvh - 120px));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(60, 48, 36, 0.22);
+  background: rgba(252, 249, 242, 0.96);
+  color: #2c2820;
+  font: 12px/1.35 system-ui, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+}
+
+.binder-layout-calibrate__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.binder-layout-calibrate__title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 13px;
+  margin: 0;
+  line-height: 1.25;
+}
+
+.binder-layout-calibrate__close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: -2px -4px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  color: #2c2820;
+  font: 20px/1 system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.binder-layout-calibrate__close:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.binder-layout-calibrate__hint {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: #4a4238;
+}
+
+.binder-layout-calibrate__hint code {
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.binder-layout-calibrate__section {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(60, 48, 36, 0.12);
+}
+
+.binder-layout-calibrate__section strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.binder-calibrate-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 64px;
+  gap: 6px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.binder-calibrate-row__label {
+  font-variant-numeric: tabular-nums;
+  color: #5c5248;
+}
+
+.binder-calibrate-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.binder-calibrate-row__num {
+  width: 64px;
+  box-sizing: border-box;
+  padding: 3px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(60, 48, 36, 0.25);
+  background: #fff;
+  color: #1a1612;
+  font-size: 11px;
+}
+
+.binder-layout-calibrate__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}

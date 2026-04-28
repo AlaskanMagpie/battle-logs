@@ -13,10 +13,10 @@ const STAGES: string[] = [
 ];
 
 const MOBILE_STAGES: string[] = [
-  "You are an interdimensional <b>Wizard</b>. On mobile, <b>tap ground</b> to move or send selected squads, <b>long-press the map</b> for orders, and let <b>Captain mode</b> steer the Wizard when you are busy dragging cards.",
+  "You are an interdimensional <b>Wizard</b>. On mobile, <b>tap ground</b> to move or send selected squads, use the <b>bottom bar</b> for formation, rally, and stance, and let <b>Captain mode</b> steer the Wizard when you are busy dragging cards.",
   "Walk into a grey <b>Mana node</b> and stay inside the ring to claim it. Claimed nodes grant <b>Mana/sec</b>, expand cyan <b>territory</b>, and grow the battlefield where your doctrine can be summoned.",
   "<b>Cards drive the war</b>: drag a tower or spell from the bottom doctrine strip onto valid ground. Green/blue reads mean playable; warnings explain Mana, cooldown, territory, or target problems.",
-  "<b>Combat is automatic</b>, but your taps still matter. Use quick orders for pushes, anchors, and rallies while armies trade blows and the Wizard auto-strikes hostile targets in range.",
+  "<b>Combat is automatic</b>, but your taps still matter. Move squads from the map and steer macro flow with the dock while armies trade blows and the Wizard auto-strikes hostile targets in range.",
   "Victory = shatter the red <b>Dark Fortresses</b> or rout the camps. Defeat = your <b>Keep</b> or <b>Wizard</b> falls.",
 ];
 

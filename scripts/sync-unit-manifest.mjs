@@ -148,9 +148,10 @@ function roleScore(role, file, meta) {
     if (duration < 0.08) score -= 55;
   } else if (role === "attack") {
     if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 90;
+    if (/\b(mage|spell|soell|cast)\b/.test(hay)) score += 95;
     if (/\b(combo|power|spin|charge)\b/.test(hay)) score += 8;
   } else if (role === "death") {
-    if (/\b(death|die|dying|fall|falling)\b/.test(hay)) score += 100;
+    if (/\b(dead|death|die|dying|fall|falling)\b/.test(hay)) score += 100;
   }
   if (score <= 0) return 0;
   if (animated > 0) score += Math.min(20, animated);

@@ -3,6 +3,7 @@ import {
   ANTI_CLASS_DAMAGE_MULT,
   PLAYER_UNIT_STRUCTURE_DAMAGE_MULT,
   TICK_HZ,
+  UNIT_ATTACK_DAMAGE_MULT,
   UNIT_AOE_SPLASH_DAMAGE_MULT,
   UNIT_LIFESTEAL_DAMAGE_FRAC,
   UNIT_TAP_ANCHOR_DAMAGE_MULT,
@@ -223,15 +224,19 @@ function trampleText(sizeClass: UnitSizeClass): string | null {
   return parts.length ? parts.join(" / ") : null;
 }
 
+function antiClassList(e: StructureCatalogEntry): UnitSizeClass[] {
+  if (e.producedAntiClasses?.length) return e.producedAntiClasses;
+  return e.producedAntiClass ? [e.producedAntiClass] : [];
+}
+
 function dcCombatProfile(e: StructureCatalogEntry): string {
   const st = unitStatsForCatalog(e.producedSizeClass);
-  const dps = st.dmgPerTick * TICK_HZ;
+  const dps = st.dmgPerTick * TICK_HZ * (UNIT_ATTACK_DAMAGE_MULT[e.producedSizeClass] ?? 1);
   const objectiveMult = e.producedDamageVsStructuresMult ?? 1;
   const trample = trampleText(e.producedSizeClass);
+  const anti = antiClassList(e);
   const chips = [
-    e.producedAntiClass
-      ? `Anti-${e.producedAntiClass} ${bonusPct(ANTI_CLASS_DAMAGE_MULT)}`
-      : "No anti-class",
+    anti.length ? `Anti-${anti.join(" / ")} ${bonusPct(ANTI_CLASS_DAMAGE_MULT)}` : "No anti-class",
     trample ? `Trample ${trample}` : "No trample",
     `Objectives ${multiplier(PLAYER_UNIT_STRUCTURE_DAMAGE_MULT * objectiveMult)} structures / ${multiplier(
       UNIT_TAP_ANCHOR_DAMAGE_MULT * objectiveMult,
@@ -257,7 +262,7 @@ function dcCombatProfile(e: StructureCatalogEntry): string {
       ${cell(String(st.maxHp), "Unit HP", "hp")}
       ${cell(`${compactNumber(st.range)}u`, "Range", "range")}
       ${cell(`${compactNumber(st.speedPerSec)}u/s`, "Speed", "speed")}
-      ${cell(compactNumber(dps), "DPS", "dps")}
+      ${cell(compactNumber(dps), "Sustained DPS", "dps")}
     </div>
     <div class="dc-combat-chips">${chipHtml}</div>
   </section>`;
@@ -550,8 +555,9 @@ function dcUnitPill(e: StructureCatalogEntry): string {
 }
 
 function dcAbilityStructure(e: StructureCatalogEntry): string {
-  if (e.chargeCooldownSeconds <= 0 && !e.producedAntiClass) return "";
-  const title = e.producedAntiClass ? `Anti ${e.producedAntiClass}` : "Unit ability";
+  const anti = antiClassList(e);
+  if (e.chargeCooldownSeconds <= 0 && anti.length === 0) return "";
+  const title = anti.length ? `Anti ${anti.join(" / ")}` : "Unit ability";
   const cd = e.chargeCooldownSeconds > 0 ? `${e.chargeCooldownSeconds}s` : "—";
   return `<div class="dc-ability" role="group" aria-label="Spawned unit ability">
     <div class="dc-ability-ico" aria-hidden="true">⌖</div>

@@ -9,8 +9,10 @@ import {
 import { logGame } from "../../gameLog";
 import {
   emitHeroStrikeFx,
+  recordDamageDealtBy,
   shatterTapAnchor,
   type GameState,
+  type HeroStrikeFxVariant,
   type StructureRuntime,
 } from "../../state";
 import type { Vec2 } from "../../types";
@@ -39,6 +41,16 @@ function enemyStructureNearEnemyOwnedTap(s: GameState, st: StructureRuntime): bo
   return false;
 }
 
+function emitPlayerHeroStrikeFx(
+  s: GameState,
+  target: Vec2,
+  from: Vec2,
+  strikeVariant: HeroStrikeFxVariant,
+): void {
+  s.hero.strikeSequence += 1;
+  emitHeroStrikeFx(s, target, from, strikeVariant, s.hero.strikeSequence);
+}
+
 /**
  * Player wizard strike resolution (auto-fire each tick when off cooldown). Caller must ensure
  * `s.hero.attackCooldownTicksRemaining === 0` before calling.
@@ -62,13 +74,15 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   }
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? HERO_ATTACK_SWARM_MULT : 1;
-    bestU.hp -= HERO_ATTACK_DAMAGE * swarmMult;
+    const dealt = HERO_ATTACK_DAMAGE * swarmMult;
+    bestU.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
     applyAttackImpulse(bestU, from, 2.4 * swarmMult);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "player_vs_unit");
+    emitPlayerHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "player_vs_unit");
     logGame(
       "attack",
-      `Wizard strike → unit #${bestU.id} (−${Math.round(HERO_ATTACK_DAMAGE * swarmMult)} HP)`,
+      `Wizard strike → unit #${bestU.id} (−${Math.round(dealt)} HP)`,
       s.tick,
     );
     return { ok: true, tag: "unit" };
@@ -77,8 +91,9 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   const eh = s.enemyHero;
   if (eh.hp > 0 && dist2(h, eh) <= r2) {
     eh.hp -= HERO_ATTACK_DAMAGE;
+    recordDamageDealtBy(s, "player", HERO_ATTACK_DAMAGE);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitHeroStrikeFx(s, { x: eh.x, z: eh.z }, from, "player_vs_rival");
+    emitPlayerHeroStrikeFx(s, { x: eh.x, z: eh.z }, from, "player_vs_rival");
     logGame("attack", `Wizard strike → rival Wizard (−${HERO_ATTACK_DAMAGE} HP)`, s.tick);
     return { ok: true, tag: "enemyWizard" };
   }
@@ -94,10 +109,12 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     }
   }
   if (bestEr) {
-    bestEr.hp -= HERO_ATTACK_DAMAGE * 0.65;
+    const dealt = HERO_ATTACK_DAMAGE * 0.65;
+    bestEr.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitHeroStrikeFx(s, { x: bestEr.x, z: bestEr.z }, from, "player_vs_fortress");
-    logGame("attack", `Wizard strike → Dark Fortress (−${Math.round(HERO_ATTACK_DAMAGE * 0.65)} HP)`, s.tick);
+    emitPlayerHeroStrikeFx(s, { x: bestEr.x, z: bestEr.z }, from, "player_vs_fortress");
+    logGame("attack", `Wizard strike → Dark Fortress (−${Math.round(dealt)} HP)`, s.tick);
     return { ok: true, tag: "fortress" };
   }
 
@@ -115,9 +132,11 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     const nearTapMult = enemyStructureNearEnemyOwnedTap(s, bestSt)
       ? HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT
       : 1;
-    bestSt.hp -= HERO_ATTACK_DAMAGE * 0.45 * nearTapMult;
+    const dealt = HERO_ATTACK_DAMAGE * 0.45 * nearTapMult;
+    bestSt.hp -= dealt;
+    recordDamageDealtBy(s, "player", dealt);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitHeroStrikeFx(s, { x: bestSt.x, z: bestSt.z }, from, "player_vs_structure");
+    emitPlayerHeroStrikeFx(s, { x: bestSt.x, z: bestSt.z }, from, "player_vs_structure");
     logGame("attack", `Wizard strike → enemy structure #${bestSt.id}`, s.tick);
     return { ok: true, tag: "structure" };
   }
@@ -134,9 +153,11 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     }
   }
   if (bestTap) {
-    bestTap.anchorHp = Math.max(0, (bestTap.anchorHp ?? 0) - HERO_ATTACK_DAMAGE * 0.42);
+    const dealt = HERO_ATTACK_DAMAGE * 0.42;
+    bestTap.anchorHp = Math.max(0, (bestTap.anchorHp ?? 0) - dealt);
+    recordDamageDealtBy(s, "player", dealt);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
-    emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "player_vs_anchor");
+    emitPlayerHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "player_vs_anchor");
     logGame("attack", `Wizard strike → enemy Mana anchor (${bestTap.defId})`, s.tick);
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return { ok: true, tag: "tap" };

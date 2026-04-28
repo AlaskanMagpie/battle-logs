@@ -1,6 +1,7 @@
 import {
   HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_FLUX_FEE,
+  HERO_CLAIM_FLUX_REWARD,
   HOME_CLAIM_CHANNEL_MULT_MAX,
   HOME_CLAIM_DISTANCE_FAR,
   HOME_CLAIM_DISTANCE_NEAR,
@@ -56,6 +57,10 @@ export function claimFluxFeeForTap(s: GameState, team: TeamId, tap: Vec2): numbe
   const t = homeStretchT(s, team, tap);
   const mult = 1 + t * (HOME_CLAIM_FLUX_MULT_MAX - 1);
   return Math.ceil(HERO_CLAIM_FLUX_FEE * mult);
+}
+
+export function claimFluxRewardForTap(s: GameState, team: TeamId, tap: Vec2): number {
+  return Math.round(HERO_CLAIM_FLUX_REWARD * tapYieldMultForOwner(s, team, tap));
 }
 
 export function claimChannelSecForTap(s: GameState, team: TeamId, tap: Vec2): number {

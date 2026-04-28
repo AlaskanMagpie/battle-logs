@@ -19,6 +19,8 @@ import { readLocalLeaderboard, recordLocalLeaderboardResult, scoreMatchResult } 
 import {
   KEEP_ID,
   KEEP_SWARM_PERIOD_SEC,
+  PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
+  PRODUCED_UNIT_SIEGE_RAM,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
@@ -157,11 +159,11 @@ describe("doctrine card playability", () => {
 
 describe("batch production", () => {
   it.each([
-    ["watchtower", "Swarm", 4],
-    ["outpost", "Line", 3],
-    ["siege_works", "Heavy", 2],
-    ["dragon_roost", "Titan", 1],
-  ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected) => {
+    ["watchtower", "Swarm", 4, PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS],
+    ["outpost", "Line", 3, undefined],
+    ["siege_works", "Heavy", 2, PRODUCED_UNIT_SIEGE_RAM],
+    ["dragon_roost", "Titan", 1, undefined],
+  ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);
     const stats = unitStatsForCatalog(sizeClass);
@@ -175,6 +177,7 @@ describe("batch production", () => {
     expect(spawned.every((u) => u.sizeClass === sizeClass)).toBe(true);
     expect(spawned.every((u) => u.squadMaxCount === undefined && u.singleMaxHp === undefined)).toBe(true);
     expect(spawned.every((u) => u.maxHp === stats.maxHp && u.pop === stats.pop)).toBe(true);
+    expect(spawned.every((u) => u.producedUnitId === producedUnitId)).toBe(true);
   });
 
   it("ignores old local pop caps and always emits the full batch", () => {
@@ -433,6 +436,7 @@ describe("hero node claiming", () => {
     const s = createInitialState(tinyMap, []);
     const tap = s.taps[0]!;
     s.flux = 1000;
+    const startFlux = s.flux;
     s.hero.x = tap.x - 3;
     s.hero.z = tap.z;
     s.hero.targetX = tap.x + 3;
@@ -453,6 +457,7 @@ describe("hero node claiming", () => {
 
     expect(tap.active).toBe(true);
     expect(tap.ownerTeam).toBe("player");
+    expect(s.flux).toBeGreaterThan(startFlux);
   });
 });
 
@@ -483,6 +488,23 @@ describe("hero captain mode", () => {
     advanceTick(s, []);
     expect(s.hero.targetX).not.toBe(manualTarget);
     expect(s.hero.targetX).toBe(s.taps[0]!.x);
+  });
+
+  it("routes the Wizard around blocking decor instead of driving straight into walls", () => {
+    const walledMap: MapData = {
+      ...tinyMap,
+      tapSlots: [{ id: "tap_blocked", x: 40, z: 0 }],
+      decor: [{ kind: "box", x: 0, z: 0, w: 8, h: 8, d: 80, blocksMovement: true }],
+    };
+    const s = createInitialState(walledMap, []);
+    s.heroCaptainEnabled = true;
+    s.heroCaptainLastManualTick = -9999;
+
+    advanceTick(s, []);
+
+    expect(s.hero.targetX).not.toBe(s.taps[0]!.x);
+    expect(s.hero.targetZ).not.toBe(s.taps[0]!.z);
+    expect(s.hero.moveWaypoints.at(-1)).toEqual({ x: s.taps[0]!.x, z: s.taps[0]!.z });
   });
 });
 
@@ -703,7 +725,7 @@ describe("selection commands", () => {
     expect(s.lastMessage).toContain("Line formation");
   });
 
-  it("lets radial commands recruit nearby idle squads without selecting them first", () => {
+  it("lets attack-move with includeNearbyIdle recruit nearby idle squads without selecting them first", () => {
     const s = createInitialState(tinyMap, []);
     const nearbyIdle = unit(5100, "player", "Swarm", null);
     nearbyIdle.x = -20;
@@ -742,7 +764,7 @@ describe("selection commands", () => {
     expect(s.lastMessage).toContain("queued to attack-move");
   });
 
-  it("sets a global rally point directly from radial commands", () => {
+  it("sets a global rally point from set_global_rally intent", () => {
     const s = createInitialState(tinyMap, []);
     s.armyStance = "defense";
 
@@ -754,7 +776,7 @@ describe("selection commands", () => {
     expect(s.globalRallyZ).toBe(9);
   });
 
-  it("sets the formation preset directly from the radial", () => {
+  it("sets the formation preset from set_formation_preset intent", () => {
     const s = createInitialState(tinyMap, []);
 
     applyPlayerIntents(s, [{ type: "set_formation_preset", formationKind: "arc" }]);
@@ -763,7 +785,7 @@ describe("selection commands", () => {
     expect(s.lastMessage).toContain("Arc");
   });
 
-  it("lets radial formation commands recruit nearby idle squads", () => {
+  it("lets formation commands with includeNearbyIdle recruit nearby idle squads", () => {
     const s = createInitialState(tinyMap, []);
     const nearbyIdle = unit(5300, "player", "Line", null);
     nearbyIdle.x = -20;

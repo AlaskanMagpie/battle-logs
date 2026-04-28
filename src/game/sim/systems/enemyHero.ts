@@ -23,6 +23,7 @@ import {
   enemyBuildSpeedScalar,
   enemyCaptureSpeedScalar,
   enemyDamageScalar,
+  enemyEconomyScalar,
   enemyProductionSpeedScalar,
 } from "../../difficulty";
 import { logGame } from "../../gameLog";
@@ -37,6 +38,7 @@ import {
   nearEnemyInfra,
   pushFx,
   rand,
+  recordDamageDealtBy,
   shatterTapAnchor,
   tacticsFieldSpeedMult,
   type CastFxKind,
@@ -47,7 +49,7 @@ import { isStructureEntry } from "../../types";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
-import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
+import { claimChannelSecForTap, claimFluxFeeForTap, claimFluxRewardForTap } from "./homeDistance";
 
 function emitFx(s: GameState, kind: CastFxKind, pos: { x: number; z: number }): void {
   pushFx(s, { kind, x: pos.x, z: pos.z });
@@ -340,6 +342,7 @@ export function enemyHeroSystem(s: GameState): void {
           /* skip */
         } else {
           s.enemyFlux -= fee;
+          s.enemyFlux += claimFluxRewardForTap(s, "enemy", tap) * enemyEconomyScalar(s);
           tap.active = true;
           tap.ownerTeam = "enemy";
           armTapClaimAnchor(tap);
@@ -372,6 +375,7 @@ function enemyHeroTryStrike(s: GameState): void {
   const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
     s.hero.hp = Math.max(0, s.hero.hp - damage);
+    recordDamageDealtBy(s, "enemy", damage);
     h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: s.hero.x, z: s.hero.z }, from, "rival_vs_hero");
     return;
@@ -389,7 +393,9 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
-    bestU.hp -= damage * swarmMult;
+    const dealt = damage * swarmMult;
+    bestU.hp -= dealt;
+    recordDamageDealtBy(s, "enemy", dealt);
     applyAttackImpulse(bestU, from, 2.1 * swarmMult);
     h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "rival_vs_unit");
@@ -409,7 +415,9 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestTap) {
     const cur = bestTap.anchorHp ?? 0;
-    bestTap.anchorHp = Math.max(0, cur - damage * 0.42);
+    const dealt = damage * 0.42;
+    bestTap.anchorHp = Math.max(0, cur - dealt);
+    recordDamageDealtBy(s, "enemy", dealt);
     h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "rival_vs_anchor");
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
@@ -418,7 +426,9 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const keep = findKeep(s);
   if (keep && dist2(h, keep) <= r2) {
-    keep.hp -= damage * 0.45;
+    const dealt = damage * 0.45;
+    keep.hp -= dealt;
+    recordDamageDealtBy(s, "enemy", dealt);
     h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: keep.x, z: keep.z }, from, "rival_vs_keep");
   }

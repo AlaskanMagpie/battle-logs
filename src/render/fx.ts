@@ -135,7 +135,7 @@ export function spawnCastFx(
     case "lightning":
       return spawnLightning(host, pos);
     case "hero_strike":
-      return spawnHeroStrike(host, pos, opts?.from, opts?.strikeVariant);
+      return spawnHeroStrike(host, pos, opts?.from, opts?.strikeVariant, opts?.visualSeed);
     case "spark_burst":
       return spawnSparkBurst(host, pos);
     case "ground_crack":
@@ -1072,13 +1072,27 @@ function heroStrikeBoltPoints(
   return arr;
 }
 
-function heroStrikeElementalPalette(v: HeroStrikeFxVariant | undefined): {
+function heroStrikeElementalPalette(v: HeroStrikeFxVariant | undefined, visualSeed?: number): {
   core: number;
   rim: number;
   bolt: number;
   fork: number;
   cone: number;
 } {
+  if (v?.startsWith("player_") && visualSeed !== undefined) {
+    if (visualSeed > 0 && visualSeed % 3 === 0) {
+      return { core: 0xb15cff, rim: 0xffffff, bolt: 0xf3dcff, fork: 0xd27cff, cone: 0x7a22ff };
+    }
+    const elemental = [
+      { core: 0xff8a32, rim: 0xfff0bb, bolt: 0xffcf66, fork: 0xff5522, cone: 0xff3b00 },
+      { core: 0x6ee7ff, rim: 0xffffff, bolt: 0xdfffff, fork: 0x6aafff, cone: 0x188bff },
+      { core: 0x5cff99, rim: 0xeefff5, bolt: 0xb8ffd8, fork: 0x5eea8a, cone: 0x20a860 },
+      { core: 0x74a7ff, rim: 0xf4fbff, bolt: 0xcfe4ff, fork: 0x66d8ff, cone: 0x2366ff },
+      { core: 0xf4d06f, rim: 0xffffdd, bolt: 0xfff0aa, fork: 0xd49a44, cone: 0x9b6a28 },
+    ] as const;
+    const nonPurpleIndex = Math.max(0, visualSeed - 1 - Math.floor((visualSeed - 1) / 3));
+    return elemental[nonPurpleIndex % elemental.length];
+  }
   switch (v) {
     case "player_vs_unit":
       return { core: 0xb8a0ff, rim: 0xffffff, bolt: 0xf0e8ff, fork: 0xaaddff, cone: 0x8866ff };
@@ -1109,9 +1123,10 @@ function spawnHeroStrike(
   pos: { x: number; z: number },
   from?: { x: number; z: number },
   strikeVariant?: HeroStrikeFxVariant,
+  visualSeed?: number,
 ): void {
   const life = 0.42;
-  const pal = heroStrikeElementalPalette(strikeVariant);
+  const pal = heroStrikeElementalPalette(strikeVariant, visualSeed);
   const root = new THREE.Group();
   const ringWrap = new THREE.Group();
   ringWrap.position.set(pos.x, 0.15, pos.z);

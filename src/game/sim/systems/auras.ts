@@ -1,6 +1,6 @@
 import { getCatalogEntry } from "../../catalog";
 import { TICK_HZ } from "../../constants";
-import type { GameState, UnitRuntime } from "../../state";
+import { recordDamageDealtBy, type GameState, type UnitRuntime } from "../../state";
 import { isStructureEntry } from "../../types";
 import { applyAttackImpulse } from "./combat";
 import { dist2 } from "./helpers";
@@ -34,6 +34,7 @@ export function auras(s: GameState): void {
       }
       if (best) {
         best.hp -= aura.value;
+        recordDamageDealtBy(s, "player", aura.value);
         applyAttackImpulse(best, st, aura.value * 0.95);
       }
     }

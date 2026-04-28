@@ -4,19 +4,20 @@ import { productionBatchSizeForClass } from "../../game/sim/systems/helpers";
 import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
-import { getCardPreviewDataUrl } from "../cardGlbPreview";
-import { getCardArtUrl } from "../cardArtManifest";
+import { getCardArtUrl, resetCardArtManifestCache, CARD_ART_CACHE_BUSTER } from "../cardArtManifest";
 import { binderPanelPixelSize } from "./CardBinderEngine";
-import { binderSleevePixelSize, composeCardIntoBinderSleeve } from "./binderSleeveComposite";
+import { composeCardIntoBinderSleeve, binderSleevePixelSize } from "./binderSleeveComposite";
 import { drawSpellBinderHero } from "./binderSpellHeroCanvas";
 
 const cache = new Map<string, Promise<THREE.CanvasTexture>>();
 /** GLB hero snapshot per structure id (reused for animated spell repaints). */
 const structureHeroImageByCatalogId = new Map<string, HTMLImageElement>();
+/** Catalog ids whose `/assets/cards/*.png` art fills the whole binder panel (no generated stats strip). */
+const manifestFullCardArtCatalogIds = new Set<string>();
 
 function binderTextureCacheKey(catalogId: string): string {
   const { w, h } = binderSleevePixelSize();
-  return `${catalogId}@${w}x${h}sleeve_v6`;
+  return `${catalogId}@${w}x${h}sleeve_${CARD_ART_CACHE_BUSTER}`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -55,13 +56,15 @@ function drawImageCover(
   ctx.drawImage(img, sx, sy, sw, sh, x, y, cw, ch);
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("preview img"));
+async function loadImage(src: string): Promise<HTMLImageElement> {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("card art load failed"));
     img.src = src;
   });
+  return img;
 }
 
 const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
@@ -82,6 +85,12 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   if (!e) {
     ctx.fillStyle = "#111318";
     ctx.fillRect(0, 0, w, h);
+    return c;
+  }
+
+  const mappedImg = structureHeroImageByCatalogId.get(catalogId);
+  if (mappedImg && manifestFullCardArtCatalogIds.has(catalogId)) {
+    drawImageCover(ctx, mappedImg, 0, 0, w, h);
     return c;
   }
 
@@ -111,7 +120,6 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   const hw = w - (pad + 2) * 2;
   const hh = heroH - pad - 4;
 
-  const mappedImg = structureHeroImageByCatalogId.get(catalogId);
   if (mappedImg) {
     ctx.save();
     roundRectPath(ctx, hx, hy, hw, hh, 4);
@@ -209,8 +217,14 @@ async function ensureCardHeroLoaded(catalogId: string): Promise<void> {
   if (!e) return;
   if (structureHeroImageByCatalogId.has(catalogId)) return;
   try {
-    const url = (await getCardArtUrl(catalogId)) ?? (isStructureEntry(e) ? await getCardPreviewDataUrl(catalogId) : null);
-    if (url) structureHeroImageByCatalogId.set(catalogId, await loadImage(url));
+    const manifestUrl = await getCardArtUrl(catalogId);
+    if (manifestUrl) {
+      manifestFullCardArtCatalogIds.add(catalogId);
+      structureHeroImageByCatalogId.set(catalogId, await loadImage(manifestUrl));
+      return;
+    }
+    manifestFullCardArtCatalogIds.delete(catalogId);
+    /** Binder sleeves use authored PNG card art only — no GLB/unit renders here (see `/assets/cards/manifest.json`). */
   } catch {
     /* keep map empty — hero stays dark */
   }
@@ -242,7 +256,7 @@ function startSpellBinderTextureLoop(catalogId: string, tex: THREE.CanvasTexture
     const dctx = dest.getContext("2d");
     if (dctx) {
       dctx.clearRect(0, 0, dest.width, dest.height);
-      dctx.drawImage(composed, 0, 0);
+      dctx.drawImage(composed, 0, 0, dest.width, dest.height);
     }
     tex.needsUpdate = true;
     if (tex.userData[SPELL_TEX_USERDATA_DEAD] === true) return;
@@ -263,9 +277,9 @@ function wrapSpellTextureDispose(tex: THREE.CanvasTexture): void {
 }
 
 async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
-  const inner = await paintBinderPanelCanvas(catalogId);
-  const cvs = composeCardIntoBinderSleeve(inner);
-  const tex = new THREE.CanvasTexture(cvs);
+  const cvs = await paintBinderPanelCanvas(catalogId);
+  const composed = composeCardIntoBinderSleeve(cvs);
+  const tex = new THREE.CanvasTexture(composed);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   tex.needsUpdate = true;
@@ -313,4 +327,5 @@ export function disposeBinderTextureCache(): void {
   }
   cache.clear();
   structureHeroImageByCatalogId.clear();
+  manifestFullCardArtCatalogIds.clear();
 }

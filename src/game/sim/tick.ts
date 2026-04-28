@@ -11,7 +11,7 @@ import { applyPlayerIntents } from "./systems/intents";
 import { portals } from "./systems/portals";
 import { buildProgress, production } from "./systems/production";
 import { maybeEnemyReinforcements } from "./systems/waves";
-import { loseCheck, winCheck } from "./systems/winlose";
+import { loseCheck, timeLimitCheck, winCheck } from "./systems/winlose";
 import { respawnDeadHeroAtKeep } from "./systems/hero";
 
 export { applyPlayerIntents } from "./systems/intents";
@@ -19,6 +19,8 @@ export { applyPlayerIntents } from "./systems/intents";
 /** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
 export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   if (s.phase === "win" || s.phase === "lose") return;
+  timeLimitCheck(s);
+  if (s.phase !== "playing") return;
   if (s.tacticsFieldZones.length > 0) {
     s.tacticsFieldZones = s.tacticsFieldZones.filter((z) => z.untilTick > s.tick);
   }

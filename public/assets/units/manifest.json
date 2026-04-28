@@ -1,6 +1,12 @@
 {
   "schemaVersion": 2,
   "files": [
+    "acrobat_compressed.glb",
+    "amber_geode_monks_attack.glb",
+    "amber_geode_monks_character.glb",
+    "amber_geode_monks_death.glb",
+    "amber_geode_monks_run.glb",
+    "amber_geode_monks_walk.glb",
     "azure_spear_swarm_attack_spin.glb",
     "azure_spear_swarm_dying.glb",
     "azure_spear_swarm_idle.glb",
@@ -8,6 +14,7 @@
     "azure_spear_swarm_running.glb",
     "azure_spear_swarm_walking.glb",
     "bastion_keep_building.glb",
+    "driftwood_oasis_compressed.glb",
     "lanternbound_line_attack_triple_combo.glb",
     "lanternbound_line_bow_charge.glb",
     "lanternbound_line_combat_stance.glb",
@@ -15,6 +22,7 @@
     "lanternbound_line_idle.glb",
     "lanternbound_line_running.glb",
     "lanternbound_line_walking.glb",
+    "starbound_arcanist_hero.glb",
     "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
     "unit_019d52a3-d2f8-7a51-b535-c938ad8c9658.glb",
     "unit_019d52a3-fcd5-7a59-b02f-1ddf2759467d.glb",
@@ -33,6 +41,31 @@
     "verdant_gatekeeper_titan_run.glb"
   ],
   "animationProfiles": [
+    {
+      "id": "amber_geode_monks",
+      "roles": {
+        "model": "amber_geode_monks_run.glb",
+        "run": "amber_geode_monks_run.glb",
+        "idle": "amber_geode_monks_walk.glb",
+        "attack": "amber_geode_monks_attack.glb",
+        "death": "amber_geode_monks_death.glb"
+      },
+      "files": [
+        "amber_geode_monks_attack.glb",
+        "amber_geode_monks_death.glb",
+        "amber_geode_monks_run.glb",
+        "amber_geode_monks_walk.glb"
+      ]
+    },
+    {
+      "id": "amber_geode_monks_character",
+      "roles": {
+        "model": "amber_geode_monks_character.glb"
+      },
+      "files": [
+        "amber_geode_monks_character.glb"
+      ]
+    },
     {
       "id": "azure_spear_swarm",
       "sizeClass": "Swarm",
@@ -73,6 +106,20 @@
       ]
     },
     {
+      "id": "starbound_arcanist_hero",
+      "sizeClass": "hero",
+      "roles": {
+        "model": "starbound_arcanist_hero.glb",
+        "run": "starbound_arcanist_hero.glb",
+        "idle": "starbound_arcanist_hero.glb",
+        "attack": "starbound_arcanist_hero.glb",
+        "death": "starbound_arcanist_hero.glb"
+      },
+      "files": [
+        "starbound_arcanist_hero.glb"
+      ]
+    },
+    {
       "id": "verdant_gatekeeper_reference",
       "roles": {
         "model": "verdant_gatekeeper_reference_running.glb",
@@ -101,6 +148,83 @@
     }
   ],
   "inspections": [
+    {
+      "file": "acrobat_compressed.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "amber_geode_monks_attack.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Charged_Ground_Slam|baselayer",
+          "duration": 3.033,
+          "tracks": 72,
+          "movingTracks": 33,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "amber_geode_monks_character.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "amber_geode_monks_death.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|Dead|baselayer",
+          "duration": 3,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "amber_geode_monks_run.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|running|baselayer",
+          "duration": 0.667,
+          "tracks": 72,
+          "movingTracks": 31,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "amber_geode_monks_walk.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|walking_man|baselayer",
+          "duration": 1.067,
+          "tracks": 72,
+          "movingTracks": 29,
+          "scaleTracks": 24
+        }
+      ]
+    },
     {
       "file": "azure_spear_swarm_attack_spin.glb",
       "skinnedMeshes": 1,
@@ -187,6 +311,13 @@
     },
     {
       "file": "bastion_keep_building.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "driftwood_oasis_compressed.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -290,6 +421,97 @@
       ]
     },
     {
+      "file": "starbound_arcanist_hero.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "360_Power_Spin_Jump",
+          "duration": 1.033,
+          "tracks": 72,
+          "movingTracks": 29,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Dead",
+          "duration": 3.667,
+          "tracks": 72,
+          "movingTracks": 40,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Idle",
+          "duration": 3.333,
+          "tracks": 72,
+          "movingTracks": 38,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Lunge_Spin_Kick",
+          "duration": 1.3,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Running",
+          "duration": 2.333,
+          "tracks": 72,
+          "movingTracks": 39,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Step_in_High_Kick",
+          "duration": 3,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Sweeping_Kick",
+          "duration": 3.533,
+          "tracks": 72,
+          "movingTracks": 46,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Swim_Idle",
+          "duration": 3.067,
+          "tracks": 72,
+          "movingTracks": 46,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Walking",
+          "duration": 2.967,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Weapon_Combo_1",
+          "duration": 4,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Weapon_Combo",
+          "duration": 1.633,
+          "tracks": 72,
+          "movingTracks": 41,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast_3",
+          "duration": 0.633,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
       "file": "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
       "skinnedMeshes": 0,
       "bones": 0,
@@ -351,6 +573,7 @@
     },
     {
       "file": "verdant_citadel_titan_base.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []

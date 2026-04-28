@@ -1,6 +1,7 @@
 import { getCatalogEntry } from "../game/catalog";
 import {
   DOCTRINE_SLOT_COUNT,
+  MATCH_DURATION_TICKS,
   SALVAGE_FLUX_CAP_PER_SEC,
   SALVAGE_FLUX_PER_POOL_PER_SEC,
   TAP_FLUX_PER_SEC,
@@ -16,7 +17,6 @@ import {
   totalPlayerPop,
   type GameState,
 } from "../game/state";
-import { getGameLogLines } from "../game/gameLog";
 import { isStructureEntry } from "../game/types";
 import {
   CARD_PREVIEW_HOVER_MS,
@@ -213,7 +213,7 @@ function computeObjective(state: GameState): string {
   const playerUnits = state.units.filter((u) => u.team === "player" && u.hp > 0);
 
   if (claimedNodes === 0)
-    return "Claim a node — walk into the nearest grey ring and stay inside to channel (need Mana for the claim fee).";
+    return "Claim a node — walk into the nearest grey ring and stay inside to earn a Mana burst plus faster income.";
   if (playerTowers.length === 0) return "Drop a tower inside claimed territory (blue field) to start batch production.";
   if (playerUnits.length === 0) {
     const producing = playerStructs.find((st) => st.complete);
@@ -276,10 +276,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         <button class="hud-btn hud-btn--ghost" id="btn-captain" type="button" aria-pressed="${initial.heroCaptainEnabled ? "true" : "false"}" title="Captain mode: the Wizard picks nearby objectives when idle. Default on for mobile.">
           <span class="hud-side-ico hud-side-ico--captain" aria-hidden="true"><i></i><em>A</em></span><span class="hud-side-copy"><span class="hud-side-eyebrow">Captain</span><b>${initial.heroCaptainEnabled ? "auto" : "manual"}</b></span>
         </button>
-        <details class="hud-gamelog" id="hud-gamelog">
-          <summary>Log</summary>
-          <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
-        </details>
       </aside>
       <div class="hud-brand" aria-hidden="true"><span class="hud-brand__mark">A</span></div>
       <div class="hud-chrome__cluster hud-chrome__cluster--main">
@@ -320,7 +316,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
           <div class="hud-help-item hud-help-item--desktop"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> move · drag <kbd>RMB</kbd> formation</div>
-          <div class="hud-help-item hud-help-item--mobile"><strong>Mobile:</strong> tap ground to move/attack-move · long-press map for orders · drag cards to summon</div>
+          <div class="hud-help-item hud-help-item--mobile"><strong>Mobile:</strong> tap ground to move/attack-move · dock bar for formation, rally, stance · drag cards to summon</div>
           <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
           <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
           <div class="hud-help-item"><kbd>V</kbd> formation · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue/wide · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> stance</div>
@@ -487,7 +483,16 @@ export function updateHud(state: GameState): void {
             : "Idle";
     }
   }
-  if (phase) phase.textContent = `${state.phase} · tick ${state.tick}`;
+  if (phase) {
+    const dp = Math.round(state.stats.damageDealtPlayer);
+    const de = Math.round(state.stats.damageDealtEnemy);
+    if (state.phase === "playing") {
+      const sec = Math.max(0, (MATCH_DURATION_TICKS - state.tick) / TICK_HZ);
+      phase.textContent = `${state.phase} · ${sec.toFixed(0)}s · ${dp}↔${de} dmg`;
+    } else {
+      phase.textContent = `${state.phase} · tick ${state.tick} · ${dp}↔${de} dmg`;
+    }
+  }
   if (captain) {
     captain.setAttribute("aria-pressed", state.heroCaptainEnabled ? "true" : "false");
     const copy = captain.querySelector<HTMLElement>(".hud-side-copy b");
@@ -558,15 +563,6 @@ export function updateHud(state: GameState): void {
         ? ` <span class="hud-readout__sep" aria-hidden="true">·</span> <span class="hud-readout__camps"><span class="hud-readout__camps-k">Enemy camps</span> ${coreLine}</span>`
         : ""
     }</span>`;
-  }
-
-  const logBody = document.querySelector("#hud-gamelog-body");
-  if (logBody) {
-    const lines = getGameLogLines();
-    const tail = lines.slice(-14);
-    logBody.textContent = tail.length
-      ? tail.map((l) => `[${l.tick}] ${l.category}: ${l.message}`).join("\n")
-      : "(no events yet)";
   }
 
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");

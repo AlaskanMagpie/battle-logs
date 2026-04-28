@@ -147,6 +147,7 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
 
   if (inner) {
     drawImageContain(ctx, inner, cardX, cardY, cardW, cardH);
+    return c;
   } else {
     ctx.fillStyle = "rgba(255,255,255,.35)";
     roundRectPath(ctx, b + 4, b + 4, W - b * 2 - 8, H - b * 2 - 8, 6);

@@ -31,6 +31,12 @@ function pushSpawnedUnitBody(
   const def = getCatalogEntry(st.catalogId);
   if (!def || !isStructureEntry(def)) return;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
+  const antiClasses =
+    def.producedAntiClasses && def.producedAntiClasses.length > 0
+      ? [...def.producedAntiClasses]
+      : def.producedAntiClass
+        ? [def.producedAntiClass]
+        : undefined;
   const spread = Math.max(1, batchTotal);
   const baseAngle = rand(s) * Math.PI * 2;
   const angle = baseAngle + (batchIndex / spread) * Math.PI * 2 + (rand(s) - 0.5) * 0.32;
@@ -49,12 +55,14 @@ function pushSpawnedUnitBody(
     range: stStats.range,
     dmgPerTick: team === "enemy" ? stStats.dmgPerTick * enemyDamageScalar(s.map) : stStats.dmgPerTick,
     visualSeed: randU32(s),
+    antiClasses,
     antiClass: def.producedAntiClass,
     trait: def.unitTrait,
     aoeRadius: def.unitAoeRadius,
     flying: def.unitFlying,
     damageVsStructuresMult: def.producedDamageVsStructuresMult ?? 1,
     signal: dominantSignal(def),
+    producedUnitId: def.producedUnitId,
     vxImpulse: 0,
     vzImpulse: 0,
   };

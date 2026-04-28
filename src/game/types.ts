@@ -178,6 +178,12 @@ export type SpellFxElement = "fire" | "lightning" | "earth" | "water" | "air" | 
 /** Renderer-facing spell silhouette. Keeps range/shape readable even when damage rules differ. */
 export type SpellFxShape = "aoe" | "bolt" | "chain" | "cone" | "beam" | "line" | "field" | "meteor" | "impact" | "burst";
 
+/**
+ * Spawn/visual profile for units from this structure (`glbPool` animationProfiles id).
+ * When omitted, runtime uses size-class defaults only.
+ */
+export type ProducedUnitId = string;
+
 export interface StructureCatalogEntry {
   id: string;
   name: string;
@@ -192,13 +198,17 @@ export interface StructureCatalogEntry {
   signalTypes: SignalType[];
   productionSeconds: number;
   producedSizeClass: UnitSizeClass;
+  /** Optional GLB/visual identity for produced squads (see `UnitRuntime.producedUnitId`). */
+  producedUnitId?: ProducedUnitId;
   producedPop: number;
   localPopCap: number;
   maxHp: number;
   /** Deprecated: generic tick damage. Prefer `aura.kind === "turret"`. Kept for legacy. */
   damagePerTick: number;
-  /** +50% damage vs this enemy size class when set. */
+  /** +50% damage vs this enemy size class when set. Back-compat single-tag form. */
   producedAntiClass?: UnitSizeClass;
+  /** +50% damage vs each listed enemy size class. Preferred over `producedAntiClass`. */
+  producedAntiClasses?: UnitSizeClass[];
   maxCharges: number;
   chargeCooldownSeconds: number;
   /** Data-driven structure effect applied while alive. */

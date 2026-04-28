@@ -114,99 +114,6 @@ body {
   background: rgba(76, 160, 255, 0.14);
   box-shadow: inset 0 0 18px rgba(126, 200, 255, 0.2), 0 0 18px rgba(36, 120, 255, 0.22);
 }
-.unit-command-radial {
-  position: fixed;
-  z-index: 75;
-  width: 236px;
-  height: 236px;
-  transform: translate(-50%, -50%);
-  pointer-events: auto;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(20, 32, 50, 0.96) 0 30%, rgba(10, 15, 24, 0.72) 31% 58%, rgba(7, 10, 16, 0) 59%),
-    radial-gradient(circle at 50% 50%, rgba(126, 200, 255, 0.14), rgba(0, 0, 0, 0) 68%);
-  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.48));
-}
-.unit-command-radial__center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 82px;
-  min-height: 54px;
-  transform: translate(-50%, -50%);
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 2px;
-  border-radius: 18px;
-  background: rgba(6, 10, 17, 0.92);
-  border: 1px solid rgba(126, 200, 255, 0.28);
-  color: #e8f4ff;
-  text-align: center;
-  box-shadow: inset 0 0 18px rgba(126, 200, 255, 0.08);
-}
-.unit-command-radial__center b {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.unit-command-radial__center span {
-  width: 68px;
-  color: #93a9c4;
-  font-size: 9px;
-  line-height: 1.15;
-}
-.unit-command-radial button {
-  position: absolute;
-  width: 86px;
-  min-height: 42px;
-  transform: translate(-50%, -50%);
-  display: grid;
-  align-content: center;
-  gap: 2px;
-  border: 1px solid rgba(126, 200, 255, 0.35);
-  border-radius: 12px;
-  background: rgba(8, 13, 22, 0.94);
-  color: #e8f4ff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  cursor: pointer;
-  transition: transform 90ms ease, background 90ms ease, border-color 90ms ease;
-}
-.unit-command-radial button b {
-  font-size: 10px;
-  line-height: 1;
-}
-.unit-command-radial button span {
-  color: #9fb4cf;
-  font-size: 8px;
-  line-height: 1.05;
-}
-.unit-command-radial button:hover {
-  transform: translate(-50%, -50%) scale(1.05);
-  background: rgba(27, 54, 86, 0.95);
-  border-color: rgba(126, 200, 255, 0.7);
-}
-.unit-command-radial__btn--attack {
-  color: #ffd1c2;
-  border-color: rgba(255, 120, 120, 0.56);
-}
-.unit-command-radial__btn--queue,
-.unit-command-radial__btn--formation {
-  color: #ffdca8;
-  border-color: rgba(255, 184, 107, 0.52);
-}
-.unit-command-radial__btn--defense {
-  color: #cbf2ff;
-  border-color: rgba(103, 218, 255, 0.5);
-}
-.unit-command-radial__btn--rally {
-  color: #d7ffd5;
-  border-color: rgba(110, 230, 145, 0.48);
-}
-.unit-command-radial__btn--hold {
-  color: #ffddb8;
-  border-color: rgba(255, 154, 92, 0.52);
-}
 
 .hud-chrome {
   position: fixed;
@@ -593,7 +500,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex-wrap: nowrap;
   align-items: stretch;
   justify-content: flex-start;
-  gap: clamp(3px, 0.55vmin, 6px);
+  gap: 10px;
   width: 100%;
   max-width: none;
   margin: 0 0 3px;
@@ -610,7 +517,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   flex: 0 0 auto;
   width: auto;
   min-width: 0;
-  min-height: clamp(30px, 6vmin, 38px);
+  min-height: 72px;
   justify-content: center;
   text-align: center;
   padding-left: clamp(4px, 1vmin, 8px);
@@ -656,17 +563,20 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 
 .hud-chrome > .hud-match-side-controls .hud-side-ico {
-  width: clamp(22px, 4.8vmin, 30px);
-  height: clamp(22px, 4.8vmin, 30px);
-  flex: 0 0 clamp(22px, 4.8vmin, 30px);
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
 }
 
 .hud-chrome > .hud-match-side-controls #btn-captain {
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
-  gap: clamp(3px, 0.6vmin, 6px);
-  padding: 2px clamp(5px, 1vmin, 8px);
-  max-width: clamp(88px, 17vmin, 118px);
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 9px 7px;
+  min-width: 76px;
+  max-width: 84px;
+  border-radius: 12px;
 }
 .hud-dock__msg {
   flex: 1 1 160px;
@@ -2990,9 +2900,9 @@ button.hud-btn--armed::after {
 
 /* Hover preview: large card above the doctrine rail — no full-screen dimmer, rail cards stay put. */
 .card-detail-pop.card-detail-pop--hover-dock {
-  place-items: end center;
-  padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 12px)
-    max(10px, env(safe-area-inset-left, 0px));
+  place-items: center;
+  padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px))
+    max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
   pointer-events: none;
 }
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-backdrop {
@@ -3001,14 +2911,14 @@ button.hud-btn--armed::after {
 }
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-body {
   pointer-events: auto;
-  max-height: min(72dvh, 640px);
-  align-self: end;
+  max-height: calc(100dvh - 20px);
+  align-self: center;
   justify-self: center;
 }
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-fit {
   width: min(400px, calc(100vw - 32px));
   height: auto;
-  max-height: min(720px, 78dvh);
+  max-height: calc(100dvh - 32px);
 }
 .card-detail-pop-backdrop {
   position: fixed;
@@ -3036,8 +2946,7 @@ button.hud-btn--armed::after {
   max-width: calc(100vw - 20px);
   max-height: min(92dvh, 900px);
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px))
     max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
   display: flex;
@@ -3055,7 +2964,7 @@ button.hud-btn--armed::after {
   width: min(400px, calc(100vw - 32px));
   height: auto;
   max-width: 100%;
-  max-height: min(88dvh, 900px);
+  max-height: calc(100dvh - 32px);
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
@@ -6468,22 +6377,24 @@ button.hud-btn--armed::after {
   }
 }
 
-/* Match rail: painted command tiles (public/assets/hud). Functionality unchanged; dynamic line is `.hud-side-copy b`. */
+/* Match rail: large clean command buttons (public/assets/hud). Functionality unchanged; dynamic line is `.hud-side-copy b`. */
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art {
   flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: clamp(0px, 0.25vmin, 2px);
-  padding: clamp(1px, 0.35vmin, 3px);
-  min-height: 0;
-  max-width: clamp(44px, 9.5vmin, 58px);
-  background: rgba(4, 8, 14, 0.55);
-  border: 1px solid rgba(120, 170, 230, 0.28);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 9px 7px;
+  min-width: 76px;
+  min-height: 72px;
+  max-width: 84px;
+  background: rgba(6, 12, 22, 0.88);
+  border: 1px solid rgba(120, 190, 255, 0.5);
+  border-radius: 12px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
 }
 
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art.hud-btn--ghost {
-  background: rgba(4, 8, 14, 0.55);
+  background: rgba(6, 12, 22, 0.88);
 }
 
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art .hud-side-eyebrow {
@@ -6492,17 +6403,17 @@ button.hud-btn--armed::after {
 
 .hud-chrome > .hud-match-side-controls .hud-side-sprite {
   display: block;
-  width: clamp(20px, 4vmin, 28px);
-  height: clamp(20px, 4vmin, 28px);
+  width: 42px;
+  height: 42px;
   aspect-ratio: 1;
   flex: 0 0 auto;
   margin: 0 auto;
-  border-radius: clamp(5px, 1vmin, 8px);
+  border-radius: 0;
   background-color: transparent;
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 
 .hud-side-sprite--rally {
@@ -6535,8 +6446,8 @@ button.hud-btn--armed::after {
   margin: 0;
   padding: 0 1px;
   text-align: center;
-  font-size: clamp(5px, 1.25vmin, 7px);
-  line-height: 1.05;
+  font-size: 10px;
+  line-height: 1.08;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(214, 228, 248, 0.92);
@@ -6544,7 +6455,7 @@ button.hud-btn--armed::after {
 }
 
 .hud-chrome > .hud-match-side-controls .hud-btn--side-art .hud-side-copy b {
-  font-size: 1em;
+  font-size: 1.08em;
   font-weight: 750;
   letter-spacing: 0.02em;
   text-transform: none;

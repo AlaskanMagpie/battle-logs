@@ -34,6 +34,7 @@ import type {
   CatalogEntry,
   GamePhase,
   MapData,
+  ProducedUnitId,
   SignalType,
   SpellFxElement,
   SpellFxShape,
@@ -143,6 +144,7 @@ export function emitHeroStrikeFx(
   target: Vec2,
   from: Vec2,
   strikeVariant: HeroStrikeFxVariant,
+  visualSeed?: number,
 ): void {
   pushFx(s, {
     kind: "hero_strike",
@@ -151,6 +153,7 @@ export function emitHeroStrikeFx(
     fromX: from.x,
     fromZ: from.z,
     strikeVariant,
+    visualSeed,
   });
 }
 
@@ -216,6 +219,8 @@ export interface HeroRuntime {
   /** World Z impulse from WASD this tick; cleared after sim. */
   wasdForward: number;
   attackCooldownTicksRemaining: number;
+  /** Monotonic cast counter used only for hero strike visual variety. */
+  strikeSequence: number;
 }
 
 export interface EnemyRelayRuntime {
@@ -264,6 +269,8 @@ export interface UnitRuntime {
   hp: number;
   maxHp: number;
   sizeClass: UnitSizeClass;
+  /** GLB animation profile id when spawned from a structure with `StructureCatalogEntry.producedUnitId`. */
+  producedUnitId?: ProducedUnitId;
   /** Number of visual/combat models represented by this shared-movement squad. */
   squadCount?: number;
   /** Original squad size for display/stat accounting. */
@@ -275,6 +282,9 @@ export interface UnitRuntime {
   range: number;
   dmgPerTick: number;
   visualSeed: number;
+  /** +50% damage bonus applies when the defender class is in this set. */
+  antiClasses?: UnitSizeClass[];
+  /** Back-compat single-target anti tag; mirrored into `antiClasses` at spawn time. */
   antiClass?: UnitSizeClass;
   trait?: UnitTrait;
   aoeRadius?: number;
@@ -340,6 +350,17 @@ export interface MatchStats {
   commandsCast: number;
   /** Enemy units spawned this match (initial camps + reinforcements). Win "routed" only counts if this is > 0. */
   enemyUnitsSpawned: number;
+  /** Total HP damage dealt by the player's army (units, wizard, spells, auras) to enemy-side targets. */
+  damageDealtPlayer: number;
+  /** Total HP damage dealt by the enemy to player-side targets. */
+  damageDealtEnemy: number;
+}
+
+/** Accumulate scored damage for time-limit tiebreaker / HUD. */
+export function recordDamageDealtBy(s: GameState, attackerTeam: TeamId, amount: number): void {
+  if (amount <= 0 || !Number.isFinite(amount)) return;
+  if (attackerTeam === "player") s.stats.damageDealtPlayer += amount;
+  else s.stats.damageDealtEnemy += amount;
 }
 
 /** Player Fortify (and similar): persistent ground zone that buffs allies and debuffs enemies. */
@@ -785,6 +806,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     wasdStrafe: 0,
     wasdForward: 0,
     attackCooldownTicksRemaining: 0,
+    strikeSequence: 0,
   };
 
   const enemySpawn =
@@ -806,6 +828,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     wasdStrafe: 0,
     wasdForward: 0,
     attackCooldownTicksRemaining: 0,
+    strikeSequence: 0,
   };
 
   resolveCircleAgainstMapObstacles(mapResolved, hero, HERO_MAP_OBSTACLE_RADIUS);
@@ -865,6 +888,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
       enemyKills: 0,
       commandsCast: 0,
       enemyUnitsSpawned: 0,
+      damageDealtPlayer: 0,
+      damageDealtEnemy: 0,
     },
     enemyCampCoreHp: {},
     fxQueue: [],

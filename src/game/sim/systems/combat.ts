@@ -19,6 +19,7 @@ import { enemyAttackSpeedScalar } from "../../difficulty";
 import {
   classifyAttackRangeBand,
   liveSquadCount,
+  recordDamageDealtBy,
   shatterTapAnchor,
   tacticsFieldIncomingDamageMult,
   tacticsFieldOutgoingDamageMult,
@@ -104,7 +105,8 @@ export function applyAttackImpulse(
 
 function physicalDamage(attacker: UnitRuntime, defender: UnitRuntime): number {
   let d = attackDamageFromPerTick(attacker, attacker.dmgPerTick);
-  if (attacker.antiClass && defender.sizeClass === attacker.antiClass) d *= ANTI_CLASS_DAMAGE_MULT;
+  const antiClasses = attacker.antiClasses?.length ? attacker.antiClasses : attacker.antiClass ? [attacker.antiClass] : [];
+  if (antiClasses.includes(defender.sizeClass)) d *= ANTI_CLASS_DAMAGE_MULT;
   const trample = TRAMPLE[attacker.sizeClass]?.[defender.sizeClass];
   if (trample) d *= trample;
   return d;
@@ -115,6 +117,7 @@ function applyUnitDamage(s: GameState, attacker: UnitRuntime, defender: UnitRunt
   d *= tacticsFieldOutgoingDamageMult(s, attacker.team, attacker.x, attacker.z);
   d *= tacticsFieldIncomingDamageMult(s, defender.team, defender.x, defender.z);
   defender.hp -= d;
+  recordDamageDealtBy(s, attacker.team, d);
   if (attacker.trait === "lifesteal") {
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + d * UNIT_LIFESTEAL_DAMAGE_FRAC);
   }
@@ -186,6 +189,7 @@ export function combat(s: GameState): void {
           tacticsFieldOutgoingDamageMult(s, u.team, u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, splash.team, splash.x, splash.z);
         splash.hp -= sp;
+        recordDamageDealtBy(s, u.team, sp);
         applyAttackImpulse(splash, best, SPELL_AOE_KNOCKBACK);
       }
     }
@@ -215,6 +219,7 @@ export function combat(s: GameState): void {
       if (best.damageReductionUntilTick > s.tick) incoming *= FORTIFY_INCOMING_DAMAGE_MULT;
       if (best.team === "player") incoming *= tacticsFieldIncomingDamageMult(s, "player", best.x, best.z);
       best.hp -= incoming;
+      recordDamageDealtBy(s, "enemy", incoming);
       commitAttack(s, u);
       pushAttackMark(s, u, best, markMax, markAttackers);
     }
@@ -232,6 +237,7 @@ export function combat(s: GameState): void {
         tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z) *
         tacticsFieldIncomingDamageMult(s, "player", s.hero.x, s.hero.z);
       s.hero.hp = Math.max(0, s.hero.hp - raw);
+      recordDamageDealtBy(s, "enemy", raw);
       commitAttack(s, u);
       pushAttackMark(s, u, s.hero, markMax, markAttackers);
     }
@@ -248,6 +254,7 @@ export function combat(s: GameState): void {
         tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
         tacticsFieldIncomingDamageMult(s, "enemy", s.enemyHero.x, s.enemyHero.z);
       s.enemyHero.hp = Math.max(0, s.enemyHero.hp - raw);
+      recordDamageDealtBy(s, "player", raw);
       commitAttack(s, u);
       pushAttackMark(s, u, s.enemyHero, markMax, markAttackers);
     }
@@ -270,6 +277,7 @@ export function combat(s: GameState): void {
           tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, "enemy", er.x, er.z);
         er.hp -= raw;
+        recordDamageDealtBy(s, "player", raw);
         if (isSiege) s.lastSiegeHit = { x: er.x, z: er.z, tick: s.tick };
         commitAttack(s, u);
         pushAttackMark(s, u, er, markMax, markAttackers);
@@ -288,6 +296,7 @@ export function combat(s: GameState): void {
           tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
           tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
         st.hp -= raw;
+        recordDamageDealtBy(s, "player", raw);
         if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
         commitAttack(s, u);
         pushAttackMark(s, u, st, markMax, markAttackers);
@@ -307,10 +316,9 @@ export function combat(s: GameState): void {
       if ((t.anchorHp ?? 0) <= 0) continue;
       if (dist2(u, t) > ar2) continue;
       const mult = u.damageVsStructuresMult ?? 1;
-      t.anchorHp = Math.max(
-        0,
-        (t.anchorHp ?? 0) - attackDamageFromPerTick(u, u.dmgPerTick) * UNIT_TAP_ANCHOR_DAMAGE_MULT * mult,
-      );
+      const anchorDmg = attackDamageFromPerTick(u, u.dmgPerTick) * UNIT_TAP_ANCHOR_DAMAGE_MULT * mult;
+      t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - anchorDmg);
+      recordDamageDealtBy(s, u.team, anchorDmg);
       commitAttack(s, u);
       pushAttackMark(s, u, t, markMax, markAttackers);
       if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
@@ -334,6 +342,9 @@ export function combat(s: GameState): void {
         pushAttackMark(s, u, camp.origin, markMax, markAttackers);
       }
     }
-    if (dmg > 0) s.enemyCampCoreHp[camp.id] = Math.max(0, cur - dmg);
+    if (dmg > 0) {
+      s.enemyCampCoreHp[camp.id] = Math.max(0, cur - dmg);
+      recordDamageDealtBy(s, "player", dmg);
+    }
   }
 }

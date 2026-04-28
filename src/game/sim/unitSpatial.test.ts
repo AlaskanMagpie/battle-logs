@@ -36,19 +36,22 @@ describe("combat spatial lookup", () => {
 });
 
 describe("unit combat ranges", () => {
-  it("uses longer ranges with lower damage for farther-reaching classes", () => {
+  it("uses a strict range and damage ladder by unit class", () => {
     const swarm = unitStatsForCatalog("Swarm");
     const line = unitStatsForCatalog("Line");
     const heavy = unitStatsForCatalog("Heavy");
     const titan = unitStatsForCatalog("Titan");
 
-    expect(swarm.range).toBeGreaterThan(line.range);
+    expect(swarm.range).toBeLessThan(line.range);
+    expect(line.range).toBeLessThan(heavy.range);
+    expect(heavy.range).toBeLessThan(titan.range);
     expect(swarm.dmgPerTick).toBeLessThan(line.dmgPerTick);
+    expect(line.dmgPerTick).toBeLessThan(heavy.dmgPerTick);
     expect(titan.range).toBeGreaterThan(heavy.range);
     expect(titan.dmgPerTick).toBeGreaterThan(heavy.dmgPerTick);
-    expect(swarm.dmgPerTick).toBe(0.12);
-    expect(line.dmgPerTick).toBe(0.22);
-    expect(heavy.dmgPerTick).toBe(0.55);
-    expect(titan.dmgPerTick).toBe(1.15);
+    expect(swarm.dmgPerTick).toBe(0.1);
+    expect(line.dmgPerTick).toBe(0.19);
+    expect(heavy.dmgPerTick).toBe(0.42);
+    expect(titan.dmgPerTick).toBe(0.92);
   });
 });

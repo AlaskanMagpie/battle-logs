@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#152238"/>
+      <stop offset="45%" style="stop-color:#0c1628"/>
+      <stop offset="100%" style="stop-color:#081018"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#6ec8ff;stop-opacity:0.45"/>
+      <stop offset="100%" style="stop-color:#3d78b8;stop-opacity:0.25"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8fd4ff"/>
+      <stop offset="100%" style="stop-color:#4a9ecc"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="600" rx="14" fill="url(#bg)"/>
+  <rect x="3" y="3" width="394" height="594" rx="12" fill="none" stroke="url(#rim)" stroke-width="3"/>
+  <!-- Stylized cliff / tower silhouette -->
+  <path fill="#1e3555" stroke="#4a8ec8" stroke-width="1.2" d="M120 380 L200 180 L280 380 Z"/>
+  <path fill="url(#blade)" opacity="0.85" d="M175 340 L200 220 L225 340 Z"/>
+  <text x="200" y="108" text-anchor="middle" fill="#d8eeff" font-family="Georgia,serif" font-size="21" font-weight="bold">CRAGRUNNER REDOUBT</text>
+  <text x="200" y="138" text-anchor="middle" fill="#7eb0dc" font-family="system-ui,sans-serif" font-size="12">STRUCTURE • VANGUARD</text>
+  <text x="200" y="428" text-anchor="middle" fill="#eaf6ff" font-family="Georgia,serif" font-size="18">Acrobat scouts</text>
+  <text x="200" y="458" text-anchor="middle" fill="#a8c8e8" font-family="system-ui,sans-serif" font-size="13">Azure Spear Swarm • Fast skirmisher</text>
+  <text x="200" y="528" text-anchor="middle" fill="#6a90b8" font-family="system-ui,sans-serif" font-size="10">catalog id: watchtower</text>
+</svg>

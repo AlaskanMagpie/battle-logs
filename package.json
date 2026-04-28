@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:lan": "vite --host",
+    "assets:sync-cards": "node scripts/sync-card-manifest.mjs",
+    "cards:pipeline": "node scripts/cards-pipeline.mjs",
+    "build": "node scripts/verify-public-glbs.mjs && node scripts/sync-card-manifest.mjs && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "playwright:install-browsers": "playwright install chromium",
     "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs",
     "assets:import-meshy": "node scripts/import-meshy-assets.mjs incoming",
-    "assets:inspect-glbs": "node scripts/inspect-unit-glbs.mjs"
+    "assets:inspect-glbs": "node scripts/inspect-unit-glbs.mjs",
+    "assets:fix-texture-webp": "node scripts/fix-ext-texture-webp.mjs"
   },
   "dependencies": {
     "react": "^19.2.5",
@@ -22,6 +27,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.175.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "^1.59.1",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.2.4"

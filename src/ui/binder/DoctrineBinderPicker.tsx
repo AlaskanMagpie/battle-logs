@@ -12,6 +12,7 @@ import {
   type PortalContext,
 } from "../../game/portal";
 import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
+import { resetCardArtManifestCache } from "../cardArtManifest";
 import {
   CARD_PREVIEW_HOVER_MS,
   onDoctrineCardPreviewHoverLeave,
@@ -23,26 +24,35 @@ import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
 import { getBinderTextureForCatalogId } from "./binderCardTexture";
 import {
+  BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_TOTAL_CELLS,
   CardBinderEngine,
   makeEmptyBinderPanelCanvas,
   type CodexPointerDragEvent,
 } from "./CardBinderEngine";
+import { BinderLayoutCalibratePanel } from "./BinderLayoutCalibratePanel";
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
 import "./binderPicker.css";
 
-const CATALOG_IDS = CATALOG.map((c) => c.id);
-/** Codex panel order: full catalog (structures + spells/commands), shuffled into binder cells. */
-const BINDER_GRID_CATALOG_IDS: readonly string[] = CATALOG_IDS;
-const validIds = new Set(CATALOG_IDS);
+const FULL_ART_STRUCTURE_CARD_IDS = [
+  "outpost",
+  "watchtower",
+  "bastion_keep",
+  "verdant_citadel",
+] as const;
+const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
+/** Codex panel order: updated visual structure cards + legacy spell/command placeholders only. */
+const BINDER_GRID_CATALOG_IDS: readonly string[] = [...FULL_ART_STRUCTURE_CARD_IDS, ...COMMAND_CARD_IDS];
+const MAP_URL_STORAGE_KEY = "signalWarsMapUrl.v2";
+const LEGACY_MAP_URL_STORAGE_KEY = "signalWarsMapUrl";
+const validIds = new Set(BINDER_GRID_CATALOG_IDS);
+const validMapUrls = new Set(MAP_REGISTRY.map((m) => m.url));
 const MIN_FILLED = 4;
 const QUICK_PICK_IDS: readonly string[] = [
   "outpost",
   "watchtower",
-  "root_bunker",
-  "menders_hut",
-  "salvage_yard",
-  "war_camp",
+  "bastion_keep",
+  "verdant_citadel",
   "firestorm",
   "fortify",
   "recycle",
@@ -87,6 +97,9 @@ function slotUnderPointerInTrack(clientX: number, clientY: number, track: HTMLEl
   return null;
 }
 
+/** Catalog ids pinned to the **first codex cell** (recto top-left) so key cards are always on page 1. */
+const CODEX_PIN_FIRST_SLOT: readonly string[] = ["watchtower"];
+
 /** One texture index per duplex slot (`BINDER_CODEX_TOTAL_CELLS`); repeats when the catalog is smaller than the grid. */
 function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
   if (baseIds.length === 0) return [];
@@ -102,6 +115,15 @@ function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
   for (let i = out.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  for (const pinId of CODEX_PIN_FIRST_SLOT) {
+    if (!baseIds.includes(pinId)) continue;
+    const at = out.indexOf(pinId);
+    if (at >= 0 && at !== 0) {
+      const swap = out[0]!;
+      out[0] = pinId;
+      out[at] = swap;
+    }
   }
   return out;
 }
@@ -125,6 +147,11 @@ export function DoctrineBinderPicker({
     [portalContext],
   );
   const controlProfile = useMemo(() => getControlProfile(), []);
+  /** Sliders for codex + Vibe portal — open from match select, or land with `?binderCalibrate=1`. */
+  const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("binderCalibrate") === "1";
+  });
 
   const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
   const initialPicker = useMemo(() => loadDoctrinePickerState(), []);
@@ -143,7 +170,8 @@ export function DoctrineBinderPicker({
   const [page, setPage] = useState({ c: 0, t: 1 });
   const [mapUrl, setMapUrl] = useState<string>(() => {
     try {
-      return localStorage.getItem("signalWarsMapUrl") || DEFAULT_MAP_URL;
+      const saved = localStorage.getItem(MAP_URL_STORAGE_KEY);
+      return saved && validMapUrls.has(saved) ? saved : DEFAULT_MAP_URL;
     } catch {
       return DEFAULT_MAP_URL;
     }
@@ -157,6 +185,7 @@ export function DoctrineBinderPicker({
   const handTrackRef = useRef<HTMLDivElement>(null);
   const handRowRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<CardBinderEngine | null>(null);
+  const [binderEngineForUi, setBinderEngineForUi] = useState<CardBinderEngine | null>(null);
   /** Two quick taps on the same catalog cell open full rules (pointer-first; complements dblclick). */
   const detailTapRef = useRef<{ t: number; idx: number | null }>({ t: 0, idx: null });
   const codexDragBusyRef = useRef(false);
@@ -175,6 +204,11 @@ export function DoctrineBinderPicker({
 
   const filledCount = slots.filter(Boolean).length;
   const canStart = filledCount >= MIN_FILLED;
+
+  /** Force refetch card manifest + bust `/assets/cards/*` cache each visit (browser loves to cache JSON/SVG). */
+  useEffect(() => {
+    resetCardArtManifestCache();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -225,6 +259,16 @@ export function DoctrineBinderPicker({
       const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
       orderedRef.current = panelIds;
       const texList: THREE.Texture[] = panelIds.map(() => makeDeferredBinderTexture());
+      const initialVisibleEnd = Math.min(panelIds.length, BINDER_CELLS_PER_SHEET);
+      try {
+        await preloadCardPreviewDataUrls(panelIds.slice(0, initialVisibleEnd));
+      } catch {
+        /* best-effort */
+      }
+      for (let i = 0; i < initialVisibleEnd; i++) {
+        if (cancelled) return;
+        texList[i] = await getBinderTextureForCatalogId(panelIds[i]!);
+      }
 
       const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true, controlProfile });
       next.snapBinderFullyOpen();
@@ -329,6 +373,7 @@ export function DoctrineBinderPicker({
 
       eng = next;
       engineRef.current = next;
+      setBinderEngineForUi(next);
       ro = new ResizeObserver((es) => {
         for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
       });
@@ -355,7 +400,7 @@ export function DoctrineBinderPicker({
           if (end < panelIds.length) afterIdle(() => hydratePanelTextures(end));
         })();
       };
-      afterIdle(() => hydratePanelTextures(0));
+      if (initialVisibleEnd < panelIds.length) afterIdle(() => hydratePanelTextures(initialVisibleEnd));
     })();
 
     return () => {
@@ -363,6 +408,7 @@ export function DoctrineBinderPicker({
       ro?.disconnect();
       eng?.dispose();
       engineRef.current = null;
+      setBinderEngineForUi(null);
     };
   }, [controlProfile]);
 
@@ -703,7 +749,8 @@ export function DoctrineBinderPicker({
     const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
     saveDoctrinePickerState(norm, binderSlotPick);
     try {
-      localStorage.setItem("signalWarsMapUrl", mapUrl);
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapUrl);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
     } catch {
       /* ignore */
     }
@@ -916,6 +963,20 @@ export function DoctrineBinderPicker({
                   >
                     View
                   </button>
+                  <button
+                    type="button"
+                    className="binder-picker-btn"
+                    title="Move the codex and the Vibe Jam portal in 3D; saves in this browser (copy TS to bake into the repo)"
+                    onClick={() => {
+                      setRoomLayoutTunerOpen((o) => {
+                        const next = !o;
+                        if (next) setPrematchSetupOpen(true);
+                        return next;
+                      });
+                    }}
+                  >
+                    {roomLayoutTunerOpen ? "Hide layout" : "Tune layout"}
+                  </button>
                 </div>
               ) : null}
               <div className="binder-picker-toolbar-map">
@@ -985,6 +1046,14 @@ export function DoctrineBinderPicker({
           🎮 Vibe Jam 2026
         </a>
       </div>
+
+      {roomLayoutTunerOpen ? (
+        <BinderLayoutCalibratePanel
+          engine={binderEngineForUi}
+          visible={!loading && binderEngineForUi != null}
+          onClose={() => setRoomLayoutTunerOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

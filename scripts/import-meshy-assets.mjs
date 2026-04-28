@@ -74,4 +74,16 @@ const sync = spawnSync(process.execPath, [path.join(__dirname, "sync-unit-manife
   cwd: repoRoot,
   stdio: "inherit",
 });
-process.exit(sync.status ?? 1);
+if (sync.status !== 0) process.exit(sync.status ?? 1);
+
+const fixScript = path.join(__dirname, "fix-ext-texture-webp.mjs");
+if (fs.existsSync(fixScript)) {
+  const fix = spawnSync(process.execPath, [fixScript, unitsDir], { cwd: repoRoot, stdio: "inherit" });
+  if (fix.status !== 0 && fix.status != null) {
+    console.warn(
+      `[import-meshy] fix-ext-texture-webp exited with code ${fix.status} (GLBs may still need manual repair)`,
+    );
+  }
+} else {
+  console.warn("[import-meshy] fix-ext-texture-webp.mjs not found, skipped");
+}

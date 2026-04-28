@@ -27,6 +27,7 @@ import {
   nearFriendlyForward,
   nearSafeDeployAura,
   pushFx,
+  recordDamageDealtBy,
   resetHeroTeleportCooldown,
   shatterTapAnchor,
   type CastFxKind,
@@ -39,9 +40,9 @@ import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { applyAttackImpulse } from "./combat";
 import { computeFormationSlots, formationKindLabel, nextFormationKind } from "./formationLayout";
-import { findNeutralTapIndexNearHero } from "./hero";
+import { findNeutralTapIndexNearHero, setHeroMovePath } from "./hero";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
-import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
+import { claimChannelSecForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
 
@@ -81,14 +82,11 @@ function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
         logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
       }
     } else {
-      h.targetX = x;
-      h.targetZ = z;
+      setHeroMovePath(s, { x, z });
       logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
     }
   } else {
-    h.moveWaypoints.length = 0;
-    h.targetX = x;
-    h.targetZ = z;
+    setHeroMovePath(s, { x, z });
     logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
   }
 }
@@ -270,9 +268,11 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   logGame("move", `Teleport -> (${s.hero.x.toFixed(1)}, ${s.hero.z.toFixed(1)})`, s.tick);
 }
 
-function damageEnemyUnitFromCommand(u: UnitRuntime | undefined, amountPerBody: number): boolean {
+function damageEnemyUnitFromCommand(s: GameState, u: UnitRuntime | undefined, amountPerBody: number): boolean {
   if (!u || u.team !== "enemy" || u.hp <= 0) return false;
-  u.hp -= amountPerBody * liveSquadCount(u);
+  const dealt = amountPerBody * liveSquadCount(u);
+  u.hp -= dealt;
+  recordDamageDealtBy(s, "player", dealt);
   return true;
 }
 
@@ -482,7 +482,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
-        damageEnemyUnitFromCommand(u, fx.damage);
+        damageEnemyUnitFromCommand(s, u, fx.damage);
         const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
         applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED);
         hits++;
@@ -491,18 +491,22 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (er.hp <= 0) continue;
         if (!pointInCorridor(er.x, er.z, hx, hz, ex, ez, hw)) continue;
         er.hp -= fx.damage * 0.65;
+        recordDamageDealtBy(s, "player", fx.damage * 0.65);
         hits++;
       }
       for (const st of s.structures) {
         if (st.team !== "enemy" || st.hp <= 0) continue;
         if (!pointInCorridor(st.x, st.z, hx, hz, ex, ez, hw)) continue;
         st.hp -= fx.damage * 0.65;
+        recordDamageDealtBy(s, "player", fx.damage * 0.65);
         hits++;
       }
       for (const t of s.taps) {
         if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
         if (!pointInCorridor(t.x, t.z, hx, hz, ex, ez, hw)) continue;
-        t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - fx.damage * 0.55);
+        const tapDmg = fx.damage * 0.55;
+        t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - tapDmg);
+        recordDamageDealtBy(s, "player", tapDmg);
         if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
         hits++;
       }
@@ -542,12 +546,16 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
-        damageEnemyUnitFromCommand(u, fx.damage);
+        damageEnemyUnitFromCommand(s, u, fx.damage);
         applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED);
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
-        if (dist2(er, pos) <= r2) er.hp -= fx.damage * 0.5;
+        if (dist2(er, pos) <= r2) {
+          const dd = fx.damage * 0.5;
+          er.hp -= dd;
+          recordDamageDealtBy(s, "player", dd);
+        }
       }
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
@@ -694,6 +702,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           const idx = Number(bestKey.slice(2));
           const er = s.enemyRelays[idx]!;
           er.hp -= dmg;
+          recordDamageDealtBy(s, "player", dmg);
           const silenceTick = s.tick + Math.round(fx.silenceSeconds * TICK_HZ);
           er.silencedUntilTick = Math.max(er.silencedUntilTick, silenceTick);
           for (const st of s.structures) {
@@ -705,11 +714,14 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         } else if (bestKey.startsWith("s:")) {
           const sid = Number(bestKey.slice(2));
           const st = s.structures.find((x) => x.id === sid);
-          if (st) st.hp -= dmg;
+          if (st) {
+            st.hp -= dmg;
+            recordDamageDealtBy(s, "player", dmg);
+          }
         } else {
           const uid = Number(bestKey.slice(2));
           const u = s.units.find((x) => x.id === uid);
-          if (damageEnemyUnitFromCommand(u, dmg)) {
+          if (damageEnemyUnitFromCommand(s, u, dmg)) {
             applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
           }
         }
@@ -1029,13 +1041,10 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       if (idx !== null && s.hero.claimChannelTarget === null) {
         const tap = s.taps[idx];
         if (tap && !tap.active) {
-          const fee = claimFluxFeeForTap(s, "player", tap);
           const chSec = claimChannelSecForTap(s, "player", tap);
-          if (s.flux >= fee) {
-            s.hero.claimChannelTarget = idx;
-            s.hero.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
-            s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s (-${fee} Mana).`;
-          }
+          s.hero.claimChannelTarget = idx;
+          s.hero.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+          s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s.`;
         }
       }
     } else if (it.type === "start_battle") {

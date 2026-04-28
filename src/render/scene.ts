@@ -48,8 +48,6 @@ import {
   requestGlbForUnit,
   type GlbExtentBasis,
 } from "./glbPool";
-import { createSkyPanorama, setSkyPanoramaZoom, type SkyPanoramaMesh } from "./skyPanorama";
-
 /** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 /** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
@@ -61,26 +59,17 @@ const UNIT_VISUAL_RUN_EPS = 0.035;
 /** Per-frame catch-up while running; keeps fixed sim steps from looking like tiny teleports. */
 const UNIT_VISUAL_RUN_CATCHUP = 0.42;
 
-/** Main match equirectangular sky (observation deck — map reads as on the lit platform). */
-const MATCH_SKYBOX_URL = "/assets/sky/match-arena-equirect.png";
-/**
- * Keep the observation-deck panorama level with the XZ match floor.
- * Pitch/roll here makes the horizon read like a tilted wall behind the arena.
- */
-const MATCH_SKYBOX_ROTATION_X = 0;
-const MATCH_SKYBOX_ROTATION_Y = 0;
-const MATCH_SKYBOX_ROTATION_Z = 0;
-const MATCH_SKYBOX_RADIUS = 1200;
-const MATCH_SKYBOX_ZOOM = 1.72;
+/** Same equirect asset / path as the doctrine prematch room (`CardBinderEngine` nebula sky). */
+const MATCH_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
 const MATCH_SKYBOX_PLACEMENT_STORAGE_KEY = "signalWarsMatchSkyboxPlacement.v1";
 export type MatchSkyboxPlacement = { x: number; y: number; z: number };
 const DEFAULT_MATCH_SKYBOX_PLACEMENT: MatchSkyboxPlacement = { x: 0, y: -120, z: 0 };
-/** Fog color lerp toward deck grey when the arena sky is active (so ground fades into the deck read). */
+/** Fog color lerp toward neutral grey when the arena equirect sky is active. */
 const MATCH_SKYBOX_FOG_DECK = 0xb9c2ce;
 const MATCH_SKYBOX_FOG_LERP = 0.36;
 const MATCH_SKYBOX_FOG_NEAR_MULT = 1.14;
 const MATCH_SKYBOX_FOG_FAR_MULT = 1.32;
-/** Default ground tint when arena sky is on (deck continuity). */
+/** Default ground tint when arena equirect sky is on. */
 const MATCH_SKYBOX_GROUND_HEX = 0xa8b2bd;
 
 function readMatchSkyboxPlacement(): MatchSkyboxPlacement {
@@ -658,7 +647,6 @@ export class GameRenderer {
   private currentState: GameState | null = null;
   /** Loaded match equirect; disposed in `dispose()`. */
   private matchSkyboxTexture: THREE.Texture | null = null;
-  private matchSkyboxMesh: SkyPanoramaMesh | null = null;
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
@@ -824,14 +812,12 @@ export class GameRenderer {
       z: Number.isFinite(next.z) ? next.z! : this.matchSkyboxPlacement.z,
     };
     if (persist) writeMatchSkyboxPlacement(this.matchSkyboxPlacement);
-    this.updateMatchSkyboxTransform();
     return this.getMatchSkyboxPlacement();
   }
 
   resetMatchSkyboxPlacement(): MatchSkyboxPlacement {
     this.matchSkyboxPlacement = { ...DEFAULT_MATCH_SKYBOX_PLACEMENT };
     writeMatchSkyboxPlacement(this.matchSkyboxPlacement);
-    this.updateMatchSkyboxTransform();
     return this.getMatchSkyboxPlacement();
   }
 
@@ -840,12 +826,6 @@ export class GameRenderer {
     if (this.matchSkyboxTexture) {
       this.matchSkyboxTexture.dispose();
       this.matchSkyboxTexture = null;
-    }
-    if (this.matchSkyboxMesh) {
-      this.scene.remove(this.matchSkyboxMesh);
-      this.matchSkyboxMesh.geometry.dispose();
-      this.matchSkyboxMesh.material.dispose();
-      this.matchSkyboxMesh = null;
     }
     this.scene.background = new THREE.Color(0x0e1116);
     this.scene.backgroundRotation.set(0, 0, 0);
@@ -1303,7 +1283,13 @@ export class GameRenderer {
           width: fxEvt.width,
           visualSeed: fxEvt.visualSeed,
         });
-        if (fxEvt.kind === "hero_strike") this.heroLungeTimer = 0.2;
+        if (fxEvt.kind === "hero_strike") {
+          this.heroLungeTimer = 0.2;
+          if (fxEvt.strikeVariant?.startsWith("player_") && this.heroGroup) this.playGlbAttackAnimation(this.heroGroup);
+          else if (fxEvt.strikeVariant?.startsWith("rival_") && this.enemyHeroGroup) {
+            this.playGlbAttackAnimation(this.enemyHeroGroup);
+          }
+        }
       }
       q.length = 0;
     }
@@ -2386,7 +2372,10 @@ export class GameRenderer {
     this.groundVisualKey = "";
   }
 
-  /** Equirect observation-deck sky for matches — sky-only mesh so the panorama can zoom/translate independently. */
+  /**
+   * Match sky: same as doctrine prematch — `Scene.background` equirect (no sky sphere; avoids custom UV).
+   * `matchSkyboxPlacement` is still persisted for `?skyboxAdjust` but does not affect `Scene.background`.
+   */
   private async _loadMatchSkybox(): Promise<void> {
     const loader = new THREE.TextureLoader();
     try {
@@ -2405,38 +2394,15 @@ export class GameRenderer {
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
       tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy());
-      if (this.matchSkyboxMesh) {
-        this.scene.remove(this.matchSkyboxMesh);
-        this.matchSkyboxMesh.geometry.dispose();
-        this.matchSkyboxMesh.material.dispose();
-      }
-      this.matchSkyboxMesh = createSkyPanorama(tex, {
-        radius: MATCH_SKYBOX_RADIUS,
-        zoom: MATCH_SKYBOX_ZOOM,
-        intensity: 1.03,
-        rotation: new THREE.Euler(MATCH_SKYBOX_ROTATION_X, MATCH_SKYBOX_ROTATION_Y, MATCH_SKYBOX_ROTATION_Z),
-      });
-      this.scene.add(this.matchSkyboxMesh);
-      this.scene.background = new THREE.Color(0x0e1116);
+      this.scene.background = tex;
       this.scene.backgroundBlurriness = 0;
       this.scene.backgroundIntensity = 1;
       this.scene.backgroundRotation.set(0, 0, 0);
-      this.updateMatchSkyboxTransform();
       this.groundVisualKey = "";
       if (this.currentState) this.applyMapVisual(this.currentState);
     } catch {
       /* Missing asset or decode error — keep solid fill. */
     }
-  }
-
-  private updateMatchSkyboxTransform(): void {
-    if (!this.matchSkyboxMesh) return;
-    this.matchSkyboxMesh.position.set(
-      this.camera.position.x + this.matchSkyboxPlacement.x,
-      this.camera.position.y + this.matchSkyboxPlacement.y,
-      this.camera.position.z + this.matchSkyboxPlacement.z,
-    );
-    setSkyPanoramaZoom(this.matchSkyboxMesh, MATCH_SKYBOX_ZOOM);
   }
 
   /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
@@ -3080,11 +3046,12 @@ export class GameRenderer {
       this.heroGroup = g;
       if (this.useGlb) {
         const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
-        if (placeholder) void requestGlbForHero(placeholder);
+        if (placeholder) void requestGlbForHero(placeholder, "player");
       }
     }
     this.heroGroup.position.set(h.x, 0, h.z);
     this.heroGroup.rotation.y = h.facing;
+    this.setGlbMoveAnimation(this.heroGroup, h.targetX !== null || h.targetZ !== null);
     if (this.heroLungeTimer > 0) {
       const p = this.heroLungeTimer / 0.2;
       const amt = 0.38 * Math.sin(p * Math.PI);
@@ -3125,13 +3092,14 @@ export class GameRenderer {
       this.enemyHeroGroup = g;
       if (this.useGlb) {
         const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
-        if (placeholder) void requestGlbForHero(placeholder);
+        if (placeholder) void requestGlbForHero(placeholder, "enemy");
       }
     }
     this.enemyHeroGroup.visible = h.hp > 0;
     if (h.hp <= 0) return;
     this.enemyHeroGroup.position.set(h.x, 0, h.z);
     this.enemyHeroGroup.rotation.y = h.facing;
+    this.setGlbMoveAnimation(this.enemyHeroGroup, h.targetX !== null || h.targetZ !== null);
 
     if (!this.enemyHeroHpBarBg) {
       const bg = new THREE.Mesh(
@@ -3189,7 +3157,7 @@ export class GameRenderer {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
             placeholder.visible = false;
-            void requestGlbForUnit(u.sizeClass, placeholder, u.team);
+            void requestGlbForUnit(u.sizeClass, placeholder, u.team, u.producedUnitId);
           }
         }
       }
@@ -3543,7 +3511,15 @@ export class GameRenderer {
     if (ud["glbAttackTimer"] !== undefined) return;
     const titan = ud["sizeClass"] === "Titan";
     const minDuration =
-      ud["sizeClass"] === "Swarm" ? 3.1 : ud["sizeClass"] === "Line" ? 4.35 : titan ? 3.35 : 3.05;
+      ud["sizeClass"] === "hero"
+        ? 0.95
+        : ud["sizeClass"] === "Swarm"
+          ? 3.1
+          : ud["sizeClass"] === "Line"
+            ? 4.35
+            : titan
+              ? 3.35
+              : 3.05;
     const duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
     const inFade = titan ? 0.18 : 0.14;
     const baseUnderlay = titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
@@ -3703,7 +3679,6 @@ export class GameRenderer {
     this.tickMatchIntroCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();
-    this.updateMatchSkyboxTransform();
     this.tickGlbAnimations(dt);
     this.tickHitPulses(dt);
     this.orientHpBars();

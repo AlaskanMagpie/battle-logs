@@ -19,15 +19,15 @@ export default defineConfig({
     },
   },
   server: {
-    /* true: desktop still uses http://localhost:2222/; phone on same LAN uses http://<this-pc-ip>:2222/ */
-    host: true,
+    /** Local-only dev (see `npm run dev:lan` for 0.0.0.0 / phone on Wi‑Fi). */
+    host: "localhost",
     port: 2222,
     /** Prefer 2222; if another process holds it, Vite picks the next free port instead of exiting. */
     strictPort: false,
     fs: { strict: false },
   },
   preview: {
-    host: true,
+    host: "localhost",
     port: 2222,
     strictPort: false,
   },

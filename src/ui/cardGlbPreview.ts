@@ -1,8 +1,12 @@
 import * as THREE from "three";
 import { getCatalogPreviewAssetUrl, loadGltfTemplateRoot } from "../render/glbPool";
-import { getCardArtUrl } from "./cardArtManifest";
+import { CARD_ART_CACHE_BUSTER, getCardArtUrl } from "./cardArtManifest";
 
 const dataUrlCache = new Map<string, string | null>();
+
+function glbPreviewCacheKey(catalogId: string): string {
+  return `${catalogId}@hud_${CARD_ART_CACHE_BUSTER}`;
+}
 
 /** One shared WebGL studio — `getCardPreviewDataUrl` must never run concurrently or pivots fight. */
 let previewSerial: Promise<void> = Promise.resolve();
@@ -52,22 +56,23 @@ function ensureStudio(): void {
  * Renders a single PNG data URL for a catalog id (cached). Returns null if no asset / load fails.
  */
 export async function getCardPreviewDataUrl(catalogId: string): Promise<string | null> {
-  const cached = dataUrlCache.get(catalogId);
+  const ck = glbPreviewCacheKey(catalogId);
+  const cached = dataUrlCache.get(ck);
   if (cached !== undefined) return cached;
 
   const run = async (): Promise<string | null> => {
-    const dup = dataUrlCache.get(catalogId);
+    const dup = dataUrlCache.get(ck);
     if (dup !== undefined) return dup;
 
     const cardArtUrl = await getCardArtUrl(catalogId);
     if (cardArtUrl) {
-      dataUrlCache.set(catalogId, cardArtUrl);
+      dataUrlCache.set(ck, cardArtUrl);
       return cardArtUrl;
     }
 
     const assetUrl = await getCatalogPreviewAssetUrl(catalogId);
     if (!assetUrl) {
-      dataUrlCache.set(catalogId, null);
+      dataUrlCache.set(ck, null);
       return null;
     }
 
@@ -94,10 +99,10 @@ export async function getCardPreviewDataUrl(catalogId: string): Promise<string |
 
       renderer.render(scene, camera);
       const dataUrl = renderer.domElement.toDataURL("image/png");
-      dataUrlCache.set(catalogId, dataUrl);
+      dataUrlCache.set(ck, dataUrl);
       return dataUrl;
     } catch {
-      dataUrlCache.set(catalogId, null);
+      dataUrlCache.set(ck, null);
       return null;
     } finally {
       while (pivot.children.length) {
@@ -124,6 +129,39 @@ export async function preloadCardPreviewDataUrls(catalogIds: readonly string[]):
   }
 }
 
+function portraitFallbackEl(img: HTMLImageElement): HTMLElement | null {
+  return img.parentElement?.querySelector(".tcg-portrait-fallback") as HTMLElement | null;
+}
+
+/**
+ * After cloning card HTML (drag ghost, etc.), `src` may already be set while `hidden` and the SVG
+ * fallback were serialized from a live node — sync visibility so the raster wins over `.tcg-portrait-fallback`.
+ */
+function syncBinderPreviewImgFromExistingSrc(img: HTMLImageElement): void {
+  const fb = portraitFallbackEl(img);
+  const raw = img.getAttribute("src");
+  if (!raw || raw.length <= 8) return;
+  const showRaster = (): void => {
+    img.removeAttribute("hidden");
+    if (fb) fb.style.display = "none";
+  };
+  const showFallback = (): void => {
+    img.setAttribute("hidden", "");
+    if (fb) fb.style.display = "";
+  };
+  if (img.complete) {
+    if (img.naturalWidth > 0) showRaster();
+    else showFallback();
+    return;
+  }
+  img.onload = () => {
+    showRaster();
+  };
+  img.onerror = () => {
+    showFallback();
+  };
+}
+
 /** Fill preview `<img data-catalog-preview>` nodes under `root` (best-effort, async). */
 export function hydrateCardPreviewImages(root: ParentNode): void {
   const imgs = root.querySelectorAll("img.tcg-card-preview-img[data-catalog-preview]");
@@ -131,11 +169,14 @@ export function hydrateCardPreviewImages(root: ParentNode): void {
     const img = el as HTMLImageElement;
     const id = img.dataset.catalogPreview;
     if (!id || img.dataset.previewPending === "1") continue;
-    if (img.getAttribute("src") && img.getAttribute("src")!.length > 8) continue;
+    if (img.getAttribute("src") && img.getAttribute("src")!.length > 8) {
+      syncBinderPreviewImgFromExistingSrc(img);
+      continue;
+    }
 
-    const warm = dataUrlCache.get(id);
+    const warm = dataUrlCache.get(glbPreviewCacheKey(id));
     if (warm !== undefined) {
-      const fb = img.parentElement?.querySelector(".tcg-portrait-fallback") as HTMLElement | null;
+      const fb = portraitFallbackEl(img);
       if (warm) {
         img.removeAttribute("hidden");
         if (fb) fb.style.display = "none";
@@ -151,7 +192,7 @@ export function hydrateCardPreviewImages(root: ParentNode): void {
     void (async () => {
       try {
         const url = await getCardPreviewDataUrl(id);
-        const fb = img.parentElement?.querySelector(".tcg-portrait-fallback") as HTMLElement | null;
+        const fb = portraitFallbackEl(img);
         if (!url) return;
         const showRaster = (): void => {
           img.removeAttribute("hidden");

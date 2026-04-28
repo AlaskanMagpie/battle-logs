@@ -4,19 +4,20 @@ import {
   BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_SPREAD_COUNT,
 } from "../ui/binder/CardBinderEngine";
+import { PRODUCED_UNIT_AMBER_GEODE_MONKS } from "./constants";
 import { productionBatchSizeForClass } from "./sim/systems/helpers";
-import { CATALOG, getCatalogEntry } from "./catalog";
+import { CATALOG, getCatalogEntry, STRUCTURES } from "./catalog";
 import { sortCatalogIds } from "./catalogSort";
 import { isCommandEntry, isStructureEntry } from "./types";
 
 const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 
 describe("Doctrine binder catalog", () => {
-  it("pads the doctrine codex to ten sheets (18 catalog slots per sheet, 9 per face)", () => {
-    expect(BINDER_CODEX_SPREAD_COUNT).toBe(10);
+  it("pads the doctrine codex to five sheets (18 catalog slots per sheet, 9 per face)", () => {
+    expect(BINDER_CODEX_SPREAD_COUNT).toBe(5);
     expect(BINDER_CELLS_PER_PAGE).toBe(9);
     expect(BINDER_CELLS_PER_SHEET).toBe(18);
-    expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET).toBe(180);
+    expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET).toBe(90);
   });
 
   it("includes enough structures to fill more than one 3×3 page", () => {
@@ -45,5 +46,11 @@ describe("Doctrine binder catalog", () => {
     expect(entry.producedSizeClass).toBe("Heavy");
     expect(productionBatchSizeForClass(entry.producedSizeClass)).toBe(2);
     expect(entry.producedFlavor).toContain("Amber Geode Monks");
+    expect(entry.producedUnitId).toBe(PRODUCED_UNIT_AMBER_GEODE_MONKS);
+  });
+
+  it("only Root Sanctum uses the Amber Geode Monks spawn profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS).map((s) => s.id);
+    expect(ids).toEqual(["bastion_keep"]);
   });
 });

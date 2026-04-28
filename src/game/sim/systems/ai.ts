@@ -23,9 +23,9 @@ import {
   type UnitRuntime,
 } from "../../state";
 import type { Vec2 } from "../../types";
-import { enemyHuntDetectRadius, playerAcquireRadius } from "../engagement";
+import { playerAcquireRadius } from "../engagement";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
-import { claimChannelSecForTap } from "./homeDistance";
+import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
 
 /** Stable ring around a point (wizard blob / idle clump). */
 function formationRingAround(center: Vec2, u: UnitRuntime, spacing: number): Vec2 {
@@ -388,15 +388,18 @@ export function movement(s: GameState): void {
   const anyEnemyCampAwake =
     s.map.enemyCamps.length === 0 || s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
   if (anyEnemyCampAwake) {
-    const detect = enemyHuntDetectRadius(half);
-    const d2 = detect * detect;
     for (const u of s.units) {
       if (u.team !== "enemy" || u.hp <= 0) continue;
       const tgt = nearestEnemyAttackTarget(s, u);
       if (!tgt) continue;
-      if (dist2(u, tgt) > d2) continue;
-      const slot = formationRingAround(tgt, u, UNIT_FORMATION_SPACING * 0.42);
-      moveToward(u, slot, stepU(u));
+      const engage = Math.max(5, u.range * 0.82);
+      const engageR2 = engage * engage;
+      if (dist2(u, tgt) > engageR2) {
+        moveToward(u, tgt, stepU(u));
+      } else {
+        const slot = formationRingAround(tgt, u, UNIT_FORMATION_SPACING * 0.42);
+        moveToward(u, slot, stepU(u));
+      }
       clampToWorldAndObstacles(s, u);
     }
   }
@@ -552,8 +555,14 @@ function unitCaptureNodes(s: GameState): void {
     tap.ownerTeam = team;
     armTapClaimAnchor(tap);
     tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
+    const reward = claimFluxRewardForTap(s, team, tap);
+    if (team === "player") s.flux += reward;
+    else s.enemyFlux += reward * enemyCaptureSpeedScalar(s);
     pushFx(s, { kind: "claim", x: tap.x, z: tap.z });
-    s.lastMessage = team === "player" ? "Unit squad captured a Mana node." : "Enemy units captured a Mana node.";
+    s.lastMessage =
+      team === "player"
+        ? `Unit squad captured a Mana node (+${reward} Mana).`
+        : "Enemy units captured a Mana node.";
     tap.claimTeam = undefined;
     tap.claimTicksRemaining = undefined;
   }

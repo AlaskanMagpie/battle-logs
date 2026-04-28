@@ -1,6 +1,6 @@
 import * as THREE from "three";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { createSkyPanorama, type SkyPanoramaMesh } from "../../render/skyPanorama";
 import { getControlProfile, type ControlProfile } from "../../controlProfile";
 import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
 import { createBinderCardBackTexture } from "./binderCardBackTexture";
@@ -44,7 +44,7 @@ export const BINDER_CELLS_PER_SHEET = BINDER_CELLS_PER_PAGE * 2;
 export const BINDER_TEST_EXTRA_PAGES = 0;
 
 /** Doctrine codex: always this many spreads (empty sleeves pad the catalog). */
-export const BINDER_CODEX_SPREAD_COUNT = 10;
+export const BINDER_CODEX_SPREAD_COUNT = 5;
 
 /** `BINDER_CODEX_SPREAD_COUNT` spreads × 18 duplex slots (3×3 recto + 3×3 verso per sheet). */
 export const BINDER_CODEX_TOTAL_CELLS = BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET;
@@ -146,18 +146,15 @@ const BINDER_DOCTRINE_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
  * Front hinge cover only — intentional “arcane portal” read (do not apply to shell / rear / pages).
  *
  * Why it happens:
- * - `createSkyPanorama` paints the nebula with `depthTest: false` + `renderOrder: -10000`, so it draws first
- *   and never occludes later geometry (see `render/skyPanorama.ts`).
- * - The outer leather box uses default `FrontSide` culling. With the cover swung open, the **outer** faces often
- *   point away from the camera → fragments are discarded → nothing overwrites those pixels, so the first-pass
- *   nebula shows through like a window (room GLB only covers rays that hit stone).
+ * - Prematch nebula uses `Scene.background` (equirect texture). The outer leather box uses default `FrontSide`
+ *   culling. With the cover swung open, the **outer** faces often point away from the camera → fragments are
+ *   discarded → nothing overwrites those pixels, so the background shows through like a window (room GLB only
+ *   covers rays that hit stone).
  *
  * We **reinforce** that behavior only on `_addFrontCover` materials: slight translucency + no depth write so the
  * cover never “masks” the sky in the depth buffer, without changing ring shell / tome back / folio.
  */
 const BINDER_COVER_PORTAL_OPACITY = 0.94;
-const BINDER_DOCTRINE_SKYBOX_RADIUS = 64;
-const BINDER_DOCTRINE_SKYBOX_ZOOM = 1.55;
 const BINDER_ROOM_PORTAL_URL = "/assets/binder/arcane_portal.glb";
 const BINDER_ROOM_GLB_MAX_EXTENT = 11.5;
 const BINDER_ROOM_GLB_CENTER = new THREE.Vector3(0, -0.85, -3.45);
@@ -174,9 +171,27 @@ export type BinderPlacement = { x: number; y: number; z: number; scale: number }
 export type VibePortalPlacement = { x: number; y: number; z: number; rx: number; ry: number; rz: number; scale: number };
 export type VibePortalAction = "enter";
 
-/** Prematch “room scale” pose (binder over pedestal + foreground portal legibility). */
-const DEFAULT_BINDER_PLACEMENT: BinderPlacement = { x: 0, y: 0.05, z: 0.12, scale: BINDER_DISPLAY_SCALE };
+/** Shipped prematch layout (author calibration). */
+const DEFAULT_BINDER_PLACEMENT: BinderPlacement = { x: 0.14, y: -0.2, z: -1.54, scale: 0.5 };
 const DEFAULT_VIBE_PORTAL_PLACEMENT: VibePortalPlacement = {
+  x: 4,
+  y: -0.94,
+  z: -3.8,
+  rx: -0.01,
+  ry: -0.8,
+  rz: 0,
+  scale: 1.89,
+};
+
+/** df12e30-era defaults (portal centered on X) — one-time upgrade to `DEFAULT_*` above when still persisted. */
+const LEGACY_SHIPPED_BINDER_POSE: BinderPlacement = { x: 0, y: 0.05, z: 0.12, scale: BINDER_DISPLAY_SCALE };
+/** Older shipped binder poses — migrate to current `DEFAULT_BINDER_PLACEMENT` when still persisted. */
+const MIGRATE_BINDER_PLACEMENT_FROM: readonly BinderPlacement[] = [
+  LEGACY_SHIPPED_BINDER_POSE,
+  { x: 0, y: -0.06, z: 0.04, scale: 0.5 },
+  { x: 0, y: -0.52, z: 0.06, scale: 0.5 },
+];
+const LEGACY_SHIPPED_VIBE_POSE: VibePortalPlacement = {
   x: 0,
   y: 0.26,
   z: -1.86,
@@ -185,8 +200,45 @@ const DEFAULT_VIBE_PORTAL_PLACEMENT: VibePortalPlacement = {
   rz: 0,
   scale: 1.05,
 };
+/** Prior shipped Vibe portal — migrate when still persisted. */
+const PREVIOUS_SHIPPED_VIBE_POSE: VibePortalPlacement = {
+  x: 1.14,
+  y: 0.23,
+  z: -2.52,
+  rx: 0.062,
+  ry: -0.22,
+  rz: 0,
+  scale: 0.96,
+};
+
+function vibePlacementNearlyEqual(a: VibePortalPlacement, b: VibePortalPlacement): boolean {
+  const eps = 1e-4;
+  return (
+    Math.abs(a.x - b.x) < eps &&
+    Math.abs(a.y - b.y) < eps &&
+    Math.abs(a.z - b.z) < eps &&
+    Math.abs(a.rx - b.rx) < eps &&
+    Math.abs(a.ry - b.ry) < eps &&
+    Math.abs(a.rz - b.rz) < eps &&
+    Math.abs(a.scale - b.scale) < eps
+  );
+}
+
+function binderPlacementNearlyEqual(a: BinderPlacement, b: BinderPlacement): boolean {
+  const eps = 1e-4;
+  return (
+    Math.abs(a.x - b.x) < eps &&
+    Math.abs(a.y - b.y) < eps &&
+    Math.abs(a.z - b.z) < eps &&
+    Math.abs(a.scale - b.scale) < eps
+  );
+}
 
 const roomLoader = new GLTFLoader();
+const roomDracoLoader = new DRACOLoader();
+/** `KHR_draco_mesh_compression` (e.g. Meshy “compressed” GLBs) — decoders load from Google CDN once. */
+roomDracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
+roomLoader.setDRACOLoader(roomDracoLoader);
 
 function dragAngleShaped(raw: number): number {
   const r = THREE.MathUtils.clamp(raw, 0, Math.PI);
@@ -209,6 +261,11 @@ function readBinderPlacement(): BinderPlacement {
       z: Number.isFinite(parsed.z) ? parsed.z! : DEFAULT_BINDER_PLACEMENT.z,
       scale: Number.isFinite(parsed.scale) ? THREE.MathUtils.clamp(parsed.scale!, 0.35, 0.78) : DEFAULT_BINDER_PLACEMENT.scale,
     };
+    if (MIGRATE_BINDER_PLACEMENT_FROM.some((p) => binderPlacementNearlyEqual(placement, p))) {
+      const next = { ...DEFAULT_BINDER_PLACEMENT };
+      writeBinderPlacement(next);
+      return next;
+    }
     writeBinderPlacement(placement);
     return placement;
   } catch {
@@ -244,6 +301,14 @@ function readVibePortalPlacement(): VibePortalPlacement {
         ? THREE.MathUtils.clamp(parsed.scale!, 0.45, 1.9)
         : DEFAULT_VIBE_PORTAL_PLACEMENT.scale,
     };
+    if (
+      vibePlacementNearlyEqual(placement, LEGACY_SHIPPED_VIBE_POSE) ||
+      vibePlacementNearlyEqual(placement, PREVIOUS_SHIPPED_VIBE_POSE)
+    ) {
+      const next = { ...DEFAULT_VIBE_PORTAL_PLACEMENT };
+      writeVibePortalPlacement(next);
+      return next;
+    }
     writeVibePortalPlacement(placement);
     return placement;
   } catch {
@@ -329,9 +394,8 @@ export class CardBinderEngine {
   private readonly vibePortalGroup = new THREE.Group();
   private portalAssetRoot: THREE.Object3D | null = null;
   private readonly portalPulseMeshes: THREE.Mesh[] = [];
-  /** Loaded nebula sky; disposed in `dispose()`. */
+  /** Loaded nebula sky (`Scene.background`); disposed in `dispose()`. */
   private doctrineSkyboxTexture: THREE.Texture | null = null;
-  private doctrineSkyboxMesh: SkyPanoramaMesh | null = null;
   private portalTransitionUntil = 0;
   private portalTransitionDuration = 0;
   private portalTransitionDirection: "in" | "out" | null = null;
@@ -631,7 +695,7 @@ export class CardBinderEngine {
     this._applyVibePortalTransform();
   }
 
-  /** Nebula equirectangular sky behind the doctrine prematch room (falls back to parchment clear color). Pair with hinged cover “portal” (`createSkyPanorama`: depth tests off, draws first). */
+  /** Nebula equirectangular sky behind the doctrine prematch room via `Scene.background` (no custom sky sphere — avoids meridian / zoom UV tears). */
   private async _loadDoctrineSkybox(): Promise<void> {
     const loader = new THREE.TextureLoader();
     try {
@@ -644,25 +708,16 @@ export class CardBinderEngine {
       tex.wrapT = THREE.ClampToEdgeWrapping;
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.mapping = THREE.EquirectangularReflectionMapping;
-      // Full-screen equirect backgrounds look mushy with mipmaps (wrong mip chain for this projection).
-      // Stay on `scene.background` (not a sky sphere) so nothing can intersect the near plane.
       tex.generateMipmaps = false;
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
       tex.anisotropy = Math.min(16, this.R.capabilities.getMaxAnisotropy());
       this.doctrineSkyboxTexture?.dispose();
       this.doctrineSkyboxTexture = tex;
-      if (this.doctrineSkyboxMesh) {
-        this.S.remove(this.doctrineSkyboxMesh);
-        this.doctrineSkyboxMesh.geometry.dispose();
-        this.doctrineSkyboxMesh.material.dispose();
-      }
-      this.doctrineSkyboxMesh = createSkyPanorama(tex, {
-        radius: BINDER_DOCTRINE_SKYBOX_RADIUS,
-        zoom: BINDER_DOCTRINE_SKYBOX_ZOOM,
-      });
-      this.S.add(this.doctrineSkyboxMesh);
-      this.S.background = new THREE.Color(BINDER_CFG.bg);
+      this.S.background = tex;
+      this.S.backgroundBlurriness = 0;
+      this.S.backgroundIntensity = 1;
+      this.S.backgroundRotation.set(0, 0, 0);
     } catch {
       /* Missing URL or decode failure — keep `BINDER_CFG.bg`. */
     }
@@ -693,7 +748,9 @@ export class CardBinderEngine {
       this._fitPortalAsset(root);
       this.portalAssetRoot = root;
       this.portalGroup.add(root);
-    } catch {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[CardBinderEngine] Room GLB load failed:", BINDER_ROOM_PORTAL_URL, err);
       /* Fallback rings still provide the room portal if the GLB fails. */
     }
   }
@@ -2627,7 +2684,6 @@ export class CardBinderEngine {
       this.lookTarget.z + distBlend * Math.cos(pitchBlend) * Math.cos(this.yaw + yawNudge),
     );
     this.cam.lookAt(this.lookTarget);
-    if (this.doctrineSkyboxMesh) this.doctrineSkyboxMesh.position.copy(this.cam.position);
     this.R.render(this.S, this.cam);
     if (!this.disposed) requestAnimationFrame(this._tick);
   }
@@ -2676,13 +2732,10 @@ export class CardBinderEngine {
       this.doctrineSkyboxTexture.dispose();
       this.doctrineSkyboxTexture = null;
     }
-    if (this.doctrineSkyboxMesh) {
-      this.S.remove(this.doctrineSkyboxMesh);
-      this.doctrineSkyboxMesh.geometry.dispose();
-      this.doctrineSkyboxMesh.material.dispose();
-      this.doctrineSkyboxMesh = null;
-    }
     this.S.background = new THREE.Color(BINDER_CFG.bg);
+    this.S.backgroundBlurriness = 0;
+    this.S.backgroundIntensity = 1;
+    this.S.backgroundRotation.set(0, 0, 0);
     this.cancelPendingCatalogPick();
     this._clearCodexLongPressTimer();
     this.codexPulledPickIndices.clear();

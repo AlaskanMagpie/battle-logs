@@ -1,3 +1,4 @@
+import { MATCH_DURATION_TICKS } from "../../constants";
 import { findKeep, type GameState } from "../../state";
 
 /**
@@ -11,6 +12,29 @@ export function loseCheck(s: GameState): void {
     s.phase = "lose";
     s.lastMessage = "Defeat — the Wizard Keep has fallen.";
   }
+}
+
+/** When match duration elapses, highest damage dealt wins (tie → stalemate counts as defeat). */
+export function resolveMatchTimeLimit(s: GameState): void {
+  if (s.phase !== "playing") return;
+  const p = s.stats.damageDealtPlayer;
+  const e = s.stats.damageDealtEnemy;
+  if (p > e) {
+    s.phase = "win";
+    s.lastMessage = `Time — victory by damage (${Math.round(p)} vs ${Math.round(e)}).`;
+  } else if (e > p) {
+    s.phase = "lose";
+    s.lastMessage = `Time — defeat by damage (${Math.round(p)} vs ${Math.round(e)}).`;
+  } else {
+    s.phase = "lose";
+    s.lastMessage = `Time — stalemate (${Math.round(p)} damage each).`;
+  }
+}
+
+/** Call when `s.tick >= MATCH_DURATION_TICKS` to end the match by score. */
+export function timeLimitCheck(s: GameState): void {
+  if (s.phase !== "playing" || s.tick < MATCH_DURATION_TICKS) return;
+  resolveMatchTimeLimit(s);
 }
 
 export function winCheck(s: GameState): void {

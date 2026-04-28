@@ -1,6 +1,9 @@
 /** Simulation ticks per second — higher = smoother movement/combat cadence (balance uses per-tick scaling). */
 export const TICK_HZ = 20;
 
+/** Match ends by damage score when wall clock reaches this duration (`ticks / TICK_HZ` seconds). */
+export const MATCH_DURATION_TICKS = 3 * 60 * TICK_HZ;
+
 /** Cast FX (lightning, rings, etc.) are forcibly removed after this many wall-clock seconds. */
 export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 
@@ -12,6 +15,12 @@ export const DOCTRINE_SLOT_COUNT = 10;
 
 /** In-match HUD: two fanned rows of this many slots each. */
 export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
+
+/** `StructureCatalogEntry.producedUnitId` / `UnitRuntime.producedUnitId` — matches `animationProfiles` id in `public/assets/units/manifest.json`. Cragrunner swarm uses `azure_spear_swarm`. */
+export const PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS = "azure_spear_swarm";
+export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
+export const PRODUCED_UNIT_SIEGE_RAM = "siege_ram";
+export const PRODUCED_UNIT_RECLAMATION_WRAITH = "reclamation_wraith";
 
 /** Enemy wizard initial Mana pool. */
 export const ENEMY_SETUP_STARTING_FLUX = 500;
@@ -168,19 +177,19 @@ export const ENEMY_UNIT_STRUCTURE_DAMAGE_MULT = 0.35;
 export const UNIT_TAP_ANCHOR_DAMAGE_MULT = 0.42;
 /** Normal units attack on cadence, not every sim tick. Damage is scaled by cooldown, so slower swings hit harder. */
 export const UNIT_ATTACK_COOLDOWN_TICKS = {
-  Swarm: 56,
-  Line: 82,
-  Heavy: 70,
-  Titan: 92,
+  Swarm: 48,
+  Line: 62,
+  Heavy: 78,
+  Titan: 96,
 } as const;
 /** Per-hit lift over old per-tick DPS so slower attacks feel decisive when they land. */
 export const UNIT_ATTACK_DAMAGE_MULT = {
-  Swarm: 1.08,
-  Line: 1.2,
-  Heavy: 1.38,
-  Titan: 1.6,
+  Swarm: 1.02,
+  Line: 1.14,
+  Heavy: 1.32,
+  Titan: 1.55,
 } as const;
-/** Long-RMB radial can pull in idle nearby squads even when they were not selected. */
+/** `command_selected_units` with includeNearbyIdle recruits idle squads near the click without selecting them first. */
 export const SMART_RADIAL_IDLE_RADIUS = 20;
 
 /** Legacy radius for match-floor portal triggers (`portals.ts`); URLs are not set during matches. */
@@ -254,7 +263,10 @@ export const TAP_UNIT_ORDER_SNAP_RADIUS = 18;
 /** While capturing, only chase enemies within this radius of the node (stay focused on the objective). */
 export const TAP_CAPTURE_CONTEST_RADIUS = 30;
 export const HERO_CLAIM_CHANNEL_SEC = 2;
-export const HERO_CLAIM_FLUX_FEE = 20;
+/** Capturing Mana nodes is a reward, not a spend. Keep the old fee API at zero for replay/back-compat paths. */
+export const HERO_CLAIM_FLUX_FEE = 0;
+/** Immediate Mana burst when a player-owned node comes online (scaled by distance/richness). */
+export const HERO_CLAIM_FLUX_REWARD = 80;
 
 /** Home distance (world units): no extra claim time / flux below this radius from Keep + relays (player) or relays + enemy start (enemy). */
 export const HOME_CLAIM_DISTANCE_NEAR = 42;

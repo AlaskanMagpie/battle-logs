@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "cards": {
-    "bastion_keep": "/assets/cards/bastion_keep.png"
+    "bastion_keep": "/assets/cards/bastion_keep.png",
+    "outpost": "/assets/cards/outpost.png",
+    "verdant_citadel": "/assets/cards/verdant_citadel.png",
+    "watchtower": "/assets/cards/watchtower.png",
+    "wizard_keep": "/assets/cards/wizard_keep.svg"
   }
 }

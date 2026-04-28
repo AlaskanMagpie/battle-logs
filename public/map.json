@@ -102,7 +102,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 7482151
+      "color": 7033151
     },
     {
       "kind": "box",
@@ -113,7 +113,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 7482151
+      "color": 7033151
     },
     {
       "kind": "box",
@@ -124,7 +124,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 7482151
+      "color": 7033151
     },
     {
       "kind": "box",
@@ -135,7 +135,7 @@
       "d": 16,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 7482151
+      "color": 7033151
     },
     {
       "kind": "box",
@@ -146,7 +146,7 @@
       "d": 210,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 6046765
+      "color": 6112824
     },
     {
       "kind": "box",
@@ -157,7 +157,7 @@
       "d": 210,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 6046765
+      "color": 6112824
     },
     {
       "kind": "box",
@@ -168,7 +168,7 @@
       "d": 14,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 4998446
+      "color": 4936548
     },
     {
       "kind": "box",
@@ -179,7 +179,7 @@
       "d": 14,
       "rotYDeg": 0,
       "blocksMovement": true,
-      "color": 4998446
+      "color": 4936548
     },
     { "kind": "box", "x": 38, "z": 28, "w": 12, "h": 4, "d": 8, "rotYDeg": 18, "color": 3555407 },
     { "kind": "box", "x": 82, "z": -36, "w": 9, "h": 3.5, "d": 14, "rotYDeg": -24, "color": 3294550 },

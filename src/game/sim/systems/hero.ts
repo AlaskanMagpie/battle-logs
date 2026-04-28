@@ -1,9 +1,9 @@
 import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
-import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
+import { planPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { armTapClaimAnchor, findKeep, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
 import { dist2 } from "./helpers";
-import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
+import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
 import { tryPlayerHeroStrike } from "./heroStrike";
 
 const HERO_CAPTAIN_IDLE_TICKS = Math.round(1.2 * TICK_HZ);
@@ -34,6 +34,21 @@ function popNextHeroWaypoint(h: GameState["hero"]): void {
     h.targetX = null;
     h.targetZ = null;
   }
+}
+
+export function setHeroMovePath(s: GameState, target: { x: number; z: number }): void {
+  const h = s.hero;
+  const half = s.map.world.halfExtents;
+  const clamped = {
+    x: Math.max(-half, Math.min(half, target.x)),
+    z: Math.max(-half, Math.min(half, target.z)),
+  };
+  const path = planPathAroundMapObstacles(s.map, h, clamped, HERO_MAP_OBSTACLE_RADIUS);
+  const first = path.shift() ?? clamped;
+  h.targetX = first.x;
+  h.targetZ = first.z;
+  h.moveWaypoints.length = 0;
+  h.moveWaypoints.push(...path);
 }
 
 function moveHeroToward(s: GameState): void {
@@ -127,8 +142,7 @@ function applyHeroCaptainMode(s: GameState): void {
   if (s.tick - s.heroCaptainLastManualTick < HERO_CAPTAIN_IDLE_TICKS) return;
   const target = nearestHeroCaptainObjective(s);
   if (!target) return;
-  h.targetX = target.x;
-  h.targetZ = target.z;
+  setHeroMovePath(s, target);
   s.lastMessage = "Captain mode: Wizard moving on the next objective.";
 }
 
@@ -165,18 +179,10 @@ export function heroSystem(s: GameState): void {
     const idx = findNeutralTapIndexNearHero(s);
     if (idx !== null) {
       const tap = s.taps[idx]!;
-      const fee = claimFluxFeeForTap(s, "player", tap);
       const chSec = claimChannelSecForTap(s, "player", tap);
-      if (s.flux < fee) {
-        // Only surface the message once per tap-adjacency to avoid tick spam.
-        if (s.lastMessage.indexOf("to claim") === -1) {
-          s.lastMessage = `Need ${fee} Mana to claim this node.`;
-        }
-      } else {
-        h.claimChannelTarget = idx;
-        h.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
-        s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s (-${fee} Mana).`;
-      }
+      h.claimChannelTarget = idx;
+      h.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+      s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s.`;
     }
   }
 
@@ -187,19 +193,15 @@ export function heroSystem(s: GameState): void {
       const idx = h.claimChannelTarget;
       const tap = s.taps[idx];
       if (tap && !tap.active) {
-        const fee = claimFluxFeeForTap(s, "player", tap);
-        if (s.flux < fee) {
-          s.lastMessage = `Not enough Mana to claim (need ${fee}).`;
-        } else {
-          s.flux -= fee;
-          tap.active = true;
-          tap.ownerTeam = "player";
-          armTapClaimAnchor(tap);
-          tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
-          pushFx(s, { kind: "claim", x: tap.x, z: tap.z });
-          s.lastMessage = `Node claimed (+1 Mana/sec). Territory expanded.`;
-          logGame("claim", `Mana node ${tap.defId} claimed`, s.tick);
-        }
+        const reward = claimFluxRewardForTap(s, "player", tap);
+        s.flux += reward;
+        tap.active = true;
+        tap.ownerTeam = "player";
+        armTapClaimAnchor(tap);
+        tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
+        pushFx(s, { kind: "claim", x: tap.x, z: tap.z });
+        s.lastMessage = `Node claimed (+${reward} Mana now, faster income). Territory expanded.`;
+        logGame("claim", `Mana node ${tap.defId} claimed`, s.tick);
       }
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
