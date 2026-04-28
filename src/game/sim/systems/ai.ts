@@ -8,11 +8,11 @@ import {
   UNIT_SEPARATION_MAX_STEP,
   UNIT_SEPARATION_PASSES,
   UNIT_SEPARATION_STRENGTH,
-  HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_RADIUS,
   TAP_CAPTURE_CONTEST_RADIUS,
   TAP_YIELD_MAX,
 } from "../../constants";
+import { enemyCaptureSpeedScalar } from "../../difficulty";
 import { planPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
   armTapClaimAnchor,
@@ -25,6 +25,7 @@ import {
 import type { Vec2 } from "../../types";
 import { enemyHuntDetectRadius, playerAcquireRadius } from "../engagement";
 import { dist2, unitSeparationRadiusXZ } from "./helpers";
+import { claimChannelSecForTap } from "./homeDistance";
 
 /** Stable ring around a point (wizard blob / idle clump). */
 function formationRingAround(center: Vec2, u: UnitRuntime, spacing: number): Vec2 {
@@ -539,7 +540,11 @@ function unitCaptureNodes(s: GameState): void {
     }
     if (tap.claimTeam !== team || tap.claimTicksRemaining == null) {
       tap.claimTeam = team;
-      tap.claimTicksRemaining = Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ * 1.35);
+      const teamCaptureSpeed = team === "enemy" ? enemyCaptureSpeedScalar(s) : 1;
+      tap.claimTicksRemaining = Math.max(
+        1,
+        Math.round((claimChannelSecForTap(s, team, tap) * TICK_HZ * 1.35) / teamCaptureSpeed),
+      );
     }
     tap.claimTicksRemaining -= 1;
     if (tap.claimTicksRemaining > 0) continue;

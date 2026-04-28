@@ -2,9 +2,15 @@ import * as THREE from "three";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CATALOG, DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "../../game/catalog";
+import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
+import {
+  buildReturnPortalUrlForPrematch,
+  buildVibeJamExitUrlForPrematch,
+  type PortalContext,
+} from "../../game/portal";
 import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
 import {
   CARD_PREVIEW_HOVER_MS,
@@ -16,7 +22,12 @@ import { attachDoctrineHandPeek } from "../hud";
 import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
 import { getBinderTextureForCatalogId } from "./binderCardTexture";
-import { BINDER_CODEX_TOTAL_CELLS, CardBinderEngine, type CodexPointerDragEvent } from "./CardBinderEngine";
+import {
+  BINDER_CODEX_TOTAL_CELLS,
+  CardBinderEngine,
+  makeEmptyBinderPanelCanvas,
+  type CodexPointerDragEvent,
+} from "./CardBinderEngine";
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
 import "./binderPicker.css";
 
@@ -37,6 +48,22 @@ const QUICK_PICK_IDS: readonly string[] = [
   "recycle",
   "shatter",
 ];
+
+function makeDeferredBinderTexture(): THREE.CanvasTexture {
+  const t = new THREE.CanvasTexture(makeEmptyBinderPanelCanvas());
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 2;
+  return t;
+}
+
+function afterIdle(fn: () => void): void {
+  const idle = window.requestIdleCallback;
+  if (idle) {
+    idle(fn, { timeout: 220 });
+    return;
+  }
+  window.setTimeout(fn, 32);
+}
 
 function padDoctrineSlotsLocal(row: (string | null)[]): (string | null)[] {
   const a = row.length > DOCTRINE_SLOT_COUNT ? row.slice(0, DOCTRINE_SLOT_COUNT) : [...row];
@@ -81,9 +108,24 @@ function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
 
 export function DoctrineBinderPicker({
   onStart,
+  portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
   onStart: (slots: (string | null)[], mapUrl: string) => void;
+  portalContext?: PortalContext;
 }): ReactElement {
+  const prematchVibeJamHref = useMemo(
+    () =>
+      typeof window !== "undefined"
+        ? buildVibeJamExitUrlForPrematch(portalContext, window.location.href)
+        : "https://vibejam.cc/portal/2026",
+    [portalContext],
+  );
+  const prematchReturnHref = useMemo(
+    () => (typeof window !== "undefined" ? buildReturnPortalUrlForPrematch(portalContext, window.location.href) : null),
+    [portalContext],
+  );
+  const controlProfile = useMemo(() => getControlProfile(), []);
+
   const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
   const initialPicker = useMemo(() => loadDoctrinePickerState(), []);
   const [slots, setSlots] = useState<(string | null)[]>(() =>
@@ -123,6 +165,8 @@ export function DoctrineBinderPicker({
   const codexGhostRef = useRef<HTMLDivElement | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
   const [dragOverHandZone, setDragOverHandZone] = useState(false);
+  const [portalTransitioning, setPortalTransitioning] = useState(false);
+  const [portalExitConfirmOpen, setPortalExitConfirmOpen] = useState(false);
 
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
@@ -178,23 +222,11 @@ export function DoctrineBinderPicker({
     setLoading(true);
 
     void (async () => {
-      try {
-        await preloadCardPreviewDataUrls([...CATALOG_IDS]);
-      } catch {
-        /* best-effort */
-      }
-      if (cancelled) return;
-
       const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
       orderedRef.current = panelIds;
-      const texList: THREE.Texture[] = [];
-      for (let i = 0; i < panelIds.length; i++) {
-        if (cancelled) return;
-        texList.push(await getBinderTextureForCatalogId(panelIds[i]!));
-      }
-      if (cancelled) return;
+      const texList: THREE.Texture[] = panelIds.map(() => makeDeferredBinderTexture());
 
-      const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true });
+      const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true, controlProfile });
       next.snapBinderFullyOpen();
       next.onClearDoctrineSelection = () => setActiveDoctrineSlot(null);
       next.onPageChange = (c, t) => setPage({ c, t });
@@ -302,6 +334,28 @@ export function DoctrineBinderPicker({
       });
       ro.observe(wrap);
       setLoading(false);
+
+      const hydratePanelTextures = (start: number): void => {
+        if (cancelled || engineRef.current !== next) return;
+        void (async () => {
+          const chunk = controlProfile.mode === "mobile" ? 9 : 18;
+          const end = Math.min(panelIds.length, start + chunk);
+          const preloadIds = panelIds.slice(start, end);
+          try {
+            await preloadCardPreviewDataUrls(preloadIds);
+          } catch {
+            /* best-effort */
+          }
+          for (let i = start; i < end; i++) {
+            if (cancelled || engineRef.current !== next) return;
+            texList[i] = await getBinderTextureForCatalogId(panelIds[i]!);
+          }
+          if (cancelled || engineRef.current !== next) return;
+          next.setTextures(texList);
+          if (end < panelIds.length) afterIdle(() => hydratePanelTextures(end));
+        })();
+      };
+      afterIdle(() => hydratePanelTextures(0));
     })();
 
     return () => {
@@ -310,7 +364,7 @@ export function DoctrineBinderPicker({
       eng?.dispose();
       engineRef.current = null;
     };
-  }, []);
+  }, [controlProfile]);
 
   useLayoutEffect(() => {
     if (loading) return;
@@ -527,6 +581,14 @@ export function DoctrineBinderPicker({
     };
   }, [loading]);
 
+  const confirmVibeJamExit = useCallback(() => {
+    setPortalExitConfirmOpen(true);
+  }, []);
+
+  const goToVibeJam = useCallback(() => {
+    window.location.assign(prematchVibeJamHref);
+  }, [prematchVibeJamHref]);
+
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -536,6 +598,13 @@ export function DoctrineBinderPicker({
     const rect = e.currentTarget.getBoundingClientRect();
     const eng = engineRef.current;
     if (!eng) return;
+    const portalAction = eng.pickVibePortalAction(e.clientX, e.clientY, rect);
+    if (portalAction === "enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      confirmVibeJamExit();
+      return;
+    }
     if (!loading) {
       const idxPre = eng.pickAt(e.clientX, e.clientY, rect);
       if (idxPre !== null && idxPre >= 0) {
@@ -561,7 +630,7 @@ export function DoctrineBinderPicker({
       }
     }
     eng.pD(e.nativeEvent, rect);
-  }, [loading]);
+  }, [confirmVibeJamExit, loading]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -582,7 +651,7 @@ export function DoctrineBinderPicker({
 
   const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    engineRef.current?.wheel(e.deltaY);
+    engineRef.current?.wheelAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect(), e.deltaY);
   }, []);
 
   const openDetailAtClient = useCallback((clientX: number, clientY: number, el: HTMLCanvasElement) => {
@@ -638,8 +707,28 @@ export function DoctrineBinderPicker({
     } catch {
       /* ignore */
     }
-    onStart(norm, mapUrl);
+    setPortalTransitioning(true);
+    void (async () => {
+      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+      onStart(norm, mapUrl);
+    })();
   }, [slots, binderSlotPick, onStart, mapUrl]);
+  useEffect(() => {
+    if (loading) return;
+    let shouldPlay = false;
+    try {
+      shouldPlay = sessionStorage.getItem("signalWarsPortalReturn") === "1";
+      if (shouldPlay) sessionStorage.removeItem("signalWarsPortalReturn");
+    } catch {
+      shouldPlay = false;
+    }
+    if (shouldPlay) {
+      setPortalTransitioning(true);
+      void (engineRef.current?.playPortalTransition("in") ?? Promise.resolve()).finally(() => {
+        setPortalTransitioning(false);
+      });
+    }
+  }, [loading]);
 
   return (
     <div className="binder-picker-root">
@@ -654,11 +743,9 @@ export function DoctrineBinderPicker({
             <div
               className="binder-picker-tome-hint"
               role="status"
-              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB orbit. Double-click for full rules. Match select: Prev/Next. Orbit behind the tome to read the rear leather."
+              title="Structures & spells live in the codex. Tap a card for a green outline; empty parchment or Esc clears. Drag into the bottom hand strip to assign (anywhere in the strip counts); filled cards then sort by card cost low→high. Hold ~0.4s to lift with sleeve back. Thin outer strips peel pages; RMB/MMB looks around the portal room within a small range. Double-click for full rules. Match select: Prev/Next."
             >
-              <strong>Tap</strong> card · <strong>Esc</strong> / empty page clears · <strong>Drag</strong> to the{" "}
-              <strong>bottom hand strip</strong> (auto-sorts by cost) or <strong>hold</strong> ~0.4s · thin{" "}
-              <strong>edge</strong> peels pages · <strong>RMB</strong> orbit · <strong>dbl-click</strong> rules
+              Tap card · Esc / empty page clears · drag to hand · edges turn pages
             </div>
           ) : null}
           <canvas
@@ -666,7 +753,7 @@ export function DoctrineBinderPicker({
             className="binder-picker-canvas"
             tabIndex={0}
             role="application"
-            aria-label="Doctrine codex. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. RMB orbit. Double-click details."
+            aria-label="Doctrine codex in the portal room. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. Right mouse looks around a limited room view. Double-click details."
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerReleased}
@@ -725,6 +812,40 @@ export function DoctrineBinderPicker({
             className="binder-picker-codex-ghost__inner"
             dangerouslySetInnerHTML={{ __html: tcgCardCompactHtml(codexDrag.catalogId, "picker") }}
           />
+        </div>
+      ) : null}
+
+      {portalExitConfirmOpen ? (
+        <div
+          className="binder-portal-exit-toast"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="binder-portal-exit-title"
+          onClick={() => {
+            setPortalExitConfirmOpen(false);
+          }}
+        >
+          <div className="binder-portal-exit-toast__title" id="binder-portal-exit-title">
+            Visit the next Vibe Jam game?
+          </div>
+          <p>
+            Thanks for visiting Battle Logs. Hope you had fun here, and have fun at the next game.
+          </p>
+          <div className="binder-portal-exit-toast__actions">
+            <button type="button" onClick={goToVibeJam}>
+              Continue to next game
+            </button>
+            <button
+              type="button"
+              className="binder-portal-exit-toast__secondary"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setPortalExitConfirmOpen(false);
+              }}
+            >
+              Stay here
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -826,24 +947,40 @@ export function DoctrineBinderPicker({
                   <button
                     type="button"
                     className="binder-picker-btn binder-picker-btn--primary"
-                    disabled={loading || !canStart}
+                    disabled={loading || !canStart || portalTransitioning}
                     onClick={() => {
                       setPrematchSetupOpen(false);
                       startMatch();
                     }}
                   >
-                    Start
+                    {portalTransitioning ? "Starting…" : "Start"}
                   </button>
                 </div>
               </div>
             </div>
           </aside>
         ) : null}
+        {prematchReturnHref ? (
+          <a
+            className="binder-picker-vibejam-link"
+            href={prematchReturnHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Return to the page that linked you here (portal continuity)"
+          >
+            ← Return
+          </a>
+        ) : null}
         <a
           className="binder-picker-vibejam-link"
-          href="https://vibej.am/"
+          href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
           target="_blank"
           rel="noopener noreferrer"
+          title={
+            portalContext.enteredViaPortal
+              ? "Exit to Vibe Jam with continuity params"
+              : "Vibe Jam 2026"
+          }
         >
           🎮 Vibe Jam 2026
         </a>

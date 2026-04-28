@@ -148,7 +148,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
   },
   {
     id: "bastion_keep",
-    name: "Bastion Keep",
+    name: "Root Sanctum",
     kind: "structure",
     fluxCost: 210,
     buildSeconds: 2,
@@ -165,7 +165,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     maxCharges: 2,
     chargeCooldownSeconds: 15,
     aura: { kind: "turret", radius: 18, value: 0.6 },
-    producedFlavor: "Heavy knights (high HP melee)",
+    producedFlavor: "Amber Geode Monks (defensive, impact, anchor)",
   },
   {
     id: "salvage_yard",

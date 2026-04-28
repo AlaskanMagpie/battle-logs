@@ -456,11 +456,11 @@ function dcHeroArt(
   catalogId: string,
   portrait: string,
   compact: boolean,
-  useGlbPreview: boolean,
+  usePreview: boolean,
   spell?: CommandCatalogEntry,
 ): string {
   const mod = compact ? "dc-hero-art--compact" : "dc-hero-art--full";
-  const img = useGlbPreview
+  const img = usePreview
     ? `<img class="tcg-card-preview-img" data-catalog-preview="${escapeHtml(catalogId)}" alt="" decoding="async" hidden />`
     : "";
   if (spell) {
@@ -469,7 +469,7 @@ function dcHeroArt(
       ${spellPortraitStack(portrait, spell)}
     </div>`;
   }
-  const fbMod = useGlbPreview ? "" : " tcg-portrait-fallback--solo";
+  const fbMod = usePreview ? "" : " tcg-portrait-fallback--solo";
   return `<div class="dc-hero-art ${mod}">
     ${img}
     <div class="tcg-portrait-fallback${fbMod}">${portrait}</div>
@@ -477,8 +477,8 @@ function dcHeroArt(
 }
 
 /** Compact face art — spells show AoE + ghost cast preview (structures may use GLB raster). */
-function dmHeroArt(catalogId: string, portrait: string, useGlbPreview: boolean, spell?: CommandCatalogEntry): string {
-  const img = useGlbPreview
+function dmHeroArt(catalogId: string, portrait: string, usePreview: boolean, spell?: CommandCatalogEntry): string {
+  const img = usePreview
     ? `<img class="tcg-card-preview-img" data-catalog-preview="${escapeHtml(catalogId)}" alt="" decoding="async" hidden />`
     : "";
   if (spell) {
@@ -487,7 +487,7 @@ function dmHeroArt(catalogId: string, portrait: string, useGlbPreview: boolean, 
       ${spellPortraitStack(portrait, spell)}
     </div>`;
   }
-  const fbMod = useGlbPreview ? "" : " tcg-portrait-fallback--solo";
+  const fbMod = usePreview ? "" : " tcg-portrait-fallback--solo";
   return `<div class="dm-art">
     ${img}
     <div class="tcg-portrait-fallback${fbMod}">${portrait}</div>
@@ -625,7 +625,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
   return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact ${kindClass} ${previewTypeClass}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="dm-shell dm-shell--compact">
     ${deckNo}
-    ${dmHeroArt(catalogId, portrait, !cmd, cmd ? (e as CommandCatalogEntry) : undefined)}
+    ${dmHeroArt(catalogId, portrait, true, cmd ? (e as CommandCatalogEntry) : undefined)}
     <div class="dm-top">
       <span class="dm-mana" title="Mana (flux) cost">${escapeHtml(manaVal)}</span>
       <span class="dm-class" title="${cmd ? "Command spell" : "Produced unit class"}">${escapeHtml(classTag)}</span>
@@ -703,7 +703,7 @@ export function tcgCardFullHtml(
     ${deckNo}
     ${detailBtn}
     <header class="dc-hero dc-hero--full">
-      ${dcHeroArt(catalogId, portrait, false, !cmd, cmd ? (e as CommandCatalogEntry) : undefined)}
+      ${dcHeroArt(catalogId, portrait, false, true, cmd ? (e as CommandCatalogEntry) : undefined)}
       <div class="dc-hero-scrim" aria-hidden="true"></div>
       <div class="dc-hero-top">
         <span class="dc-mana" title="Mana cost">${escapeHtml(manaVal)}</span>

@@ -9,6 +9,13 @@ export default defineConfig({
         main: "index.html",
         mapEditor: "map-editor.html",
       },
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/three/examples")) return "three-extras";
+          if (id.includes("node_modules/three")) return "three-core";
+          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "react";
+        },
+      },
     },
   },
   server: {

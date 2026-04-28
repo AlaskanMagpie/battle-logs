@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { getCatalogPreviewAssetUrl, loadGltfTemplateRoot } from "../render/glbPool";
+import { getCardArtUrl } from "./cardArtManifest";
 
 const dataUrlCache = new Map<string, string | null>();
 
@@ -57,6 +58,12 @@ export async function getCardPreviewDataUrl(catalogId: string): Promise<string |
   const run = async (): Promise<string | null> => {
     const dup = dataUrlCache.get(catalogId);
     if (dup !== undefined) return dup;
+
+    const cardArtUrl = await getCardArtUrl(catalogId);
+    if (cardArtUrl) {
+      dataUrlCache.set(catalogId, cardArtUrl);
+      return cardArtUrl;
+    }
 
     const assetUrl = await getCatalogPreviewAssetUrl(catalogId);
     if (!assetUrl) {

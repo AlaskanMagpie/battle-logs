@@ -154,6 +154,78 @@
   cursor: grabbing;
 }
 
+/* Confirmation toast before the 3D Vibe Jam portal sends visitors onward. */
+.binder-portal-exit-toast {
+  position: fixed;
+  left: 50%;
+  top: max(16px, env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 50045;
+  width: min(440px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(72, 201, 255, 0.45);
+  background: rgba(12, 18, 28, 0.92);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+  color: #e8f4ff;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: auto;
+  animation: binder-portal-exit-toast-in 0.22s ease-out;
+}
+
+.binder-portal-exit-toast__title {
+  color: #b8f0ff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.binder-portal-exit-toast p {
+  margin: 7px 0 12px;
+  color: rgba(232, 244, 255, 0.9);
+}
+
+.binder-portal-exit-toast__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.binder-portal-exit-toast__actions button {
+  appearance: none;
+  border: 1px solid rgba(120, 224, 255, 0.48);
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: linear-gradient(180deg, rgba(92, 214, 255, 0.95), rgba(33, 125, 255, 0.92));
+  color: #061423;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.binder-portal-exit-toast__actions button:hover {
+  filter: brightness(1.06);
+}
+
+.binder-portal-exit-toast__actions .binder-portal-exit-toast__secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8f4ff;
+}
+
+@keyframes binder-portal-exit-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
 /* Light dismiss layer — binder stays visible underneath. */
 .binder-picker-setup-backdrop {
   position: fixed;
@@ -331,19 +403,22 @@
   z-index: 3;
   pointer-events: auto;
   cursor: help;
-  max-width: min(560px, calc(100vw - 24px));
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 11px;
+  box-sizing: border-box;
+  width: min(max-content, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  padding: 3px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  border-radius: 999px;
+  font-size: clamp(9px, 1.65vw, 11px);
   font-weight: 500;
-  line-height: 1.35;
-  color: #2c2820;
-  background: rgba(255, 252, 246, 0.82);
-  border: 1px solid rgba(60, 48, 36, 0.1);
-  box-shadow: 0 1px 6px rgba(45, 38, 28, 0.06);
+  line-height: 1.25;
+  color: rgba(44, 40, 32, 0.88);
+  background: rgba(255, 252, 246, 0.55);
+  border: 1px solid rgba(60, 48, 36, 0.08);
+  box-shadow: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Page controls (floating setup panel or legacy toolbar). */

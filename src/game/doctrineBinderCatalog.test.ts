@@ -4,9 +4,10 @@ import {
   BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_SPREAD_COUNT,
 } from "../ui/binder/CardBinderEngine";
-import { CATALOG } from "./catalog";
+import { productionBatchSizeForClass } from "./sim/systems/helpers";
+import { CATALOG, getCatalogEntry } from "./catalog";
 import { sortCatalogIds } from "./catalogSort";
-import { isCommandEntry } from "./types";
+import { isCommandEntry, isStructureEntry } from "./types";
 
 const STRUCTURE_CATALOG_IDS = CATALOG.filter((c) => !isCommandEntry(c)).map((c) => c.id);
 
@@ -33,5 +34,16 @@ describe("Doctrine binder catalog", () => {
         expect(isCommandEntry(e!)).toBe(false);
       }
     }
+  });
+
+  it("maps Bastion's heavy placeholder slot to Root Sanctum's two Geode Monks", () => {
+    const entry = getCatalogEntry("bastion_keep");
+    expect(entry).toBeTruthy();
+    expect(isStructureEntry(entry!)).toBe(true);
+    if (!entry || !isStructureEntry(entry)) return;
+    expect(entry.name).toBe("Root Sanctum");
+    expect(entry.producedSizeClass).toBe("Heavy");
+    expect(productionBatchSizeForClass(entry.producedSizeClass)).toBe(2);
+    expect(entry.producedFlavor).toContain("Amber Geode Monks");
   });
 });

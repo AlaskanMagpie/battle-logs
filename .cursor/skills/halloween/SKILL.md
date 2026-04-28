@@ -37,9 +37,12 @@ If the user is frustrated or wants speed, ask fewer questions and state inferred
 - Never knowingly ship a T-pose/static frame as run, attack, death, or active idle.
 - Do not use `Character_output`/one-frame clips as motion unless the user explicitly wants a statue.
 - Prefer clips with moving rotation/quaternion tracks for body motion; reject clips with zero moving tracks for active roles.
+- Same bone count is not proof of compatibility. Do not bind a clip from another GLB/family unless skeleton paths, bone names, and rest pose are verified; otherwise use the unit's own authored clip.
+- Do not create separate run/idle actions from the same file/clip. Reuse or alias the base action; duplicate same-clip actions can phase-fight and look like jitter/T-pose snaps.
 - Strip or isolate scale tracks that fight class/world normalization.
 - Keep authored timing where it sells impact; smooth cadence without changing sim speed.
 - Runtime visuals must not affect gameplay simulation timing unless the user requests balance changes.
+- During crossfades, keep at least one compatible base action enabled with nonzero weight. Never let all actions fade to zero, which exposes bind/rest pose.
 - Translate plain-language combat intent into readable anticipation, release, travel/contact, impact, and recovery beats.
 - If the rig cannot do an action, compensate honestly with runtime VFX/posing/blends; do not claim authored animation exists.
 - VFX must serve gameplay readability first: team color, class scale, target direction, hit confirmation, and cleanup.
@@ -53,13 +56,14 @@ If the user is frustrated or wants speed, ask fewer questions and state inferred
 
 2. Diagnose clips:
    - Record clip name, duration, track count, moving track count, scale/root-position tracks, skeleton/bone counts.
+   - Compare animated track target paths/bone names before mixing clips across GLBs; treat mismatches as `retarget-risk`.
    - Mark clips as `usable`, `static`, `scale-risk`, `root-motion-risk`, or `wrong-feel`.
    - If no usable clip exists for a role, choose the least bad fallback and make the fallback obvious in code/manifest.
 
 3. Bind roles intentionally:
    - `model`: stable skinned model or best motion file if static model is not suitable.
    - `run`: strongest locomotion clip matching user feel; for titans prefer lumbering walks over sprint loops.
-   - `idle`: stance/breath/guard; use slow walk only as a temporary idle fallback.
+   - `idle`: stance/breath/guard; use slow walk only as a temporary idle fallback. If idle resolves to the same clip as run, do not instantiate a second action.
    - `attack`: clip with visible anticipation/release/follow-through; avoid compressing rich attacks into one pose.
    - `death`: authored death if present; otherwise runtime dissolve/fade with no frozen T-pose.
 
@@ -76,6 +80,7 @@ If the user is frustrated or wants speed, ask fewer questions and state inferred
 
 5. Smooth runtime:
    - Blend run/idle/attack/death with fade windows; do not snap back to stock upright between states.
+   - Guard mixer weights: on attack start, keep the base action alive under the attack if the rig snaps to bind pose; on recovery/interruption, stop fading and restore base weight immediately.
    - Gate visible movement to locomotion state; if sim position gets ahead, catch up with eased visual interpolation.
    - Face target or move direction continuously; smooth rotation during turns instead of hard snapping.
    - Match run playback to foot cadence: slow frantic short loops, preserve already-heavy walks, and document chosen target duration.
@@ -92,7 +97,7 @@ If the user is frustrated or wants speed, ask fewer questions and state inferred
 Run the smallest checks that prove the animation pass:
 - Asset diagnostics (`assets:inspect-glbs` or repo equivalent) show expected roles and moving tracks.
 - Build/typecheck/tests pass.
-- If browser automation is available, capture a short run/turn/attack/spell/death sequence and inspect screenshots/console.
+- If browser automation is available, capture a short run/turn/attack/spell/death sequence and inspect screenshots/console; this is required when fixing reported T-pose/jitter.
 - Confirm no visible T-pose/static upright flash during run, turn, attack recovery, spell cast, or death cleanup.
 - Manually report any remaining weak spots: missing death clip, no hand/weapon bone anchor, idle fallback, root motion, foot sliding, over-bright bloom, or browser smoke unavailable.
 

@@ -3,6 +3,7 @@ export type TeamId = "player" | "enemy";
 export type SignalType = "Vanguard" | "Bastion" | "Reclaim";
 
 export type UnitSizeClass = "Swarm" | "Line" | "Heavy" | "Titan";
+export type UnitFormationKind = "line" | "wedge" | "arc";
 
 export type DoctrineEntryKind = "structure" | "command";
 
@@ -39,8 +40,18 @@ export interface EnemyCampDef {
 }
 
 export interface MapDifficulty {
-  enemyHpMult: number;
-  enemyDmgMult: number;
+  /** Master AI pressure knob. Values below 1 slow and soften the enemy. Defaults to 0.6. */
+  enemyEffectivenessMult?: number;
+  /** Legacy health multiplier from authored maps; composed with `enemyEffectivenessMult`. */
+  enemyHpMult?: number;
+  /** Legacy damage multiplier from authored maps; composed with `enemyEffectivenessMult`. */
+  enemyDmgMult?: number;
+  enemyDamageMult?: number;
+  enemyAttackSpeedMult?: number;
+  enemyCaptureSpeedMult?: number;
+  enemyBuildSpeedMult?: number;
+  enemyEconomyMult?: number;
+  enemyProductionSpeedMult?: number;
 }
 
 /** Optional on any decor: when true, ground units / wizards cannot walk through this shape (sim). */

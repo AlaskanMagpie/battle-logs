@@ -16,8 +16,8 @@ export const TRAMPLE: Record<UnitSizeClass, Partial<Record<UnitSizeClass, number
 };
 
 /**
- * Characteristic unit height/max extent (world units), shared by gameplay spacing and renderer
- * GLB normalization. Scale target: Swarm 10ft, Line 20ft, Heavy 30ft, Titan 50ft.
+ * Characteristic unit height (world units), shared by gameplay spacing and renderer GLB
+ * normalization. Canonical feet: Swarm 15′, Line 25′, Heavy 35′, Titan 50′ (`constants.ts`).
  */
 export function unitMeshLinearSize(size: UnitSizeClass): number {
   switch (size) {

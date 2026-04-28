@@ -6,6 +6,8 @@ import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 import { tryPlayerHeroStrike } from "./heroStrike";
 
+const HERO_CAPTAIN_IDLE_TICKS = Math.round(1.2 * TICK_HZ);
+
 /** Neutral tap index within `HERO_CLAIM_RADIUS` of the Wizard (closest wins). */
 export function findNeutralTapIndexNearHero(s: GameState): number | null {
   const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
@@ -85,6 +87,51 @@ function applyWasd(s: GameState): boolean {
   return true;
 }
 
+function nearestHeroCaptainObjective(s: GameState): { x: number; z: number } | null {
+  const h = s.hero;
+  let best: { x: number; z: number } | null = null;
+  let bestD = Number.POSITIVE_INFINITY;
+  const consider = (p: { x: number; z: number }): void => {
+    const d = dist2(h, p);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: p.x, z: p.z };
+    }
+  };
+
+  for (const t of s.taps) {
+    if (!t.active) consider(t);
+  }
+  if (best) return best;
+
+  for (const st of s.structures) {
+    if (st.team === "enemy" && st.hp > 0) consider(st);
+  }
+  for (const r of s.enemyRelays) {
+    if (r.hp > 0) consider(r);
+  }
+  for (const c of s.map.enemyCamps) {
+    const hp = s.enemyCampCoreHp[c.id];
+    if (hp !== undefined && hp > 0) consider(c.origin);
+  }
+  for (const u of s.units) {
+    if (u.team === "enemy" && u.hp > 0) consider(u);
+  }
+  return best;
+}
+
+function applyHeroCaptainMode(s: GameState): void {
+  const h = s.hero;
+  if (!s.heroCaptainEnabled || h.hp <= 0) return;
+  if (h.targetX !== null || h.targetZ !== null || h.moveWaypoints.length > 0 || h.claimChannelTarget !== null) return;
+  if (s.tick - s.heroCaptainLastManualTick < HERO_CAPTAIN_IDLE_TICKS) return;
+  const target = nearestHeroCaptainObjective(s);
+  if (!target) return;
+  h.targetX = target.x;
+  h.targetZ = target.z;
+  s.lastMessage = "Captain mode: Wizard moving on the next objective.";
+}
+
 export function heroSystem(s: GameState): void {
   const h = s.hero;
 
@@ -100,16 +147,10 @@ export function heroSystem(s: GameState): void {
   h.wasdStrafe = 0;
   h.wasdForward = 0;
 
-  const moving = wasdMoving || h.targetX !== null || h.targetZ !== null;
+  applyHeroCaptainMode(s);
 
-  // If moving, cancel any in-progress claim.
-  if (moving && h.claimChannelTarget !== null) {
-    h.claimChannelTarget = null;
-    h.claimChannelTicksRemaining = 0;
-    s.lastMessage = "Claim cancelled.";
-  }
-
-  // Drop a claim if we drifted out of range.
+  // Drop a claim only if the Wizard leaves the node. Movement inside the ring
+  // should keep channeling so capture feels continuous while pathing.
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
     if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
@@ -119,8 +160,8 @@ export function heroSystem(s: GameState): void {
     }
   }
 
-  // Auto-start a channel when idle inside range of a neutral tap (and can afford the fee).
-  if (!moving && h.claimChannelTarget === null) {
+  // Auto-start a channel whenever the Wizard is inside range of a neutral tap (and can afford the fee).
+  if (h.claimChannelTarget === null) {
     const idx = findNeutralTapIndexNearHero(s);
     if (idx !== null) {
       const tap = s.taps[idx]!;
@@ -134,7 +175,7 @@ export function heroSystem(s: GameState): void {
       } else {
         h.claimChannelTarget = idx;
         h.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
-        s.lastMessage = `Claiming node… stand still for ${chSec.toFixed(1)}s (−${fee} Mana).`;
+        s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s (-${fee} Mana).`;
       }
     }
   }

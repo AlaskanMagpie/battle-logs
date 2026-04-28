@@ -8,6 +8,7 @@ import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/econom
 import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
 import { applyPlayerIntents } from "./systems/intents";
+import { portals } from "./systems/portals";
 import { buildProgress, production } from "./systems/production";
 import { maybeEnemyReinforcements } from "./systems/waves";
 import { loseCheck, winCheck } from "./systems/winlose";
@@ -34,6 +35,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   heroSystem(s);
   enemyHeroSystem(s);
   movement(s);
+  portals(s);
   combat(s);
   cleanupDead(s);
   respawnDeadHeroAtKeep(s);

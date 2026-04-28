@@ -1,6 +1,14 @@
-# Signal Wars — Phase 1 playtest (Three.js + Vite)
+# Doctrine — Phase 1 playtest (Three.js + Vite)
 
-Design reference: **[docs/prd-v2.md](docs/prd-v2.md)** (Vibejam PRD v2).
+**Doctrine is the war you draft from broken worlds — then break the next one.**
+
+You are a powerful interdimensional Wizard who defeats armies across the multiverse, lets them return to their peaceful lives, and summons them again when the next fight starts. Some factions sign up for loot and legend. Others are indoctrinated into your doctrine and answer when called.
+
+Doctrine is an action RTS autobattler where cards are the engine of play: draft structures, spells, and commands, drag them onto the battlefield, then override the automatic war when strategy demands it.
+
+Technical package / legacy prototype name: `signal-wars`.
+
+Design reference: **[docs/prd-v2.md](docs/prd-v2.md)** (Vibe Jam PRD v2).
 
 ## Run
 
@@ -13,17 +21,29 @@ Open the dev URL (e.g. `http://localhost:2222/` if using the project Vite port).
 
 ## Controls (Phase 1)
 
-You play the **blue hero** directly.
+You command the **blue Wizard** and a doctrine hand of cards.
 
-1. **Move** — **right-click** ground to move. **Hold right-click** to follow the cursor (MOBA-style).
-2. **Claim a Node** — walk onto a grey ring and **stand still**. After a short channel (costs **20 Flux**) it becomes a green, player-owned node that adds **+1 Flux/sec** and expands your cyan **territory**.
-3. **Build a Relay** — left-click a blue pillar slot (**slot 1 is free**, then scaling costs; **80 Flux** rebuild after destruction) and pick a **Signal** (Vanguard / Bastion / Reclaim).
-4. **Build Towers** — **drag a Doctrine card** from the hand onto the ground *inside your cyan territory*. Towers auto-produce units.
-5. **Unit AI** — units push the nearest enemy Relay by default, but **follow the hero** when inside `HERO_FOLLOW_RADIUS`. **Alt+click** a tower to toggle **Hold** on its units.
-6. **Rally** — left-click one of your towers, then left-click ground to set its rally.
+### Desktop
 
-**Win:** destroy the **enemy Relay** (red pillar) or wipe the **enemy camp**.  
-**Lose:** lose all your Relays for **10s** grace (see HUD tick), then defeat.
+1. **Move / micro** — **right-click** ground to move the Wizard; with squads selected it also orders them. Hold/drag right-click for follow / formation behavior.
+2. **Claim Mana** — walk into a grey node ring and stay inside while the Wizard channels. Claimed nodes add **Mana/sec** and expand cyan **territory**.
+3. **Play cards** — drag a Doctrine card from the hand onto valid ground. Structures summon inside territory; spells and commands target directly.
+4. **Army stance** — **G** toggles Offense / Defense. Offense pushes objectives; Defense regroups near the Wizard.
+5. **Rally / formation** — **R** arms a global rally point. **V** cycles Line / Wedge / Arc for formation orders.
+6. **Captain mode** — optional Wizard autopilot. It picks nearby objectives when idle, but manual orders pause it briefly.
+
+### Mobile profile
+
+Doctrine detects coarse-pointer devices and switches to a lighter control profile:
+
+1. **Tap ground** to move the Wizard or attack-move selected squads.
+2. **Long-press the map** for simplified orders.
+3. **Drag cards** from the doctrine strip to play the war; this is the primary mobile interaction.
+4. **Captain mode defaults on**, so the Wizard can auto-battle and claim objectives while you focus on cards.
+5. The renderer caps pixel ratio and staggers binder card-preview work to reduce mobile GPU and first-load pressure.
+
+**Win:** shatter the red **Dark Fortresses** or rout the camps.  
+**Lose:** your **Keep** or **Wizard** falls.
 
 ## Map iteration (`map.local.json`)
 

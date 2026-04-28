@@ -1,5 +1,5 @@
 import type { ArmyStance } from "./state";
-import type { Vec2 } from "./types";
+import type { UnitFormationKind, Vec2 } from "./types";
 
 export type PlayerIntent =
   | { type: "select_doctrine_slot"; index: number }
@@ -23,9 +23,24 @@ export type PlayerIntent =
       queue?: boolean;
       includeNearbyIdle?: boolean;
     }
+  | {
+      type: "command_selected_units_formation";
+      from: Vec2;
+      to: Vec2;
+      mode: "move" | "attack_move";
+      queue?: boolean;
+      includeNearbyIdle?: boolean;
+      formationKind?: UnitFormationKind;
+      depthScale?: number;
+    }
   | { type: "toggle_structure_orders"; structureId: number }
   | { type: "set_army_stance"; stance: ArmyStance }
   | { type: "toggle_army_stance" }
+  | { type: "toggle_hero_captain" }
+  | { type: "set_hero_captain"; enabled: boolean }
+  | { type: "set_global_rally"; x: number; z: number }
+  | { type: "set_formation_preset"; formationKind: UnitFormationKind }
+  | { type: "toggle_formation_preset" }
   | { type: "begin_hero_teleport" }
   | { type: "hero_teleport"; x: number; z: number }
   | { type: "hero_move"; x: number; z: number; shiftKey?: boolean }

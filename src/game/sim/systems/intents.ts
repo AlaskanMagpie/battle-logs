@@ -33,12 +33,14 @@ import {
   type GameState,
   type StructureRuntime,
   type UnitOrderMode,
+  type UnitRuntime,
 } from "../../state";
 import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
 import { applyAttackImpulse } from "./combat";
+import { computeFormationSlots, formationKindLabel, nextFormationKind } from "./formationLayout";
 import { findNeutralTapIndexNearHero } from "./hero";
-import { dist2 } from "./helpers";
+import { dist2, unitSeparationRadiusXZ } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
@@ -60,6 +62,7 @@ function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includ
 }
 
 function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
+  s.heroCaptainLastManualTick = s.tick;
   s.teleportClickPending = false;
   const half = s.map.world.halfExtents;
   const x = Math.max(-half, Math.min(half, pos.x));
@@ -162,6 +165,63 @@ export function orderPlayerUnits(
   }
 }
 
+function setUnitOrderTarget(u: UnitRuntime, target: Vec2, mode: UnitOrderMode, queue: boolean): void {
+  if (queue && u.order) {
+    u.order.queued.push(target);
+  } else {
+    u.order = { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+  }
+}
+
+function orderPlayerUnitsFormation(
+  s: GameState,
+  ids: number[],
+  from: Vec2,
+  to: Vec2,
+  mode: Exclude<UnitOrderMode, "stay">,
+  queue = false,
+  includeNearbyIdle = false,
+  formationKind = s.formationPreset,
+  depthScale = 1,
+): void {
+  const chosen = ids.length ? ids : s.selectedUnitIds;
+  const commandIds = commandUnitIdsForContext(s, chosen, to, includeNearbyIdle);
+  const units = commandIds
+    .map((id) => s.units.find((x) => x.id === id && x.team === "player" && x.hp > 0))
+    .filter((u): u is UnitRuntime => !!u);
+  if (units.length === 0) {
+    if (chosen.includes(HERO_SELECTION_ID)) return;
+    s.lastMessage = includeNearbyIdle ? "No selected or nearby idle units." : "No units selected.";
+    return;
+  }
+
+  const slots = computeFormationSlots(
+    units.map((u) => ({
+      id: u.id,
+      x: u.x,
+      z: u.z,
+      sizeClass: u.sizeClass,
+      range: u.range,
+      flying: u.flying,
+    })),
+    { from, to, kind: formationKind, depthScale },
+    s.map.world.halfExtents,
+  );
+  const byId = new Map(slots.map((slot) => [slot.id, slot]));
+  for (const u of units) {
+    const raw = byId.get(u.id) ?? to;
+    const target = { x: raw.x, z: raw.z };
+    resolveCircleAgainstMapObstacles(s.map, target, unitSeparationRadiusXZ(u.sizeClass, u.flying));
+    setUnitOrderTarget(u, target, mode, queue);
+  }
+
+  s.globalRallyActive = false;
+  const action = mode === "attack_move" ? "attack-move" : "move";
+  s.lastMessage = `${units.length} unit${units.length === 1 ? "" : "s"} ordered into ${formationKindLabel(
+    formationKind,
+  )} formation to ${action}${depthScale > 1.1 ? " (wide ranks)" : ""}.`;
+}
+
 function canTeleportHeroTo(s: GameState, pos: Vec2): string | null {
   if (s.heroTeleportCooldownTicks > 0) {
     return `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
@@ -208,6 +268,12 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   pushFx(s, { kind: "lightning", x: s.hero.x, z: s.hero.z, fromX: from.x, fromZ: from.z });
   s.lastMessage = `Teleported Wizard squad (${carried.length} troops carried).`;
   logGame("move", `Teleport -> (${s.hero.x.toFixed(1)}, ${s.hero.z.toFixed(1)})`, s.tick);
+}
+
+function damageEnemyUnitFromCommand(u: UnitRuntime | undefined, amountPerBody: number): boolean {
+  if (!u || u.team !== "enemy" || u.hp <= 0) return false;
+  u.hp -= amountPerBody * liveSquadCount(u);
+  return true;
 }
 
 function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
@@ -416,7 +482,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
-        u.hp -= fx.damage * liveSquadCount(u);
+        damageEnemyUnitFromCommand(u, fx.damage);
         const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
         applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED);
         hits++;
@@ -476,7 +542,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
-        u.hp -= fx.damage * liveSquadCount(u);
+        damageEnemyUnitFromCommand(u, fx.damage);
         applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED);
       }
       for (const er of s.enemyRelays) {
@@ -643,8 +709,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         } else {
           const uid = Number(bestKey.slice(2));
           const u = s.units.find((x) => x.id === uid);
-          if (u) {
-            u.hp -= dmg * liveSquadCount(u);
+          if (damageEnemyUnitFromCommand(u, dmg)) {
             applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
           }
         }
@@ -814,6 +879,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         : "Teleport cancelled.";
     } else if (it.type === "hero_teleport") {
       if (s.phase !== "playing") continue;
+      s.heroCaptainLastManualTick = s.tick;
       tryHeroTeleport(s, { x: it.x, z: it.z });
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
@@ -852,6 +918,21 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         it.queue === true,
         it.includeNearbyIdle === true,
       );
+    } else if (it.type === "command_selected_units_formation") {
+      if (s.selectedUnitIds.includes(HERO_SELECTION_ID)) {
+        commandHeroMove(s, { x: (it.from.x + it.to.x) * 0.5, z: (it.from.z + it.to.z) * 0.5 }, it.queue === true);
+      }
+      orderPlayerUnitsFormation(
+        s,
+        s.selectedUnitIds,
+        it.from,
+        it.to,
+        it.mode,
+        it.queue === true,
+        it.includeNearbyIdle === true,
+        it.formationKind ?? s.formationPreset,
+        it.depthScale ?? 1,
+      );
     } else if (it.type === "toggle_structure_orders") {
       const st = s.structures.find((x) => x.id === it.structureId);
       if (st && st.team === "player") {
@@ -874,12 +955,40 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         s.armyStance === "defense"
           ? "Stance: Defense — army rallying on the Wizard."
           : "Stance: Offense — army seeks out foes.";
+    } else if (it.type === "toggle_hero_captain") {
+      s.heroCaptainEnabled = !s.heroCaptainEnabled;
+      s.heroCaptainLastManualTick = s.tick;
+      s.lastMessage = s.heroCaptainEnabled
+        ? "Captain mode on — the Wizard will pick nearby objectives when idle."
+        : "Captain mode off — the Wizard waits for your orders.";
+    } else if (it.type === "set_hero_captain") {
+      if (s.heroCaptainEnabled !== it.enabled) s.heroCaptainLastManualTick = s.tick;
+      s.heroCaptainEnabled = it.enabled;
+      s.lastMessage = s.heroCaptainEnabled
+        ? "Captain mode on — the Wizard will pick nearby objectives when idle."
+        : "Captain mode off — the Wizard waits for your orders.";
+    } else if (it.type === "set_global_rally") {
+      if (s.phase !== "playing") continue;
+      s.rallyClickPending = false;
+      s.teleportClickPending = false;
+      s.armyStance = "offense";
+      s.globalRallyActive = true;
+      s.globalRallyX = it.x;
+      s.globalRallyZ = it.z;
+      s.lastMessage = "Rally point set — army marches there in Offense.";
+    } else if (it.type === "set_formation_preset") {
+      s.formationPreset = it.formationKind;
+      s.lastMessage = `Formation: ${formationKindLabel(s.formationPreset)} (RMB-drag selected units; Shift widens ranks).`;
+    } else if (it.type === "toggle_formation_preset") {
+      s.formationPreset = nextFormationKind(s.formationPreset);
+      s.lastMessage = `Formation: ${formationKindLabel(s.formationPreset)} (RMB-drag selected units; Shift widens ranks).`;
     } else if (it.type === "hero_move") {
       if (s.selectedUnitIds.length > 0) continue;
       commandHeroMove(s, { x: it.x, z: it.z }, it.shiftKey === true);
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));
+      if (sx !== 0 || sz !== 0) s.heroCaptainLastManualTick = s.tick;
       const { camFx, camFz, camRx, camRz } = it;
       if (
         camFx !== undefined &&
@@ -912,6 +1021,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
         s.lastMessage = "Claim cancelled.";
       }
     } else if (it.type === "hero_claim") {
+      s.heroCaptainLastManualTick = s.tick;
       s.hero.targetX = null;
       s.hero.targetZ = null;
       s.hero.moveWaypoints.length = 0;
@@ -924,7 +1034,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
           if (s.flux >= fee) {
             s.hero.claimChannelTarget = idx;
             s.hero.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
-            s.lastMessage = `Claiming node… stand still for ${chSec.toFixed(1)}s (−${fee} Mana).`;
+            s.lastMessage = `Claiming node… stay inside the ring for ${chSec.toFixed(1)}s (-${fee} Mana).`;
           }
         }
       }

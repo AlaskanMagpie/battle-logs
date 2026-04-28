@@ -1,3 +1,47 @@
+html,
+body,
+#game,
+#hud-root,
+#doctrine-picker {
+  overscroll-behavior: none;
+}
+
+#game {
+  touch-action: none;
+}
+
+#hud-root,
+#doctrine-picker {
+  touch-action: manipulation;
+}
+
+.hud-help-item--mobile {
+  display: none;
+}
+
+html.is-mobile-profile .hud-help-item--desktop {
+  display: none;
+}
+
+html.is-mobile-profile .hud-help-item--mobile {
+  display: block;
+}
+
+html.is-mobile-profile .hud-btn,
+html.is-mobile-profile .slot,
+html.is-mobile-profile .binder-picker-btn,
+html.is-mobile-profile .binder-picker-floor-portal {
+  min-height: 44px;
+}
+
+html.is-mobile-profile .hud-match-side-controls {
+  gap: clamp(2px, 0.5vmin, 5px);
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn {
+  min-height: clamp(30px, 7vmin, 40px);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -114,8 +158,9 @@ body {
 }
 .unit-command-radial button {
   position: absolute;
-  width: 92px;
-  min-height: 46px;
+  width: 86px;
+  min-height: 42px;
+  transform: translate(-50%, -50%);
   display: grid;
   align-content: center;
   gap: 2px;
@@ -124,27 +169,43 @@ body {
   background: rgba(8, 13, 22, 0.94);
   color: #e8f4ff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 90ms ease, background 90ms ease, border-color 90ms ease;
 }
 .unit-command-radial button b {
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
 }
 .unit-command-radial button span {
   color: #9fb4cf;
-  font-size: 9px;
+  font-size: 8px;
   line-height: 1.05;
 }
-.unit-command-radial button:nth-of-type(1) { left: 72px; top: 0; }
-.unit-command-radial button:nth-of-type(2) { right: 0; top: 70px; border-color: rgba(255, 120, 120, 0.52); }
-.unit-command-radial button:nth-of-type(3) { right: 18px; bottom: 18px; border-color: rgba(255, 184, 107, 0.5); }
-.unit-command-radial button:nth-of-type(4) { left: 18px; bottom: 18px; border-color: rgba(255, 140, 110, 0.5); }
-.unit-command-radial button:nth-of-type(5) { left: 0; top: 70px; }
-.unit-command-radial button:hover { background: rgba(27, 54, 86, 0.95); }
-.unit-command-radial__btn--attack_move:not(.unit-command-radial__btn--queue) {
-  color: #ffd1c2;
+.unit-command-radial button:hover {
+  transform: translate(-50%, -50%) scale(1.05);
+  background: rgba(27, 54, 86, 0.95);
+  border-color: rgba(126, 200, 255, 0.7);
 }
-.unit-command-radial__btn--queue {
+.unit-command-radial__btn--attack {
+  color: #ffd1c2;
+  border-color: rgba(255, 120, 120, 0.56);
+}
+.unit-command-radial__btn--queue,
+.unit-command-radial__btn--formation {
   color: #ffdca8;
+  border-color: rgba(255, 184, 107, 0.52);
+}
+.unit-command-radial__btn--defense {
+  color: #cbf2ff;
+  border-color: rgba(103, 218, 255, 0.5);
+}
+.unit-command-radial__btn--rally {
+  color: #d7ffd5;
+  border-color: rgba(110, 230, 145, 0.48);
+}
+.unit-command-radial__btn--hold {
+  color: #ffddb8;
+  border-color: rgba(255, 154, 92, 0.52);
 }
 
 .hud-chrome {
@@ -520,45 +581,92 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   align-items: center;
 }
 
-/** Match controls off the bottom rail — left column so doctrine cards can span the deck edge-to-edge. */
-.hud-match-side-controls {
-  position: fixed;
-  left: max(10px, env(safe-area-inset-left, 0px));
-  top: max(112px, calc(env(safe-area-inset-top, 0px) + 88px));
-  bottom: max(calc(var(--doctrine-tray-h, 160px) + env(safe-area-inset-bottom, 0px) + 8px), 140px);
-  z-index: 26;
+/** Match command rail — first row inside `.hud-chrome` (compact horizontal strip). */
+.hud-chrome > .hud-match-side-controls {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  position: relative;
+  inset: auto;
+  z-index: 24;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: stretch;
-  width: min(118px, 22vw);
-  max-width: 132px;
+  justify-content: flex-start;
+  gap: clamp(3px, 0.55vmin, 6px);
+  width: 100%;
+  max-width: none;
+  margin: 0 0 3px;
+  padding: 0 0 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
   pointer-events: auto;
 }
-.hud-match-side-controls .hud-btn {
-  width: 100%;
+
+.hud-chrome > .hud-match-side-controls .hud-btn {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  min-height: clamp(30px, 6vmin, 38px);
   justify-content: center;
   text-align: center;
-  padding-left: 8px;
-  padding-right: 8px;
+  padding-left: clamp(4px, 1vmin, 8px);
+  padding-right: clamp(4px, 1vmin, 8px);
 }
-.hud-match-side-controls .hud-btn--ghost {
+
+.hud-chrome > .hud-match-side-controls .hud-btn--ghost {
   background: rgba(6, 10, 18, 0.72);
   border-color: rgba(100, 160, 255, 0.22);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
-.hud-match-side-controls .hud-gamelog {
-  max-width: 100%;
-  flex: 1 1 auto;
+
+.hud-chrome > .hud-match-side-controls .hud-gamelog {
+  flex: 1 1 72px;
+  margin-left: auto;
+  align-self: stretch;
+  min-width: 56px;
+  max-width: min(128px, 22vw);
+  max-height: none;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
 }
-.hud-match-side-controls .hud-gamelog-body {
+
+.hud-chrome > .hud-match-side-controls .hud-gamelog-body {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: min(22dvh, 200px);
+  max-height: min(28dvh, 220px);
+  font-size: 9px;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-gamelog > summary {
+  min-height: clamp(26px, 5vmin, 34px);
+  display: flex;
+  align-items: center;
+  padding: 0 clamp(6px, 1vmin, 10px);
+  text-transform: uppercase;
+  font-size: clamp(8px, 1.65vmin, 10px);
+  letter-spacing: 0.06em;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-side-ico {
+  width: clamp(22px, 4.8vmin, 30px);
+  height: clamp(22px, 4.8vmin, 30px);
+  flex: 0 0 clamp(22px, 4.8vmin, 30px);
+}
+
+.hud-chrome > .hud-match-side-controls #btn-captain {
+  flex-direction: row;
+  align-items: center;
+  gap: clamp(3px, 0.6vmin, 6px);
+  padding: 2px clamp(5px, 1vmin, 8px);
+  max-width: clamp(88px, 17vmin, 118px);
 }
 .hud-dock__msg {
   flex: 1 1 160px;
@@ -1931,7 +2039,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .tcg--detail-pop .dc-shell {
   max-height: none;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   overflow: hidden;
 }
 
@@ -2863,14 +2971,15 @@ button.hud-btn--armed::after {
   border-color: #4b5b73;
 }
 
-/* Full doctrine card: full-viewport dimmer (no padding gaps) + shrink-wrapped body so clicks outside the card hit the dimmer. */
+/* Full doctrine card: full-viewport dimmer + grid-stacked layers so the card stays visually centered. */
 .card-detail-pop {
   position: fixed;
   inset: 0;
   z-index: 120;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  place-items: center;
   padding: 0;
   box-sizing: border-box;
   touch-action: none;
@@ -2881,8 +2990,7 @@ button.hud-btn--armed::after {
 
 /* Hover preview: large card above the doctrine rail — no full-screen dimmer, rail cards stay put. */
 .card-detail-pop.card-detail-pop--hover-dock {
-  align-items: flex-end;
-  justify-content: center;
+  place-items: end center;
   padding: 0 max(10px, env(safe-area-inset-right, 0px)) calc(var(--doctrine-tray-h, 160px) + 12px)
     max(10px, env(safe-area-inset-left, 0px));
   pointer-events: none;
@@ -2894,10 +3002,13 @@ button.hud-btn--armed::after {
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-body {
   pointer-events: auto;
   max-height: min(72dvh, 640px);
+  align-self: end;
+  justify-self: center;
 }
 .card-detail-pop.card-detail-pop--hover-dock .card-detail-pop-fit {
-  width: min(480px, calc(100vw - 32px));
-  height: min(720px, 78dvh);
+  width: min(400px, calc(100vw - 32px));
+  height: auto;
+  max-height: min(720px, 78dvh);
 }
 .card-detail-pop-backdrop {
   position: fixed;
@@ -2908,21 +3019,32 @@ button.hud-btn--armed::after {
   border: 0;
   background: rgba(4, 6, 10, 0.82);
   cursor: pointer;
+  grid-column: 1;
+  grid-row: 1;
+  width: 100%;
+  height: 100%;
+  align-self: stretch;
+  justify-self: stretch;
 }
 .card-detail-pop-body {
   position: relative;
   z-index: 1;
+  grid-column: 1;
+  grid-row: 1;
   pointer-events: none;
   width: max-content;
   max-width: calc(100vw - 20px);
   max-height: min(92dvh, 900px);
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: max(10px, env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px))
     max(10px, env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px));
   display: flex;
   align-items: center;
   justify-content: center;
+  align-self: center;
+  justify-self: center;
   box-sizing: border-box;
 }
 .card-detail-pop-body:focus {
@@ -2930,10 +3052,10 @@ button.hud-btn--armed::after {
 }
 .card-detail-pop-fit {
   pointer-events: auto;
-  width: 400px;
-  height: 600px;
+  width: min(400px, calc(100vw - 32px));
+  height: auto;
   max-width: 100%;
-  max-height: 100%;
+  max-height: min(88dvh, 900px);
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
@@ -2942,16 +3064,15 @@ button.hud-btn--armed::after {
   padding: 0;
   box-sizing: border-box;
   isolation: isolate;
-  contain: layout style paint;
   border-radius: 14px;
   background: #0a0d12;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
 }
 .card-detail-pop-fit > .tcg {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
 }
 
 /* ═══ Doctrine card blueprint (dc-*) — portrait rail + stat bar + rows (matches design mock) ═══ */
@@ -4380,23 +4501,22 @@ button.hud-btn--armed::after {
   z-index: 8;
 }
 
-/* Detail pop: fixed print size (400×600); outer .card-detail-pop-fit scales uniformly in JS. */
+/* Detail pop: width cap; height hugs card content (scaled uniformly in JS to fit the dialog). */
 .tcg--detail-pop.tcg--layout-v2 {
-  width: 400px;
-  height: 600px;
+  width: min(400px, 100%);
+  height: auto;
   max-width: 100%;
-  max-height: 100%;
-  flex: 1 1 auto;
+  max-height: none;
+  flex: 0 0 auto;
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   isolation: isolate;
-  contain: layout style paint;
 }
 .tcg--detail-pop.tcg--layout-v2 .dc-hero--full {
-  min-height: 200px;
-  max-height: 40%;
+  min-height: 160px;
+  max-height: min(240px, 38vh);
   flex-shrink: 0;
 }
 .tcg--detail-pop.tcg--layout-v2 .dc-title {
@@ -4819,11 +4939,6 @@ button.hud-btn--armed::after {
 .tcg--full.tcg--layout-v2 .dc-hero--full {
   min-height: 245px;
   max-height: 47%;
-}
-
-.tcg--detail-pop.tcg--layout-v2 .dc-hero--full {
-  min-height: 246px;
-  max-height: 46%;
 }
 
 .tcg--full.tcg--layout-v2 .dc-hero-art {
@@ -5501,20 +5616,6 @@ button.hud-btn--armed::after {
   font-size: 13px;
 }
 
-.hud-match-side-controls {
-  top: max(176px, calc(env(safe-area-inset-top, 0px) + 166px));
-  width: 128px;
-  max-width: 150px;
-  gap: 10px;
-}
-.hud-match-side-controls .hud-btn {
-  min-height: 58px;
-  justify-content: flex-start;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 10px;
-  text-align: left;
-}
 .hud-side-ico {
   width: 34px;
   height: 34px;
@@ -5543,20 +5644,6 @@ button.hud-btn--armed::after {
   text-transform: none;
   color: #f3f8ff;
 }
-.hud-match-side-controls .hud-gamelog {
-  border-radius: 10px;
-  overflow: hidden;
-}
-.hud-match-side-controls .hud-gamelog > summary {
-  min-height: 52px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-}
-
 @media (max-width: 900px) {
   .hud-chrome {
     grid-template-columns: 56px 1fr;
@@ -5772,54 +5859,292 @@ button.hud-btn--armed::after {
   line-height: 1.25;
 }
 
-.hud-match-side-controls {
+/* Battle HUD pass: readable top vitals plus pictographic command buttons. */
+.hud-chrome {
+  left: max(10px, env(safe-area-inset-left, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
   top: max(10px, env(safe-area-inset-top, 0px));
-  left: max(8px, env(safe-area-inset-left, 0px));
-  width: 78px;
-  max-width: 78px;
-  bottom: auto;
-  gap: 5px;
+  width: auto;
+  display: grid;
+  grid-template-columns: minmax(330px, 1fr) minmax(420px, 0.9fr);
+  gap: 8px 10px;
+  align-items: start;
 }
 
-.hud-match-side-controls .hud-btn {
-  min-height: 36px;
-  gap: 5px;
-  padding: 5px 6px;
-  border-radius: 7px;
+.hud-chrome__cluster--main {
+  min-width: 0;
+}
+
+.hud-chrome__cluster--status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hud-chrome__vitals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  gap: 7px;
+}
+
+.hud-vital {
+  position: relative;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 4px;
+  padding: 8px 10px;
+  overflow: hidden;
+}
+
+.hud-vital::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(126, 200, 255, 0.1), transparent 42%);
+  opacity: 0.9;
+}
+
+.hud-vital__ico {
+  position: relative;
+  z-index: 1;
+  grid-row: 1 / span 2;
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  color: #eff9ff;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.28), transparent 32%),
+    linear-gradient(145deg, rgba(74, 163, 255, 0.42), rgba(17, 42, 78, 0.86));
+  border: 1px solid rgba(126, 200, 255, 0.42);
+  box-shadow: 0 0 18px rgba(68, 160, 255, 0.18);
+}
+
+.hud-vital__lbl,
+.hud-vital strong,
+.hud-vital .bar {
+  position: relative;
+  z-index: 1;
+}
+
+.hud-vital__lbl {
+  min-width: 0;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: #9fd8ff;
+}
+
+.hud-vital .bar {
+  grid-column: 2 / span 2;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(6, 10, 18, 0.74);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 2px 8px rgba(0, 0, 0, 0.48);
+}
+
+.hud-vital .bar-fill {
+  border-radius: inherit;
+  box-shadow: 0 0 12px currentColor;
+}
+
+#hud-hero-hp .bar-fill {
+  color: #6ae1ff;
+  background: linear-gradient(90deg, #2aa8ff, #77ebff);
+}
+
+#hud-keep-hp .bar-fill {
+  color: #89c8ff;
+  background: linear-gradient(90deg, #407cff, #90d6ff);
+}
+
+.hud-vital--low .bar-fill {
+  color: #ffd37a !important;
+  background: linear-gradient(90deg, #f39b39, #ffd37a) !important;
+}
+
+.hud-vital--critical .bar-fill,
+.hud-vital--empty .bar-fill {
+  color: #ff7070 !important;
+  background: linear-gradient(90deg, #db4040, #ff8b8b) !important;
+}
+
+.hud-vital--critical {
+  border-color: rgba(255, 118, 118, 0.52) !important;
+}
+
+.hud-vital strong {
+  min-width: 6.8em;
+  font-size: 12px;
+  color: #f4f9ff;
+}
+
+.hud-chrome__objective {
+  grid-column: 1 / -1;
+}
+
+.hud-select-tag {
+  grid-column: 1 / -1;
 }
 
 .hud-side-ico {
-  width: 22px;
-  height: 22px;
-  flex-basis: 22px;
-  border-radius: 5px;
-  font-size: 10px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  font-size: 0;
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.24), transparent 30%),
+    linear-gradient(145deg, rgba(71, 148, 242, 0.28), rgba(9, 18, 31, 0.86));
 }
 
-.hud-side-copy {
-  font-size: 7px;
-  letter-spacing: 0.06em;
-  gap: 0;
+.hud-side-ico::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(circle at 50% 50%, rgba(106, 225, 255, 0.18), transparent 68%);
 }
 
-.hud-side-copy b {
-  font-size: 9.5px;
-  line-height: 1.05;
+.hud-side-ico i,
+.hud-side-ico i::before,
+.hud-side-ico i::after {
+  position: absolute;
+  display: block;
+  content: "";
 }
 
-.hud-match-side-controls .hud-gamelog {
-  border-radius: 7px;
-}
-
-.hud-match-side-controls .hud-gamelog > summary {
-  min-height: 32px;
-  padding: 0 7px;
+.hud-side-ico em {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font-style: normal;
   font-size: 8px;
+  line-height: 1;
+  color: rgba(232, 246, 255, 0.72);
 }
 
-.hud-match-side-controls .hud-gamelog-body {
-  max-height: 120px;
-  font-size: 9px;
+.hud-side-ico--rally i {
+  left: 10px;
+  top: 7px;
+  width: 2px;
+  height: 20px;
+  background: #b9e7ff;
+  border-radius: 2px;
+}
+
+.hud-side-ico--rally i::after {
+  left: 3px;
+  top: 1px;
+  width: 13px;
+  height: 9px;
+  background: linear-gradient(135deg, #78dbff, #3477ff);
+  clip-path: polygon(0 0, 100% 22%, 74% 100%, 0 78%);
+}
+
+.hud-side-ico--stance i {
+  left: 9px;
+  top: 7px;
+  width: 16px;
+  height: 20px;
+  border: 2px solid #bfe9ff;
+  border-radius: 9px 9px 12px 12px;
+  clip-path: polygon(50% 0, 100% 18%, 88% 76%, 50% 100%, 12% 76%, 0 18%);
+}
+
+.hud-side-ico--formation i,
+.hud-side-ico--formation i::before,
+.hud-side-ico--formation i::after {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #bdeaff;
+  box-shadow: 0 0 9px rgba(106, 225, 255, 0.48);
+}
+
+.hud-side-ico--formation i {
+  left: 14px;
+  top: 7px;
+}
+
+.hud-side-ico--formation i::before {
+  left: -8px;
+  top: 13px;
+}
+
+.hud-side-ico--formation i::after {
+  left: 8px;
+  top: 13px;
+}
+
+.hud-side-ico--camera i {
+  left: 7px;
+  top: 11px;
+  width: 20px;
+  height: 13px;
+  border: 2px solid #c8efff;
+  border-radius: 4px;
+}
+
+.hud-side-ico--camera i::before {
+  left: 5px;
+  top: 2px;
+  width: 6px;
+  height: 6px;
+  border: 2px solid #86dfff;
+  border-radius: 50%;
+}
+
+.hud-side-ico--camera i::after {
+  left: 2px;
+  top: -5px;
+  width: 8px;
+  height: 4px;
+  border-radius: 3px 3px 0 0;
+  background: #c8efff;
+}
+
+.hud-side-ico--teleport i {
+  left: 7px;
+  top: 7px;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #9defff;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 4px rgba(106, 225, 255, 0.12),
+    0 0 14px rgba(106, 225, 255, 0.42);
+}
+
+.hud-side-ico--teleport i::after {
+  left: 6px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f0fbff;
+}
+
+@media (max-width: 980px) {
+  .hud-chrome {
+    grid-template-columns: 1fr;
+    width: min(420px, calc(100vw - 20px));
+    left: auto;
+  }
+
+  .hud-chrome__vitals {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Single-line compact HUD: everything non-card sits across the top edge. */
@@ -5972,6 +6297,261 @@ button.hud-btn--armed::after {
   font-size: 9.5px;
 }
 
-.hud-match-side-controls {
-  top: max(40px, calc(env(safe-area-inset-top, 0px) + 40px));
+/* Final battle HUD layout: keep Wizard/Keep health readable across the top. */
+.hud-chrome {
+  display: grid;
+  grid-template-columns: minmax(310px, 0.9fr) minmax(580px, 1.35fr);
+  align-items: start;
+  gap: 8px 10px;
+  overflow: visible;
+}
+
+.hud-chrome__cluster--main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.hud-chrome__cluster--status {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.46fr) minmax(390px, 1fr);
+  gap: 7px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.hud-chrome__vitals {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(190px, 1fr));
+  gap: 7px;
+}
+
+.hud-vital {
+  min-width: 0;
+  min-height: 46px;
+  padding: 7px 9px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+
+.hud-vital__ico {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+}
+
+.hud-vital .bar {
+  height: 8px;
+}
+
+.hud-vital strong {
+  min-width: 6.4em;
+  font-size: 11px;
+}
+
+.hud-chrome__objective,
+.hud-select-tag {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1120px) {
+  /* Full-width top band — avoids a tall floating column on the right (was width + left:auto). */
+  .hud-chrome {
+    left: max(6px, env(safe-area-inset-left, 0px));
+    right: max(6px, env(safe-area-inset-right, 0px));
+    width: auto;
+    max-width: none;
+    grid-template-columns: 1fr;
+    gap: clamp(3px, 0.85vmin, 7px);
+    align-items: stretch;
+    font-size: clamp(10px, 2.5vmin, 13px);
+  }
+
+  .hud-chrome__cluster--main {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: clamp(3px, 0.75vmin, 6px);
+    min-width: 0;
+  }
+
+  .hud-chrome__stats {
+    display: flex;
+    flex-wrap: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: clamp(2px, 0.55vmin, 5px);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .hud-chrome__stats::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hud-chrome__phase {
+    flex: 0 0 auto;
+    min-height: clamp(26px, 6.5vmin, 38px);
+  }
+
+  /* Hostiles + Wizard/Keep on one row so the stack stays short and pinned to the top. */
+  .hud-chrome__cluster--status {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr);
+    gap: clamp(3px, 0.85vmin, 6px);
+    align-items: stretch;
+    min-width: 0;
+  }
+
+  .hud-chrome__readout {
+    min-width: 0;
+    min-height: clamp(30px, 7vmin, 48px);
+  }
+
+  .hud-chrome__vitals {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(3px, 0.75vmin, 5px);
+    min-width: 0;
+  }
+
+  .hud-vital {
+    min-height: clamp(32px, 7.5vmin, 46px);
+    padding: clamp(4px, 1vmin, 8px) clamp(4px, 1.1vmin, 9px);
+  }
+
+  .hud-vital .bar {
+    height: clamp(5px, 1.1vmin, 8px);
+  }
+
+  .hud-vital strong {
+    min-width: 0;
+    font-size: clamp(9px, 2.1vmin, 11px);
+  }
+
+  .hud-chrome > .hud-match-side-controls {
+    gap: clamp(2px, 0.55vmin, 5px);
+    margin-bottom: clamp(2px, 0.45vmin, 5px);
+  }
+
+  .hud-chrome > .hud-match-side-controls .hud-gamelog {
+    max-width: min(110px, 28vw);
+  }
+}
+
+/* Landscape phones: shorter chrome stack + tighter command rail offset. */
+@media (max-width: 1120px) and (max-height: 480px) {
+  .hud-chrome {
+    gap: 2px;
+    font-size: clamp(8px, 2.35vmin, 11px);
+  }
+
+  .hud-chrome__cluster--status {
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  }
+
+  .hud-vital {
+    min-height: clamp(28px, 6.5vmin, 40px);
+    padding: 3px 5px;
+  }
+
+  .hud-chrome > .hud-match-side-controls .hud-btn {
+    min-height: clamp(28px, 6.5vmin, 38px);
+    padding: 2px 3px;
+  }
+
+  html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn {
+    min-height: clamp(28px, 6.5vmin, 38px);
+  }
+}
+
+/* Match rail: painted command tiles (public/assets/hud). Functionality unchanged; dynamic line is `.hud-side-copy b`. */
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: clamp(0px, 0.25vmin, 2px);
+  padding: clamp(1px, 0.35vmin, 3px);
+  min-height: 0;
+  max-width: clamp(44px, 9.5vmin, 58px);
+  background: rgba(4, 8, 14, 0.55);
+  border: 1px solid rgba(120, 170, 230, 0.28);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art.hud-btn--ghost {
+  background: rgba(4, 8, 14, 0.55);
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art .hud-side-eyebrow {
+  display: none;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-side-sprite {
+  display: block;
+  width: clamp(20px, 4vmin, 28px);
+  height: clamp(20px, 4vmin, 28px);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  margin: 0 auto;
+  border-radius: clamp(5px, 1vmin, 8px);
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.hud-side-sprite--rally {
+  background-image: url("/assets/hud/btn-rally.png");
+}
+
+.hud-side-sprite--stance {
+  background-image: url("/assets/hud/btn-stance.png");
+}
+
+.hud-side-sprite--formation {
+  background-image: url("/assets/hud/btn-formation.png");
+}
+
+.hud-side-sprite--camera {
+  background-image: url("/assets/hud/btn-camera-follow.png");
+}
+
+.hud-side-sprite--teleport {
+  background-image: url("/assets/hud/btn-teleport.png");
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art .hud-side-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 1px;
+  text-align: center;
+  font-size: clamp(5px, 1.25vmin, 7px);
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(214, 228, 248, 0.92);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art .hud-side-copy b {
+  font-size: 1em;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #f5f9ff;
+}
+
+.hud-chrome > .hud-match-side-controls .hud-btn--side-art:focus-visible {
+  outline: 2px solid rgba(126, 200, 255, 0.85);
+  outline-offset: 2px;
 }

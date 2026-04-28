@@ -7,6 +7,7 @@
     "azure_spear_swarm_run_fast.glb",
     "azure_spear_swarm_running.glb",
     "azure_spear_swarm_walking.glb",
+    "bastion_keep_building.glb",
     "lanternbound_line_attack_triple_combo.glb",
     "lanternbound_line_bow_charge.glb",
     "lanternbound_line_combat_stance.glb",
@@ -183,6 +184,12 @@
           "scaleTracks": 24
         }
       ]
+    },
+    {
+      "file": "bastion_keep_building.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
     },
     {
       "file": "lanternbound_line_attack_triple_combo.glb",

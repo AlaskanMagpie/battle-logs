@@ -112,16 +112,17 @@ export const GLOBAL_POP_CAP = 1000;
 export const GLOBAL_POP_CAP_MAX = 9999;
 
 /**
- * Visual scale contract: one Titan / tower height is 50ft. One world unit is therefore
- * roughly 5.38ft, and all unit GLB normalization + procedural fallback bodies derive from
- * these class heights.
+ * Visual scale contract (canonical standing height). Titan = 50′ defines world scale;
+ * Swarm / Line / Heavy step down in fixed feet. GLB normalization uses a height-first
+ * extent so wide models (e.g. treant titans) are not shrunk to their horizontal AABB.
  */
 export const UNIT_HEIGHT_FEET = {
-  Swarm: 10,
-  Line: 20,
-  Heavy: 30,
+  Swarm: 15,
+  Line: 25,
+  Heavy: 35,
   Titan: 50,
 } as const;
+/** World-space vertical target for a 50′ titan (same units as map XZ). */
 export const UNIT_MESH_TITAN = 9.3;
 export const FEET_PER_WORLD_UNIT = UNIT_HEIGHT_FEET.Titan / UNIT_MESH_TITAN;
 export const UNIT_MESH_SWARM = UNIT_HEIGHT_FEET.Swarm / FEET_PER_WORLD_UNIT;
@@ -165,12 +166,12 @@ export const UNIT_AOE_SPLASH_DAMAGE_MULT = 0.6;
 export const PLAYER_UNIT_STRUCTURE_DAMAGE_MULT = 0.5;
 export const ENEMY_UNIT_STRUCTURE_DAMAGE_MULT = 0.35;
 export const UNIT_TAP_ANCHOR_DAMAGE_MULT = 0.42;
-/** Normal units attack on cadence, not every sim tick. Swarms still hit fastest; big units wind up. */
+/** Normal units attack on cadence, not every sim tick. Damage is scaled by cooldown, so slower swings hit harder. */
 export const UNIT_ATTACK_COOLDOWN_TICKS = {
-  Swarm: 9,
-  Line: 14,
-  Heavy: 24,
-  Titan: 34,
+  Swarm: 56,
+  Line: 82,
+  Heavy: 70,
+  Titan: 92,
 } as const;
 /** Per-hit lift over old per-tick DPS so slower attacks feel decisive when they land. */
 export const UNIT_ATTACK_DAMAGE_MULT = {
@@ -181,6 +182,10 @@ export const UNIT_ATTACK_DAMAGE_MULT = {
 } as const;
 /** Long-RMB radial can pull in idle nearby squads even when they were not selected. */
 export const SMART_RADIAL_IDLE_RADIUS = 20;
+
+/** Legacy radius for match-floor portal triggers (`portals.ts`); URLs are not set during matches. */
+export const PORTAL_TRIGGER_RADIUS = 4.2;
+export const PORTAL_SPAWN_COOLDOWN_TICKS = 2 * TICK_HZ;
 
 /** Commands: friendly unit or completed player structure must be within this radius of the cast point (world units). */
 export const COMMAND_FRIENDLY_PRESENCE_RADIUS = 18;
@@ -242,7 +247,7 @@ export const HERO_SPEED = 11;
 /** Max queued RMB destinations after the current move (Shift+right-click). */
 export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
-/** Wizard must stand within this radius (idle) to channel a neutral Mana node. */
+/** Wizard must stay within this radius to channel a neutral Mana node. */
 export const HERO_CLAIM_RADIUS = 14;
 /** Player right-click near a Mana node: assign capture order within this radius of the node's center. */
 export const TAP_UNIT_ORDER_SNAP_RADIUS = 18;

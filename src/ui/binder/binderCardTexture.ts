@@ -5,6 +5,7 @@ import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from ".
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
 import { getCardPreviewDataUrl } from "../cardGlbPreview";
+import { getCardArtUrl } from "../cardArtManifest";
 import { binderPanelPixelSize } from "./CardBinderEngine";
 import { binderSleevePixelSize, composeCardIntoBinderSleeve } from "./binderSleeveComposite";
 import { drawSpellBinderHero } from "./binderSpellHeroCanvas";
@@ -15,7 +16,7 @@ const structureHeroImageByCatalogId = new Map<string, HTMLImageElement>();
 
 function binderTextureCacheKey(catalogId: string): string {
   const { w, h } = binderSleevePixelSize();
-  return `${catalogId}@${w}x${h}sleeve_v5`;
+  return `${catalogId}@${w}x${h}sleeve_v6`;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -110,15 +111,15 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   const hw = w - (pad + 2) * 2;
   const hh = heroH - pad - 4;
 
-  if (isStructureEntry(e)) {
-    const img = structureHeroImageByCatalogId.get(catalogId);
-    if (img) {
-      ctx.save();
-      roundRectPath(ctx, hx, hy, hw, hh, 4);
-      ctx.clip();
-      drawImageCover(ctx, img, hx, hy, hw, hh);
-      ctx.restore();
-    }
+  const mappedImg = structureHeroImageByCatalogId.get(catalogId);
+  if (mappedImg) {
+    ctx.save();
+    roundRectPath(ctx, hx, hy, hw, hh, 4);
+    ctx.clip();
+    drawImageCover(ctx, mappedImg, hx, hy, hw, hh);
+    ctx.restore();
+  } else if (isStructureEntry(e)) {
+    // Structure GLB snapshot fallback is populated by `ensureCardHeroLoaded`.
   } else {
     drawSpellBinderHero(ctx, e as CommandCatalogEntry, hx, hy, hw, hh, hue, spellTimeSec);
   }
@@ -203,12 +204,12 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   return c;
 }
 
-async function ensureStructureHeroLoaded(catalogId: string): Promise<void> {
+async function ensureCardHeroLoaded(catalogId: string): Promise<void> {
   const e = getCatalogEntry(catalogId);
-  if (!e || !isStructureEntry(e)) return;
+  if (!e) return;
   if (structureHeroImageByCatalogId.has(catalogId)) return;
   try {
-    const url = await getCardPreviewDataUrl(catalogId);
+    const url = (await getCardArtUrl(catalogId)) ?? (isStructureEntry(e) ? await getCardPreviewDataUrl(catalogId) : null);
     if (url) structureHeroImageByCatalogId.set(catalogId, await loadImage(url));
   } catch {
     /* keep map empty — hero stays dark */
@@ -216,7 +217,7 @@ async function ensureStructureHeroLoaded(catalogId: string): Promise<void> {
 }
 
 async function paintBinderPanelCanvas(catalogId: string): Promise<HTMLCanvasElement> {
-  await ensureStructureHeroLoaded(catalogId);
+  await ensureCardHeroLoaded(catalogId);
   return paintBinderPanelOntoCanvas(catalogId, 0);
 }
 

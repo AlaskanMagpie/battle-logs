@@ -21,7 +21,7 @@ type UnitGlbManifest = {
 let manifest: UnitGlbManifest | undefined;
 let manifestPromise: Promise<UnitGlbManifest> | null = null;
 const loader = new GLTFLoader();
-type GltfTemplate = { root: THREE.Object3D; animations: THREE.AnimationClip[] };
+type GltfTemplate = { root: THREE.Object3D; animations: THREE.AnimationClip[]; triangleCount: number };
 /** Cached *template* GLTF data (never added to scene). */
 const cache = new Map<string, GltfTemplate>();
 /** In-flight loads: many units can request the same manifest URL before the first parse finishes. */
@@ -39,6 +39,8 @@ const LANTERNBOUND_LINE_RUN_FILE = "lanternbound_line_running.glb";
 const LANTERNBOUND_LINE_ATTACK_FILE = "lanternbound_line_attack_triple_combo.glb";
 const LANTERNBOUND_LINE_IDLE_FILE = "lanternbound_line_combat_stance.glb";
 const LANTERNBOUND_LINE_DEATH_FILE = "lanternbound_line_dying.glb";
+const VERDANT_HEAVY_RUN_FILE = "verdant_gatekeeper_reference_running.glb";
+const VERDANT_HEAVY_IDLE_FILE = "verdant_gatekeeper_reference_walking.glb";
 
 function isAzureSpearSwarmFile(file: string): boolean {
   return file.startsWith(AZURE_SPEAR_SWARM_PREFIX);
@@ -61,7 +63,7 @@ function animatedProfileFiles(m: UnitGlbManifest): Set<string> {
 
 function productionArtFiles(m: UnitGlbManifest): string[] {
   const animatedFiles = animatedProfileFiles(m);
-  return m.files.filter((f) => !animatedFiles.has(f) && !isPreviewUnitFile(f));
+  return m.files.filter((f) => !animatedFiles.has(f) && !isPreviewUnitFile(f) && !f.endsWith("_building.glb"));
 }
 
 function animationProfileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): UnitAnimationProfile | null {
@@ -94,6 +96,7 @@ function idleFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): str
     return files.includes(AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE) ? AZURE_SPEAR_SWARM_IDLE_FALLBACK_FILE : null;
   }
   if (kind === "Line") return files.includes(LANTERNBOUND_LINE_IDLE_FILE) ? LANTERNBOUND_LINE_IDLE_FILE : null;
+  if (kind === "Heavy") return files.includes(VERDANT_HEAVY_IDLE_FILE) ? VERDANT_HEAVY_IDLE_FILE : null;
   return null;
 }
 
@@ -107,10 +110,20 @@ function deathFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): st
 }
 
 function attackPlaybackSeconds(kind: UnitSizeClass | "hero"): number | undefined {
-  void kind;
-  // Use authored timing. Compressing long attack files to sim cooldowns made rich
-  // sequences (e.g. triple-combo) flash by as a single pose.
-  return undefined;
+  // Never compress attack clips to sim cooldowns. Short Meshy attacks need extra
+  // visual recovery so anticipation/release/follow-through can read on screen.
+  switch (kind) {
+    case "Swarm":
+      return 3.1;
+    case "Line":
+      return 4.35;
+    case "Heavy":
+      return 3.05;
+    case "Titan":
+      return 3.35;
+    case "hero":
+      return 1.1;
+  }
 }
 
 function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, file: string): number {
@@ -119,10 +132,16 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
     // Meshy run exports are often 0.5-0.7s loops, which reads frantic at this scale.
     // Stretch short loops into a calm jog cadence while keeping already-slower clips authored.
     const target = /\b(fast|sprint|runfast)\b/.test(hay) ? 0.95 : 1.08;
-    return Math.max(clip.duration, target);
+    let playback = Math.max(clip.duration, target);
+    // Verdant Titan locomotion GLB is authored as Monster_Walk; stretch slightly for a heavier field read.
+    if (file.includes("verdant_gatekeeper_titan_run")) playback *= 1.1;
+    if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.45);
+    return playback;
   }
   const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
-  return Math.max(clip.duration, target);
+  let playback = Math.max(clip.duration, target);
+  if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.55);
+  return playback;
 }
 
 function setLoopPlayback(action: THREE.AnimationAction, clip: THREE.AnimationClip, role: "run" | "idle", file: string): void {
@@ -203,6 +222,32 @@ function rigSummary(root: THREE.Object3D): { skinnedMeshes: number; bones: numbe
   return { skinnedMeshes, bones };
 }
 
+function triangleCount(root: THREE.Object3D): number {
+  let tris = 0;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const geom = m.geometry;
+    const pos = geom.getAttribute("position");
+    if (!pos) return;
+    tris += geom.index ? geom.index.count / 3 : pos.count / 3;
+  });
+  return Math.max(0, Math.round(tris));
+}
+
+/** AABB size → scalar used to fit `targetMaxExtent`. */
+export type GlbExtentBasis = "max" | "height";
+
+/**
+ * `max`: largest axis (legacy, good for squat structures).
+ * `height`: standing-height contract — max(Y, 0.5·max(X,Z)) so wide titans still hit their foot ladder.
+ */
+export function glbBoxExtentRef(size: THREE.Vector3, basis: GlbExtentBasis): number {
+  if (basis === "max") return Math.max(size.x, size.y, size.z, 1e-3);
+  const maxXZ = Math.max(size.x, size.z);
+  return Math.max(size.y, maxXZ * 0.5, 1e-3);
+}
+
 function visibleMeshBounds(root: THREE.Object3D, relativeTo?: THREE.Object3D): THREE.Box3 {
   root.updateMatrixWorld(true);
   relativeTo?.updateMatrixWorld(true);
@@ -224,15 +269,15 @@ function visibleMeshBounds(root: THREE.Object3D, relativeTo?: THREE.Object3D): T
   return out;
 }
 
-function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number): void {
+function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, basis: GlbExtentBasis): void {
   inst.updateMatrixWorld(true);
   const parent = inst.parent ?? undefined;
   const box = visibleMeshBounds(inst, parent);
   if (box.isEmpty()) return;
   const size = new THREE.Vector3();
   box.getSize(size);
-  const max = Math.max(size.x, size.y, size.z, 1e-3);
-  inst.scale.multiplyScalar(targetMaxExtent / max);
+  const ref = glbBoxExtentRef(size, basis);
+  inst.scale.multiplyScalar(targetMaxExtent / ref);
   inst.updateMatrixWorld(true);
   const b2 = visibleMeshBounds(inst, parent);
   inst.position.x -= (b2.min.x + b2.max.x) / 2;
@@ -249,7 +294,7 @@ async function loadGltfTemplate(url: string): Promise<GltfTemplate> {
     p = loader
       .loadAsync(url)
       .then((gltf: GLTF) => {
-        const template = { root: gltf.scene, animations: gltf.animations ?? [] };
+        const template = { root: gltf.scene, animations: gltf.animations ?? [], triangleCount: triangleCount(gltf.scene) };
         cache.set(url, template);
         templateLoadPromises.delete(url);
         return template;
@@ -329,6 +374,7 @@ function pickFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): str
   if (kind === "Line") {
     return files.includes(LANTERNBOUND_LINE_RUN_FILE) ? LANTERNBOUND_LINE_RUN_FILE : null;
   }
+  if (kind === "Heavy" && files.includes(VERDANT_HEAVY_RUN_FILE)) return VERDANT_HEAVY_RUN_FILE;
   const classFiles = productionArtFiles(m);
   if (!classFiles.length) return null;
   const idx = CLASS_INDEX[kind] ?? 0;
@@ -337,9 +383,9 @@ function pickFileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): str
 
 /** Team albedo push so GLBs keep an immediate blue-vs-red read (multiply + slight anchor lerp). */
 function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
-  const mul = team === "enemy" ? new THREE.Color(1.08, 0.78, 0.74) : new THREE.Color(0.82, 0.96, 1.08);
-  const anchor = team === "enemy" ? new THREE.Color(0xef6a5a) : new THREE.Color(0x6ec9ff);
-  const lerp = team === "enemy" ? 0.12 : 0.13;
+  const mul = team === "enemy" ? new THREE.Color(1.22, 0.62, 0.82) : new THREE.Color(0.82, 0.96, 1.08);
+  const anchor = team === "enemy" ? new THREE.Color(0xff3f7f) : new THREE.Color(0x6ec9ff);
+  const lerp = team === "enemy" ? 0.24 : 0.13;
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || !m.material) return;
@@ -349,6 +395,10 @@ function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
       if (mat.isMeshStandardMaterial && mat.color) {
         mat.color.multiply(mul);
         mat.color.lerp(anchor, lerp);
+        if (team === "enemy" && mat.emissive) {
+          mat.emissive.lerp(new THREE.Color(0x6c1234), 0.22);
+          mat.emissiveIntensity = Math.max(mat.emissiveIntensity ?? 0, 0.08);
+        }
       }
     }
   });
@@ -406,6 +456,10 @@ type AttachGlbOpts = {
   attackPlaybackSeconds?: number;
   /** Unit/art role label used for one-time dev warnings when expected clips are absent. */
   animationRoleLabel?: string;
+  /** Unit placeholders should never reappear as boxes if GLB art is missing/late. */
+  keepPlaceholderHidden?: boolean;
+  /** How to read authored bounds for normalization (default: height for animated units, max otherwise). */
+  extentBasis?: GlbExtentBasis;
 };
 
 async function attachGlbByFile(
@@ -419,6 +473,7 @@ async function attachGlbByFile(
   if (!parent) return;
   if (parent.userData["unitDying"] || parent.userData["glbRoot"] || parent.userData["glbPending"]) return;
   parent.userData["glbPending"] = true;
+  if (opts?.keepPlaceholderHidden) placeholder.visible = false;
 
   try {
     const template = await loadGltfTemplate(url);
@@ -447,6 +502,10 @@ async function attachGlbByFile(
     parent.add(inst);
     parent.userData["glbRoot"] = inst;
     parent.userData["glbTargetMaxExtent"] = targetMaxExtent;
+    const extentBasis: GlbExtentBasis =
+      opts?.extentBasis ?? (opts?.animationRoleLabel || opts?.attackFile || opts?.idleFile ? "height" : "max");
+    parent.userData["glbExtentBasis"] = extentBasis;
+    parent.userData["glbTriangleCount"] = template.triangleCount;
     parent.userData["glbClampChecksRemaining"] = 2;
     let mixer: THREE.AnimationMixer | null = null;
     if (template.animations.length > 0) {
@@ -458,6 +517,8 @@ async function attachGlbByFile(
         action.setLoop(THREE.LoopRepeat, Infinity);
         setLoopPlayback(action, clip, "run", file);
         action.reset();
+        action.enabled = true;
+        action.setEffectiveWeight(1);
         action.play();
         parent.userData["glbMixer"] = mixer;
         parent.userData["glbAction"] = action;
@@ -465,7 +526,8 @@ async function attachGlbByFile(
         parent.userData["glbBaseState"] = "run";
       }
     }
-    if (opts?.idleFile) {
+    const loadSeparateIdle = !!opts?.idleFile && opts.idleFile !== file;
+    if (loadSeparateIdle) {
       const idleTemplate = await loadGltfTemplate(`/assets/units/${opts.idleFile}`);
       const clipRaw = clipForRole(idleTemplate.animations, "idle", opts.idleFile);
       if (clipRaw) {
@@ -491,7 +553,7 @@ async function attachGlbByFile(
         action.clampWhenFinished = false;
         action.enabled = false;
         action.setEffectiveWeight(0);
-        const playback = opts.attackPlaybackSeconds ?? clip.duration;
+        const playback = Math.max(clip.duration, opts.attackPlaybackSeconds ?? clip.duration);
         action.timeScale = clip.duration / Math.max(0.05, playback);
         parent.userData["glbMixer"] = mixer;
         parent.userData["glbAttackAction"] = action;
@@ -519,7 +581,7 @@ async function attachGlbByFile(
     if (opts?.animationRoleLabel) {
       const missing = [
         parent.userData["glbRunAction"] ? "" : "run",
-        opts.idleFile && !parent.userData["glbIdleAction"] ? "idle" : "",
+        loadSeparateIdle && !parent.userData["glbIdleAction"] ? "idle" : "",
         opts.attackFile && !parent.userData["glbAttackAction"] ? "attack" : "",
         opts.deathFile && !parent.userData["glbDeathAction"] ? "death" : "",
       ].filter(Boolean);
@@ -529,7 +591,7 @@ async function attachGlbByFile(
         console.warn(`[glb] ${opts.animationRoleLabel} missing animation roles: ${missing.join(", ") || "all"}`, file);
       }
     }
-    normalizeGlbInstance(inst, targetMaxExtent);
+    normalizeGlbInstance(inst, targetMaxExtent, extentBasis);
 
     if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
 
@@ -539,7 +601,7 @@ async function attachGlbByFile(
       if (silo) silo.visible = false;
     }
   } catch {
-    placeholder.visible = true;
+    placeholder.visible = !opts?.keepPlaceholderHidden;
   } finally {
     delete parent.userData["glbPending"];
   }
@@ -574,10 +636,11 @@ export async function attachGlbForClass(
     deathFile: deathFileForClass(kind, m),
     attackPlaybackSeconds: attackPlaybackSeconds(kind),
     animationRoleLabel: kind,
+    keepPlaceholderHidden: true,
   });
 }
 
-/** Unit GLBs normalize to the canonical tower-derived ladder exactly (1.5× per tier). */
+/** Unit GLBs normalize to the canonical foot ladder (`unitMeshLinearSize` / `constants.ts`). */
 export async function requestGlbForUnit(
   kind: UnitSizeClass,
   placeholder: THREE.Mesh,
@@ -613,6 +676,7 @@ const TOWER_GLB_MANIFEST_ORDER = [
 ] as const;
 
 const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
+  bastion_keep: "bastion_keep_building.glb",
   verdant_citadel: "verdant_citadel_titan_base.glb",
 };
 

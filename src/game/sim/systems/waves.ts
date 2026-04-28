@@ -1,9 +1,5 @@
-import {
-  ENEMY_DAMAGE_MULT,
-  ENEMY_WAVE_EVERY_TICKS,
-  ENEMY_WAVE_GLOBAL_CAP,
-  REINFORCEMENT_WAVE_BATCH,
-} from "../../constants";
+import { ENEMY_WAVE_EVERY_TICKS, ENEMY_WAVE_GLOBAL_CAP, REINFORCEMENT_WAVE_BATCH } from "../../constants";
+import { enemyDamageScalar, enemyHpScalar } from "../../difficulty";
 import { rand, randU32, type GameState } from "../../state";
 import { unitStatsForCatalog } from "./helpers";
 
@@ -21,8 +17,8 @@ export function maybeEnemyReinforcements(s: GameState): void {
   if (roomUnits < 1) return;
 
   const camp = awakeCamps[Math.floor(rand(s) * awakeCamps.length)] ?? awakeCamps[0]!;
-  const hpMult = s.map.difficulty?.enemyHpMult ?? 1;
-  const dmgMult = (s.map.difficulty?.enemyDmgMult ?? 1) * ENEMY_DAMAGE_MULT;
+  const hpMult = enemyHpScalar(s.map);
+  const dmgMult = enemyDamageScalar(s.map);
   const st = unitStatsForCatalog("Swarm");
   const hp = Math.max(1, Math.round(st.maxHp * hpMult));
   const batch = Math.min(REINFORCEMENT_WAVE_BATCH, roomUnits);

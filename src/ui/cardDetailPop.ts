@@ -79,10 +79,6 @@ export function onDoctrineCardPreviewHoverLeave(ev: MouseEvent): void {
   closePop();
 }
 
-/** Fixed “print size” for detail cards; whole frame scales uniformly to fit the dialog. */
-const DETAIL_CARD_W = 400;
-const DETAIL_CARD_H = 600;
-
 function layoutCardDetailFit(): void {
   if (!layer || layer.hasAttribute("hidden")) return;
   const body = layer.querySelector("#card-detail-pop-body") as HTMLElement | null;
@@ -92,7 +88,9 @@ function layoutCardDetailFit(): void {
   const pw = body.clientWidth;
   const ph = body.clientHeight;
   if (pw < 2 || ph < 2) return;
-  const s = Math.min(1, (pw * 0.97) / DETAIL_CARD_W, (ph * 0.97) / DETAIL_CARD_H);
+  const nw = Math.max(1, fit.offsetWidth, fit.scrollWidth);
+  const nh = Math.max(1, fit.offsetHeight, fit.scrollHeight);
+  const s = Math.min(1, (pw * 0.97) / nw, (ph * 0.97) / nh);
   fit.style.transformOrigin = "center center";
   fit.style.transform = s < 0.999 ? `scale(${s})` : "";
 }
@@ -100,10 +98,12 @@ function layoutCardDetailFit(): void {
 function wireDetailResize(): void {
   if (!layer) return;
   const body = layer.querySelector("#card-detail-pop-body") as HTMLElement | null;
+  const fit = body?.querySelector(".card-detail-pop-fit") as HTMLElement | null;
   if (!body) return;
   detailResizeRo?.disconnect();
   detailResizeRo = new ResizeObserver(() => layoutCardDetailFit());
   detailResizeRo.observe(body);
+  if (fit) detailResizeRo.observe(fit);
 }
 
 function unwireDetailResize(): void {
@@ -187,12 +187,21 @@ export function showDoctrineCardDetail(catalogId: string, opts?: ShowDoctrineCar
   const body = el.querySelector("#card-detail-pop-body") as HTMLElement;
   body.innerHTML = `<div class="card-detail-pop-fit">${doctrineCardFullModalHtml(catalogId)}</div>`;
   hydrateCardPreviewImages(body);
+  const refitSoon = (): void => {
+    requestAnimationFrame(() => layoutCardDetailFit());
+  };
+  body.querySelectorAll("img.tcg-card-preview-img").forEach((img) => {
+    if (!(img instanceof HTMLImageElement)) return;
+    img.addEventListener("load", refitSoon, { once: true, passive: true });
+    if (img.complete && img.naturalWidth > 0) refitSoon();
+  });
   el.removeAttribute("hidden");
   el.setAttribute("aria-hidden", "false");
   requestAnimationFrame(() => {
     body.focus({ preventScroll: true });
     layoutCardDetailFit();
     wireDetailResize();
+    refitSoon();
     if (detailOpenedFromHover) armHoverOutsideDismiss();
   });
 }

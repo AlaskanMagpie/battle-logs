@@ -15,6 +15,7 @@ import {
   UNIT_LIFESTEAL_DAMAGE_FRAC,
   UNIT_TAP_ANCHOR_DAMAGE_MULT,
 } from "../../constants";
+import { enemyAttackSpeedScalar } from "../../difficulty";
 import {
   classifyAttackRangeBand,
   liveSquadCount,
@@ -45,8 +46,14 @@ const ATTACK_IMPULSE_BY_CLASS: Record<UnitSizeClass, number> = {
 
 const ATTACK_IMPULSE_CAP = 8.5;
 
-function attackCooldownTicks(u: UnitRuntime): number {
+function baseAttackCooldownTicks(u: UnitRuntime): number {
   return UNIT_ATTACK_COOLDOWN_TICKS[u.sizeClass] ?? UNIT_ATTACK_COOLDOWN_TICKS.Line;
+}
+
+function attackCooldownTicks(s: GameState, u: UnitRuntime): number {
+  const base = baseAttackCooldownTicks(u);
+  if (u.team !== "enemy") return base;
+  return Math.max(1, Math.round(base / enemyAttackSpeedScalar(s)));
 }
 
 function tickAttackCooldowns(units: UnitRuntime[]): void {
@@ -62,13 +69,13 @@ function attackReady(u: UnitRuntime): boolean {
 }
 
 function commitAttack(s: GameState, u: UnitRuntime): void {
-  u.attackCooldownTicksRemaining = attackCooldownTicks(u);
+  u.attackCooldownTicksRemaining = attackCooldownTicks(s, u);
   u.lastAttackTick = s.tick;
 }
 
 function attackDamageFromPerTick(u: UnitRuntime, perTick: number): number {
   const classMult = UNIT_ATTACK_DAMAGE_MULT[u.sizeClass] ?? UNIT_ATTACK_DAMAGE_MULT.Line;
-  return perTick * attackCooldownTicks(u) * classMult * liveSquadCount(u);
+  return perTick * baseAttackCooldownTicks(u) * classMult * liveSquadCount(u);
 }
 
 export function applyAttackImpulse(

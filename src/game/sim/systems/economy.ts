@@ -6,16 +6,14 @@ import {
   TAP_FLUX_PER_SEC,
   TICK_HZ,
 } from "../../constants";
+import { enemyEconomyScalar } from "../../difficulty";
 import type { GameState } from "../../state";
 import type { TeamId } from "../../types";
 import { tapYieldMultForOwner } from "./homeDistance";
 
 export function economy(s: GameState): void {
   if (s.phase === "playing") {
-    const d = s.map.difficulty;
-    const stress = d ? Math.max(d.enemyHpMult, d.enemyDmgMult) : 1;
-    const fluxMul = 0.78 + 0.28 * Math.min(Math.max(stress, 0.85), 1.75);
-    s.enemyFlux += (ENEMY_AI_PASSIVE_FLUX_PER_SEC * fluxMul) / TICK_HZ;
+    s.enemyFlux += (ENEMY_AI_PASSIVE_FLUX_PER_SEC * enemyEconomyScalar(s)) / TICK_HZ;
   }
   const perTap = TAP_FLUX_PER_SEC / TICK_HZ;
   for (const t of s.taps) {
@@ -25,7 +23,7 @@ export function economy(s: GameState): void {
     const owner: TeamId = t.ownerTeam ?? "player";
     const yMul = tapYieldMultForOwner(s, owner, t);
     const take = Math.min(t.yieldRemaining, perTap * yMul);
-    if (owner === "enemy") s.enemyFlux += take;
+    if (owner === "enemy") s.enemyFlux += take * enemyEconomyScalar(s);
     else s.flux += take;
     t.yieldRemaining -= take;
   }

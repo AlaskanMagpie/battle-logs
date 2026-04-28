@@ -7,15 +7,23 @@ import { applyAttackImpulse, combat } from "./sim/systems/combat";
 import { applyPlayerIntents } from "./sim/systems/intents";
 import { advanceTick } from "./sim/tick";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
+import { claimChannelSecForTap } from "./sim/systems/homeDistance";
 import {
-  ENEMY_DAMAGE_MULT,
-  ENEMY_PRODUCTION_RATE_MULT,
+  buildReturnPortalUrl,
+  buildVibeJamExitUrl,
+  buildVibeJamExitUrlForPrematch,
+  configureGamePortals,
+  parsePortalContext,
+} from "./portal";
+import { readLocalLeaderboard, recordLocalLeaderboardResult, scoreMatchResult } from "./leaderboard";
+import {
   KEEP_ID,
   KEEP_SWARM_PERIOD_SEC,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
 } from "./constants";
+import { enemyCaptureSpeedScalar, enemyDamageScalar, enemyProductionSpeedScalar } from "./difficulty";
 import {
   canPlaceEnemyStructureAt,
   canUseDoctrineSlot,
@@ -228,8 +236,8 @@ describe("batch production", () => {
 
     const spawned = s.units.filter((u) => u.team === "enemy" && u.structureId === st.id);
     expect(spawned).toHaveLength(4);
-    expect(spawned.every((u) => u.dmgPerTick === unitStatsForCatalog("Swarm").dmgPerTick * ENEMY_DAMAGE_MULT)).toBe(true);
-    expect(st.productionTicksRemaining).toBe(Math.round((def.productionSeconds * TICK_HZ) / ENEMY_PRODUCTION_RATE_MULT));
+    expect(spawned.every((u) => u.dmgPerTick === unitStatsForCatalog("Swarm").dmgPerTick * enemyDamageScalar(s.map))).toBe(true);
+    expect(st.productionTicksRemaining).toBe(Math.round((def.productionSeconds * TICK_HZ) / enemyProductionSpeedScalar(s)));
   });
 
   it("keeps the Wizard Keep producing literal guard bodies", () => {
@@ -338,6 +346,146 @@ describe("hero resilience", () => {
   });
 });
 
+describe("vibe jam portals", () => {
+  it("parses and forwards portal query params with current game ref defaults", () => {
+    const s = createInitialState(tinyMap, []);
+    s.hero.hp = s.hero.maxHp / 2;
+    const ctx = parsePortalContext("?portal=true&username=levelsio&color=red&speed=5&ref=fly.pieter.com");
+
+    expect(ctx.enteredViaPortal).toBe(true);
+    expect(ctx.params.username).toBe("levelsio");
+    const exit = buildVibeJamExitUrl(ctx, s, "https://battle.logs/game?portal=true");
+    expect(exit).toContain("https://vibejam.cc/portal/2026");
+    expect(exit).toContain("username=levelsio");
+    expect(exit).toContain("color=red");
+    expect(exit).toContain("hp=50");
+    expect(exit).toContain("ref=https%3A%2F%2Fbattle.logs%2Fgame");
+
+    const back = buildReturnPortalUrl(ctx, s, "https://battle.logs/game?portal=true");
+    expect(back).toContain("https://fly.pieter.com/");
+    expect(back).toContain("portal=true");
+    expect(back).toContain("username=levelsio");
+  });
+
+  it("does not place Vibe Jam walk-in portals on the battlefield during matches", () => {
+    const s = createInitialState(tinyMap, []);
+    const heroBefore = { x: s.hero.x, z: s.hero.z };
+    const ctx = parsePortalContext("?portal=true&ref=https%3A%2F%2Fprevious.example%2Fgame");
+    configureGamePortals(s, ctx, "https://battle.logs/game");
+
+    expect(s.portal.enteredViaPortal).toBe(true);
+    expect(s.portal.exitUrl).toBe("");
+    expect(s.portal.returnUrl).toBeNull();
+    expect(s.portal.cooldownTicksRemaining).toBe(0);
+    expect(s.hero.x).toBe(heroBefore.x);
+    expect(s.hero.z).toBe(heroBefore.z);
+
+    s.hero.x = s.portal.exitPortal.x;
+    s.hero.z = s.portal.exitPortal.z;
+    advanceTick(s, []);
+
+    expect(s.portal.pendingRedirectUrl).toBeNull();
+  });
+
+  it("builds a prematch Vibe Jam exit URL without a live GameState", () => {
+    const ctx = parsePortalContext("?portal=true&username=levelsio&color=red&speed=5");
+    const href = buildVibeJamExitUrlForPrematch(ctx, "https://battle.logs/game?portal=true");
+    expect(href).toContain("https://vibejam.cc/portal/2026");
+    expect(href).toContain("username=levelsio");
+  });
+});
+
+describe("local leaderboard", () => {
+  it("scores and stores completed matches without requiring a backend", () => {
+    const stored = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        stored.set(key, value);
+      },
+      removeItem: (key: string) => {
+        stored.delete(key);
+      },
+      clear: () => stored.clear(),
+      key: (index: number) => [...stored.keys()][index] ?? null,
+      get length() {
+        return stored.size;
+      },
+    } satisfies Storage;
+    const s = createInitialState(tinyMap, []);
+    s.phase = "win";
+    s.stats.enemyKills = 7;
+    s.stats.structuresBuilt = 3;
+    s.tick = TICK_HZ * 90;
+
+    const entry = recordLocalLeaderboardResult(s, "wizard", storage);
+
+    expect(entry?.score).toBe(scoreMatchResult(s));
+    const rows = readLocalLeaderboard(storage);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.username).toBe("wizard");
+    expect(rows[0]!.phase).toBe("win");
+  });
+});
+
+describe("hero node claiming", () => {
+  it("channels and claims while the Wizard is still moving inside the node ring", () => {
+    const s = createInitialState(tinyMap, []);
+    const tap = s.taps[0]!;
+    s.flux = 1000;
+    s.hero.x = tap.x - 3;
+    s.hero.z = tap.z;
+    s.hero.targetX = tap.x + 3;
+    s.hero.targetZ = tap.z;
+
+    advanceTick(s, []);
+
+    expect(s.hero.claimChannelTarget).toBe(0);
+    expect(s.hero.targetX).not.toBeNull();
+
+    let guard = TICK_HZ * 8;
+    while (!tap.active && guard-- > 0) {
+      const side = guard % 2 === 0 ? 3 : -3;
+      s.hero.targetX = tap.x + side;
+      s.hero.targetZ = tap.z;
+      advanceTick(s, []);
+    }
+
+    expect(tap.active).toBe(true);
+    expect(tap.ownerTeam).toBe("player");
+  });
+});
+
+describe("hero captain mode", () => {
+  it("moves the idle Wizard toward map objectives and pauses after manual orders", () => {
+    const s = createInitialState(tinyMap, []);
+    const startX = s.hero.x;
+    s.heroCaptainEnabled = true;
+    s.heroCaptainLastManualTick = -9999;
+
+    advanceTick(s, []);
+
+    expect(s.hero.targetX).toBe(s.taps[0]!.x);
+    expect(s.hero.targetZ).toBe(s.taps[0]!.z);
+    expect(s.lastMessage).toContain("Captain mode");
+
+    applyPlayerIntents(s, [{ type: "hero_move", x: startX - 10, z: s.hero.z }]);
+    expect(s.heroCaptainLastManualTick).toBe(s.tick);
+    const manualTarget = s.hero.targetX;
+
+    s.hero.targetX = null;
+    s.hero.targetZ = null;
+    advanceTick(s, []);
+
+    expect(s.hero.targetX).toBeNull();
+
+    s.tick += TICK_HZ * 2;
+    advanceTick(s, []);
+    expect(s.hero.targetX).not.toBe(manualTarget);
+    expect(s.hero.targetX).toBe(s.taps[0]!.x);
+  });
+});
+
 describe("command spells", () => {
   it("Cut Back cleaves through the clicked point even beyond the base line length", () => {
     const s = createInitialState(tinyMap, ["recycle"]);
@@ -377,6 +525,34 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "firestorm")).toBe(true);
+  });
+
+  it("player-cast damage spells do not damage friendly units inside the area", () => {
+    const s = createInitialState(tinyMap, ["firestorm", "recycle", "shatter"]);
+    s.flux = 1000;
+    const friendlyFirestorm = unit(4100, "player", "Line", null);
+    friendlyFirestorm.x = 18;
+    friendlyFirestorm.z = 0;
+    const friendlyCutBack = unit(4101, "player", "Swarm", null);
+    friendlyCutBack.x = 20;
+    friendlyCutBack.z = 0;
+    const friendlyShatter = unit(4102, "player", "Heavy", null);
+    friendlyShatter.x = 80;
+    friendlyShatter.z = 0;
+    s.units.push(friendlyFirestorm, friendlyCutBack, friendlyShatter);
+
+    applyPlayerIntents(s, [
+      { type: "select_doctrine_slot", index: 0 },
+      { type: "try_click_world", pos: { x: 18, z: 0 } },
+      { type: "select_doctrine_slot", index: 1 },
+      { type: "try_click_world", pos: { x: 20, z: 0 } },
+      { type: "select_doctrine_slot", index: 2 },
+      { type: "try_click_world", pos: { x: 80, z: 0 } },
+    ]);
+
+    expect(friendlyFirestorm.hp).toBe(friendlyFirestorm.maxHp);
+    expect(friendlyCutBack.hp).toBe(friendlyCutBack.maxHp);
+    expect(friendlyShatter.hp).toBe(friendlyShatter.maxHp);
   });
 
   it("Fortify creates a tactics field", () => {
@@ -440,6 +616,50 @@ describe("autonomous unit movement", () => {
     expect(ally.autoOrder).toBeDefined();
     expect(ally.x).toBeGreaterThan(s.hero.x);
   });
+
+  it("uses home-distance claim timing for squad captures", () => {
+    const nearMap: MapData = { ...tinyMap, tapSlots: [{ id: "tap_near", x: -40, z: 0 }] };
+    const farMap: MapData = { ...tinyMap, tapSlots: [{ id: "tap_far", x: 130, z: 0 }] };
+    const near = createInitialState(nearMap, []);
+    const far = createInitialState(farMap, []);
+    const nearUnit = unit(5400, "player", "Swarm", null);
+    const farUnit = unit(5401, "player", "Swarm", null);
+    nearUnit.x = near.taps[0]!.x;
+    nearUnit.z = near.taps[0]!.z;
+    farUnit.x = far.taps[0]!.x;
+    farUnit.z = far.taps[0]!.z;
+    near.units.push(nearUnit);
+    far.units.push(farUnit);
+
+    movement(near);
+    movement(far);
+
+    const nearExpected = Math.round(claimChannelSecForTap(near, "player", near.taps[0]!) * TICK_HZ * 1.35) - 1;
+    const farExpected = Math.round(claimChannelSecForTap(far, "player", far.taps[0]!) * TICK_HZ * 1.35) - 1;
+    expect(near.taps[0]!.claimTicksRemaining).toBe(nearExpected);
+    expect(far.taps[0]!.claimTicksRemaining).toBe(farExpected);
+    expect(farExpected).toBeGreaterThan(nearExpected);
+  });
+
+  it("applies the enemy capture speed slider to squad captures", () => {
+    const map: MapData = {
+      ...tinyMap,
+      tapSlots: [{ id: "tap_enemy", x: 80, z: 0 }],
+      difficulty: { enemyEffectivenessMult: 0.5 },
+    };
+    const s = createInitialState(map, []);
+    const hostile = unit(5500, "enemy", "Swarm", null);
+    hostile.x = s.taps[0]!.x;
+    hostile.z = s.taps[0]!.z;
+    s.units.push(hostile);
+
+    movement(s);
+
+    const expected =
+      Math.round((claimChannelSecForTap(s, "enemy", s.taps[0]!) * TICK_HZ * 1.35) / enemyCaptureSpeedScalar(s)) - 1;
+    expect(s.taps[0]!.claimTeam).toBe("enemy");
+    expect(s.taps[0]!.claimTicksRemaining).toBe(expected);
+  });
 });
 
 describe("selection commands", () => {
@@ -456,6 +676,31 @@ describe("selection commands", () => {
     expect(s.hero.targetX).toBe(-20);
     expect(s.hero.targetZ).toBe(12);
     expect(ally.order?.mode).toBe("move");
+  });
+
+  it("orders selected squads into drag-defined formations", () => {
+    const s = createInitialState(tinyMap, []);
+    const a = unit(5300, "player", "Swarm", null);
+    const b = unit(5301, "player", "Line", null);
+    const c = unit(5302, "player", "Heavy", null);
+    s.units.push(a, b, c);
+
+    applyPlayerIntents(s, [
+      { type: "select_units", unitIds: [a.id, b.id, c.id] },
+      {
+        type: "command_selected_units_formation",
+        from: { x: -10, z: -12 },
+        to: { x: -10, z: 12 },
+        mode: "move",
+        formationKind: "line",
+      },
+    ]);
+
+    expect(a.order?.mode).toBe("move");
+    expect(b.order?.mode).toBe("move");
+    expect(c.order?.mode).toBe("move");
+    expect(new Set(s.units.map((x) => `${x.order?.x.toFixed(1)},${x.order?.z.toFixed(1)}`)).size).toBe(3);
+    expect(s.lastMessage).toContain("Line formation");
   });
 
   it("lets radial commands recruit nearby idle squads without selecting them first", () => {
@@ -495,5 +740,52 @@ describe("selection commands", () => {
     expect(ally.order?.mode).toBe("move");
     expect(ally.order?.queued).toHaveLength(1);
     expect(s.lastMessage).toContain("queued to attack-move");
+  });
+
+  it("sets a global rally point directly from radial commands", () => {
+    const s = createInitialState(tinyMap, []);
+    s.armyStance = "defense";
+
+    applyPlayerIntents(s, [{ type: "set_global_rally", x: -12, z: 9 }]);
+
+    expect(s.armyStance).toBe("offense");
+    expect(s.globalRallyActive).toBe(true);
+    expect(s.globalRallyX).toBe(-12);
+    expect(s.globalRallyZ).toBe(9);
+  });
+
+  it("sets the formation preset directly from the radial", () => {
+    const s = createInitialState(tinyMap, []);
+
+    applyPlayerIntents(s, [{ type: "set_formation_preset", formationKind: "arc" }]);
+
+    expect(s.formationPreset).toBe("arc");
+    expect(s.lastMessage).toContain("Arc");
+  });
+
+  it("lets radial formation commands recruit nearby idle squads", () => {
+    const s = createInitialState(tinyMap, []);
+    const nearbyIdle = unit(5300, "player", "Line", null);
+    nearbyIdle.x = -20;
+    nearbyIdle.z = 14;
+    const farIdle = unit(5301, "player", "Line", null);
+    farIdle.x = 40;
+    farIdle.z = 14;
+    s.units.push(nearbyIdle, farIdle);
+
+    applyPlayerIntents(s, [
+      {
+        type: "command_selected_units_formation",
+        from: { x: -24, z: 10 },
+        to: { x: -16, z: 14 },
+        mode: "move",
+        includeNearbyIdle: true,
+        formationKind: "wedge",
+      },
+    ]);
+
+    expect(nearbyIdle.order?.mode).toBe("move");
+    expect(farIdle.order).toBeUndefined();
+    expect(s.lastMessage).toContain("Wedge formation");
   });
 });

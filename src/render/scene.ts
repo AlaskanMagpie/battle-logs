@@ -6,20 +6,23 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { getControlProfile, type ControlProfile } from "../controlProfile";
 import { getCatalogEntry } from "../game/catalog";
 import {
-  HERO_CLAIM_CHANNEL_SEC,
   HERO_CLAIM_RADIUS,
   TAP_YIELD_MAX,
   TERRITORY_RADIUS,
   TICK_HZ,
 } from "../game/constants";
+import { claimChannelSecForTap } from "../game/sim/systems/homeDistance";
 import { dist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
   dominantSignal,
   enemyTerritorySources,
   findKeep,
   HERO_SELECTION_ID,
+  inEnemyTerritory,
+  inPlayerTerritory,
   signalColorHex,
   territorySources,
   liveSquadCount,
@@ -38,7 +41,14 @@ import {
   type FxHost,
 } from "./fx";
 import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
-import { requestGlbForHero, requestGlbForTower, requestGlbForUnit } from "./glbPool";
+import {
+  glbBoxExtentRef,
+  requestGlbForHero,
+  requestGlbForTower,
+  requestGlbForUnit,
+  type GlbExtentBasis,
+} from "./glbPool";
+import { createSkyPanorama, setSkyPanoramaZoom, type SkyPanoramaMesh } from "./skyPanorama";
 
 /** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
@@ -50,6 +60,51 @@ const MATCH_INTRO_CAMERA_SEC = 5.4;
 const UNIT_VISUAL_RUN_EPS = 0.035;
 /** Per-frame catch-up while running; keeps fixed sim steps from looking like tiny teleports. */
 const UNIT_VISUAL_RUN_CATCHUP = 0.42;
+
+/** Main match equirectangular sky (observation deck — map reads as on the lit platform). */
+const MATCH_SKYBOX_URL = "/assets/sky/match-arena-equirect.png";
+/**
+ * Keep the observation-deck panorama level with the XZ match floor.
+ * Pitch/roll here makes the horizon read like a tilted wall behind the arena.
+ */
+const MATCH_SKYBOX_ROTATION_X = 0;
+const MATCH_SKYBOX_ROTATION_Y = 0;
+const MATCH_SKYBOX_ROTATION_Z = 0;
+const MATCH_SKYBOX_RADIUS = 1200;
+const MATCH_SKYBOX_ZOOM = 1.72;
+const MATCH_SKYBOX_PLACEMENT_STORAGE_KEY = "signalWarsMatchSkyboxPlacement.v1";
+export type MatchSkyboxPlacement = { x: number; y: number; z: number };
+const DEFAULT_MATCH_SKYBOX_PLACEMENT: MatchSkyboxPlacement = { x: 0, y: -120, z: 0 };
+/** Fog color lerp toward deck grey when the arena sky is active (so ground fades into the deck read). */
+const MATCH_SKYBOX_FOG_DECK = 0xb9c2ce;
+const MATCH_SKYBOX_FOG_LERP = 0.36;
+const MATCH_SKYBOX_FOG_NEAR_MULT = 1.14;
+const MATCH_SKYBOX_FOG_FAR_MULT = 1.32;
+/** Default ground tint when arena sky is on (deck continuity). */
+const MATCH_SKYBOX_GROUND_HEX = 0xa8b2bd;
+
+function readMatchSkyboxPlacement(): MatchSkyboxPlacement {
+  try {
+    const raw = window.localStorage.getItem(MATCH_SKYBOX_PLACEMENT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_MATCH_SKYBOX_PLACEMENT };
+    const parsed = JSON.parse(raw) as Partial<MatchSkyboxPlacement>;
+    return {
+      x: Number.isFinite(parsed.x) ? parsed.x! : DEFAULT_MATCH_SKYBOX_PLACEMENT.x,
+      y: Number.isFinite(parsed.y) ? parsed.y! : DEFAULT_MATCH_SKYBOX_PLACEMENT.y,
+      z: Number.isFinite(parsed.z) ? parsed.z! : DEFAULT_MATCH_SKYBOX_PLACEMENT.z,
+    };
+  } catch {
+    return { ...DEFAULT_MATCH_SKYBOX_PLACEMENT };
+  }
+}
+
+function writeMatchSkyboxPlacement(p: MatchSkyboxPlacement): void {
+  try {
+    window.localStorage.setItem(MATCH_SKYBOX_PLACEMENT_STORAGE_KEY, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
 
 function makeGroundOverlayTexture(): THREE.CanvasTexture {
   const size = 512;
@@ -115,7 +170,7 @@ function matFor(color: number, roughness = 0.82, metalness = 0.08): THREE.MeshSt
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
-/** Limb/torso chunkiness on top of `unitMeshLinearSize` so classes read distinct at a glance. */
+/** Token chunkiness on top of `unitMeshLinearSize` so classes read distinct at a glance. */
 function bipedBulkScale(size: UnitSizeClass): number {
   switch (size) {
     case "Swarm":
@@ -144,53 +199,37 @@ function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, tea
   );
   basis.lerp(new THREE.Color(signalColorHex(signal)), 0.26);
   if (team === "player") basis.lerp(new THREE.Color(0x58b4ff), 0.2);
-  else basis.lerp(new THREE.Color(0xff6048), 0.22);
+  else basis.lerp(new THREE.Color(0xff2f82), 0.42);
   return basis.getHex();
 }
 
-/** Single merged mesh (GLB anchor): feet at y=0; total height is approximately `L`. */
+/** Single merged fallback/LOD token: abstract game piece, not a mannequin. */
 function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferGeometry {
   const b = bipedBulkScale(size);
-  const legH = 0.48 * L;
-  const torsoH = 0.34 * L;
-  const headS = 0.18 * L;
-  const spread = 0.11 * L * b;
-  const legW = 0.085 * L * b;
-  const legD = 0.095 * L * b;
-  const torsoW = 0.2 * L * b;
-  const torsoD = 0.11 * L * b;
-  const armLenV = 0.37 * L;
-  const armTh = 0.062 * L * b;
-
-  const cy = legH + torsoH * 0.5;
-  const shoulderY = legH + torsoH - armTh * 0.35;
-  const ax = torsoW * 0.5 + armTh * 0.65;
-
   const parts: THREE.BufferGeometry[] = [];
 
-  const legL = new THREE.BoxGeometry(legW, legH, legD);
-  legL.translate(-spread, legH * 0.5, 0);
-  parts.push(legL);
+  const baseR = 0.18 * L * b;
+  const baseH = 0.08 * L;
+  const base = new THREE.CylinderGeometry(baseR * 1.2, baseR * 1.38, baseH, 12);
+  base.translate(0, baseH * 0.5, 0);
+  parts.push(base);
 
-  const legR = new THREE.BoxGeometry(legW, legH, legD);
-  legR.translate(spread, legH * 0.5, 0);
-  parts.push(legR);
+  const stemH = L * (size === "Swarm" ? 0.34 : size === "Line" ? 0.48 : size === "Heavy" ? 0.52 : 0.62);
+  const stemR = baseR * (size === "Swarm" ? 0.52 : size === "Line" ? 0.66 : size === "Heavy" ? 0.86 : 1.02);
+  const stem = new THREE.CylinderGeometry(stemR * 0.7, stemR, stemH, size === "Swarm" ? 5 : 6);
+  stem.translate(0, baseH + stemH * 0.5, 0);
+  parts.push(stem);
 
-  const torso = new THREE.BoxGeometry(torsoW, torsoH, torsoD);
-  torso.translate(0, cy, 0);
-  parts.push(torso);
+  const capH = L * (size === "Titan" ? 0.28 : 0.2);
+  const cap = new THREE.ConeGeometry(stemR * (size === "Swarm" ? 1.0 : 1.16), capH, size === "Swarm" ? 5 : 6);
+  cap.translate(0, baseH + stemH + capH * 0.5, 0);
+  parts.push(cap);
 
-  const head = new THREE.BoxGeometry(headS, headS, headS * 0.92);
-  head.translate(0, legH + torsoH + headS * 0.5, 0);
-  parts.push(head);
-
-  const armL = new THREE.BoxGeometry(armTh, armLenV, armTh);
-  armL.translate(-ax, shoulderY - armLenV * 0.48, 0);
-  parts.push(armL);
-
-  const armR = new THREE.BoxGeometry(armTh, armLenV, armTh);
-  armR.translate(ax, shoulderY - armLenV * 0.48, 0);
-  parts.push(armR);
+  if (size === "Heavy" || size === "Titan") {
+    const shoulder = new THREE.BoxGeometry(stemR * 2.15, baseH * 1.35, stemR * 1.15);
+    shoulder.translate(0, baseH + stemH * 0.68, 0);
+    parts.push(shoulder);
+  }
 
   return mergeGeometries(parts, false);
 }
@@ -593,6 +632,7 @@ export class GameRenderer {
   private campAggroRings = new Map<string, THREE.Mesh>();
   private campWakeRings = new Map<string, THREE.Mesh>();
   private tacticsFieldRings = new Map<string, THREE.Mesh>();
+  private portalRoots = new Map<"exit" | "return", { root: THREE.Group; label: LabelSprite }>();
   private decorBuilt = false;
 
   private ghost: THREE.Mesh | null = null;
@@ -600,6 +640,8 @@ export class GameRenderer {
   private cmdGhostCore: THREE.Mesh | null = null;
   /** Line-strip preview for aimed cleave spells (Cut Back). */
   private cmdGhostLine: THREE.Mesh | null = null;
+  private formationGhostLine: THREE.Mesh | null = null;
+  private formationGhostSlots: THREE.InstancedMesh | null = null;
   private readonly controls: OrbitControls;
   private readonly clock = new THREE.Clock();
   /** Animation/render delta must not use `clock.getDelta()` because sync code calls `getElapsedTime()` for pulses. */
@@ -614,6 +656,11 @@ export class GameRenderer {
   private readonly fx: FxHost;
   private lastSiegeTick = -1;
   private currentState: GameState | null = null;
+  /** Loaded match equirect; disposed in `dispose()`. */
+  private matchSkyboxTexture: THREE.Texture | null = null;
+  private matchSkyboxMesh: SkyPanoramaMesh | null = null;
+  private matchSkyboxPlacement = readMatchSkyboxPlacement();
+  private rendererDisposed = false;
   private worldPlaneHalf = 0;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
@@ -624,6 +671,7 @@ export class GameRenderer {
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
   private readonly unitVisualPos = new Map<number, THREE.Vector2>();
   private readonly unitFaceTargets = new Map<number, Vec2>();
+  private readonly unitLodState = new Map<number, { placeholder: boolean; nextAllowedMs: number }>();
   private readonly dyingUnits: { obj: THREE.Object3D; timer: number; life: number; particles: THREE.Mesh[] }[] = [];
   private readonly structurePrevHp = new Map<number, number>();
   private readonly relayPrevHp = new Map<string, number>();
@@ -675,7 +723,7 @@ export class GameRenderer {
     this.camera.position.z += dz;
   }
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, controlProfile: ControlProfile = getControlProfile()) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
@@ -683,8 +731,8 @@ export class GameRenderer {
       stencil: false,
       depth: true,
     });
-    /** Cap DPR for 120Hz — full retina is often fill-rate bound. */
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    /** Cap DPR for 120Hz and mobile fill-rate budgets. */
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, controlProfile.maxPixelRatio));
     this.renderer.shadowMap.enabled = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -724,8 +772,12 @@ export class GameRenderer {
     this.scene.add(this.groundOverlay);
 
     this.territoryGroup.name = "territory";
-    this.root.add(this.decor, this.markers, this.entities, this.territoryGroup);
+    /** Floor decal only: lives on `scene` (not `root`) so opaque decor/units fill the depth buffer first; tint uses polygon offset so vertical meshes win Z-tests. */
+    this.scene.add(this.territoryGroup);
+    this.root.add(this.decor, this.markers, this.entities);
     this.scene.add(this.root);
+
+    void this._loadMatchSkybox();
 
     this.fx = createFxHost(this.scene);
 
@@ -759,6 +811,63 @@ export class GameRenderer {
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
   clearCastFx(): void {
     clearFx(this.fx);
+  }
+
+  getMatchSkyboxPlacement(): MatchSkyboxPlacement {
+    return { ...this.matchSkyboxPlacement };
+  }
+
+  setMatchSkyboxPlacement(next: Partial<MatchSkyboxPlacement>, persist = true): MatchSkyboxPlacement {
+    this.matchSkyboxPlacement = {
+      x: Number.isFinite(next.x) ? next.x! : this.matchSkyboxPlacement.x,
+      y: Number.isFinite(next.y) ? next.y! : this.matchSkyboxPlacement.y,
+      z: Number.isFinite(next.z) ? next.z! : this.matchSkyboxPlacement.z,
+    };
+    if (persist) writeMatchSkyboxPlacement(this.matchSkyboxPlacement);
+    this.updateMatchSkyboxTransform();
+    return this.getMatchSkyboxPlacement();
+  }
+
+  resetMatchSkyboxPlacement(): MatchSkyboxPlacement {
+    this.matchSkyboxPlacement = { ...DEFAULT_MATCH_SKYBOX_PLACEMENT };
+    writeMatchSkyboxPlacement(this.matchSkyboxPlacement);
+    this.updateMatchSkyboxTransform();
+    return this.getMatchSkyboxPlacement();
+  }
+
+  dispose(): void {
+    this.rendererDisposed = true;
+    if (this.matchSkyboxTexture) {
+      this.matchSkyboxTexture.dispose();
+      this.matchSkyboxTexture = null;
+    }
+    if (this.matchSkyboxMesh) {
+      this.scene.remove(this.matchSkyboxMesh);
+      this.matchSkyboxMesh.geometry.dispose();
+      this.matchSkyboxMesh.material.dispose();
+      this.matchSkyboxMesh = null;
+    }
+    this.scene.background = new THREE.Color(0x0e1116);
+    this.scene.backgroundRotation.set(0, 0, 0);
+    this.scene.backgroundBlurriness = 0;
+    this.scene.backgroundIntensity = 1;
+    clearFx(this.fx);
+    this.controls.dispose();
+    this.disposeTerritoryTeam("player");
+    this.disposeTerritoryTeam("enemy");
+    this.scene.remove(this.territoryGroup);
+    this.disposeObject(this.root);
+    if (this.terrainRoot) this.disposeObject(this.terrainRoot);
+    this.ground.geometry.dispose();
+    const groundMat = this.ground.material;
+    if (Array.isArray(groundMat)) groundMat.forEach((m) => m.dispose());
+    else groundMat.dispose();
+    this.groundOverlay.geometry.dispose();
+    const overlayMat = this.groundOverlay.material;
+    if (Array.isArray(overlayMat)) overlayMat.forEach((m) => m.dispose());
+    else overlayMat.dispose();
+    this.composer.dispose();
+    this.renderer.dispose();
   }
 
   setSize(w: number, h: number): void {
@@ -981,6 +1090,19 @@ export class GameRenderer {
     this.cameraFramedState = state;
   }
 
+  private frameCameraImmediatelyOnHero(state: GameState): void {
+    const { pos, tgt } = this.getHeroIntroEndCameraRig(state);
+    this.controls.target.copy(tgt);
+    this.camera.position.copy(pos);
+    this.camera.lookAt(tgt);
+    this.controls.update();
+    this.introCinematicStartMs = null;
+    this.cameraFollowHero = true;
+    this.cameraFollowUnitId = null;
+    this.cameraFramedState = state;
+    this.refreshControlsEnabledFromIntro();
+  }
+
   private tickMatchIntroCinematic(): void {
     if (this.introCinematicStartMs === null) return;
     const state = this.cameraFramedState;
@@ -1139,7 +1261,10 @@ export class GameRenderer {
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
     this.syncCameraLimits(state.map.world.halfExtents);
-    if (this.cameraFramedState !== state) this.startMatchIntroCinematic(state);
+    if (this.cameraFramedState !== state) {
+      if (state.portal.enteredViaPortal) this.frameCameraImmediatelyOnHero(state);
+      else this.startMatchIntroCinematic(state);
+    }
     this.applyMapVisual(state);
     this.syncMapDecor(state);
     this.syncTerritory(state);
@@ -1152,6 +1277,7 @@ export class GameRenderer {
     this.syncHoldCubes(state);
     this.syncSelectionAndRally(state);
     this.syncCoreOrbs(state);
+    this.syncPortals(state);
     this.consumeCastEvents(state);
   }
 
@@ -1336,6 +1462,81 @@ export class GameRenderer {
     );
   }
 
+  setFormationGhost(
+    from: { x: number; z: number } | null,
+    to: { x: number; z: number } | null,
+    slots: { x: number; z: number }[] = [],
+    valid = true,
+  ): void {
+    if (!from || !to) {
+      if (this.formationGhostLine) this.formationGhostLine.visible = false;
+      if (this.formationGhostSlots) this.formationGhostSlots.visible = false;
+      return;
+    }
+
+    let dx = to.x - from.x;
+    let dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.1) {
+      dx = 1;
+      dz = 0;
+    } else {
+      dx /= len;
+      dz /= len;
+    }
+
+    if (!this.formationGhostLine) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x7ec8ff,
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+      this.formationGhostLine = new THREE.Mesh(new THREE.BoxGeometry(1, 0.12, 1), mat);
+      this.formationGhostLine.position.y = 0.115;
+      this.scene.add(this.formationGhostLine);
+    }
+    const line = this.formationGhostLine;
+    line.visible = true;
+    line.position.set((from.x + to.x) * 0.5, 0.115, (from.z + to.z) * 0.5);
+    line.rotation.y = Math.atan2(dx, dz);
+    line.geometry.dispose();
+    line.geometry = new THREE.BoxGeometry(0.28, 0.12, Math.max(0.5, len));
+    const lineMat = line.material as THREE.MeshBasicMaterial;
+    lineMat.color.set(valid ? 0x7ec8ff : 0xff7070);
+    lineMat.opacity = valid ? 0.48 : 0.34;
+
+    if (!this.formationGhostSlots) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0xbceeff,
+        transparent: true,
+        opacity: 0.68,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const geom = new THREE.RingGeometry(0.28, 0.48, 18);
+      geom.rotateX(-Math.PI / 2);
+      this.formationGhostSlots = new THREE.InstancedMesh(geom, mat, 256);
+      this.formationGhostSlots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.scene.add(this.formationGhostSlots);
+    }
+    const inst = this.formationGhostSlots;
+    inst.visible = slots.length > 0;
+    inst.count = Math.min(slots.length, 256);
+    const mat = inst.material as THREE.MeshBasicMaterial;
+    mat.color.set(valid ? 0xbceeff : 0xffa0a0);
+    const m = new THREE.Matrix4();
+    for (let i = 0; i < inst.count; i++) {
+      const slot = slots[i]!;
+      m.makeTranslation(slot.x, 0.13, slot.z);
+      inst.setMatrixAt(i, m);
+    }
+    inst.instanceMatrix.needsUpdate = true;
+  }
+
   private syncTaps(state: GameState): void {
     const hero = state.hero;
     const claimR = HERO_CLAIM_RADIUS;
@@ -1391,20 +1592,31 @@ export class GameRenderer {
       const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && dist2(u, t) <= nodeR2);
       const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && dist2(u, t) <= nodeR2);
       const contested = playerNear && enemyNear;
+      const playerTerritory = inPlayerTerritory(state, t);
+      const enemyTerritory = inEnemyTerritory(state, t);
+      const enemyChanneling = state.enemyHero.claimChannelTarget === idx;
+      const playerChanneling = hero.claimChannelTarget === idx;
       if (contested) mat.color.set(0xffd36a);
       else if (t.active && t.ownerTeam === "player") mat.color.set(0x54c7ff);
       else if (t.active && t.ownerTeam === "enemy") mat.color.set(0xff6b6b);
       else if (t.active && t.yieldRemaining <= 0) mat.color.set(0x7d8895);
+      else if (enemyChanneling) mat.color.set(0xff8a8a);
+      else if (playerChanneling) mat.color.set(0x6ae1ff);
+      else if (playerTerritory && !enemyTerritory) mat.color.set(0x54c7ff);
+      else if (enemyTerritory && !playerTerritory) mat.color.set(0xff6b6b);
       else if (t.active) mat.color.set(0x52b0ff);
       else mat.color.set(0xc1ccd8);
       mat.opacity = contested ? 1 : t.active ? 0.92 : 0.72;
 
       // Claim channel arc (cyan), visible while hero is channeling this tap.
       let claimArc = this.tapClaimArcs.get(t.defId);
-      const channeling = hero.claimChannelTarget === idx || state.enemyHero.claimChannelTarget === idx;
+      const channeling = playerChanneling || enemyChanneling;
       if (channeling) {
-        const total = Math.max(1, Math.round(HERO_CLAIM_CHANNEL_SEC * TICK_HZ));
-        const isEnemyChannel = state.enemyHero.claimChannelTarget === idx;
+        const isEnemyChannel = enemyChanneling;
+        const total = Math.max(
+          1,
+          Math.round(claimChannelSecForTap(state, isEnemyChannel ? "enemy" : "player", t) * TICK_HZ),
+        );
         const frac = isEnemyChannel
           ? Math.max(0, Math.min(1, 1 - state.enemyHero.claimChannelTicksRemaining / total))
           : Math.max(0, Math.min(1, 1 - hero.claimChannelTicksRemaining / total));
@@ -2174,6 +2386,59 @@ export class GameRenderer {
     this.groundVisualKey = "";
   }
 
+  /** Equirect observation-deck sky for matches — sky-only mesh so the panorama can zoom/translate independently. */
+  private async _loadMatchSkybox(): Promise<void> {
+    const loader = new THREE.TextureLoader();
+    try {
+      const tex = await loader.loadAsync(MATCH_SKYBOX_URL);
+      if (this.rendererDisposed) {
+        tex.dispose();
+        return;
+      }
+      this.matchSkyboxTexture?.dispose();
+      this.matchSkyboxTexture = tex;
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      tex.generateMipmaps = false;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy());
+      if (this.matchSkyboxMesh) {
+        this.scene.remove(this.matchSkyboxMesh);
+        this.matchSkyboxMesh.geometry.dispose();
+        this.matchSkyboxMesh.material.dispose();
+      }
+      this.matchSkyboxMesh = createSkyPanorama(tex, {
+        radius: MATCH_SKYBOX_RADIUS,
+        zoom: MATCH_SKYBOX_ZOOM,
+        intensity: 1.03,
+        rotation: new THREE.Euler(MATCH_SKYBOX_ROTATION_X, MATCH_SKYBOX_ROTATION_Y, MATCH_SKYBOX_ROTATION_Z),
+      });
+      this.scene.add(this.matchSkyboxMesh);
+      this.scene.background = new THREE.Color(0x0e1116);
+      this.scene.backgroundBlurriness = 0;
+      this.scene.backgroundIntensity = 1;
+      this.scene.backgroundRotation.set(0, 0, 0);
+      this.updateMatchSkyboxTransform();
+      this.groundVisualKey = "";
+      if (this.currentState) this.applyMapVisual(this.currentState);
+    } catch {
+      /* Missing asset or decode error — keep solid fill. */
+    }
+  }
+
+  private updateMatchSkyboxTransform(): void {
+    if (!this.matchSkyboxMesh) return;
+    this.matchSkyboxMesh.position.set(
+      this.camera.position.x + this.matchSkyboxPlacement.x,
+      this.camera.position.y + this.matchSkyboxPlacement.y,
+      this.camera.position.z + this.matchSkyboxPlacement.z,
+    );
+    setSkyPanoramaZoom(this.matchSkyboxMesh, MATCH_SKYBOX_ZOOM);
+  }
+
   /** Fog, lighting tint, and procedural ground shader from `map.visual`. */
   private applyMapVisual(state: GameState): void {
     const v = state.map.visual;
@@ -2181,11 +2446,17 @@ export class GameRenderer {
     const fogH = v?.fogHex;
     const skyH = v?.skyHex;
     const sunH = v?.sunHex;
-    const key = `${preset}|${fogH ?? ""}|${skyH ?? ""}|${sunH ?? ""}`;
+    const key = `${preset}|${fogH ?? ""}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`;
     if (key !== this.groundVisualKey) {
       this.groundVisualKey = key;
       if (fogH != null) {
-        this.scene.fog = new THREE.Fog(fogH, v?.fogNear ?? 200, v?.fogFar ?? 960);
+        let near = (v?.fogNear ?? 200) * (this.matchSkyboxTexture ? MATCH_SKYBOX_FOG_NEAR_MULT : 1);
+        let far = (v?.fogFar ?? 960) * (this.matchSkyboxTexture ? MATCH_SKYBOX_FOG_FAR_MULT : 1);
+        let fogColor = new THREE.Color(fogH);
+        if (this.matchSkyboxTexture) {
+          fogColor = fogColor.lerp(new THREE.Color(MATCH_SKYBOX_FOG_DECK), MATCH_SKYBOX_FOG_LERP);
+        }
+        this.scene.fog = new THREE.Fog(fogColor.getHex(), near, far);
       } else {
         this.scene.fog = null;
       }
@@ -2200,10 +2471,11 @@ export class GameRenderer {
 
       if (preset === "solid" || !isShaderGroundPreset(preset)) {
         disposeGroundMat();
+        const deck = !!this.matchSkyboxTexture;
         this.ground.material = new THREE.MeshStandardMaterial({
-          color: 0x1b2430,
-          roughness: 0.92,
-          metalness: 0.04,
+          color: deck ? MATCH_SKYBOX_GROUND_HEX : 0x1b2430,
+          roughness: deck ? 0.9 : 0.92,
+          metalness: deck ? 0.06 : 0.04,
         });
       } else {
         disposeGroundMat();
@@ -2440,9 +2712,98 @@ export class GameRenderer {
     }
   }
 
+  private ensurePortalRoot(kind: "exit" | "return"): { root: THREE.Group; label: LabelSprite } {
+    const existing = this.portalRoots.get(kind);
+    if (existing) return existing;
+    const root = new THREE.Group();
+    root.name = `portal-${kind}`;
+
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(3.25, 64),
+      new THREE.MeshBasicMaterial({
+        color: kind === "exit" ? 0x26a7ff : 0x62d8ff,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.y = 0.09;
+    root.add(disc);
+
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(2.1 + i * 0.55, 2.22 + i * 0.55, 80),
+        new THREE.MeshBasicMaterial({
+          color: i === 0 ? 0xbef2ff : i === 1 ? 0x4bbcff : 0x176dff,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.52 - i * 0.1,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.12 + i * 0.025;
+      ring.userData["portalRingIndex"] = i;
+      root.add(ring);
+    }
+
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.14, 1.35, 1.8, 24, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x62d8ff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.17,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    beam.position.y = 0.9;
+    root.add(beam);
+
+    const label = makeLabelSprite(kind === "exit" ? "Vibe Jam Portal" : "Return Portal", "#6ae1ff");
+    label.sprite.scale.set(9.2, 2.5, 1);
+    label.sprite.position.set(0, 4.25, 0);
+    root.add(label.sprite);
+
+    this.markers.add(root);
+    const pair = { root, label };
+    this.portalRoots.set(kind, pair);
+    return pair;
+  }
+
+  private syncPortals(state: GameState): void {
+    const elapsed = this.clock.getElapsedTime();
+    const syncOne = (kind: "exit" | "return", pos: { x: number; z: number } | null, active: boolean): void => {
+      if (!active || !pos) {
+        const existing = this.portalRoots.get(kind);
+        if (existing) existing.root.visible = false;
+        return;
+      }
+      const pair = this.ensurePortalRoot(kind);
+      pair.root.visible = true;
+      pair.root.position.set(pos.x, 0, pos.z);
+      const pulse = 1 + Math.sin(elapsed * 3.2 + (kind === "return" ? 1.5 : 0)) * 0.035;
+      pair.root.scale.setScalar(pulse);
+      drawLabel(pair.label, kind === "exit" ? "Vibe Jam Portal" : "Return Portal", "#6ae1ff");
+      for (const child of pair.root.children) {
+        const idx = child.userData["portalRingIndex"] as number | undefined;
+        if (idx === undefined) continue;
+        child.rotation.z = elapsed * (0.35 + idx * 0.18) * (idx % 2 === 0 ? 1 : -1);
+        const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial | undefined;
+        if (mat) mat.opacity = 0.42 - idx * 0.07 + Math.sin(elapsed * 4 + idx) * 0.05;
+      }
+    };
+    syncOne("exit", state.portal.exitPortal, !!state.portal.exitUrl);
+    syncOne("return", state.portal.returnPortal, !!state.portal.returnUrl);
+  }
+
   private syncTerritory(state: GameState): void {
-    this.syncTerritoryTeam("player", territorySources(state), 0x56c9ff, 0.18);
-    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff5d54, 0.13);
+    this.syncTerritoryTeam("player", territorySources(state), 0x56c9ff, 0.13);
+    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff5d54, 0.1);
   }
 
   private territorySourceKey(sources: { x: number; z: number }[]): string {
@@ -2466,6 +2827,8 @@ export class GameRenderer {
 
     const half = Math.max(this.worldPlaneHalf, TERRITORY_RADIUS * 2);
     const texture = this.createTerritoryTexture(sources, half);
+    /** Hug the floor so grazing angles don't clip before vertical obstacle geometry in the depth buffer. */
+    const fieldY = team === "player" ? 0.038 : 0.036;
     const field = new THREE.Mesh(
       new THREE.PlaneGeometry(half * 2, half * 2),
       new THREE.MeshBasicMaterial({
@@ -2473,18 +2836,29 @@ export class GameRenderer {
         map: texture,
         transparent: true,
         opacity,
-        depthWrite: false,
+        depthWrite: true,
         depthTest: true,
+        /** Push stamp slightly farther in depth so props/units occlude instead of catching a pale wash. */
+        polygonOffset: true,
+        polygonOffsetFactor: 6,
+        polygonOffsetUnits: 6,
+        /** Drop bilinear fringe so the mask edge matches sim `TERRITORY_RADIUS` more closely. */
+        alphaTest: 0.035,
         side: THREE.DoubleSide,
       }),
     );
     field.rotation.x = -Math.PI / 2;
-    field.position.y = team === "player" ? 0.055 : 0.052;
+    field.position.y = fieldY;
     field.renderOrder = -6;
 
-    const outline = this.createTerritoryOutline(sources, color, team === "player" ? 0.78 : 0.52);
-    if (outline) this.territoryGroup.add(outline);
     this.territoryGroup.add(field);
+    const outline = this.createTerritoryOutline(
+      sources,
+      color,
+      team === "player" ? 0.78 : 0.52,
+      fieldY + 0.002,
+    );
+    if (outline) this.territoryGroup.add(outline);
 
     if (team === "player") {
       this.territoryField = field;
@@ -2524,7 +2898,8 @@ export class GameRenderer {
   }
 
   private createTerritoryTexture(sources: { x: number; z: number }[], half: number): THREE.CanvasTexture {
-    const size = 512;
+    /** Higher res so the union edge stays tight to `TERRITORY_RADIUS` in world space (512 was visibly soft vs outline). */
+    const size = 1024;
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
@@ -2553,6 +2928,8 @@ export class GameRenderer {
     sources: { x: number; z: number }[],
     color: number,
     opacity: number,
+    /** Match the fill plane height (outline was at y=0.16, which parallax-skewed vs the disk on the floor). */
+    lineY: number,
   ): THREE.LineSegments | null {
     const positions: number[] = [];
     const segs = 96;
@@ -2578,8 +2955,8 @@ export class GameRenderer {
           }
         }
         if (covered) continue;
-        positions.push(p.x + Math.cos(a0) * r, 0.16, p.z + Math.sin(a0) * r);
-        positions.push(p.x + Math.cos(a1) * r, 0.16, p.z + Math.sin(a1) * r);
+        positions.push(p.x + Math.cos(a0) * r, lineY, p.z + Math.sin(a0) * r);
+        positions.push(p.x + Math.cos(a1) * r, lineY, p.z + Math.sin(a1) * r);
       }
     }
     if (positions.length === 0) return null;
@@ -2797,6 +3174,7 @@ export class GameRenderer {
         this.unitPrevPos.delete(id);
         this.unitVisualPos.delete(id);
         this.unitFaceTargets.delete(id);
+        this.unitLodState.delete(id);
       }
     }
 
@@ -2810,6 +3188,7 @@ export class GameRenderer {
         if (this.useGlb) {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
+            placeholder.visible = false;
             void requestGlbForUnit(u.sizeClass, placeholder, u.team);
           }
         }
@@ -2829,12 +3208,14 @@ export class GameRenderer {
       const simDz = u.z - visual.y;
       const simMoveDist = Math.hypot(simDx, simDz);
       const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
-      const forceRunCatchup = simMoveDist > 0.45;
+      const forceRunCatchup = simMoveDist > (attackActive ? 9.5 : 0.65);
       const shouldRun = simMoveDist > UNIT_VISUAL_RUN_EPS && (!attackActive || forceRunCatchup);
       if (shouldRun && attackActive) {
         const attack = g.userData["glbAttackAction"] as THREE.AnimationAction | undefined;
-        if (attack) attack.fadeOut(0.06);
+        const titan = g.userData["sizeClass"] === "Titan";
+        if (attack) attack.fadeOut(titan ? 0.24 : 0.2);
         delete g.userData["glbAttackTimer"];
+        this.setGlbBaseActionWeight(g, "run", 1);
       }
       if (forceRunCatchup) visual.set(u.x, u.z);
       else if (!attackActive && shouldRun) {
@@ -2875,12 +3256,90 @@ export class GameRenderer {
       label.sprite.visible = maxCount > 1;
       const prevHp = this.unitPrevHp.get(u.id);
       if (prevHp !== undefined && u.hp < prevHp - 0.25) {
-        (g.userData as Record<string, unknown>)["hitPulse"] = 0.22;
+        (g.userData as Record<string, unknown>)["unitHitFlash"] = 0.22;
       }
       this.unitPrevHp.set(u.id, u.hp);
       this.setGlbMoveAnimation(g, shouldRun);
       this.unitPrevPos.set(u.id, new THREE.Vector2(u.x, u.z));
     }
+    this.applyUnitRenderBudgets(state);
+  }
+
+  private applyUnitRenderBudgets(state: GameState): void {
+    const unitCount = state.units.length;
+    const now = performance.now();
+    const candidates: Array<{
+      id: number;
+      root: THREE.Group;
+      tri: number;
+      distSq: number;
+      keepBoost: number;
+      farCullUi: boolean;
+    }> = [];
+
+    for (const u of state.units) {
+      const root = this.unitMeshes.get(u.id) as THREE.Group | undefined;
+      if (!root) continue;
+      const glb = root.userData["glbRoot"] as THREE.Object3D | undefined;
+      if (!glb) continue;
+      const tri = (root.userData["glbTriangleCount"] as number | undefined) ?? 1200;
+      const dx = root.position.x - this.camera.position.x;
+      const dy = root.position.y - this.camera.position.y;
+      const dz = root.position.z - this.camera.position.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      const selected = state.selectedUnitIds.includes(u.id);
+      const attacking = root.userData["glbAttackTimer"] !== undefined || u.lastAttackTick === state.tick;
+      const keepBoost = (selected ? 100000 : 0) + (attacking ? 24000 : 0) + (u.team === "player" ? 6000 : 0);
+      candidates.push({
+        id: u.id,
+        root,
+        tri,
+        distSq,
+        keepBoost,
+        farCullUi: unitCount > 340 && distSq > 160 * 160,
+      });
+    }
+
+    if (candidates.length === 0) return;
+    candidates.sort((a, b) => a.distSq - a.keepBoost - (b.distSq - b.keepBoost) || a.tri - b.tri);
+    const triBudget =
+      unitCount < 120 ? Infinity : unitCount < 240 ? 210_000 : unitCount < 420 ? 165_000 : 125_000;
+    let spent = 0;
+    for (const c of candidates) {
+      spent += c.tri;
+      const distancePop = unitCount > 260 && c.distSq > 145 * 145 && c.keepBoost < 50000;
+      const budgetPop = spent > triBudget && c.keepBoost < 50000;
+      const shouldPlaceholder = distancePop || budgetPop;
+      this.setUnitLod(c.root, c.id, shouldPlaceholder, c.farCullUi, now);
+    }
+  }
+
+  private setUnitLod(root: THREE.Group, id: number, placeholder: boolean, farCullUi: boolean, nowMs: number): void {
+    const current = this.unitLodState.get(id);
+    if (current && current.placeholder !== placeholder && nowMs < current.nextAllowedMs) {
+      placeholder = current.placeholder;
+    } else if (!current || current.placeholder !== placeholder) {
+      this.unitLodState.set(id, { placeholder, nextAllowedMs: nowMs + 320 });
+    }
+
+    const glb = root.userData["glbRoot"] as THREE.Object3D | undefined;
+    const body = root.userData["bodyMesh"] as THREE.Mesh | undefined;
+    // Never pop a loaded GLB back to procedural fallback: even a close match reads
+    // as unit size-changing. Placeholder is only for not-yet-loaded/missing art.
+    if (glb) {
+      glb.visible = true;
+      if (body) body.visible = false;
+      placeholder = false;
+    } else if (body) {
+      body.visible = placeholder;
+    }
+    root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.castShadow = !placeholder;
+    });
+    this.setHpBarPairVisible(root, "u", !farCullUi);
+    const label = this.unitCountLabels.get((root.userData["unitId"] as number | undefined) ?? id);
+    if (label && farCullUi) label.sprite.visible = false;
   }
 
   private faceUnitForState(root: THREE.Object3D, u: UnitRuntime, attackTarget: Vec2 | undefined, moveDelta: Vec2 | null): void {
@@ -2901,7 +3360,9 @@ export class GameRenderer {
       dz = u.order.z - pz;
     }
     if (Math.hypot(dx, dz) <= 0.001) return;
-    root.rotation.y = Math.atan2(dx, dz);
+    const target = Math.atan2(dx, dz);
+    const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
+    root.rotation.y += delta * 0.22;
   }
 
   private orientHpBars(): void {
@@ -2972,7 +3433,7 @@ export class GameRenderer {
       const mixer = ud?.["glbMixer"] as THREE.AnimationMixer | undefined;
       if (mixer && shouldUpdateMixers) mixer.update(mixerDt);
       const clampChecks = (ud?.["glbClampChecksRemaining"] as number | undefined) ?? 0;
-      if (root && allowClamp && clampChecks > 0 && clampBudget > 0) {
+      if (root && allowClamp && clampChecks > 0 && clampBudget > 0 && ud?.["allowRuntimeGlbScaleClamp"] === true) {
         this.clampUnitGlbScale(root);
         ud!["glbClampChecksRemaining"] = clampChecks - 1;
         clampBudget--;
@@ -2986,15 +3447,10 @@ export class GameRenderer {
       }
       delete ud!["glbAttackTimer"];
       const attack = ud?.["glbAttackAction"] as THREE.AnimationAction | undefined;
-      const run = ud?.["glbRunAction"] as THREE.AnimationAction | undefined;
-      const idle = ud?.["glbIdleAction"] as THREE.AnimationAction | undefined;
-      if (attack) attack.fadeOut(0.08);
-      const nextBase = ud?.["glbBaseState"] === "idle" ? (idle ?? run) : run;
-      if (nextBase) {
-        nextBase.enabled = true;
-        nextBase.play();
-        nextBase.fadeIn(0.08);
-      }
+      const titan = ud?.["sizeClass"] === "Titan";
+      const atkFade = titan ? 0.3 : 0.24;
+      if (attack) attack.fadeOut(atkFade);
+      if (root) this.setGlbBaseActionWeight(root, ud?.["glbBaseState"] === "idle" ? "idle" : "run", 1);
     };
     for (const g of this.unitMeshes.values()) tick(g, true);
     for (const g of this.structureMeshes.values()) tick(g, false);
@@ -3029,25 +3485,20 @@ export class GameRenderer {
     const target = ud["glbTargetMaxExtent"] as number | undefined;
     if (!glb || !(typeof target === "number") || target <= 0) return;
 
+    const basis = (ud["glbExtentBasis"] as GlbExtentBasis | undefined) ?? "max";
     const box = this.localBoundsForObject(glb, root);
     if (box.isEmpty()) return;
     const size = new THREE.Vector3();
     box.getSize(size);
-    const max = Math.max(size.x, size.y, size.z);
-    if (!Number.isFinite(max) || max <= 1e-5) return;
+    const ref = glbBoxExtentRef(size, basis);
+    if (!Number.isFinite(ref) || ref <= 1e-5) return;
 
-    // Hard safety cage: animated unit art must never exceed its class target by much.
-    // Meshy clips can include incompatible rig transforms; this keeps towers as the visual truth.
-    if (max > target * 1.12) {
-      glb.scale.multiplyScalar(target / max);
+    // Hard safety cage: animated art must not blow past its class target; shrink only.
+    // Uses the same extent basis as load-time normalization (height-first for squads).
+    if (ref > target * 1.12) {
+      glb.scale.multiplyScalar(target / ref);
       glb.updateMatrixWorld(true);
     }
-
-    const b2 = this.localBoundsForObject(glb, root);
-    if (b2.isEmpty()) return;
-    glb.position.x -= (b2.min.x + b2.max.x) / 2;
-    glb.position.z -= (b2.min.z + b2.max.z) / 2;
-    glb.position.y -= b2.min.y;
   }
 
   private localBoundsForObject(obj: THREE.Object3D, relativeTo: THREE.Object3D): THREE.Box3 {
@@ -3070,23 +3521,39 @@ export class GameRenderer {
     return out;
   }
 
+  private setGlbBaseActionWeight(root: THREE.Object3D, state: "run" | "idle", weight: number): void {
+    const ud = root.userData as Record<string, unknown>;
+    const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
+    const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
+    const resolvedState = state === "idle" && idle ? "idle" : "run";
+    const action = resolvedState === "idle" ? idle : run;
+    if (!action) return;
+    action.enabled = true;
+    action.paused = false;
+    action.play();
+    action.stopFading();
+    action.setEffectiveWeight(weight);
+    ud["glbBaseState"] = resolvedState;
+  }
+
   private playGlbAttackAnimation(root: THREE.Object3D): void {
     const ud = root.userData as Record<string, unknown>;
     const attack = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
     if (!attack) return;
     if (ud["glbAttackTimer"] !== undefined) return;
-    const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
-    const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
-    const duration = Math.max(0.18, (ud["glbAttackDuration"] as number | undefined) ?? 0.65);
-    if (run) run.fadeOut(0.08);
-    if (idle) idle.fadeOut(0.08);
+    const titan = ud["sizeClass"] === "Titan";
+    const minDuration =
+      ud["sizeClass"] === "Swarm" ? 3.1 : ud["sizeClass"] === "Line" ? 4.35 : titan ? 3.35 : 3.05;
+    const duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
+    const inFade = titan ? 0.18 : 0.14;
+    const baseUnderlay = titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    this.setGlbBaseActionWeight(root, ud["glbBaseState"] === "idle" ? "idle" : "run", baseUnderlay);
     attack.enabled = true;
     attack.reset();
     attack.setEffectiveWeight(1);
-    attack.fadeIn(0.04);
+    attack.fadeIn(inFade);
     attack.play();
     ud["glbAttackTimer"] = duration;
-    ud["glbClampChecksRemaining"] = Math.max((ud["glbClampChecksRemaining"] as number | undefined) ?? 0, 1);
   }
 
   private cloneMaterialsForDissolve(root: THREE.Object3D): void {
@@ -3188,15 +3655,27 @@ export class GameRenderer {
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
     if (!run) return;
-    const next = moving ? "run" : "idle";
-    if (ud["glbBaseState"] === next) return;
+    const next = moving || !idle ? "run" : "idle";
+    if (ud["glbBaseState"] === next) {
+      this.setGlbBaseActionWeight(root, next, 1);
+      return;
+    }
     const from = next === "run" ? idle : run;
-    const to = next === "run" ? run : (idle ?? run);
-    if (from && from !== to) from.fadeOut(0.12);
+    const to = next === "run" ? run : idle;
+    if (!to) return;
+    const titan = ud["sizeClass"] === "Titan";
+    const moveFade = titan ? 0.2 : 0.12;
+    if (from && from !== to) from.fadeOut(moveFade);
     to.enabled = true;
+    to.paused = false;
     to.play();
-    to.fadeIn(0.12);
-    ud["glbBaseState"] = next === "idle" && !idle ? "run" : next;
+    if (titan) {
+      to.stopFading();
+      to.setEffectiveWeight(1);
+    } else {
+      to.fadeIn(moveFade);
+    }
+    ud["glbBaseState"] = next;
   }
 
   private updateAdaptiveBloom(dt: number): void {
@@ -3224,6 +3703,7 @@ export class GameRenderer {
     this.tickMatchIntroCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();
+    this.updateMatchSkyboxTransform();
     this.tickGlbAnimations(dt);
     this.tickHitPulses(dt);
     this.orientHpBars();

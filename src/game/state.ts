@@ -3,7 +3,6 @@ import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
-  ENEMY_DAMAGE_MULT,
   ENEMY_RELAY_MAX_HP,
   ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
@@ -28,6 +27,7 @@ import {
   ATTACK_RANGE_CLOSE_MAX,
   ATTACK_RANGE_MEDIUM_MAX,
 } from "./constants";
+import { enemyDamageScalar, enemyHpScalar } from "./difficulty";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
@@ -39,6 +39,7 @@ import type {
   SpellFxShape,
   TeamId,
   TapSlotDef,
+  UnitFormationKind,
   UnitSizeClass,
   UnitTrait,
   Vec2,
@@ -355,6 +356,16 @@ export interface TacticsFieldZone {
   enemyIncomingDamageMult: number;
 }
 
+export interface PortalRuntime {
+  enteredViaPortal: boolean;
+  exitPortal: Vec2;
+  returnPortal: Vec2 | null;
+  exitUrl: string;
+  returnUrl: string | null;
+  cooldownTicksRemaining: number;
+  pendingRedirectUrl: string | null;
+}
+
 export interface GameState {
   map: MapData;
   tick: number;
@@ -379,6 +390,9 @@ export interface GameState {
   /** Current RTS selection; can include friendly units plus `HERO_SELECTION_ID` for the Wizard. */
   selectedUnitIds: number[];
   selectedUnitBox: { x1: number; z1: number; x2: number; z2: number } | null;
+  /** Mobile-friendly Wizard autopilot. Manual hero orders suppress it briefly. */
+  heroCaptainEnabled: boolean;
+  heroCaptainLastManualTick: number;
   /** After T / teleport button: next valid map click blinks the Wizard squad. */
   teleportClickPending: boolean;
   heroTeleportCooldownTicks: number;
@@ -390,6 +404,8 @@ export interface GameState {
   pendingPlacementCatalogId: string | null;
   /** Global stance for friendly units. Offense → seek/engage; Defense → rally to wizard. */
   armyStance: ArmyStance;
+  /** Player-selected RMB drag formation preset. */
+  formationPreset: UnitFormationKind;
   /** After R / rally button: next map click sets `globalRally*`. */
   rallyClickPending: boolean;
   /** When true (offense only), player units march to `globalRallyX/Z` until stance toggles. */
@@ -420,6 +436,8 @@ export interface GameState {
   enemyAiLastBuildCatalogId: string | null;
   /** Active Fortify-style fields (tick-based expiry). */
   tacticsFieldZones: TacticsFieldZone[];
+  /** Portal continuity flag + legacy ring positions; exit/return URLs stay empty during matches (binder UI only). */
+  portal: PortalRuntime;
 }
 
 /** Seeded xorshift32 PRNG on state. Returns [0, 1). */
@@ -745,8 +763,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     silencedUntilTick: 0,
   }));
 
-  const hpMult = map.difficulty?.enemyHpMult ?? 1;
-  const dmgMult = (map.difficulty?.enemyDmgMult ?? 1) * ENEMY_DAMAGE_MULT;
+  const hpMult = enemyHpScalar(mapResolved);
+  const dmgMult = enemyDamageScalar(mapResolved);
 
   /** Plan: spawn at first player relay slot when the map defines one; else `playerStart` (with Keep). */
   const relay0 = mapResolved.playerRelaySlots[0];
@@ -793,6 +811,15 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   resolveCircleAgainstMapObstacles(mapResolved, hero, HERO_MAP_OBSTACLE_RADIUS);
   resolveCircleAgainstMapObstacles(mapResolved, enemyHero, HERO_MAP_OBSTACLE_RADIUS);
 
+  const portalExit = {
+    x: Math.max(-mapResolved.world.halfExtents + 12, heroSpawn.x + 13),
+    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, heroSpawn.z - 12)),
+  };
+  const portalReturn = {
+    x: Math.max(-mapResolved.world.halfExtents + 12, heroSpawn.x - 11),
+    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, heroSpawn.z + 11)),
+  };
+
   const state: GameState = {
     map: mapResolved,
     tick: 0,
@@ -814,11 +841,14 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     selectedUnitId: null,
     selectedUnitIds: [],
     selectedUnitBox: null,
+    heroCaptainEnabled: false,
+    heroCaptainLastManualTick: -9999,
     teleportClickPending: false,
     heroTeleportCooldownTicks: 0,
     combatHitMarks: [],
     pendingPlacementCatalogId: null,
     armyStance: "offense",
+    formationPreset: "line",
     rallyClickPending: false,
     globalRallyActive: false,
     globalRallyX: 0,
@@ -844,6 +874,15 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     enemyHero,
     enemyAiLastBuildCatalogId: null,
     tacticsFieldZones: [],
+    portal: {
+      enteredViaPortal: false,
+      exitPortal: portalExit,
+      returnPortal: portalReturn,
+      exitUrl: "",
+      returnUrl: null,
+      cooldownTicksRemaining: 0,
+      pendingRedirectUrl: null,
+    },
   };
 
   spawnKeep(state);

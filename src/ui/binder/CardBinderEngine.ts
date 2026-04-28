@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { createSkyPanorama, type SkyPanoramaMesh } from "../../render/skyPanorama";
+import { getControlProfile, type ControlProfile } from "../../controlProfile";
 import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
 import { createBinderCardBackTexture } from "./binderCardBackTexture";
 import {
@@ -53,9 +56,10 @@ export type CardBinderEngineOptions = {
    * Doctrine picker: quick tap selects a recto cell; tap empty folio clears selection.
    * Long-press on **any** face card lifts that card (sleeve shows card-back), then drag to the DOM hand.
    * Page peel: outer-margin intent wins over a card ray-hit so peels still arm.
-   * RMB orbits camera.
+   * RMB looks around the portal room within a small yaw/pitch range.
    */
   codexHandDragMode?: boolean;
+  controlProfile?: ControlProfile;
 };
 
 export type CodexPointerDragEvent = {
@@ -134,12 +138,126 @@ const FLIP_DRAG_ANG_VEL_IDLE_MS = 52;
 
 const BINDER_ORBIT_PITCH_MIN = -0.48;
 const BINDER_ORBIT_PITCH_MAX = 0.4;
+const BINDER_ORBIT_YAW_MAX = Math.PI / 6;
+/** Equirectangular nebula sky for doctrine prematch room (wizard hut / portal). */
+const BINDER_DOCTRINE_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
+
+/**
+ * Front hinge cover only — intentional “arcane portal” read (do not apply to shell / rear / pages).
+ *
+ * Why it happens:
+ * - `createSkyPanorama` paints the nebula with `depthTest: false` + `renderOrder: -10000`, so it draws first
+ *   and never occludes later geometry (see `render/skyPanorama.ts`).
+ * - The outer leather box uses default `FrontSide` culling. With the cover swung open, the **outer** faces often
+ *   point away from the camera → fragments are discarded → nothing overwrites those pixels, so the first-pass
+ *   nebula shows through like a window (room GLB only covers rays that hit stone).
+ *
+ * We **reinforce** that behavior only on `_addFrontCover` materials: slight translucency + no depth write so the
+ * cover never “masks” the sky in the depth buffer, without changing ring shell / tome back / folio.
+ */
+const BINDER_COVER_PORTAL_OPACITY = 0.94;
+const BINDER_DOCTRINE_SKYBOX_RADIUS = 64;
+const BINDER_DOCTRINE_SKYBOX_ZOOM = 1.55;
+const BINDER_ROOM_PORTAL_URL = "/assets/binder/arcane_portal.glb";
+const BINDER_ROOM_GLB_MAX_EXTENT = 11.5;
+const BINDER_ROOM_GLB_CENTER = new THREE.Vector3(0, -0.85, -3.45);
+const BINDER_FLOAT_Y = 0.18;
+const BINDER_LOOK_AT = new THREE.Vector3(0, 0, 0);
+const BINDER_DISPLAY_SCALE = 0.55;
+/** v2 is the normal prematch layout key; v1 is migrated so the old `?binderCalibrate=1` pose becomes the landing page. */
+const BINDER_PLACEMENT_STORAGE_KEY = "signalWarsBinderPlacement.v2";
+const VIBE_PORTAL_PLACEMENT_STORAGE_KEY = "signalWarsVibePortalPlacement.v2";
+const LEGACY_BINDER_PLACEMENT_STORAGE_KEY = "signalWarsBinderPlacement.v1";
+const LEGACY_VIBE_PORTAL_PLACEMENT_STORAGE_KEY = "signalWarsVibePortalPlacement.v1";
+
+export type BinderPlacement = { x: number; y: number; z: number; scale: number };
+export type VibePortalPlacement = { x: number; y: number; z: number; rx: number; ry: number; rz: number; scale: number };
+export type VibePortalAction = "enter";
+
+/** Prematch “room scale” pose (binder over pedestal + foreground portal legibility). */
+const DEFAULT_BINDER_PLACEMENT: BinderPlacement = { x: 0, y: 0.05, z: 0.12, scale: BINDER_DISPLAY_SCALE };
+const DEFAULT_VIBE_PORTAL_PLACEMENT: VibePortalPlacement = {
+  x: 0,
+  y: 0.26,
+  z: -1.86,
+  rx: 0,
+  ry: 0,
+  rz: 0,
+  scale: 1.05,
+};
+
+const roomLoader = new GLTFLoader();
 
 function dragAngleShaped(raw: number): number {
   const r = THREE.MathUtils.clamp(raw, 0, Math.PI);
   const t = r / Math.PI;
   const s = t * t * (3.0 - 2.0 * t);
   return Math.PI * THREE.MathUtils.lerp(t, s, 0.38);
+}
+
+function readBinderPlacement(): BinderPlacement {
+  if (typeof window === "undefined") return { ...DEFAULT_BINDER_PLACEMENT };
+  try {
+    const raw =
+      window.localStorage.getItem(BINDER_PLACEMENT_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_BINDER_PLACEMENT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_BINDER_PLACEMENT };
+    const parsed = JSON.parse(raw) as Partial<BinderPlacement>;
+    const placement = {
+      x: Number.isFinite(parsed.x) ? parsed.x! : DEFAULT_BINDER_PLACEMENT.x,
+      y: Number.isFinite(parsed.y) ? parsed.y! : DEFAULT_BINDER_PLACEMENT.y,
+      z: Number.isFinite(parsed.z) ? parsed.z! : DEFAULT_BINDER_PLACEMENT.z,
+      scale: Number.isFinite(parsed.scale) ? THREE.MathUtils.clamp(parsed.scale!, 0.35, 0.78) : DEFAULT_BINDER_PLACEMENT.scale,
+    };
+    writeBinderPlacement(placement);
+    return placement;
+  } catch {
+    return { ...DEFAULT_BINDER_PLACEMENT };
+  }
+}
+
+function writeBinderPlacement(p: BinderPlacement): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(BINDER_PLACEMENT_STORAGE_KEY, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+function readVibePortalPlacement(): VibePortalPlacement {
+  if (typeof window === "undefined") return { ...DEFAULT_VIBE_PORTAL_PLACEMENT };
+  try {
+    const raw =
+      window.localStorage.getItem(VIBE_PORTAL_PLACEMENT_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_VIBE_PORTAL_PLACEMENT_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_VIBE_PORTAL_PLACEMENT };
+    const parsed = JSON.parse(raw) as Partial<VibePortalPlacement>;
+    const placement = {
+      x: Number.isFinite(parsed.x) ? parsed.x! : DEFAULT_VIBE_PORTAL_PLACEMENT.x,
+      y: Number.isFinite(parsed.y) ? parsed.y! : DEFAULT_VIBE_PORTAL_PLACEMENT.y,
+      z: Number.isFinite(parsed.z) ? parsed.z! : DEFAULT_VIBE_PORTAL_PLACEMENT.z,
+      rx: Number.isFinite(parsed.rx) ? parsed.rx! : DEFAULT_VIBE_PORTAL_PLACEMENT.rx,
+      ry: Number.isFinite(parsed.ry) ? parsed.ry! : DEFAULT_VIBE_PORTAL_PLACEMENT.ry,
+      rz: Number.isFinite(parsed.rz) ? parsed.rz! : DEFAULT_VIBE_PORTAL_PLACEMENT.rz,
+      scale: Number.isFinite(parsed.scale)
+        ? THREE.MathUtils.clamp(parsed.scale!, 0.45, 1.9)
+        : DEFAULT_VIBE_PORTAL_PLACEMENT.scale,
+    };
+    writeVibePortalPlacement(placement);
+    return placement;
+  } catch {
+    return { ...DEFAULT_VIBE_PORTAL_PLACEMENT };
+  }
+}
+
+function writeVibePortalPlacement(p: VibePortalPlacement): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(VIBE_PORTAL_PLACEMENT_STORAGE_KEY, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Empty sleeve panel — same 2D treatment as catalog cards. */
@@ -153,6 +271,33 @@ function makeEmptyTexture(): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
+}
+
+function makePortalTextPanel(text: string, width: number, height: number): THREE.Mesh {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 128;
+  const g = c.getContext("2d")!;
+  g.clearRect(0, 0, c.width, c.height);
+  g.font = "900 46px system-ui, Segoe UI, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillStyle = "rgba(220, 250, 255, 0.98)";
+  g.shadowColor = "rgba(0, 20, 48, 0.95)";
+  g.shadowBlur = 16;
+  g.fillText(text, c.width / 2, c.height / 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
+  mesh.renderOrder = 26;
+  return mesh;
 }
 
 /** Shared leather look for shell + hinged front cover (Phase B). */
@@ -178,6 +323,18 @@ export class CardBinderEngine {
   readonly S: THREE.Scene;
   readonly cam: THREE.PerspectiveCamera;
   readonly G: THREE.Group;
+  private readonly lookTarget = BINDER_LOOK_AT.clone();
+  private readonly roomGroup = new THREE.Group();
+  private readonly portalGroup = new THREE.Group();
+  private readonly vibePortalGroup = new THREE.Group();
+  private portalAssetRoot: THREE.Object3D | null = null;
+  private readonly portalPulseMeshes: THREE.Mesh[] = [];
+  /** Loaded nebula sky; disposed in `dispose()`. */
+  private doctrineSkyboxTexture: THREE.Texture | null = null;
+  private doctrineSkyboxMesh: SkyPanoramaMesh | null = null;
+  private portalTransitionUntil = 0;
+  private portalTransitionDuration = 0;
+  private portalTransitionDirection: "in" | "out" | null = null;
   /** Leather back + spine — reads as the outer tome block behind the folio. */
   private readonly tomeBackGroup = new THREE.Group();
   private readonly shellGroup: THREE.Group;
@@ -221,7 +378,7 @@ export class CardBinderEngine {
   private oSP = 0;
   private readonly clock = new THREE.Clock();
   private disposed = false;
-  private dist = 5.8;
+  private dist = 4.35;
   private yaw = 0;
   private pitch = -0.15;
   private readonly codexHandDragMode: boolean;
@@ -231,6 +388,8 @@ export class CardBinderEngine {
   private codexDragActive = false;
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
+  private binderPlacement = readBinderPlacement();
+  private vibePortalPlacement = readVibePortalPlacement();
   /** Debug ingest throttle (`performance.now()` ms). */
   private _dbgFlipLogLast = 0;
 
@@ -291,6 +450,7 @@ export class CardBinderEngine {
 
   constructor(canvas: HTMLCanvasElement, textures: THREE.Texture[], opts?: CardBinderEngineOptions) {
     this.codexHandDragMode = opts?.codexHandDragMode === true;
+    const controlProfile = opts?.controlProfile ?? getControlProfile();
     this.pageAudio = new BinderPageAudio();
 
     this.R = new THREE.WebGLRenderer({
@@ -301,7 +461,7 @@ export class CardBinderEngine {
       /** Reduces folio / page / slot Z sparkles when many coplanar-ish surfaces stack (binder only uses this renderer). */
       logarithmicDepthBuffer: true,
     });
-    this.R.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.R.setPixelRatio(Math.min(devicePixelRatio, controlProfile.binderMaxPixelRatio));
     this.R.outputColorSpace = THREE.SRGBColorSpace;
     this.R.toneMapping = THREE.ACESFilmicToneMapping;
     /** Leather shell only — catalog panels use `toneMapped:false` so ACES + high exposure cannot crush sleeve art to black. */
@@ -310,8 +470,11 @@ export class CardBinderEngine {
 
     this.S = new THREE.Scene();
     this.S.background = new THREE.Color(BINDER_CFG.bg);
+    void this._loadDoctrineSkybox();
     /** Tighter near plane with log depth improves precision for stacked folio pages without clipping the shell. */
     this.cam = new THREE.PerspectiveCamera(40, 1, 0.04, 80);
+    this.cam.position.set(0, -0.65, 5.7);
+    this.cam.lookAt(this.lookTarget);
 
     const addLight = (L: THREE.Light): void => {
       this.S.add(L);
@@ -335,6 +498,9 @@ export class CardBinderEngine {
     addLight(spine);
 
     this.G = new THREE.Group();
+    this.G.position.y = BINDER_FLOAT_Y;
+    this._addBinderRoomSet();
+    this.S.add(this.roomGroup);
     this.S.add(this.G);
 
     this._sharedLeatherTex = createProceduralLeatherTexture();
@@ -401,8 +567,151 @@ export class CardBinderEngine {
     this.chunks = this._mkChunks();
 
     this._v();
+    void this._loadPortalAsset();
     this._tick = this._tick.bind(this);
     requestAnimationFrame(this._tick);
+  }
+
+  private _addBinderRoomSet(): void {
+    this.roomGroup.name = "binder_arcane_room";
+    this.roomGroup.renderOrder = -80;
+
+    this._addVibePortalSet();
+    this.roomGroup.add(this.portalGroup);
+    this.roomGroup.add(this.vibePortalGroup);
+  }
+
+  private _addVibePortalSet(): void {
+    this.vibePortalGroup.name = "vibe_jam_foreground_portal";
+    this.vibePortalGroup.renderOrder = 20;
+
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(1.02, 96),
+      new THREE.MeshBasicMaterial({
+        color: 0x48c9ff,
+        transparent: true,
+        opacity: 0.14,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    );
+    disc.name = "vibe_jam_portal_enter_disc";
+    disc.userData.vibePortalAction = "enter" satisfies VibePortalAction;
+    disc.renderOrder = 20;
+    this.vibePortalGroup.add(disc);
+    this.portalPulseMeshes.push(disc);
+
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.7 + i * 0.16, 0.74 + i * 0.16, 96),
+        new THREE.MeshBasicMaterial({
+          color: i === 0 ? 0xd8fbff : i === 1 ? 0x52d6ff : 0x286dff,
+          transparent: true,
+          opacity: 0.58 - i * 0.08,
+          depthWrite: false,
+          depthTest: true,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        }),
+      );
+      ring.name = `vibe_jam_portal_enter_ring_${i}`;
+      ring.userData.vibePortalAction = "enter" satisfies VibePortalAction;
+      ring.userData.portalRingIndex = i + 10;
+      ring.renderOrder = 21 + i;
+      this.vibePortalGroup.add(ring);
+      this.portalPulseMeshes.push(ring);
+    }
+
+    const enter = makePortalTextPanel("NEXT GAME", 1.25, 0.25);
+    enter.position.set(0, 0.08, 0.035);
+    enter.userData.vibePortalAction = "enter" satisfies VibePortalAction;
+    this.vibePortalGroup.add(enter);
+    this._applyVibePortalTransform();
+  }
+
+  /** Nebula equirectangular sky behind the doctrine prematch room (falls back to parchment clear color). Pair with hinged cover “portal” (`createSkyPanorama`: depth tests off, draws first). */
+  private async _loadDoctrineSkybox(): Promise<void> {
+    const loader = new THREE.TextureLoader();
+    try {
+      const tex = await loader.loadAsync(BINDER_DOCTRINE_SKYBOX_URL);
+      if (this.disposed) {
+        tex.dispose();
+        return;
+      }
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      // Full-screen equirect backgrounds look mushy with mipmaps (wrong mip chain for this projection).
+      // Stay on `scene.background` (not a sky sphere) so nothing can intersect the near plane.
+      tex.generateMipmaps = false;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.anisotropy = Math.min(16, this.R.capabilities.getMaxAnisotropy());
+      this.doctrineSkyboxTexture?.dispose();
+      this.doctrineSkyboxTexture = tex;
+      if (this.doctrineSkyboxMesh) {
+        this.S.remove(this.doctrineSkyboxMesh);
+        this.doctrineSkyboxMesh.geometry.dispose();
+        this.doctrineSkyboxMesh.material.dispose();
+      }
+      this.doctrineSkyboxMesh = createSkyPanorama(tex, {
+        radius: BINDER_DOCTRINE_SKYBOX_RADIUS,
+        zoom: BINDER_DOCTRINE_SKYBOX_ZOOM,
+      });
+      this.S.add(this.doctrineSkyboxMesh);
+      this.S.background = new THREE.Color(BINDER_CFG.bg);
+    } catch {
+      /* Missing URL or decode failure — keep `BINDER_CFG.bg`. */
+    }
+  }
+
+  private async _loadPortalAsset(): Promise<void> {
+    try {
+      const gltf = await roomLoader.loadAsync(BINDER_ROOM_PORTAL_URL);
+      if (this.disposed) {
+        this._disposeObject(gltf.scene);
+        return;
+      }
+      const root = gltf.scene;
+      root.name = "arcane_portal_glb";
+      root.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const raw of mats) {
+          const mat = raw as THREE.MeshStandardMaterial;
+          if (mat.isMeshStandardMaterial) {
+            mat.emissive = mat.emissive ?? new THREE.Color(0x000000);
+            mat.emissive.lerp(new THREE.Color(0x6b38ff), 0.28);
+            mat.emissiveIntensity = Math.max(mat.emissiveIntensity ?? 0, 0.18);
+          }
+        }
+      });
+      this._fitPortalAsset(root);
+      this.portalAssetRoot = root;
+      this.portalGroup.add(root);
+    } catch {
+      /* Fallback rings still provide the room portal if the GLB fails. */
+    }
+  }
+
+  private _fitPortalAsset(root: THREE.Object3D): void {
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    if (box.isEmpty()) return;
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const max = Math.max(size.x, size.y, size.z, 1e-3);
+    const scale = BINDER_ROOM_GLB_MAX_EXTENT / max;
+    root.scale.setScalar(scale);
+    root.position.set(
+      BINDER_ROOM_GLB_CENTER.x - center.x * scale,
+      BINDER_ROOM_GLB_CENTER.y - center.y * scale,
+      BINDER_ROOM_GLB_CENTER.z - center.z * scale,
+    );
   }
 
   private _withTestPagePadding(incoming: THREE.Texture[]): THREE.Texture[] {
@@ -701,12 +1010,14 @@ export class CardBinderEngine {
       map: leatherMap,
       roughness: 0.82,
       metalness: 0.06,
+      ...this._coverPortalMaterialOpts(),
     });
     this._coverBoardMat = boardMat;
 
     const board = new THREE.Mesh(new THREE.BoxGeometry(thick, PH + 0.28, spanZ), boardMat);
     board.position.set(thick / 2 + 0.02, 0, 0);
     board.renderOrder = 2;
+    board.userData.binderCoverPortalShell = true;
     hinge.add(board);
     this.coverBoard = board;
 
@@ -747,6 +1058,7 @@ export class CardBinderEngine {
       metalness: 0.42,
       emissive: new THREE.Color(0x1a0f06),
       emissiveIntensity: 0.09,
+      ...this._coverPortalMaterialOpts(),
     });
     const deco = new THREE.Mesh(
       new THREE.PlaneGeometry(spanZ * 0.9, (PH + 0.28) * 0.86),
@@ -755,7 +1067,22 @@ export class CardBinderEngine {
     deco.position.set(thick + 0.02 + 0.0035, 0, 0);
     deco.rotation.y = Math.PI / 2;
     deco.renderOrder = 4;
+    deco.userData.binderCoverPortalShell = true;
     hinge.add(deco);
+  }
+
+  /** Cover-only: keeps the nebula “portal” readable (see header comment by `BINDER_COVER_PORTAL_OPACITY`). */
+  private _coverPortalMaterialOpts(): Pick<
+    THREE.MeshStandardMaterialParameters,
+    "side" | "transparent" | "opacity" | "depthWrite" | "depthTest"
+  > {
+    return {
+      side: THREE.FrontSide,
+      transparent: true,
+      opacity: BINDER_COVER_PORTAL_OPACITY,
+      depthWrite: false,
+      depthTest: true,
+    };
   }
 
   private _gT(i: number): THREE.Texture {
@@ -1266,12 +1593,138 @@ export class CardBinderEngine {
     this.cam.updateProjectionMatrix();
   }
 
+  getBinderPlacement(): BinderPlacement {
+    return { ...this.binderPlacement };
+  }
+
+  setBinderPlacement(next: Partial<BinderPlacement>, persist = true): BinderPlacement {
+    this.binderPlacement = {
+      x: Number.isFinite(next.x) ? next.x! : this.binderPlacement.x,
+      y: Number.isFinite(next.y) ? next.y! : this.binderPlacement.y,
+      z: Number.isFinite(next.z) ? next.z! : this.binderPlacement.z,
+      scale: Number.isFinite(next.scale) ? THREE.MathUtils.clamp(next.scale!, 0.35, 0.78) : this.binderPlacement.scale,
+    };
+    if (persist) writeBinderPlacement(this.binderPlacement);
+    this._applyBinderTransform();
+    return this.getBinderPlacement();
+  }
+
+  resetBinderPlacement(): BinderPlacement {
+    this.binderPlacement = { ...DEFAULT_BINDER_PLACEMENT };
+    writeBinderPlacement(this.binderPlacement);
+    this._applyBinderTransform();
+    return this.getBinderPlacement();
+  }
+
+  getVibePortalPlacement(): VibePortalPlacement {
+    return { ...this.vibePortalPlacement };
+  }
+
+  setVibePortalPlacement(next: Partial<VibePortalPlacement>, persist = true): VibePortalPlacement {
+    this.vibePortalPlacement = {
+      x: Number.isFinite(next.x) ? next.x! : this.vibePortalPlacement.x,
+      y: Number.isFinite(next.y) ? next.y! : this.vibePortalPlacement.y,
+      z: Number.isFinite(next.z) ? next.z! : this.vibePortalPlacement.z,
+      rx: Number.isFinite(next.rx) ? next.rx! : this.vibePortalPlacement.rx,
+      ry: Number.isFinite(next.ry) ? next.ry! : this.vibePortalPlacement.ry,
+      rz: Number.isFinite(next.rz) ? next.rz! : this.vibePortalPlacement.rz,
+      scale: Number.isFinite(next.scale)
+        ? THREE.MathUtils.clamp(next.scale!, 0.45, 1.9)
+        : this.vibePortalPlacement.scale,
+    };
+    if (persist) writeVibePortalPlacement(this.vibePortalPlacement);
+    this._applyVibePortalTransform();
+    return this.getVibePortalPlacement();
+  }
+
+  resetVibePortalPlacement(): VibePortalPlacement {
+    this.vibePortalPlacement = { ...DEFAULT_VIBE_PORTAL_PLACEMENT };
+    writeVibePortalPlacement(this.vibePortalPlacement);
+    this._applyVibePortalTransform();
+    return this.getVibePortalPlacement();
+  }
+
+  projectBinderAnchor(rect: DOMRect): { x: number; y: number } {
+    const p = this.G.getWorldPosition(new THREE.Vector3()).project(this.cam);
+    return {
+      x: rect.left + (p.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (-p.y * 0.5 + 0.5) * rect.height,
+    };
+  }
+
+  alignBinderAnchorToClient(clientX: number, clientY: number, rect: DOMRect): BinderPlacement {
+    const anchor = this.projectBinderAnchor(rect);
+    return this.nudgeBinderByScreenPixels(clientX - anchor.x, clientY - anchor.y, rect);
+  }
+
+  nudgeBinderByScreenPixels(dxPx: number, dyPx: number, rect: DOMRect): BinderPlacement {
+    this.cam.updateMatrixWorld(true);
+    this.G.updateMatrixWorld(true);
+    const anchor = this.G.getWorldPosition(new THREE.Vector3());
+    const distance = Math.max(0.1, anchor.distanceTo(this.cam.position));
+    const unitsPerPx = (2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov) * 0.5) * distance) / Math.max(1, rect.height);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.cam.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.cam.matrixWorld, 1);
+    const disp = right.multiplyScalar(dxPx * unitsPerPx).add(up.multiplyScalar(-dyPx * unitsPerPx));
+    return this.setBinderPlacement({
+      x: this.binderPlacement.x + disp.x,
+      y: this.binderPlacement.y + disp.y,
+      z: this.binderPlacement.z + disp.z,
+    });
+  }
+
+  nudgeBinderDepth(delta: number): BinderPlacement {
+    return this.setBinderPlacement({ z: this.binderPlacement.z + delta });
+  }
+
+  nudgeVibePortal(delta: Partial<VibePortalPlacement>): VibePortalPlacement {
+    return this.setVibePortalPlacement({
+      x: this.vibePortalPlacement.x + (delta.x ?? 0),
+      y: this.vibePortalPlacement.y + (delta.y ?? 0),
+      z: this.vibePortalPlacement.z + (delta.z ?? 0),
+      rx: this.vibePortalPlacement.rx + (delta.rx ?? 0),
+      ry: this.vibePortalPlacement.ry + (delta.ry ?? 0),
+      rz: this.vibePortalPlacement.rz + (delta.rz ?? 0),
+      scale: this.vibePortalPlacement.scale + (delta.scale ?? 0),
+    });
+  }
+
+  alignVibePortalToClient(clientX: number, clientY: number, rect: DOMRect): VibePortalPlacement {
+    this.cam.updateMatrixWorld(true);
+    this.vibePortalGroup.updateMatrixWorld(true);
+    const anchor = this.vibePortalGroup.getWorldPosition(new THREE.Vector3());
+    const projected = anchor.clone().project(this.cam);
+    const dxPx = clientX - (rect.left + (projected.x * 0.5 + 0.5) * rect.width);
+    const dyPx = clientY - (rect.top + (-projected.y * 0.5 + 0.5) * rect.height);
+    const distance = Math.max(0.1, anchor.distanceTo(this.cam.position));
+    const unitsPerPx = (2 * Math.tan(THREE.MathUtils.degToRad(this.cam.fov) * 0.5) * distance) / Math.max(1, rect.height);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.cam.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.cam.matrixWorld, 1);
+    const disp = right.multiplyScalar(dxPx * unitsPerPx).add(up.multiplyScalar(-dyPx * unitsPerPx));
+    return this.nudgeVibePortal({ x: disp.x, y: disp.y, z: disp.z });
+  }
+
   resetCam(): void {
     this.yaw = 0;
     const open = this.openingProgress >= BINDER_FULLY_OPEN_PROGRESS;
     this.pitch = open ? -0.14 : -0.27;
-    this.dist = open ? 5.88 : 4.92;
+    this.dist = open ? 4.35 : 4.75;
+    this.lookTarget.copy(BINDER_LOOK_AT);
     this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
+  }
+
+  playPortalTransition(direction: "in" | "out", durationMs = 760): Promise<void> {
+    this.portalTransitionDirection = direction;
+    this.portalTransitionDuration = durationMs;
+    this.portalTransitionUntil = performance.now() + durationMs;
+    if (direction === "out") {
+      this.openingTarget = 0.78;
+    } else {
+      this.openingTarget = 1;
+    }
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, durationMs);
+    });
   }
 
   /**
@@ -1478,8 +1931,22 @@ export class CardBinderEngine {
     this._setCatalogSelection(null);
   }
 
+  wheelAt(clientX: number, clientY: number, rect: DOMRect, dy: number): void {
+    const zoomingIn = dy < 0;
+    if (zoomingIn && mayRaycastCatalog(this.getBinderUiMode())) {
+      this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      this.raycaster.setFromCamera(this.ndc, this.cam);
+      const hits = this.raycaster.intersectObjects(this._pickablePageMeshes(), false);
+      if (hits[0]) this.lookTarget.lerp(hits[0].point, 0.42);
+    } else if (!zoomingIn) {
+      this.lookTarget.lerp(BINDER_LOOK_AT, 0.16);
+    }
+    this.dist = THREE.MathUtils.clamp(this.dist * Math.exp(dy * 0.0018), 0.72, 12);
+  }
+
   wheel(dy: number): void {
-    this.dist = Math.max(3, Math.min(12, this.dist + dy * 0.005));
+    this.dist = THREE.MathUtils.clamp(this.dist * Math.exp(dy * 0.0018), 0.72, 12);
   }
 
   getBinderUiMode(): BinderUiMode {
@@ -1587,6 +2054,22 @@ export class CardBinderEngine {
     return Math.cos(this.yaw + this._orbitYawNudge()) < -0.34;
   }
 
+  private _applyBinderTransform(yWave = 0, scaleMult = 1): void {
+    this.G.position.set(
+      this.binderPlacement.x,
+      BINDER_FLOAT_Y + this.binderPlacement.y + yWave,
+      this.binderPlacement.z,
+    );
+    this.G.scale.setScalar(this.binderPlacement.scale * scaleMult);
+    this._applyVibePortalTransform();
+  }
+
+  private _applyVibePortalTransform(): void {
+    this.vibePortalGroup.position.set(this.vibePortalPlacement.x, this.vibePortalPlacement.y, this.vibePortalPlacement.z);
+    this.vibePortalGroup.rotation.set(this.vibePortalPlacement.rx, this.vibePortalPlacement.ry, this.vibePortalPlacement.rz);
+    this.vibePortalGroup.scale.setScalar(this.vibePortalPlacement.scale);
+  }
+
   /**
    * True when LMB targets the rear leather board **from behind** — blocked if pages/shell/cover
    * are closer along the same ray (prevents the joke firing through the open folio from the front).
@@ -1650,8 +2133,8 @@ export class CardBinderEngine {
   }
 
   /**
-   * Outer horizontal bands on the folio plane — arms page turns before card picks (doctrine UX).
-   * Uses the folio plane z, not margin quads (those sit in front of card slots in ray order).
+   * Side-only outer edge bands for page turns. Doctrine mode keeps the in-page strip narrow so the
+   * outer card column remains selectable, while allowing a small ray-plane zone just outside the left/right book edge.
    */
   private _edgeTurnSideFromPlane(
     clientX: number,
@@ -1663,20 +2146,36 @@ export class CardBinderEngine {
     if (!interactionMayArmPageTurn(this.getBinderUiMode())) return null;
     const PW = BINDER_CFG.pageWidth;
     const PH = BINDER_CFG.pageHeight;
-    /**
-     * Outer strips on each half-page (near the free edges) arm drags; spine-adjacent band stays for card picks.
-     * Default `0.55 * PW` is generous for binder demos; doctrine mode uses a **narrow** strip so recto cells arm.
-     */
-    const outer = doctrineNarrowMargin ? PW * 0.11 : PW * 0.55;
+    const insideStrip = doctrineNarrowMargin ? PW * 0.065 : PW * 0.18;
+    const outsideStrip = PW * 0.1;
     this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.ndc, this.cam);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -PAGE_SURFACE_Z);
-    const hit = new THREE.Vector3();
-    if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
-    if (Math.abs(hit.y) > PH * 0.58) return null;
-    if (hit.x >= PW - outer && this.chunks.length > 1 && this.cur < this.chunks.length - 1) return "right";
-    if (hit.x <= -PW + outer && this.chunks.length > 1 && this.cur > 0) return "left";
+    const inv = new THREE.Matrix4().copy(this.innerGroup.matrixWorld).invert();
+    const localOrigin = this.raycaster.ray.origin.clone().applyMatrix4(inv);
+    const localDir = this.raycaster.ray.direction.clone().transformDirection(inv);
+    if (Math.abs(localDir.z) < 0.0001) return null;
+    const zPlane = this.folioPaperMesh.position.z;
+    const t = (zPlane - localOrigin.z) / localDir.z;
+    if (t < 0) return null;
+    const local = localOrigin.add(localDir.multiplyScalar(t));
+    if (Math.abs(local.y) > PH * 0.5) return null;
+    if (
+      local.x >= PW - insideStrip &&
+      local.x <= PW + outsideStrip &&
+      this.chunks.length > 1 &&
+      this.cur < this.chunks.length - 1
+    ) {
+      return "right";
+    }
+    if (
+      local.x <= -PW + insideStrip &&
+      local.x >= -PW - outsideStrip &&
+      this.chunks.length > 1 &&
+      this.cur > 0
+    ) {
+      return "left";
+    }
     return null;
   }
 
@@ -1774,7 +2273,7 @@ export class CardBinderEngine {
     if (this.orb) {
       const dx = (e.clientX - this.oSX) / rect.width;
       const dy = (e.clientY - this.oSY) / rect.height;
-      this.yaw = this.oSY2 + dx * Math.PI;
+      this.yaw = THREE.MathUtils.clamp(this.oSY2 + dx * Math.PI, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);
       this.pitch = THREE.MathUtils.clamp(
         this.oSP + dy * Math.PI * 0.6,
         BINDER_ORBIT_PITCH_MIN,
@@ -1816,11 +2315,8 @@ export class CardBinderEngine {
       dist >= this.CODEX_MOVE_PULL_PX &&
       interactionMayPickCatalog(modePick)
     ) {
-      const idxNow = this.pickAt(e.clientX, e.clientY, rect);
-      if (idxNow === this.armCatalogPickIndex) {
-        this._clearCodexLongPressTimer();
-        this._startCodexBinderPullDrag(this.armCatalogPickIndex);
-      }
+      this._clearCodexLongPressTimer();
+      this._startCodexBinderPullDrag(this.armCatalogPickIndex);
     }
 
     const longPressWait =
@@ -2014,6 +2510,25 @@ export class CardBinderEngine {
     return bestRecto;
   }
 
+  pickVibePortalAction(clientX: number, clientY: number, rect: DOMRect): VibePortalAction | null {
+    this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.ndc, this.cam);
+    if (this.raycaster.intersectObject(this.G, true).length > 0) return null;
+    const hits = this.raycaster.intersectObject(this.vibePortalGroup, true);
+    hits.sort((a, b) => a.distance - b.distance);
+    for (const hit of hits) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o) {
+        const action = o.userData.vibePortalAction as VibePortalAction | undefined;
+        if (action === "enter") return action;
+        if (o === this.vibePortalGroup) break;
+        o = o.parent;
+      }
+    }
+    return null;
+  }
+
   private _tick(): void {
     if (this.disposed) return;
     const dt = Math.min(0.05, this.clock.getDelta());
@@ -2096,28 +2611,83 @@ export class CardBinderEngine {
     }
     // #endregion
     if (this.fp) this._aa(this.ang);
+    this._tickPortal(performance.now());
+    this.yaw = THREE.MathUtils.clamp(this.yaw, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);
     this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
+    this.G.rotation.y = this.yaw;
     const flipping = this.fl !== 0 && this.fp !== null;
     const tCam = easeOutCubic(this.openingProgress);
-    let distBlend = THREE.MathUtils.lerp(4.88, this.dist, tCam);
+    let distBlend = THREE.MathUtils.lerp(4.75, this.dist, tCam);
     if (flipping) distBlend *= 1 + 0.016 * Math.sin(this.ang);
     const pitchBlend = THREE.MathUtils.lerp(-0.28, this.pitch, tCam);
     const yawNudge = THREE.MathUtils.lerp(0.09, 0, tCam);
     this.cam.position.set(
-      distBlend * Math.cos(pitchBlend) * Math.sin(this.yaw + yawNudge),
-      distBlend * Math.sin(pitchBlend) + 0.2,
-      distBlend * Math.cos(pitchBlend) * Math.cos(this.yaw + yawNudge),
+      this.lookTarget.x + distBlend * Math.cos(pitchBlend) * Math.sin(this.yaw + yawNudge),
+      this.lookTarget.y + distBlend * Math.sin(pitchBlend) + 0.2,
+      this.lookTarget.z + distBlend * Math.cos(pitchBlend) * Math.cos(this.yaw + yawNudge),
     );
-    this.cam.lookAt(0, 0, 0);
+    this.cam.lookAt(this.lookTarget);
+    if (this.doctrineSkyboxMesh) this.doctrineSkyboxMesh.position.copy(this.cam.position);
     this.R.render(this.S, this.cam);
     if (!this.disposed) requestAnimationFrame(this._tick);
   }
 
+  private _tickPortal(now: number): void {
+    let k = 0.2 + 0.12 * Math.sin(now * 0.0025);
+    if (this.portalTransitionUntil > now && this.portalTransitionDuration > 0) {
+      const p = 1 - (this.portalTransitionUntil - now) / this.portalTransitionDuration;
+      const wave = Math.sin(Math.max(0, Math.min(1, p)) * Math.PI);
+      k += 1.3 * wave;
+      if (this.portalTransitionDirection === "out") {
+        this._applyBinderTransform(-0.16 * wave, 1 - 0.035 * wave);
+      } else {
+        this._applyBinderTransform(0.08 * wave, 1 + 0.025 * wave);
+      }
+    } else {
+      this._applyBinderTransform();
+      this.portalTransitionDirection = null;
+    }
+    for (const mesh of this.portalPulseMeshes) {
+      const mat = mesh.material as THREE.Material & { opacity?: number; color?: THREE.Color };
+      if (typeof mat.opacity === "number") mat.opacity = Math.min(0.82, 0.12 + k * 0.18);
+      mesh.scale.setScalar(1 + k * 0.045);
+    }
+  }
+
+  private _disposeObject(root: THREE.Object3D): void {
+    root.traverse((ch) => {
+      const mesh = ch as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry?.dispose();
+      const mat = mesh.material;
+      const disposeMat = (m: THREE.Material): void => {
+        const maybeMap = (m as THREE.Material & { map?: THREE.Texture | null }).map;
+        maybeMap?.dispose();
+        m.dispose();
+      };
+      if (Array.isArray(mat)) mat.forEach(disposeMat);
+      else if (mat) disposeMat(mat as THREE.Material);
+    });
+  }
+
   dispose(): void {
     this.disposed = true;
+    if (this.doctrineSkyboxTexture) {
+      this.doctrineSkyboxTexture.dispose();
+      this.doctrineSkyboxTexture = null;
+    }
+    if (this.doctrineSkyboxMesh) {
+      this.S.remove(this.doctrineSkyboxMesh);
+      this.doctrineSkyboxMesh.geometry.dispose();
+      this.doctrineSkyboxMesh.material.dispose();
+      this.doctrineSkyboxMesh = null;
+    }
+    this.S.background = new THREE.Color(BINDER_CFG.bg);
     this.cancelPendingCatalogPick();
     this._clearCodexLongPressTimer();
     this.codexPulledPickIndices.clear();
+    this._disposeObject(this.roomGroup);
+    this.S.remove(this.roomGroup);
     for (const ch of [...this.marginHitGroup.children]) {
       const m = ch as THREE.Mesh;
       this.marginHitGroup.remove(m);

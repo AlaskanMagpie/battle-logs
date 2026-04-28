@@ -5,11 +5,9 @@ import {
   ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE,
   ENEMY_AI_CLAIM_RESERVE_TAP_GOAL,
   ENEMY_AI_MIN_BUILD_SEP,
-  ENEMY_DAMAGE_MULT,
   ENEMY_HERO_STRIKE_COOLDOWN_TICKS,
   ENEMY_HERO_STRIKE_DAMAGE,
   ENEMY_HERO_STRIKE_SWARM_MULT,
-  ENEMY_PRODUCTION_RATE_MULT,
   ENEMY_TAP_WEDGE_MARGIN_X,
   FORWARD_STRUCTURE_HP_MULT,
   HERO_ATTACK_RANGE,
@@ -20,6 +18,13 @@ import {
   TAP_YIELD_MAX,
   TICK_HZ,
 } from "../../constants";
+import {
+  enemyAttackSpeedScalar,
+  enemyBuildSpeedScalar,
+  enemyCaptureSpeedScalar,
+  enemyDamageScalar,
+  enemyProductionSpeedScalar,
+} from "../../difficulty";
 import { logGame } from "../../gameLog";
 import {
   armTapClaimAnchor,
@@ -166,7 +171,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
   if (!def || !isStructureEntry(def)) return false;
   s.enemyFlux -= def.fluxCost;
   const placementForward = !nearEnemyInfra(s, pos) && inEnemyTerritory(s, pos);
-  const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
+  const buildTicks = Math.max(1, Math.round((def.buildSeconds * TICK_HZ) / enemyBuildSpeedScalar(s)));
   const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
   const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
   const keep = findKeep(s);
@@ -189,7 +194,7 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
     buildTicksRemaining: buildTicks,
     buildTotalTicks: buildTicks,
     complete: false,
-    productionTicksRemaining: Math.round((def.productionSeconds * TICK_HZ) / ENEMY_PRODUCTION_RATE_MULT),
+    productionTicksRemaining: Math.round((def.productionSeconds * TICK_HZ) / enemyProductionSpeedScalar(s)),
     doctrineSlotIndex: -1,
     rallyX: pos.x + rdx * rallyLead,
     rallyZ: pos.z + rdz * rallyLead,
@@ -234,12 +239,9 @@ function minDist2ToEnemyStructures(s: GameState, pos: { x: number; z: number }):
 }
 
 function enemyAiBuildIntervalTicks(s: GameState): number {
-  const d = s.map.difficulty;
-  const stress = d ? Math.max(d.enemyHpMult, d.enemyDmgMult) : 1;
-  const cadence = 0.62 + 0.38 * Math.min(Math.max(stress, 0.85), 1.65);
   return Math.max(
     Math.round(1.6 * TICK_HZ),
-    Math.round(ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS / cadence),
+    Math.round(ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS / enemyBuildSpeedScalar(s)),
   );
 }
 
@@ -302,12 +304,6 @@ export function enemyHeroSystem(s: GameState): void {
   moveEnemyHeroToward(s);
   pickMoveTargetForEnemyHero(s);
 
-  const moving = h.targetX !== null || h.targetZ !== null;
-  if (moving && h.claimChannelTarget !== null) {
-    h.claimChannelTarget = null;
-    h.claimChannelTicksRemaining = 0;
-  }
-
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
     if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
@@ -316,7 +312,7 @@ export function enemyHeroSystem(s: GameState): void {
     }
   }
 
-  if (!moving && h.claimChannelTarget === null) {
+  if (h.claimChannelTarget === null) {
     const idx = findClaimableTapIndexNearEnemy(s, h);
     if (idx !== null) {
       const tap0 = s.taps[idx]!;
@@ -325,7 +321,10 @@ export function enemyHeroSystem(s: GameState): void {
         /* wait for tap income */
       } else {
         h.claimChannelTarget = idx;
-        h.claimChannelTicksRemaining = Math.round(claimChannelSecForTap(s, "enemy", tap0) * TICK_HZ);
+        h.claimChannelTicksRemaining = Math.max(
+          1,
+          Math.round((claimChannelSecForTap(s, "enemy", tap0) * TICK_HZ) / enemyCaptureSpeedScalar(s)),
+        );
       }
     }
   }
@@ -367,11 +366,13 @@ function enemyHeroTryStrike(s: GameState): void {
   const h = s.enemyHero;
   if (h.hp <= 0 || h.attackCooldownTicksRemaining > 0) return;
   const r2 = HERO_ATTACK_RANGE * HERO_ATTACK_RANGE;
+  const damage = ENEMY_HERO_STRIKE_DAMAGE * enemyDamageScalar(s.map);
+  const cooldown = Math.max(1, Math.round(ENEMY_HERO_STRIKE_COOLDOWN_TICKS / enemyAttackSpeedScalar(s)));
 
   const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
-    s.hero.hp = Math.max(0, s.hero.hp - ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT);
-    h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
+    s.hero.hp = Math.max(0, s.hero.hp - damage);
+    h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: s.hero.x, z: s.hero.z }, from, "rival_vs_hero");
     return;
   }
@@ -388,9 +389,9 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestU) {
     const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
-    bestU.hp -= ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * swarmMult;
+    bestU.hp -= damage * swarmMult;
     applyAttackImpulse(bestU, from, 2.1 * swarmMult);
-    h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
+    h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: bestU.x, z: bestU.z }, from, "rival_vs_unit");
     return;
   }
@@ -408,8 +409,8 @@ function enemyHeroTryStrike(s: GameState): void {
   }
   if (bestTap) {
     const cur = bestTap.anchorHp ?? 0;
-    bestTap.anchorHp = Math.max(0, cur - ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * 0.42);
-    h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
+    bestTap.anchorHp = Math.max(0, cur - damage * 0.42);
+    h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: bestTap.x, z: bestTap.z }, from, "rival_vs_anchor");
     if ((bestTap.anchorHp ?? 0) <= 0) shatterTapAnchor(s, bestTap);
     return;
@@ -417,8 +418,8 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const keep = findKeep(s);
   if (keep && dist2(h, keep) <= r2) {
-    keep.hp -= ENEMY_HERO_STRIKE_DAMAGE * ENEMY_DAMAGE_MULT * 0.45;
-    h.attackCooldownTicksRemaining = ENEMY_HERO_STRIKE_COOLDOWN_TICKS;
+    keep.hp -= damage * 0.45;
+    h.attackCooldownTicksRemaining = cooldown;
     emitHeroStrikeFx(s, { x: keep.x, z: keep.z }, from, "rival_vs_keep");
   }
 }

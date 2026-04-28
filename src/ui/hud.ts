@@ -7,6 +7,7 @@ import {
   TICK_HZ,
 } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
+import { readLocalLeaderboard, scoreMatchResult } from "../game/leaderboard";
 import {
   claimedTapCount,
   doctrineCardPlayability,
@@ -22,6 +23,7 @@ import {
   onDoctrineCardPreviewHoverLeave,
   showDoctrineCardDetail,
 } from "./cardDetailPop";
+import type { ControlProfile } from "../controlProfile";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineCardBody } from "./doctrineCard";
 import { doctrineSlotHudTone } from "./doctrineSlotHudTone";
@@ -189,6 +191,7 @@ function syncDoctrineHandOverlap(track: HTMLElement, state: GameState): void {
 export type HudIntentSink = (intent: PlayerIntent) => void;
 
 export type HudMountApi = {
+  controlProfile?: ControlProfile;
   onRematch?: () => void;
   onEditDoctrine?: () => void;
   /** Lock camera pivot on wizard vs free orbit (same as C). */
@@ -210,7 +213,7 @@ function computeObjective(state: GameState): string {
   const playerUnits = state.units.filter((u) => u.team === "player" && u.hp > 0);
 
   if (claimedNodes === 0)
-    return "Claim a node — walk to the nearest grey ring and stand still to channel (need Mana for the claim fee).";
+    return "Claim a node — walk into the nearest grey ring and stay inside to channel (need Mana for the claim fee).";
   if (playerTowers.length === 0) return "Drop a tower inside claimed territory (blue field) to start batch production.";
   if (playerUnits.length === 0) {
     const producing = playerStructs.find((st) => st.complete);
@@ -239,9 +242,45 @@ function campCoreSummary(state: GameState): string {
 }
 
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
-  const { onRematch, onEditDoctrine, onCameraFollowToggle, pushIntent } = api;
+  const { controlProfile, onRematch, onEditDoctrine, onCameraFollowToggle, pushIntent } = api;
+  root.dataset.controlProfile = controlProfile?.mode ?? "desktop";
   root.innerHTML = `
     <header class="hud-chrome" aria-label="Match status">
+      <aside class="hud-match-side-controls" aria-label="Commands and battle log">
+        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
+          <span class="hud-side-sprite hud-side-sprite--rally" aria-hidden="true"></span>
+          <span class="hud-side-copy"><span class="hud-side-eyebrow">Rally</span><b>Map</b></span>
+        </button>
+        <button class="hud-btn hud-btn--ghost hud-btn--stance hud-btn--side-art" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
+          <span class="hud-side-sprite hud-side-sprite--stance" aria-hidden="true"></span>
+          <span class="hud-side-copy"><span class="hud-side-eyebrow">Stance</span><b>Offense</b></span>
+        </button>
+        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-formation" type="button" title="Cycle RMB-drag formation (V). Drag RMB with squads selected to set the line; hold Shift for wider ranks.">
+          <span class="hud-side-sprite hud-side-sprite--formation" aria-hidden="true"></span>
+          <span class="hud-side-copy"><span class="hud-side-eyebrow">Formation</span><b>Line</b></span>
+        </button>
+        <button
+          class="hud-btn hud-btn--ghost hud-btn--side-art"
+          id="btn-camera-follow"
+          type="button"
+          aria-pressed="true"
+          title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
+        >
+          <span class="hud-side-sprite hud-side-sprite--camera" aria-hidden="true"></span>
+          <span class="hud-side-copy"><span class="hud-side-eyebrow">Camera</span><b>lock</b></span>
+        </button>
+        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-teleport" type="button" aria-pressed="false" title="Teleport Wizard squad (T). Click your half; carries nearby friendly troops.">
+          <span class="hud-side-sprite hud-side-sprite--teleport" aria-hidden="true"></span>
+          <span class="hud-side-copy"><span class="hud-side-eyebrow">Teleport</span><b>Ready</b></span>
+        </button>
+        <button class="hud-btn hud-btn--ghost" id="btn-captain" type="button" aria-pressed="${initial.heroCaptainEnabled ? "true" : "false"}" title="Captain mode: the Wizard picks nearby objectives when idle. Default on for mobile.">
+          <span class="hud-side-ico hud-side-ico--captain" aria-hidden="true"><i></i><em>A</em></span><span class="hud-side-copy"><span class="hud-side-eyebrow">Captain</span><b>${initial.heroCaptainEnabled ? "auto" : "manual"}</b></span>
+        </button>
+        <details class="hud-gamelog" id="hud-gamelog">
+          <summary>Log</summary>
+          <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
+        </details>
+      </aside>
       <div class="hud-brand" aria-hidden="true"><span class="hud-brand__mark">A</span></div>
       <div class="hud-chrome__cluster hud-chrome__cluster--main">
         <div class="hud-chrome__stats">
@@ -277,37 +316,14 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       </div>
     </div>
     <footer class="hud-dock hud-dock--overlay" id="hud-dock">
-      <aside class="hud-match-side-controls" aria-label="Rally, stance, camera, and log">
-        <button class="hud-btn hud-btn--ghost" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
-          <span class="hud-side-ico" aria-hidden="true">R</span><span class="hud-side-copy"><span>Rally</span><b>Map</b></span>
-        </button>
-        <button class="hud-btn hud-btn--ghost hud-btn--stance" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
-          <span class="hud-side-ico" aria-hidden="true">X</span><span class="hud-side-copy"><span>Stance</span><b>Offense</b></span>
-        </button>
-        <button
-          class="hud-btn hud-btn--ghost"
-          id="btn-camera-follow"
-          type="button"
-          aria-pressed="true"
-          title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
-        >
-          <span class="hud-side-ico" aria-hidden="true">C</span><span class="hud-side-copy"><span>Camera</span><b>lock</b></span>
-        </button>
-        <button class="hud-btn hud-btn--ghost" id="btn-teleport" type="button" aria-pressed="false" title="Teleport Wizard squad (T). Click your half; carries nearby friendly troops.">
-          <span class="hud-side-ico" aria-hidden="true">T</span><span class="hud-side-copy"><span>Teleport</span><b>Ready</b></span>
-        </button>
-        <details class="hud-gamelog" id="hud-gamelog">
-          <summary>Log</summary>
-          <pre class="hud-gamelog-body" id="hud-gamelog-body"></pre>
-        </details>
-      </aside>
       <details class="hud-dock__help-drawer">
         <summary class="hud-dock__help-summary">Controls <span class="hud-dock__help-hint">(click to expand)</span></summary>
         <div class="hud-help-grid" role="region" aria-label="Keyboard and mouse controls">
-          <div class="hud-help-item"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> move on release · hold <kbd>RMB</kbd> orders</div>
+          <div class="hud-help-item hud-help-item--desktop"><kbd>1</kbd>–<kbd>0</kbd> doctrine · <kbd>WASD</kbd> pan camera · <kbd>RMB</kbd> move · drag <kbd>RMB</kbd> formation</div>
+          <div class="hud-help-item hud-help-item--mobile"><strong>Mobile:</strong> tap ground to move/attack-move · long-press map for orders · drag cards to summon</div>
           <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
           <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
-          <div class="hud-help-item"><kbd>Shift</kbd>+<kbd>RMB</kbd> queue · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> offense / defense</div>
+          <div class="hud-help-item"><kbd>V</kbd> formation · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue/wide · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> stance</div>
           <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
         </div>
       </details>
@@ -404,12 +420,19 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
     pushIntent({ type: "toggle_army_stance" });
   });
 
+  root.querySelector("#btn-formation")?.addEventListener("click", () => {
+    pushIntent({ type: "toggle_formation_preset" });
+  });
+
   root.querySelector("#btn-camera-follow")?.addEventListener("click", () => {
     onCameraFollowToggle?.();
   });
 
   root.querySelector("#btn-teleport")?.addEventListener("click", () => {
     pushIntent({ type: "begin_hero_teleport" });
+  });
+  root.querySelector("#btn-captain")?.addEventListener("click", () => {
+    pushIntent({ type: "toggle_hero_captain" });
   });
 
   root.querySelector("#btn-rematch")?.addEventListener("click", () => {
@@ -428,6 +451,7 @@ export function updateHud(state: GameState): void {
   const mode = document.querySelector("#mode");
   const phase = document.querySelector("#phase");
   const msg = document.querySelector("#msg");
+  const captain = document.querySelector("#btn-captain");
   const nodeIncome = playerManaIncomePerSec(state);
   const salvageIncome = salvageManaPerSec(state);
   if (flux) {
@@ -464,6 +488,12 @@ export function updateHud(state: GameState): void {
     }
   }
   if (phase) phase.textContent = `${state.phase} · tick ${state.tick}`;
+  if (captain) {
+    captain.setAttribute("aria-pressed", state.heroCaptainEnabled ? "true" : "false");
+    const copy = captain.querySelector<HTMLElement>(".hud-side-copy b");
+    if (copy) copy.textContent = state.heroCaptainEnabled ? "auto" : "manual";
+    captain.classList.toggle("active", state.heroCaptainEnabled);
+  }
   if (msg) msg.textContent = state.lastMessage;
 
   const stanceBtn = document.querySelector<HTMLButtonElement>("#btn-stance");
@@ -473,6 +503,12 @@ export function updateHud(state: GameState): void {
     if (copy) copy.textContent = def ? "Defense" : "Offense";
     stanceBtn.setAttribute("aria-pressed", def ? "true" : "false");
     stanceBtn.classList.toggle("hud-btn--stance-defense", def);
+  }
+
+  const formationBtn = document.querySelector<HTMLButtonElement>("#btn-formation");
+  if (formationBtn) {
+    const copy = formationBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    if (copy) copy.textContent = state.formationPreset[0]!.toUpperCase() + state.formationPreset.slice(1);
   }
 
   const selTag = document.querySelector<HTMLElement>("#hud-select-tag");
@@ -550,7 +586,14 @@ export function updateHud(state: GameState): void {
     const frac = state.hero.maxHp > 0 ? state.hero.hp / state.hero.maxHp : 0;
     const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
     heroHpFill.style.width = `${pct}%`;
-    heroHpVal.textContent = `${pct}%`;
+    heroHpVal.textContent = `${Math.max(0, Math.ceil(state.hero.hp))}/${Math.ceil(state.hero.maxHp)}`;
+    const card = heroHpFill.closest<HTMLElement>(".hud-vital");
+    if (card) {
+      card.classList.toggle("hud-vital--low", pct > 0 && pct <= 35);
+      card.classList.toggle("hud-vital--critical", pct > 0 && pct <= 18);
+      card.classList.toggle("hud-vital--empty", pct <= 0);
+      card.title = `Wizard health: ${pct}%`;
+    }
   }
 
   const keepHpFill = document.querySelector<HTMLElement>("#hud-keep-hp-fill");
@@ -560,7 +603,14 @@ export function updateHud(state: GameState): void {
     const frac = keep && keep.maxHp > 0 ? keep.hp / keep.maxHp : 0;
     const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
     keepHpFill.style.width = `${pct}%`;
-    keepHpVal.textContent = keep ? `${pct}%` : "—";
+    keepHpVal.textContent = keep ? `${Math.max(0, Math.ceil(keep.hp))}/${Math.ceil(keep.maxHp)}` : "-";
+    const card = keepHpFill.closest<HTMLElement>(".hud-vital");
+    if (card) {
+      card.classList.toggle("hud-vital--low", pct > 0 && pct <= 35);
+      card.classList.toggle("hud-vital--critical", pct > 0 && pct <= 18);
+      card.classList.toggle("hud-vital--empty", pct <= 0 || !keep);
+      card.title = keep ? `Keep health: ${pct}%` : "Keep destroyed.";
+    }
   }
 
   const end = document.querySelector("#hud-endgame") as HTMLElement | null;
@@ -576,8 +626,11 @@ export function updateHud(state: GameState): void {
       endTitle.textContent = state.phase === "win" ? "Victory" : "Defeat";
       const mins = (state.tick / TICK_HZ / 60).toFixed(1);
       const st = state.stats;
+      const best = readLocalLeaderboard()[0];
       endStats.innerHTML = [
         ["Time", `${mins} min`],
+        ["Score", scoreMatchResult(state)],
+        ["Best local", best ? best.score : "—"],
         ["Structures built", st.structuresBuilt],
         ["Structures lost", st.structuresLost],
         ["Units produced", st.unitsProduced],
