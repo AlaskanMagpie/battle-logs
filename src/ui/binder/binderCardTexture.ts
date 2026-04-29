@@ -212,11 +212,19 @@ function svgWithExplicitIntrinsicSize(raw: string): string {
   return raw.replace(/<svg\b([^>]*)>/i, `<svg$1${widthAttr}${heightAttr}${parAttr}>`);
 }
 
+function svgWithoutTextNodes(raw: string): string {
+  return raw
+    .replace(/<text\b[\s\S]*?<\/text>/gi, "")
+    .replace(/<text\b[^/>]*\/>/gi, "")
+    .replace(/<tspan\b[\s\S]*?<\/tspan>/gi, "")
+    .replace(/<tspan\b[^/>]*\/>/gi, "");
+}
+
 async function loadImage(src: string): Promise<HTMLImageElement> {
   if (!isSameOriginSvgAsset(src)) return loadRasterImage(src);
   const res = await fetch(src, { cache: "force-cache" });
   if (!res.ok) throw new Error("card svg load failed");
-  const svg = svgWithExplicitIntrinsicSize(await res.text());
+  const svg = svgWithoutTextNodes(svgWithExplicitIntrinsicSize(await res.text()));
   const blobUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
   try {
     return await loadRasterImage(blobUrl);
