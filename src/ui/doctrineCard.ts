@@ -16,6 +16,7 @@ import type {
   UnitSizeClass,
 } from "../game/types";
 import { isCommandEntry, isStructureEntry } from "../game/types";
+import { cardArtOverlayHtml, isCardOverlayFieldVisible } from "./cardArtOverlay";
 
 function structurePopCapLine(e: StructureCatalogEntry): string {
   return `${productionBatchSizeForClass(e.producedSizeClass)} bodies`;
@@ -89,8 +90,12 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
   }
 }
 
-function dmSpellCostLine(e: CommandCatalogEntry): string {
-  return `${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown · ${e.salvagePctOnCast}% to Salvage`;
+function dmSpellCostLine(e: CommandCatalogEntry, catalogId?: string): string {
+  const base = `${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown`;
+  if (catalogId != null && catalogId !== "" && !isCardOverlayFieldVisible(catalogId, "salvage")) {
+    return base;
+  }
+  return `${base} · ${e.salvagePctOnCast}% to Salvage`;
 }
 
 function dmSpellFxCompact(e: CommandCatalogEntry): string {
@@ -105,8 +110,11 @@ function dmSpellFxCompact(e: CommandCatalogEntry): string {
   </div>`;
 }
 
-function dcSpellEffectPanel(e: CommandCatalogEntry): string {
+function dcSpellEffectPanel(e: CommandCatalogEntry, catalogId: string): string {
   const { target, rolls, payLine } = commandSpellFxRows(e);
+  const pay = isCardOverlayFieldVisible(catalogId, "salvage")
+    ? payLine
+    : `Costs ${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
   const lis = rolls.map((t) => `<li>${escapeHtml(t)}</li>`).join("");
   return `<section class="dc-spell-panel" aria-label="Spell effect details">
     <div class="dc-spell-panel__banner" role="heading" aria-level="3">Spell effect</div>
@@ -116,7 +124,7 @@ function dcSpellEffectPanel(e: CommandCatalogEntry): string {
       <div class="dc-spell-panel__label">Resolves</div>
       <ul class="dc-spell-panel__ul">${lis}</ul>
       <div class="dc-spell-panel__label">Each cast</div>
-      <p class="dc-spell-panel__text dc-spell-panel__pay">${escapeHtml(payLine)}</p>
+      <p class="dc-spell-panel__text dc-spell-panel__pay">${escapeHtml(pay)}</p>
     </div>
   </section>`;
 }
@@ -507,7 +515,7 @@ function dmStatsOneLine(e: CatalogEntry): string {
   if (isCommandEntry(e)) {
     return `${e.fluxCost} · ${e.chargeCooldownSeconds}s · ${e.salvagePctOnCast}%`;
   }
-  return `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)}`;
+  return `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
 }
 
 function dcHeroTopTags(cmd: boolean, classOrSpell: string, cdSeconds: number): string {
@@ -529,20 +537,16 @@ function dcTitleBlock(name: string, kindWord: "Structure" | "Command", compact: 
   </div>`;
 }
 
-type DcStatTone = "hp" | "build" | "prod" | "pop" | "mana" | "cd" | "salv" | "uses";
+type DcStatTone = "hp" | "prod" | "pop" | "mana" | "cd" | "salv" | "uses";
 
-function dcStatRail4(
-  a: { v: string; l: string; t: DcStatTone },
-  b: { v: string; l: string; t: DcStatTone },
-  c: { v: string; l: string; t: DcStatTone },
-  d: { v: string; l: string; t: DcStatTone },
-  compact: boolean,
-): string {
+function dcStatRailCells(cells: Array<{ v: string; l: string; t: DcStatTone }>, compact: boolean): string {
+  if (cells.length === 0) return "";
   const cell = (x: { v: string; l: string; t: DcStatTone }) =>
     `<div class="dc-stat"><span class="dc-stat-val dc-stat-val--${x.t}">${escapeHtml(x.v)}</span><span class="dc-stat-lbl">${escapeHtml(x.l)}</span></div>`;
   const div = `<span class="dc-stat-div" aria-hidden="true"></span>`;
   const railMod = compact ? "dc-stat-rail--compact" : "";
-  return `<div class="dc-stat-rail ${railMod}">${cell(a)}${div}${cell(b)}${div}${cell(c)}${div}${cell(d)}</div>`;
+  const inner = cells.map((c, i) => (i === 0 ? cell(c) : `${div}${cell(c)}`)).join("");
+  return `<div class="dc-stat-rail ${railMod}">${inner}</div>`;
 }
 
 function dcUnitPill(e: StructureCatalogEntry): string {
@@ -622,10 +626,10 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
   const statsLine = dmStatsOneLine(e);
   const statsTitle = isCommandEntry(e)
     ? commandSpellTooltipSummary(e as CommandCatalogEntry)
-    : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)} · ${structurePopCapLine(e)} per event`;
-  const spellFx = cmd ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
+    : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)} · ${structurePopCapLine(e)} per event`;
+  const spellFx = cmd && isCardOverlayFieldVisible(catalogId, "effect") ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
   const statsBlock = cmd
-    ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry))}</div>`
+    ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry, catalogId))}</div>`
     : `<div class="dm-stats" title="${escapeHtml(statsTitle)}">${escapeHtml(statsLine)}</div>`;
 
   return `<div class="tcg tcg--compact tcg--layout-min doctrine-card-compact ${kindClass} ${previewTypeClass}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
@@ -648,13 +652,6 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
 </div>`;
 }
 
-type SlotBadgeTone = "hp" | "build" | "prod" | "batch" | "mana" | "cd" | "salv" | "uses" | "effect";
-
-function slotInfoBadge(value: string, label: string, tone: SlotBadgeTone, title?: string): string {
-  const tip = title ? ` title="${escapeHtml(title)}"` : "";
-  return `<span class="slot-card-stat slot-card-stat--${tone}"${tip}><b>${escapeHtml(value)}</b><small>${escapeHtml(label)}</small></span>`;
-}
-
 function commandSlotEffectLabel(e: CommandCatalogEntry): string {
   switch (e.effect.type) {
     case "aoe_damage":
@@ -670,23 +667,6 @@ function commandSlotEffectLabel(e: CommandCatalogEntry): string {
   }
 }
 
-function slotCardStatBadges(e: CatalogEntry): string {
-  if (isCommandEntry(e)) {
-    return [
-      slotInfoBadge(`${e.chargeCooldownSeconds}s`, "CD", "cd", "Per-slot cooldown after casting"),
-      slotInfoBadge(`${e.salvagePctOnCast}%`, "SALV", "salv", "Mana cost converted into Salvage"),
-      slotInfoBadge(String(e.maxCharges), "USES", "uses", "Per-match uses before long cooldown"),
-      slotInfoBadge(commandSlotEffectLabel(e), "FX", "effect", commandSpellTooltipSummary(e)),
-    ].join("");
-  }
-  return [
-    slotInfoBadge(String(e.maxHp), "HP", "hp", "Structure health"),
-    slotInfoBadge(`${e.buildSeconds}s`, "BUILD", "build", "Build time"),
-    slotInfoBadge(`${e.productionSeconds}s`, "PROD", "prod", "Production cadence"),
-    slotInfoBadge(structurePopCapLine(e), "BATCH", "batch", structureProductionLine(e)),
-  ].join("");
-}
-
 /** Full-preview doctrine face for clickable hand slots: art first, rules reduced to overlaid stat badges. */
 export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deckSlotIndex?: number): string {
   const e = getCatalogEntry(catalogId);
@@ -698,26 +678,23 @@ export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deck
   const cmd = isCommandEntry(e);
   const sizeClass = cmd ? "" : e.producedSizeClass;
   const sizeMod = cmd ? "" : ` tcg--size-${sizeClass}`;
-  const classTag = cmd ? "Spell" : e.producedSizeClass;
-  const manaVal = String(e.fluxCost);
   const svgKey = deckSlotIndex != null ? `${catalogId}_slot${deckSlotIndex}_hand` : `${catalogId}_${variant}_hand`;
   const portrait = catalogPortraitSvg(catalogId, hue, cmd, svgKey);
   const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
-  const cdSec = e.chargeCooldownSeconds;
-  const cdShow = cdSec > 0 ? `${cdSec}s` : "—";
   const art = dmHeroArt(catalogId, portrait, true, cmd ? e : undefined);
-  const subtitle = cmd ? commandSlotEffectLabel(e) : structureProductionLine(e);
-  const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.buildSeconds}s build · ${structureProductionLine(e)}`;
+  const subtitle = cmd
+    ? isCardOverlayFieldVisible(catalogId, "effect")
+      ? commandSlotEffectLabel(e as CommandCatalogEntry)
+      : ""
+    : structureProductionLine(e as StructureCatalogEntry);
+  const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
+  const overlay = cardArtOverlayHtml(catalogId);
 
   return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact ${kindClass} ${previewTypeClass} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="slot-card-shell" title="${escapeHtml(title)}">
     <div class="slot-card-art">
       ${art}
-      <div class="slot-card-scrim" aria-hidden="true"></div>
-      <span class="slot-card-mana" title="Mana cost">${escapeHtml(manaVal)}</span>
-      <span class="slot-card-type" title="${cmd ? "Command spell" : "Produced unit class"}">${escapeHtml(classTag)}</span>
-      <span class="slot-card-cd" title="${escapeHtml(dmCdTitle(cmd))}">${escapeHtml(cdShow)}</span>
-      <div class="slot-card-stats" aria-label="Key card stats">${slotCardStatBadges(e)}</div>
+      ${overlay}
     </div>
     <div class="slot-card-title" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</div>
     <div class="slot-card-subtitle" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</div>
@@ -758,27 +735,26 @@ export function tcgCardFullHtml(
   const detailCls = detailPop ? " tcg--detail-pop" : "";
   const detailBtn = detailPop ? "" : cardDetailButton(catalogId);
   const watermark = detailPop ? "" : `<div class="dc-id-watermark">${escapeHtml(catalogId)}</div>`;
-  const rail = isCommandEntry(e)
-    ? dcStatRail4(
-        { v: manaVal, l: "MANA", t: "mana" },
-        { v: `${e.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" },
-        { v: `${e.salvagePctOnCast}%`, l: "SALVAGE", t: "salv" },
-        { v: `${e.maxCharges}`, l: "USES", t: "uses" },
-        false,
-      )
-    : dcStatRail4(
-        { v: String(e.maxHp), l: "HP", t: "hp" },
-        { v: `${e.buildSeconds}s`, l: "BUILD", t: "build" },
-        { v: `${e.productionSeconds}s`, l: "PROD", t: "prod" },
-        {
-          v: structurePopCapLine(e as StructureCatalogEntry),
-          l: "BATCH",
-          t: "pop",
-        },
-        false,
-      );
+  let rail: string;
+  if (isCommandEntry(e)) {
+    const ec = e as CommandCatalogEntry;
+    const cells: Array<{ v: string; l: string; t: DcStatTone }> = [];
+    if (isCardOverlayFieldVisible(catalogId, "mana")) cells.push({ v: manaVal, l: "MANA", t: "mana" });
+    if (isCardOverlayFieldVisible(catalogId, "cooldown")) cells.push({ v: `${ec.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" });
+    if (isCardOverlayFieldVisible(catalogId, "salvage")) cells.push({ v: `${ec.salvagePctOnCast}%`, l: "SALVAGE", t: "salv" });
+    rail = dcStatRailCells(cells, false);
+  } else {
+    const st = e as StructureCatalogEntry;
+    const cells: Array<{ v: string; l: string; t: DcStatTone }> = [];
+    if (isCardOverlayFieldVisible(catalogId, "hp")) cells.push({ v: String(st.maxHp), l: "HP", t: "hp" });
+    if (isCardOverlayFieldVisible(catalogId, "cooldown")) cells.push({ v: `${st.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" });
+    if (isCardOverlayFieldVisible(catalogId, "prod")) cells.push({ v: `${st.productionSeconds}s`, l: "PROD", t: "prod" });
+    if (isCardOverlayFieldVisible(catalogId, "batch"))
+      cells.push({ v: structurePopCapLine(st), l: "BATCH", t: "pop" });
+    rail = dcStatRailCells(cells, false);
+  }
   const bodyFull = cmd
-    ? `<div class="dc-body">${dcSpellEffectPanel(e as CommandCatalogEntry)}</div>`
+    ? `<div class="dc-body">${dcSpellEffectPanel(e as CommandCatalogEntry, catalogId)}</div>`
     : `<div class="dc-body">${dcUnitPill(e as StructureCatalogEntry)}${dcCombatProfile(e as StructureCatalogEntry)}${dcAbilityStructure(e as StructureCatalogEntry)}${dcAuxStructure(e as StructureCatalogEntry)}${matchArmyPopBonusNote(e as StructureCatalogEntry)}${dcFlavor((e as StructureCatalogEntry).producedFlavor)}</div>`;
 
   return `<div class="tcg tcg--full tcg--layout-v2 ${kindClass} ${previewTypeClass} tcg--${variant}${detailCls}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">

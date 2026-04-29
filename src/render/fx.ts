@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { FX_ABSOLUTE_MAX_LIFETIME_SEC, PRODUCED_UNIT_AMBER_GEODE_MONKS } from "../game/constants";
-import type { AttackRangeBand, CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
-import type { SpellFxElement, SpellFxShape } from "../game/types";
+import type { CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
+import type { AttackRangeBand, SpellFxElement, SpellFxShape } from "../game/types";
 
 export type CastFxSpawnOpts = {
   from?: { x: number; z: number };

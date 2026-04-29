@@ -115,6 +115,8 @@ export function disposeTapBandMeshes(band: TapBandMeshes): void {
     g0.dispose();
     g1.dispose();
   }
-  band.solid.material.dispose();
-  band.hatch.material.dispose();
+  for (const mat of [band.solid.material, band.hatch.material]) {
+    if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+    else mat.dispose();
+  }
 }

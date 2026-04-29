@@ -1,5 +1,8 @@
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
+import { getCardArtUrl } from "./cardArtManifest";
 import { doctrineCardFullModalHtml } from "./doctrineCard";
+import { getCatalogEntry } from "../game/catalog";
+import { cardArtOverlayHtml } from "./cardArtOverlay";
 
 /** @deprecated Long-press to open detail was removed. */
 export const CARD_DETAIL_HOLD_MS = 0;
@@ -9,6 +12,7 @@ export const CARD_PREVIEW_HOVER_MS = 320;
 
 let layer: HTMLElement | null = null;
 let detailResizeRo: ResizeObserver | null = null;
+let detailRenderToken = 0;
 
 /** True while the open dialog was opened from a hover preview (not button / long-press). */
 let detailOpenedFromHover = false;
@@ -111,8 +115,48 @@ function unwireDetailResize(): void {
   detailResizeRo = null;
 }
 
+function escapeAttr(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function authoredCardImageHtml(catalogId: string, url: string): string {
+  const name = getCatalogEntry(catalogId)?.name ?? catalogId;
+  return `<div class="card-detail-pop-fit card-detail-pop-fit--art"><div class="card-detail-pop-card-frame"><img class="card-detail-pop-card-img" src="${escapeAttr(url)}" alt="${escapeAttr(name)} full card" draggable="false" />${cardArtOverlayHtml(catalogId)}</div></div>`;
+}
+
+function generatedCardHtml(catalogId: string): string {
+  return `<div class="card-detail-pop-fit">${doctrineCardFullModalHtml(catalogId)}</div>`;
+}
+
+function loadingCardHtml(): string {
+  return `<div class="card-detail-pop-fit card-detail-pop-fit--loading">Loading card…</div>`;
+}
+
+function refitDetailSoon(body: HTMLElement): void {
+  const refitSoon = (): void => {
+    requestAnimationFrame(() => layoutCardDetailFit());
+  };
+  body.querySelectorAll("img").forEach((img) => {
+    if (!(img instanceof HTMLImageElement)) return;
+    img.addEventListener("load", refitSoon, { once: true, passive: true });
+    if (img.complete && img.naturalWidth > 0) refitSoon();
+  });
+  requestAnimationFrame(() => {
+    body.focus({ preventScroll: true });
+    layoutCardDetailFit();
+    wireDetailResize();
+    refitSoon();
+    if (detailOpenedFromHover) armHoverOutsideDismiss();
+  });
+}
+
 function closePop(): void {
   if (!layer || layer.hasAttribute("hidden")) return;
+  detailRenderToken++;
   disarmHoverOutsideDismiss();
   detailOpenedFromHover = false;
   hoverPreviewSourceEl = null;
@@ -177,6 +221,7 @@ export type ShowDoctrineCardDetailOpts = {
 
 export function showDoctrineCardDetail(catalogId: string, opts?: ShowDoctrineCardDetailOpts): void {
   disarmHoverOutsideDismiss();
+  const renderToken = ++detailRenderToken;
   const wantHover = opts?.fromHover === true;
   const src = wantHover && opts?.hoverSourceEl instanceof HTMLElement ? opts.hoverSourceEl : null;
   detailOpenedFromHover = wantHover && !!src;
@@ -185,23 +230,18 @@ export function showDoctrineCardDetail(catalogId: string, opts?: ShowDoctrineCar
   if (detailOpenedFromHover) el.classList.add("card-detail-pop--hover-dock");
   else el.classList.remove("card-detail-pop--hover-dock");
   const body = el.querySelector("#card-detail-pop-body") as HTMLElement;
-  body.innerHTML = `<div class="card-detail-pop-fit">${doctrineCardFullModalHtml(catalogId)}</div>`;
-  hydrateCardPreviewImages(body);
-  const refitSoon = (): void => {
-    requestAnimationFrame(() => layoutCardDetailFit());
-  };
-  body.querySelectorAll("img.tcg-card-preview-img").forEach((img) => {
-    if (!(img instanceof HTMLImageElement)) return;
-    img.addEventListener("load", refitSoon, { once: true, passive: true });
-    if (img.complete && img.naturalWidth > 0) refitSoon();
-  });
+  unwireDetailResize();
+  body.innerHTML = loadingCardHtml();
   el.removeAttribute("hidden");
   el.setAttribute("aria-hidden", "false");
-  requestAnimationFrame(() => {
-    body.focus({ preventScroll: true });
-    layoutCardDetailFit();
-    wireDetailResize();
-    refitSoon();
-    if (detailOpenedFromHover) armHoverOutsideDismiss();
-  });
+  refitDetailSoon(body);
+
+  void (async () => {
+    const artUrl = await getCardArtUrl(catalogId);
+    if (renderToken !== detailRenderToken || !layer || layer.hasAttribute("hidden")) return;
+    unwireDetailResize();
+    body.innerHTML = artUrl ? authoredCardImageHtml(catalogId, artUrl) : generatedCardHtml(catalogId);
+    if (!artUrl) hydrateCardPreviewImages(body);
+    refitDetailSoon(body);
+  })();
 }

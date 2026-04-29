@@ -23,6 +23,7 @@ import {
   inEnemyTerritory,
   inPlayerTerritory,
   signalColorHex,
+  structureFacingYawRad,
   territorySources,
   liveSquadCount,
   type GameState,
@@ -79,26 +80,34 @@ const CAMERA_HERO_PIVOT_Y = 1.38;
 const MATCH_INTRO_CAMERA_SEC = 5.4;
 /** If a unit's visual moves more than this, it must be in run/move animation. */
 const UNIT_VISUAL_RUN_EPS = 0.035;
+/** Hero GLB run vs idle: same idea as squads — use sim travel per frame, not only click-target flags (Captain / gaps). */
+const HERO_LOCOMOTION_EPS = 0.055;
 /** Per-frame catch-up while running; keeps fixed sim steps from looking like tiny teleports. */
 const UNIT_VISUAL_RUN_CATCHUP = 0.42;
 
 /** Same equirect asset / path as the doctrine prematch room (`CardBinderEngine` nebula sky). */
 const MATCH_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
-/** Match readability wins over panorama mood: sky equirects shimmer/darken badly at low camera angles. */
-const MATCH_SKYBOX_ENABLED = false;
+/** Doctrine nebula equirect as `Scene.background` during matches (fog stays off in `applyMapVisual`). */
+const MATCH_SKYBOX_ENABLED = true;
+/** Ground tint when match uses the doctrine equirect as `Scene.background` (fog stays off — see `applyMapVisual`). */
+const MATCH_SKYBOX_GROUND_HEX = 0xc8b6a0;
 
-/** Ground / drag preview art for the four doctrine spells (PNG under `public/assets/spell-reticles/`). */
+/**
+ * Spell command effect kinds that *could* use a texture on the ground ghost.
+ * We intentionally load **no** card PNGs here — full card art is heavy and reads poorly stretched on terrain;
+ * drag ghosts stay procedural (boxes / tinted quads) to keep match startup lite.
+ */
 type SpellReticleEffectType = Extract<
   CommandEffect["type"],
   "aoe_line_damage" | "aoe_tactics_field" | "aoe_damage" | "aoe_shatter_chain"
 >;
 
-const SPELL_RETICLE_URLS: Record<SpellReticleEffectType, string> = {
-  aoe_line_damage: "/assets/spell-reticles/cut_back.png",
-  aoe_tactics_field: "/assets/spell-reticles/fortify.png",
-  aoe_damage: "/assets/spell-reticles/firestorm.png",
-  aoe_shatter_chain: "/assets/spell-reticles/shatter.png",
-};
+const SPELL_RETICLE_EFFECT_TYPES: readonly SpellReticleEffectType[] = [
+  "aoe_line_damage",
+  "aoe_tactics_field",
+  "aoe_damage",
+  "aoe_shatter_chain",
+] as const;
 
 function isSpellReticleEffectType(t: CommandEffect["type"] | null | undefined): t is SpellReticleEffectType {
   return (
@@ -916,6 +925,8 @@ export class GameRenderer {
   private enemyHeroGroup: THREE.Group | null = null;
   private enemyHeroHpBarBg: THREE.Mesh | null = null;
   private enemyHeroHpBarFg: THREE.Mesh | null = null;
+  private heroLocomotionPrev: { x: number; z: number; valid: boolean } = { x: 0, z: 0, valid: false };
+  private enemyHeroLocomotionPrev: { x: number; z: number; valid: boolean } = { x: 0, z: 0, valid: false };
   /** Per enemy-relay (Dark Fortress) id → marker cylinder. */
   private relayMeshes = new Map<string, THREE.Mesh>();
   /** Wizard-Keep marker (violet ring + HP arc on the ground). */
@@ -972,7 +983,6 @@ export class GameRenderer {
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
-  private terrainSlabHalf = 0;
   private terrainSlab: THREE.Group | null = null;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
@@ -1003,7 +1013,6 @@ export class GameRenderer {
   private readonly introStartTgt = new THREE.Vector3();
   private readonly introEndPos = new THREE.Vector3();
   private readonly introEndTgt = new THREE.Vector3();
-  private readonly introScratchCam = new THREE.Vector3();
   private introOrbitStartAngle = 0;
   /** Orbit / pan allowed (e.g. false while dragging a doctrine card). */
   private controlsUserDesiredEnabled = true;
@@ -1103,8 +1112,6 @@ export class GameRenderer {
         console.warn("[mana nodes] decal texture load failed — fallback rings", e);
       });
 
-    this.loadSpellReticleTextures();
-
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 0, 0);
     this.controls.enableDamping = false;
@@ -1154,6 +1161,8 @@ export class GameRenderer {
 
   dispose(): void {
     this.rendererDisposed = true;
+    this.heroLocomotionPrev = { x: 0, z: 0, valid: false };
+    this.enemyHeroLocomotionPrev = { x: 0, z: 0, valid: false };
     if (this.matchSkyboxTexture) {
       this.matchSkyboxTexture.dispose();
       this.matchSkyboxTexture = null;
@@ -1196,33 +1205,6 @@ export class GameRenderer {
     this.renderer.dispose();
   }
 
-  private loadSpellReticleTextures(): void {
-    const loader = new THREE.TextureLoader();
-    const maxA = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
-    for (const key of Object.keys(SPELL_RETICLE_URLS) as SpellReticleEffectType[]) {
-      const url = SPELL_RETICLE_URLS[key];
-      loader.load(
-        url,
-        (tex) => {
-          if (this.rendererDisposed) {
-            tex.dispose();
-            return;
-          }
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.wrapS = THREE.ClampToEdgeWrapping;
-          tex.wrapT = THREE.ClampToEdgeWrapping;
-          tex.anisotropy = maxA;
-          tex.needsUpdate = true;
-          this.spellReticleTextures[key] = tex;
-        },
-        undefined,
-        () => {
-          console.warn("[spell reticle] load failed:", url);
-        },
-      );
-    }
-  }
-
   private disposeSpellReticleResources(): void {
     if (this.cmdGhostDiscTexMaterial) {
       this.cmdGhostDiscTexMaterial.map = null;
@@ -1234,7 +1216,7 @@ export class GameRenderer {
       this.cmdGhostLineTexMaterial.dispose();
       this.cmdGhostLineTexMaterial = null;
     }
-    for (const key of Object.keys(SPELL_RETICLE_URLS) as SpellReticleEffectType[]) {
+    for (const key of SPELL_RETICLE_EFFECT_TYPES) {
       const tex = this.spellReticleTextures[key];
       if (tex) {
         tex.dispose();
@@ -2596,7 +2578,11 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.6,
           depthWrite: false,
-          depthTest: false,
+          /** Ground decal: respect depth so the ring does not paint through the Keep mesh / nearby walls. */
+          depthTest: true,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
           blending: THREE.AdditiveBlending,
         }),
       );
@@ -2614,7 +2600,10 @@ export class GameRenderer {
           transparent: true,
           opacity: 0.9,
           depthWrite: false,
-          depthTest: false,
+          depthTest: true,
+          polygonOffset: true,
+          polygonOffsetFactor: 1,
+          polygonOffsetUnits: 1,
           blending: THREE.AdditiveBlending,
         }),
       );
@@ -2678,6 +2667,7 @@ export class GameRenderer {
       const g = obj as THREE.Group;
       if (this.useGlb) setStructureFallbackVisible(g, false);
       g.position.set(st.x, 0, st.z);
+      g.rotation.y = structureFacingYawRad(state, st);
       const buildT = st.complete ? 1 : 0.35 + 0.65 * (1 - st.buildTicksRemaining / Math.max(1, st.buildTotalTicks));
       g.scale.set(1, buildT, 1);
 
@@ -2979,7 +2969,6 @@ export class GameRenderer {
       this.disposeObject(this.terrainSlab);
       this.terrainSlab = null;
     }
-    this.terrainSlabHalf = 0;
   }
 
   /**
@@ -3019,23 +3008,14 @@ export class GameRenderer {
   private applyMapVisual(state: GameState): void {
     const v = state.map.visual;
     const preset = v?.groundPreset ?? "solid";
-    const fogH = v?.fogHex;
     const skyH = v?.skyHex;
     const sunH = v?.sunHex;
-    const key = `${preset}|${fogH ?? ""}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`;
+    const key = `${preset}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`;
     if (key !== this.groundVisualKey) {
       this.groundVisualKey = key;
-      if (fogH != null) {
-        let near = (v?.fogNear ?? 200) * (this.matchSkyboxTexture ? MATCH_SKYBOX_FOG_NEAR_MULT : 1);
-        let far = (v?.fogFar ?? 960) * (this.matchSkyboxTexture ? MATCH_SKYBOX_FOG_FAR_MULT : 1);
-        let fogColor = new THREE.Color(fogH);
-        if (this.matchSkyboxTexture) {
-          fogColor = fogColor.lerp(new THREE.Color(MATCH_SKYBOX_FOG_DECK), MATCH_SKYBOX_FOG_LERP);
-        }
-        this.scene.fog = new THREE.Fog(fogColor.getHex(), near, far);
-      } else {
-        this.scene.fog = null;
-      }
+      // Map JSON still carries `fogHex` for tooling / legacy — we do not apply linear fog: it homogenizes
+      // distant GLBs into one murky color at orbit zoom and reads like broken lighting.
+      this.scene.fog = null;
       if (skyH != null) this.hemiLight.color.setHex(skyH);
       if (sunH != null) this.sunLight.color.setHex(sunH);
 
@@ -3713,7 +3693,16 @@ export class GameRenderer {
     }
     this.heroGroup.position.set(h.x, 0, h.z);
     this.heroGroup.rotation.y = h.facing;
-    this.setGlbMoveAnimation(this.heroGroup, h.targetX !== null || h.targetZ !== null);
+    const clickMove = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
+    let frameTravel = false;
+    if (this.heroLocomotionPrev.valid) {
+      frameTravel =
+        Math.hypot(h.x - this.heroLocomotionPrev.x, h.z - this.heroLocomotionPrev.z) > HERO_LOCOMOTION_EPS;
+    }
+    this.heroLocomotionPrev = { x: h.x, z: h.z, valid: true };
+    const moving = clickMove || frameTravel;
+    if (moving) this.interruptHeroStrikeForRun(this.heroGroup);
+    this.setGlbMoveAnimation(this.heroGroup, moving);
     if (this.heroLungeTimer > 0) {
       const p = this.heroLungeTimer / 0.2;
       const amt = 0.38 * Math.sin(p * Math.PI);
@@ -3761,7 +3750,16 @@ export class GameRenderer {
     if (h.hp <= 0) return;
     this.enemyHeroGroup.position.set(h.x, 0, h.z);
     this.enemyHeroGroup.rotation.y = h.facing;
-    this.setGlbMoveAnimation(this.enemyHeroGroup, h.targetX !== null || h.targetZ !== null);
+    const clickMoveE = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
+    let frameTravelE = false;
+    if (this.enemyHeroLocomotionPrev.valid) {
+      frameTravelE =
+        Math.hypot(h.x - this.enemyHeroLocomotionPrev.x, h.z - this.enemyHeroLocomotionPrev.z) > HERO_LOCOMOTION_EPS;
+    }
+    this.enemyHeroLocomotionPrev = { x: h.x, z: h.z, valid: true };
+    const moving = clickMoveE || frameTravelE;
+    if (moving) this.interruptHeroStrikeForRun(this.enemyHeroGroup);
+    this.setGlbMoveAnimation(this.enemyHeroGroup, moving);
 
     if (!this.enemyHeroHpBarBg) {
       const bg = new THREE.Mesh(
@@ -3791,6 +3789,7 @@ export class GameRenderer {
     const alive = new Set(state.units.map((u) => u.id));
     const attackTargets = new Map<number, Vec2>();
     for (const mark of state.combatHitMarks) {
+      if (mark.attackerId === undefined) continue;
       const target = { x: mark.tx, z: mark.tz };
       attackTargets.set(mark.attackerId, target);
       this.unitFaceTargets.set(mark.attackerId, target);
@@ -3842,17 +3841,24 @@ export class GameRenderer {
       const forceRunCatchup = simMoveDist > (attackActive ? 9.5 : 0.65);
       const shouldRun = simMoveDist > UNIT_VISUAL_RUN_EPS && (!attackActive || forceRunCatchup);
       if (shouldRun && attackActive) {
-        const attack = g.userData["glbAttackAction"] as THREE.AnimationAction | undefined;
-        const titan = g.userData["sizeClass"] === "Titan";
-        if (attack) attack.fadeOut(titan ? 0.24 : 0.2);
+        const ud = g.userData as Record<string, unknown>;
+        const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
+        const fade = this.glbAttackOutFadeSec(ud);
         delete g.userData["glbAttackTimer"];
-        this.setGlbBaseActionWeight(g, "run", 1);
+        delete g.userData["glbStrikeActive"];
+        if (!this.tryCrossfadeStrikeIntoRun(ud, strike, fade, { forceRun: true })) {
+          strike?.fadeOut(fade);
+          this.setGlbBaseActionWeight(g, "run", 1);
+        }
       }
+      // Always ease the mesh toward sim when it has drifted. Previously we froze `visual` for the
+      // whole attack clip while `u.x/u.z` kept stepping — Line (long attacks, slower cadence) read
+      // as in-place swings then huge teleports when the timer cleared or catch-up fired.
       if (forceRunCatchup) visual.set(u.x, u.z);
-      else if (!attackActive && shouldRun) {
+      else if (simMoveDist > UNIT_VISUAL_RUN_EPS) {
         visual.x += simDx * UNIT_VISUAL_RUN_CATCHUP;
         visual.y += simDz * UNIT_VISUAL_RUN_CATCHUP;
-      } else if (!attackActive) {
+      } else {
         visual.set(u.x, u.z);
       }
       obj.position.set(visual.x, 0, visual.y);
@@ -4077,17 +4083,7 @@ export class GameRenderer {
         return;
       }
       delete ud!["glbAttackTimer"];
-      const activeStrike = ud?.["glbStrikeActive"] as THREE.AnimationAction | undefined;
-      const attackDefault = ud?.["glbAttackAction"] as THREE.AnimationAction | undefined;
-      const titan = ud?.["sizeClass"] === "Titan";
-      const atkFade = titan ? 0.3 : 0.24;
-      if (activeStrike) {
-        activeStrike.fadeOut(atkFade);
-        delete ud!["glbStrikeActive"];
-      } else if (attackDefault) {
-        attackDefault.fadeOut(atkFade);
-      }
-      if (root) this.setGlbBaseActionWeight(root, ud?.["glbBaseState"] === "idle" ? "idle" : "run", 1);
+      if (root) this.endGlbAttackReturnToLocomotion(root, ud!);
     };
     for (const g of this.unitMeshes.values()) tick(g, true);
     for (const g of this.structureMeshes.values()) tick(g, false);
@@ -4158,6 +4154,78 @@ export class GameRenderer {
     return out;
   }
 
+  /** Crossfade window for run ↔ idle (sim-smoothed mesh vs. choppy pops). */
+  private glbLocomotionCrossfadeSec(ud: Record<string, unknown>): number {
+    const sc = ud["sizeClass"];
+    if (sc === "Titan") return 0.28;
+    if (sc === "hero") return 0.22;
+    if (sc === "Swarm" || sc === "Line") return 0.24;
+    if (sc === "Heavy") return 0.22;
+    return 0.2;
+  }
+
+  /** Attack clip fade-out / recovery into locomotion (tick end, interrupt, hero run break). */
+  private glbAttackOutFadeSec(ud: Record<string, unknown>): number {
+    if (ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS) return 0.42;
+    if (ud["sizeClass"] === "Titan") return 0.38;
+    if (ud["sizeClass"] === "hero") return 0.28;
+    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.34;
+    return 0.32;
+  }
+
+  /** Attack clip fade-in at swing start (overlaps base underlay). */
+  private glbAttackInFadeSec(ud: Record<string, unknown>): number {
+    if (ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS) return 0.24;
+    if (ud["sizeClass"] === "Titan") return 0.22;
+    if (ud["sizeClass"] === "hero") return 0.2;
+    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.2;
+    if (ud["sizeClass"] === "Heavy") return 0.19;
+    return 0.18;
+  }
+
+  /**
+   * Fades the strike out while fading run in (THREE.AnimationAction.crossFadeFrom).
+   * Returns false when recovery should use idle or there is no run clip.
+   */
+  private tryCrossfadeStrikeIntoRun(
+    ud: Record<string, unknown>,
+    strike: THREE.AnimationAction | undefined,
+    fadeSec: number,
+    opts?: { forceRun?: boolean },
+  ): boolean {
+    if (!strike) return false;
+    const wantIdle = opts?.forceRun ? false : ud["glbBaseState"] === "idle";
+    const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
+    if (wantIdle || !run || run === strike) return false;
+    run.enabled = true;
+    run.paused = false;
+    run.play();
+    run.crossFadeFrom(strike, fadeSec, false);
+    ud["glbBaseState"] = "run";
+    return true;
+  }
+
+  /** Called when `glbAttackTimer` reaches zero: strike → locomotion without snapping base weight. */
+  private endGlbAttackReturnToLocomotion(root: THREE.Object3D | null, ud: Record<string, unknown>): void {
+    const fade = this.glbAttackOutFadeSec(ud);
+    const activeStrike = ud["glbStrikeActive"] as THREE.AnimationAction | undefined;
+    const attackDefault = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
+    const strike = activeStrike ?? attackDefault;
+    const wantIdle = ud["glbBaseState"] === "idle";
+    const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
+    if (root && strike && this.tryCrossfadeStrikeIntoRun(ud, strike, fade)) {
+      delete ud["glbStrikeActive"];
+      return;
+    }
+    if (activeStrike) {
+      activeStrike.fadeOut(fade);
+      delete ud["glbStrikeActive"];
+    } else if (attackDefault) {
+      attackDefault.fadeOut(fade);
+    }
+    if (root) this.setGlbBaseActionWeight(root, wantIdle && idle ? "idle" : "run", 1);
+  }
+
   private setGlbBaseActionWeight(root: THREE.Object3D, state: "run" | "idle", weight: number): void {
     const ud = root.userData as Record<string, unknown>;
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
@@ -4171,6 +4239,21 @@ export class GameRenderer {
     action.stopFading();
     action.setEffectiveWeight(weight);
     ud["glbBaseState"] = resolvedState;
+  }
+
+  private interruptHeroStrikeForRun(root: THREE.Object3D): void {
+    const ud = root.userData as Record<string, unknown>;
+    if (ud["sizeClass"] !== "hero" || ud["glbAttackTimer"] === undefined) return;
+    const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
+    const attackDefault = ud["glbAttackAction"] as THREE.AnimationAction | undefined;
+    const fade = this.glbAttackOutFadeSec(ud);
+    delete ud["glbAttackTimer"];
+    delete ud["glbStrikeActive"];
+    if (!this.tryCrossfadeStrikeIntoRun(ud, strike, fade, { forceRun: true })) {
+      strike?.fadeOut(fade * 0.85);
+      if (attackDefault && attackDefault !== strike) attackDefault.fadeOut(fade * 0.85);
+      this.setGlbBaseActionWeight(root, "run", 1);
+    }
   }
 
   private playGlbAttackAnimation(root: THREE.Object3D): void {
@@ -4206,11 +4289,11 @@ export class GameRenderer {
         duration = Math.max(minDuration, strikeDurs[idx]!);
       }
     }
-    const inFade = geodeMonks ? 0.11 : titan ? 0.18 : ud["sizeClass"] === "hero" ? 0.16 : 0.14;
-    const baseUnderlay = geodeMonks ? 0.5 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    const inFade = this.glbAttackInFadeSec(ud);
+    const baseUnderlay = this.glbBaseUnderlayDuringAttack(ud);
     this.setGlbBaseActionWeight(root, ud["glbBaseState"] === "idle" ? "idle" : "run", baseUnderlay);
     if (attackDefault && attack !== attackDefault) {
-      attackDefault.fadeOut(0.08);
+      attackDefault.fadeOut(Math.max(0.1, inFade * 0.55));
     }
     ud["glbStrikeActive"] = attack;
     attack.enabled = true;
@@ -4304,42 +4387,56 @@ export class GameRenderer {
     const ud = root.userData as Record<string, unknown>;
     const death = ud["glbDeathAction"] as THREE.AnimationAction | undefined;
     if (!death) return;
+    const dFade = 0.26;
     for (const key of ["glbRunAction", "glbIdleAction", "glbAttackAction"] as const) {
       const a = ud[key] as THREE.AnimationAction | undefined;
-      if (a) a.stop();
+      if (a) a.fadeOut(dFade);
     }
     death.enabled = true;
     death.reset();
-    death.setEffectiveWeight(1);
+    death.setEffectiveWeight(0);
+    death.fadeIn(dFade);
     death.play();
+  }
+
+  /** Base locomotion weight under an active attack crossfade (must match `playGlbAttackAnimation`). */
+  private glbBaseUnderlayDuringAttack(ud: Record<string, unknown>): number {
+    const producedId = ud["producedUnitId"] as string | undefined;
+    const geodeMonks = producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS;
+    const titan = ud["sizeClass"] === "Titan";
+    // Lower run cross-weight so baked root motion in the slam clip is not double-driven (twitchy).
+    return geodeMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {
     const ud = root.userData as Record<string, unknown>;
-    if (ud["glbAttackTimer"] !== undefined) return;
+    const inAttack = ud["glbAttackTimer"] !== undefined;
+    const baseW = inAttack ? this.glbBaseUnderlayDuringAttack(ud) : 1;
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
     if (!run) return;
-    const next = moving || !idle ? "run" : "idle";
+    // While an attack clip is active, `playGlbAttackAnimation` owns the run/idle underlay. Driving
+    // run↔idle from smoothed sim motion here fights that (shouldRun is false whenever attackActive
+    // without force catch-up), which reads as constant snapping — especially on Swarm/Line.
+    if (inAttack) {
+      const pinned = (ud["glbBaseState"] as "run" | "idle" | undefined) ?? "run";
+      this.setGlbBaseActionWeight(root, pinned === "idle" && idle ? "idle" : "run", baseW);
+      return;
+    }
+    const next = (moving || !idle ? "run" : "idle") as "run" | "idle";
     if (ud["glbBaseState"] === next) {
-      this.setGlbBaseActionWeight(root, next, 1);
+      this.setGlbBaseActionWeight(root, next, baseW);
       return;
     }
     const from = next === "run" ? idle : run;
     const to = next === "run" ? run : idle;
     if (!to) return;
-    const titan = ud["sizeClass"] === "Titan";
-    const moveFade = titan ? 0.2 : 0.12;
+    const moveFade = this.glbLocomotionCrossfadeSec(ud);
     if (from && from !== to) from.fadeOut(moveFade);
     to.enabled = true;
     to.paused = false;
     to.play();
-    if (titan) {
-      to.stopFading();
-      to.setEffectiveWeight(1);
-    } else {
-      to.fadeIn(moveFade);
-    }
+    to.fadeIn(moveFade);
     ud["glbBaseState"] = next;
   }
 

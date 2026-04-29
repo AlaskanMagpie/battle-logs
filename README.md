@@ -14,10 +14,12 @@ Design reference: **[docs/prd-v2.md](docs/prd-v2.md)** (Vibe Jam PRD v2).
 
 ```bash
 npm install
-npm run dev
+npm run localhost
 ```
 
-Open the dev URL (e.g. `http://localhost:2222/` if using the project Vite port).
+Open **`http://localhost:2222/`** — Vite is configured with `strictPort: true`, so the dev server always uses 2222 or exits with “port in use” (no silent 2223/2224).
+
+`npm run localhost` is the safe local reset path: it closes old listeners on 2222/2223/2224, clears Vite's transform cache, then starts a fresh strict 2222 server. Use `npm run dev` only when you know no stale server is already running.
 
 ## Controls (Phase 1)
 

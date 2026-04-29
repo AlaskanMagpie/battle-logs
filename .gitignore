@@ -5,6 +5,12 @@ public/map.local.json
 .env.local
 *.log
 
+# Local / agent artifacts
+test-results/
+output/
+.playwright-cli/
+.cursor/plans/
+
 # Stash chat/Download drops here; agent moves to public/assets/units/
 incoming/*
 !incoming/README.md

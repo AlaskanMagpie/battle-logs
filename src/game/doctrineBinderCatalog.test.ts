@@ -37,19 +37,19 @@ describe("Doctrine binder catalog", () => {
     }
   });
 
-  it("maps Bastion's heavy placeholder slot to Root Sanctum's two Geode Monks", () => {
+  it("maps Bastion's heavy placeholder slot to Rootbound Crag's two Geode Monks", () => {
     const entry = getCatalogEntry("bastion_keep");
     expect(entry).toBeTruthy();
     expect(isStructureEntry(entry!)).toBe(true);
     if (!entry || !isStructureEntry(entry)) return;
-    expect(entry.name).toBe("Root Sanctum");
+    expect(entry.name).toBe("Rootbound Crag");
     expect(entry.producedSizeClass).toBe("Heavy");
     expect(productionBatchSizeForClass(entry.producedSizeClass)).toBe(2);
     expect(entry.producedFlavor).toContain("Amber Geode Monks");
     expect(entry.producedUnitId).toBe(PRODUCED_UNIT_AMBER_GEODE_MONKS);
   });
 
-  it("only Root Sanctum uses the Amber Geode Monks spawn profile", () => {
+  it("only Rootbound Crag uses the Amber Geode Monks spawn profile", () => {
     const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS).map((s) => s.id);
     expect(ids).toEqual(["bastion_keep"]);
   });

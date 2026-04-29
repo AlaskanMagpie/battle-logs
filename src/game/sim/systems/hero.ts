@@ -1,10 +1,11 @@
 import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
 import { logGame } from "../../gameLog";
 import { planChainedPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import { armTapClaimAnchor, findKeep, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
+import { armTapClaimAnchor, findKeep, heroStandPositionNearKeepAnchor, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
 import { structureObstacleFootprints } from "../../structureObstacles";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
+import { applyHeroFacingTowardWorld } from "./heroFacing";
 import { tryPlayerHeroStrike } from "./heroStrike";
 
 const HERO_CAPTAIN_IDLE_TICKS = Math.round(1.2 * TICK_HZ);
@@ -215,6 +216,17 @@ export function heroSystem(s: GameState): void {
     }
   }
 
+  const sf = h.spellFacingToward;
+  if (sf !== undefined) {
+    h.spellFacingToward = undefined;
+    applyHeroFacingTowardWorld(s, sf.x, sf.z);
+  }
+
+  if (h.claimChannelTarget !== null) {
+    const tap = s.taps[h.claimChannelTarget];
+    if (tap) applyHeroFacingTowardWorld(s, tap.x, tap.z);
+  }
+
   // Auto arcane strike when in range (no HUD copy; intents still handle manual LMB feedback).
   if (h.attackCooldownTicksRemaining === 0) {
     tryPlayerHeroStrike(s);
@@ -228,8 +240,9 @@ export function respawnDeadHeroAtKeep(s: GameState): void {
   const keep = findKeep(s);
   if (!keep) return;
   h.hp = h.maxHp;
-  h.x = keep.x;
-  h.z = keep.z;
+  const pos = heroStandPositionNearKeepAnchor({ x: keep.x, z: keep.z }, s.map, "player");
+  h.x = pos.x;
+  h.z = pos.z;
   h.targetX = null;
   h.targetZ = null;
   h.moveWaypoints.length = 0;

@@ -52,6 +52,9 @@ function isPreviewUnitFile(file: string): boolean {
   return (
     isAzureSpearSwarmFile(file) ||
     file === "acrobat_compressed.glb" ||
+    file === "bastion_keep_compressed.glb" ||
+    file === "driftwood_oasis_compressed.glb" ||
+    file === "verdant_citadel_titan_base.glb" ||
     file.startsWith(LANTERNBOUND_LINE_PREFIX)
   );
 }
@@ -183,11 +186,15 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
     if (file.includes("starbound_arcanist_hero")) {
       playback = Math.max(playback, 1.1);
     }
+    // Amber golem squad: slightly slower loop read vs frantic short Meshy run cycles.
+    if (file.includes("amber_geode_monks_run")) playback *= 1.14;
     return playback;
   }
   const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
   let playback = Math.max(clip.duration, target);
   if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.55);
+  // Idle slot uses walk clip — stretch so stance transitions don't feel twitchy.
+  if (file.includes("amber_geode_monks_walk")) playback = Math.max(playback, 1.38);
   return playback;
 }
 
@@ -247,6 +254,45 @@ function movingTrackCount(clip: THREE.AnimationClip): number {
   return moving;
 }
 
+function animClipLeafLower(name: string): string {
+  const t = name.trim();
+  const parts = t.split(/[|/\\]/u);
+  return (parts[parts.length - 1] ?? t).trim().toLowerCase();
+}
+
+function starboundHeroForbiddenLocoName(name: string): boolean {
+  const h = name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  return /\b(kick|lunge|sweep|spin|jump|360|weapon|combo|mage|spell|cast|soell|dab|taunt|dance|flip)\b/.test(h);
+}
+
+/**
+ * Hard-pick authored locomotion for the Starbound wizard GLB (same file as kicks/spells).
+ * Uses leaf names so `Armature|Running` still resolves; rejects flourish clips if mis-tagged.
+ */
+function starboundHeroLocomotionClip(
+  animations: THREE.AnimationClip[],
+  role: "run" | "idle",
+): THREE.AnimationClip | null {
+  const okTracks = (c: THREE.AnimationClip) => movingTrackCount(c) > 0;
+  if (role === "run") {
+    const byLeaf = animations.filter((c) => animClipLeafLower(c.name) === "running" && okTracks(c));
+    const running = byLeaf.find((c) => !starboundHeroForbiddenLocoName(c.name)) ?? byLeaf[0];
+    if (running) return running;
+    const walking = animations.find(
+      (c) => animClipLeafLower(c.name) === "walking" && okTracks(c) && !starboundHeroForbiddenLocoName(c.name),
+    );
+    return walking ?? null;
+  }
+  const idles = animations.filter((c) => {
+    if (!okTracks(c)) return false;
+    if (animClipLeafLower(c.name) !== "idle") return false;
+    if (/\bswim\b/i.test(c.name)) return false;
+    if (starboundHeroForbiddenLocoName(c.name)) return false;
+    return true;
+  });
+  return idles[0] ?? null;
+}
+
 function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, clip: THREE.AnimationClip): number {
   if (movingTrackCount(clip) <= 0) return 0;
   const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
@@ -270,7 +316,11 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
     }
   } else if (role === "attack") {
     if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 100;
-    if (file.includes("starbound_arcanist_hero") && /\b(mage|spell|soell|cast)\b/.test(hay)) score += 180;
+    if (file.includes("starbound_arcanist_hero")) {
+      // Prefer readable melee on the default action; short cast bursts are strike-roulette only.
+      if (/\b(mage|spell|soell|cast)\b/.test(hay)) score -= 220;
+      if (/\b(weapon|kick|sweep|lunge)\b/.test(hay)) score += 120;
+    }
   } else if (role === "death") {
     if (/\b(dead|death|die|dying|fall|falling)\b/.test(hay)) score += 100;
   }
@@ -285,6 +335,21 @@ function clipForRole(
   file: string,
 ): THREE.AnimationClip | null {
   if (!animations.length) return null;
+  /** Starbound wizard pack: pin real run + standing idle (never kicks / swim idle / cast micro-clips). */
+  if (isStarboundHeroFile(file)) {
+    if (role === "run" || role === "idle") {
+      const picked = starboundHeroLocomotionClip(animations, role);
+      if (picked) return picked;
+    }
+    if (role === "attack") {
+      const weapon = animations.find(
+        (c) => /weapon_combo/i.test(c.name) && !/_1$/i.test(c.name.trim()) && movingTrackCount(c) > 0,
+      );
+      if (weapon) return weapon;
+      const weapon1 = animations.find((c) => /weapon_combo_1/i.test(c.name) && movingTrackCount(c) > 0);
+      if (weapon1) return weapon1;
+    }
+  }
   let best = animations[0]!;
   let bestScore = clipRoleScore(role, file, best);
   for (const clip of animations.slice(1)) {
@@ -308,6 +373,10 @@ function isHeroStrikeRouletteClip(clip: THREE.AnimationClip): boolean {
   if (movingTrackCount(clip) < 2) return false;
   const hay = clip.name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   if (/\b(death|die|dying|fall|falling)\b/.test(hay)) return false;
+  const leaf = animClipLeafLower(clip.name);
+  if (leaf === "idle" || leaf === "running" || leaf === "walking") return false;
+  if (/\bswim\b/.test(hay)) return false;
+  if (/\bidle\b/.test(hay) && !/\b(kick|weapon|combo|attack|cast|spin|jump|lunge|sweep)\b/.test(hay)) return false;
   const loco = /\b(walk|walking|run|running|sprint|jog)\b/.test(hay);
   const flourish =
     /\b(spell|cast|mage|magic|kick|flip|jump|attack|slash|strike|combo|dance|spin|fire|wave|summon|portal)\b/.test(hay);
@@ -691,7 +760,7 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw);
+        const clip = safeClip(clipRaw, opts.attackFile.includes("amber_geode_monks_attack"));
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = false;
@@ -710,7 +779,7 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw);
+        const clip = safeClip(clipRaw, opts.deathFile.includes("amber_geode_monks_death"));
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
@@ -832,8 +901,12 @@ const TOWER_GLB_MANIFEST_ORDER = [
 ] as const;
 
 const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
+  /** Permanent HQ + Rootbound Crag — compressed crag shell (Amber Geode Monks home). */
+  [KEEP_ID]: "bastion_keep_compressed.glb",
   outpost: "driftwood_oasis_compressed.glb",
-  bastion_keep: "bastion_keep_building.glb",
+  /** Cragrunner Redoubt — cliff acropolis mesh; `acrobat_compressed.glb` is excluded from generic tower hashing (preview filter). */
+  watchtower: "acrobat_compressed.glb",
+  bastion_keep: "bastion_keep_compressed.glb",
   verdant_citadel: "verdant_citadel_titan_base.glb",
 };
 
@@ -849,6 +922,42 @@ function pickTowerFile(catalogId: string, m: UnitGlbManifest): string | null {
   const towerFiles = productionArtFiles(m);
   if (!towerFiles.length) return null;
   return towerFiles[towerManifestIndex(catalogId) % towerFiles.length] ?? null;
+}
+
+/**
+ * Asset lab: tower GLB + spawned-unit preview GLB using the same rules as the match (`pickTowerFile` + `pickFileForUnit`).
+ * Note: e.g. `watchtower` uses `acrobat_compressed.glb` for the **building**; produced scouts use `azure_spear_swarm` profile files.
+ */
+export async function getAssetLabTowerAndUnitGlbFiles(catalogId: string): Promise<{
+  towerFile: string | null;
+  unitFile: string | null;
+}> {
+  const m = await loadManifest();
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return { towerFile: null, unitFile: null };
+  const towerFile = pickTowerFile(catalogId, m);
+  const unitFile = pickFileForUnit(entry.producedSizeClass, entry.producedUnitId, m);
+  return { towerFile, unitFile };
+}
+
+/**
+ * Extra unit GLBs whose clips the match loads beside the base `pickFileForUnit` file (idle / attack / death).
+ * Asset lab merges these into one preview so role dropdowns are not stuck on a single run clip.
+ */
+export async function getAssetLabUnitExtraAnimationFiles(catalogId: string): Promise<readonly string[]> {
+  const m = await loadManifest();
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return [];
+  const kind = entry.producedSizeClass;
+  const pid = entry.producedUnitId;
+  const base = pickFileForUnit(kind, pid, m);
+  if (!base) return [];
+  const parts = [
+    idleFileForUnit(kind, pid, m),
+    attackFileForUnit(kind, pid, m),
+    deathFileForUnit(kind, pid, m),
+  ].filter((f): f is string => typeof f === "string" && f.length > 0 && f !== base);
+  return [...new Set(parts)];
 }
 
 /** Root-relative GLB URL for HUD doctrine thumbnails when no `/assets/cards/*.png` exists (tower mesh only). */

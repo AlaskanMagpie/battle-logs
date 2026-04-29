@@ -41,6 +41,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     signalTypes: [],
     productionSeconds: KEEP_SWARM_PERIOD_SEC,
     producedSizeClass: "Swarm",
+    producedUnitId: PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
     producedPop: 4,
     localPopCap: 8,
     maxHp: KEEP_MAX_HP,
@@ -154,7 +155,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
   },
   {
     id: "bastion_keep",
-    name: "Root Sanctum",
+    name: "Rootbound Crag",
     kind: "structure",
     fluxCost: 210,
     buildSeconds: 2,

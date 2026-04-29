@@ -6,15 +6,17 @@ import {
 } from "./game/catalog";
 import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
-import { loadMapMerged } from "./game/loadMap";
-import { QUICK_MATCH_DOCTRINE_SLOTS } from "./game/quickMatchDoctrine";
+import { DEFAULT_MAP_URL, loadMapMerged, MAP_REGISTRY } from "./game/loadMap";
+import {
+  doctrineSlotsForUrlQuickMatch,
+  isUserDoctrineHandViableForQuickMatch,
+} from "./game/quickMatchDoctrine";
 import { recordLocalLeaderboardResult } from "./game/leaderboard";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
 import {
   canPlaceStructureHere,
   createInitialState,
   doctrineCardPlayability,
-  placementFailureReason,
   pushFx,
   type GameState,
 } from "./game/state";
@@ -25,6 +27,7 @@ import { configureGamePortals, parsePortalContext, type PortalContext } from "./
 import { GameRenderer } from "./render/scene";
 import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
 import { tcgCardSlotHtml } from "./ui/doctrineCard";
+import { loadDoctrineSlots } from "./ui/doctrineStorage";
 import {
   destroyDragGhost,
   DRAG_THRESHOLD_PX,
@@ -33,6 +36,7 @@ import {
   pointInRect,
 } from "./ui/doctrineDrag";
 import { mountDoctrinePicker } from "./ui/doctrinePicker";
+import { installCardArtOverlayCalibrator } from "./ui/cardArtOverlay";
 import { attachDoctrineHandPeek, mountHud, updateHud } from "./ui/hud";
 import { hideRulesToast, showRulesToast } from "./ui/rulesToast";
 import {
@@ -466,7 +470,7 @@ function wireDoctrineDragToMap(
       renderer.setCommandGhost(null, null, false);
     }
     const hint = commandTargetingHint(entry);
-    const msg = playable.reason ?? (playable.longCooldown ? `${hint} — ${playable.hint}` : hint);
+    const msg = playable.reason ?? hint;
     updateDragReason(
       ev.clientX,
       ev.clientY,
@@ -932,7 +936,11 @@ function runMatch(
         ev.preventDefault();
         pendingIntents.push({ type: "begin_hero_teleport" });
       } else if (ev.key === "Escape") {
+        ev.preventDefault();
         cancelRightHold();
+        if (state.pendingPlacementCatalogId || state.rallyClickPending || state.teleportClickPending) {
+          pendingIntents.push({ type: "clear_placement" });
+        }
       }
     }, { signal });
 
@@ -1172,6 +1180,11 @@ function runMatch(
 
       if (ev.button === 2) {
         ev.preventDefault();
+        if (state.pendingPlacementCatalogId || state.rallyClickPending) {
+          pendingIntents.push({ type: "clear_placement" });
+          cancelRightHold();
+          return;
+        }
         const hasSelection = state.selectedUnitIds.length > 0;
         rightHold = {
           pointerId: ev.pointerId,
@@ -1476,10 +1489,11 @@ function stripLegacyPrematchCalibrateParams(): void {
   }
 }
 stripLegacyPrematchCalibrateParams();
+installCardArtOverlayCalibrator();
 const params = new URLSearchParams(window.location.search);
 const portalContext = parsePortalContext(params);
 const quickMatch = params.get("quickMatch") === "1" || params.get("testMatch") === "1";
-const mountPortalPicker = (): void => {
+const mountPortalPicker = (onReady?: () => void): void => {
   pickerRoot.style.display = "";
   if (portalContext.enteredViaPortal) {
     try {
@@ -1490,11 +1504,28 @@ const mountPortalPicker = (): void => {
   }
   mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
     runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext);
-  }, portalContext);
+  }, portalContext, onReady);
 };
-if (quickMatch) {
-  pickerRoot.style.display = "none";
-  runMatch([...QUICK_MATCH_DOCTRINE_SLOTS], params.get("map") || "/map.json", mountPortalPicker, portalContext);
-} else {
-  mountPortalPicker();
+
+async function boot(): Promise<void> {
+  if (quickMatch) {
+    pickerRoot.style.display = "none";
+    const stored = loadDoctrineSlots();
+    const slotRow = doctrineSlotsForUrlQuickMatch(stored);
+    const mapParam = params.get("map");
+    let mapUrl = mapParam ?? DEFAULT_MAP_URL;
+    if (!mapParam && isUserDoctrineHandViableForQuickMatch(stored)) {
+      try {
+        const saved = localStorage.getItem("signalWarsMapUrl.v2");
+        if (saved && MAP_REGISTRY.some((m) => m.url === saved)) mapUrl = saved;
+      } catch {
+        /* ignore */
+      }
+    }
+    runMatch([...slotRow], mapUrl, mountPortalPicker, portalContext);
+  } else {
+    mountPortalPicker();
+  }
 }
+
+void boot();

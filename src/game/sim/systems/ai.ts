@@ -200,11 +200,12 @@ function moveUnitAutonomousOnPath(
     wp0 !== undefined &&
     (segmentHitsMapObstacles(s.map, u, wp0, r, structureObstacles) ||
       circleOverlapsMapObstacles(s.map, wp0, r, structureObstacles));
+  const ao0 = u.autoOrder;
   const stale =
-    !u.autoOrder ||
-    dist2(u.autoOrder, target) > 8 * 8 ||
+    !ao0 ||
+    dist2(ao0, target) > 8 * 8 ||
     pathBlocked ||
-    (!u.flying && u.autoOrder.waypoints.length === 0 && dist2(u, target) > 3.4 * 3.4);
+    (!u.flying && ao0.waypoints.length === 0 && dist2(u, target) > 3.4 * 3.4);
   if (stale) {
     u.autoOrder = {
       x: target.x,
@@ -212,10 +213,11 @@ function moveUnitAutonomousOnPath(
       waypoints: u.flying ? [] : planChainedPathAroundMapObstacles(s.map, u, target, r, structureObstacles),
     };
   }
-  const next = !u.flying && u.autoOrder.waypoints.length > 0 ? u.autoOrder.waypoints[0]! : target;
+  const ao = u.autoOrder!;
+  const next = !u.flying && ao.waypoints.length > 0 ? ao.waypoints[0]! : target;
   moveToward(u, next, step);
   clampToWorldAndObstacles(s, u, structureObstacles);
-  if (dist2(u, next) <= 1.4 * 1.4 && u.autoOrder.waypoints.length > 0) u.autoOrder.waypoints.shift();
+  if (dist2(u, next) <= 1.4 * 1.4 && ao.waypoints.length > 0) ao.waypoints.shift();
   const arrived = dist2(u, target) <= 2.2 * 2.2;
   if (arrived) u.autoOrder = undefined;
   return arrived;
@@ -441,7 +443,6 @@ export function movement(s: GameState): void {
   }
 
   const hero = s.hero;
-  const heroR2 = HERO_FOLLOW_RADIUS * HERO_FOLLOW_RADIUS;
   const defense = s.armyStance === "defense";
   const DEFENSE_ENGAGE_RADIUS = HERO_FOLLOW_RADIUS * 1.42;
   const defR2 = DEFENSE_ENGAGE_RADIUS * DEFENSE_ENGAGE_RADIUS;

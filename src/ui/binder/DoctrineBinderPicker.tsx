@@ -6,7 +6,7 @@ import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
-import { QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
+import { fillDoctrineSlotsWithDuplicatePicks, QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
 import {
   buildReturnPortalUrlForPrematch,
   buildVibeJamExitUrlForPrematch,
@@ -21,12 +21,16 @@ import {
 } from "../cardDetailPop";
 import { doctrineSlotButtonInnerHtml, tcgCardSlotHtml } from "../doctrineCard";
 import { attachDoctrineHandPeek } from "../hud";
+import { showComicLoreModal } from "../intro/comicIntro";
 import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
 import { getBinderTextureForCatalogId } from "./binderCardTexture";
 import {
+  BINDER_CELLS_PER_PAGE,
   BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_TOTAL_CELLS,
+  BINDER_COLS,
+  BINDER_ROWS,
   CardBinderEngine,
   makeEmptyBinderPanelCanvas,
   type CodexPointerDragEvent,
@@ -58,6 +62,9 @@ const validMapUrls = new Set(MAP_REGISTRY.map((m) => m.url));
 const MIN_FILLED = 4;
 /** Long-press on the tome hint strip to open goals + controls without resizing the 3D view. */
 const BINDER_HOWTO_HOLD_MS = 480;
+/** Open to the first true two-page spread; hydrate enough cells that both visible halves have real card art. */
+const BINDER_INITIAL_SPREAD_INDEX = 1;
+const BINDER_INITIAL_ART_CELLS = BINDER_CELLS_PER_SHEET + BINDER_CELLS_PER_PAGE;
 const QUICK_PICK_IDS: readonly string[] = [
   "outpost",
   "watchtower",
@@ -107,42 +114,192 @@ function slotUnderPointerInTrack(clientX: number, clientY: number, track: HTMLEl
   return null;
 }
 
+function swapBinderSlotPicks(
+  picks: readonly (number | null)[] | undefined,
+  a: number,
+  b: number,
+): (number | null)[] {
+  const out: (number | null)[] = Array.from(
+    { length: DOCTRINE_SLOT_COUNT },
+    (_, i) => (i < (picks?.length ?? 0) ? picks![i] ?? null : null),
+  );
+  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+    if (out[i] === a) out[i] = b;
+    else if (out[i] === b) out[i] = a;
+  }
+  return out;
+}
+
 /** Catalog ids pinned to the **first codex cell** (recto top-left) so key cards are always on page 1. */
 const CODEX_PIN_FIRST_SLOT: readonly string[] = ["watchtower"];
+
+const BINDER_SHEET_COUNT = BINDER_CODEX_TOTAL_CELLS / BINDER_CELLS_PER_SHEET;
+
+/** Local panel index 0–17 on one sheet: row-major 3×3 recto then 3×3 verso; includes spine neighbors (2↔9, 5↔12, 8↔15). */
+function binderLocalNeighborLocals(local: number): readonly number[] {
+  const pageOffset = local < BINDER_CELLS_PER_PAGE ? 0 : BINDER_CELLS_PER_PAGE;
+  const loc = local - pageOffset;
+  const row = Math.floor(loc / BINDER_COLS);
+  const col = loc % BINDER_COLS;
+  const n: number[] = [];
+  if (col > 0) n.push(local - 1);
+  if (col < BINDER_COLS - 1) n.push(local + 1);
+  if (row > 0) n.push(local - BINDER_COLS);
+  if (row < BINDER_ROWS - 1) n.push(local + BINDER_COLS);
+  if (pageOffset === 0 && col === BINDER_COLS - 1) n.push(BINDER_CELLS_PER_PAGE + row * BINDER_COLS);
+  if (pageOffset === BINDER_CELLS_PER_PAGE && col === 0) n.push(row * BINDER_COLS + (BINDER_COLS - 1));
+  return n;
+}
+
+/** Precompute undirected edges within each sheet (each pair once, smaller index first). */
+const BINDER_SHEET_EDGE_PAIRS: readonly (readonly [number, number])[] = (() => {
+  const pairs: [number, number][] = [];
+  const seen = new Set<string>();
+  for (let local = 0; local < BINDER_CELLS_PER_SHEET; local++) {
+    for (const nb of binderLocalNeighborLocals(local)) {
+      const a = Math.min(local, nb);
+      const b = Math.max(local, nb);
+      const key = `${a},${b}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push([a, b]);
+    }
+  }
+  return pairs;
+})();
+
+function scoreBinderCodexLayout(ids: readonly string[]): number {
+  let adjacentSame = 0;
+  for (let s = 0; s < BINDER_SHEET_COUNT; s++) {
+    const base = s * BINDER_CELLS_PER_SHEET;
+    for (const [la, lb] of BINDER_SHEET_EDGE_PAIRS) {
+      if (ids[base + la] === ids[base + lb]) adjacentSame++;
+    }
+  }
+  let pageBalance = 0;
+  for (let s = 0; s < BINDER_SHEET_COUNT; s++) {
+    const base = s * BINDER_CELLS_PER_SHEET;
+    const left = new Map<string, number>();
+    const right = new Map<string, number>();
+    for (let k = 0; k < BINDER_CELLS_PER_PAGE; k++) {
+      const id = ids[base + k]!;
+      left.set(id, (left.get(id) ?? 0) + 1);
+    }
+    for (let k = 0; k < BINDER_CELLS_PER_PAGE; k++) {
+      const id = ids[base + BINDER_CELLS_PER_PAGE + k]!;
+      right.set(id, (right.get(id) ?? 0) + 1);
+    }
+    const idsOnSheet = new Set<string>([...left.keys(), ...right.keys()]);
+    for (const id of idsOnSheet) {
+      pageBalance += Math.abs((left.get(id) ?? 0) - (right.get(id) ?? 0));
+    }
+  }
+  return adjacentSame * 100 + pageBalance;
+}
+
+function fisherYates<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j]!, arr[i]!];
+  }
+}
+
+/**
+ * Hill-climb: swap pairs (slot 0 fixed when `fixedIndex === 0`) to reduce same-card neighbors on each sheet
+ * (including across the spine) and balance repeats left vs right page.
+ */
+function optimizeBinderCodexLayout(out: string[], fixedIndex: number | null): void {
+  const n = out.length;
+  const swapRangeLo = fixedIndex === 0 ? 1 : 0;
+  const swapRangeHi = n - 1;
+  if (swapRangeHi < swapRangeLo) return;
+
+  let best = scoreBinderCodexLayout(out);
+  const maxIter = 14000;
+  for (let iter = 0; iter < maxIter; iter++) {
+    const i = swapRangeLo + Math.floor(Math.random() * (swapRangeHi - swapRangeLo + 1));
+    const j = swapRangeLo + Math.floor(Math.random() * (swapRangeHi - swapRangeLo + 1));
+    if (i === j) continue;
+    const a = out[i]!;
+    const b = out[j]!;
+    out[i] = b;
+    out[j] = a;
+    const next = scoreBinderCodexLayout(out);
+    if (next <= best) {
+      best = next;
+    } else {
+      out[i] = a;
+      out[j] = b;
+    }
+  }
+}
+
+const BINDER_LAYOUT_RESTARTS = 4;
 
 /** One texture index per duplex slot (`BINDER_CODEX_TOTAL_CELLS`); repeats when the catalog is smaller than the grid. */
 function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
   if (baseIds.length === 0) return [];
   const rotated = [...baseIds];
-  for (let i = rotated.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [rotated[i], rotated[j]] = [rotated[j]!, rotated[i]!];
-  }
-  const out: string[] = [];
+  fisherYates(rotated);
+  const multiset: string[] = [];
   for (let i = 0; i < BINDER_CODEX_TOTAL_CELLS; i++) {
-    out.push(rotated[i % rotated.length]!);
+    multiset.push(rotated[i % rotated.length]!);
   }
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j]!, out[i]!];
-  }
-  for (const pinId of CODEX_PIN_FIRST_SLOT) {
-    if (!baseIds.includes(pinId)) continue;
-    const at = out.indexOf(pinId);
-    if (at >= 0 && at !== 0) {
-      const swap = out[0]!;
-      out[0] = pinId;
-      out[at] = swap;
+
+  let pinId: string | null = null;
+  for (const pid of CODEX_PIN_FIRST_SLOT) {
+    if (baseIds.includes(pid)) {
+      pinId = pid;
+      break;
     }
   }
-  return out;
+
+  let bestOut: string[] | null = null;
+  let bestScore = Infinity;
+
+  const pinOk = pinId !== null && multiset.includes(pinId);
+
+  const consider = (candidate: string[]): void => {
+    optimizeBinderCodexLayout(candidate, pinOk ? 0 : null);
+    const sc = scoreBinderCodexLayout(candidate);
+    if (sc < bestScore) {
+      bestScore = sc;
+      bestOut = [...candidate];
+    }
+  };
+
+  if (pinOk && pinId !== null) {
+    const basePool = [...multiset];
+    const at = basePool.indexOf(pinId);
+    basePool.splice(at, 1);
+    for (let r = 0; r < BINDER_LAYOUT_RESTARTS; r++) {
+      const fill = [...basePool];
+      fisherYates(fill);
+      const candidate = new Array<string>(BINDER_CODEX_TOTAL_CELLS);
+      candidate[0] = pinId;
+      for (let i = 0; i < fill.length; i++) {
+        candidate[i + 1] = fill[i]!;
+      }
+      consider(candidate);
+    }
+  } else {
+    for (let r = 0; r < BINDER_LAYOUT_RESTARTS; r++) {
+      const candidate = [...multiset];
+      fisherYates(candidate);
+      consider(candidate);
+    }
+  }
+
+  return bestOut ?? [...multiset];
 }
 
 export function DoctrineBinderPicker({
   onStart,
+  onReady,
   portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
   onStart: (slots: (string | null)[], mapUrl: string) => void;
+  onReady?: () => void;
   portalContext?: PortalContext;
 }): ReactElement {
   const prematchVibeJamHref = useMemo(
@@ -161,6 +318,8 @@ export function DoctrineBinderPicker({
   const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(isBinderLayoutCalibrateMode);
 
   const orderedRef = useRef<string[]>([...BINDER_GRID_CATALOG_IDS]);
+  /** Parallel to `orderedRef` — the live texture array passed to `CardBinderEngine.setTextures` (incl. swaps). */
+  const binderPanelTexturesRef = useRef<THREE.Texture[] | null>(null);
   const initialPicker = useMemo(() => loadDoctrinePickerState(), []);
   const [slots, setSlots] = useState<(string | null)[]>(() =>
     normalizeDoctrineSlotsForMatch(
@@ -174,6 +333,7 @@ export function DoctrineBinderPicker({
   const activeDoctrineSlotRef = useRef<number | null>(null);
   activeDoctrineSlotRef.current = activeDoctrineSlot;
   const [loading, setLoading] = useState(true);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
   const [page, setPage] = useState({ c: 0, t: 1 });
   const [mapUrl, setMapUrl] = useState<string>(() => {
     try {
@@ -197,22 +357,28 @@ export function DoctrineBinderPicker({
   const detailTapRef = useRef<{ t: number; idx: number | null }>({ t: 0, idx: null });
   const codexDragBusyRef = useRef(false);
 
-  const [codexDrag, setCodexDrag] = useState<{ catalogId: string; x: number; y: number } | null>(null);
+  const [codexDrag, setCodexDrag] = useState<{ catalogId: string } | null>(null);
+  const codexDragPosRef = useRef({ x: 0, y: 0 });
   const codexGhostRef = useRef<HTMLDivElement | null>(null);
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
   const [dragOverHandZone, setDragOverHandZone] = useState(false);
   const [portalTransitioning, setPortalTransitioning] = useState(false);
   const [portalExitConfirmOpen, setPortalExitConfirmOpen] = useState(false);
+  const [quickfillConfirmOpen, setQuickfillConfirmOpen] = useState(false);
   const [binderHowToOpen, setBinderHowToOpen] = useState(false);
   const [tomeHintPressed, setTomeHintPressed] = useState(false);
   const binderHowToOpenRef = useRef(false);
   binderHowToOpenRef.current = binderHowToOpen;
+  const quickfillConfirmOpenRef = useRef(false);
+  quickfillConfirmOpenRef.current = quickfillConfirmOpen;
   const binderHowToHoldTimerRef = useRef<number | null>(null);
 
   const slotsRef = useRef(slots);
   slotsRef.current = slots;
   const binderSlotPickRef = useRef(binderSlotPick);
   binderSlotPickRef.current = binderSlotPick;
+  const mapUrlRef = useRef(mapUrl);
+  mapUrlRef.current = mapUrl;
 
   const filledCount = slots.filter(Boolean).length;
   const canStart = filledCount >= MIN_FILLED;
@@ -227,6 +393,14 @@ export function DoctrineBinderPicker({
       window.clearTimeout(binderHowToHoldTimerRef.current);
       binderHowToHoldTimerRef.current = null;
     }
+  }, []);
+
+  const moveCodexGhost = useCallback((clientX: number, clientY: number) => {
+    codexDragPosRef.current = { x: clientX, y: clientY };
+    const ghost = codexGhostRef.current;
+    if (!ghost) return;
+    ghost.style.left = `${clientX + 14}px`;
+    ghost.style.top = `${clientY + 14}px`;
   }, []);
 
   const onTomeHintPointerDown = useCallback(
@@ -266,6 +440,11 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
+        if (quickfillConfirmOpenRef.current) {
+          e.preventDefault();
+          setQuickfillConfirmOpen(false);
+          return;
+        }
         if (binderHowToOpenRef.current) {
           e.preventDefault();
           setBinderHowToOpen(false);
@@ -312,38 +491,32 @@ export function DoctrineBinderPicker({
     let ro: ResizeObserver | null = null;
 
     setLoading(true);
+    setLoadingError(null);
 
     void (async () => {
-      const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
-      orderedRef.current = panelIds;
-      const texList: THREE.Texture[] = panelIds.map(() => makeDeferredBinderTexture());
-      const initialVisibleEnd = Math.min(panelIds.length, BINDER_CELLS_PER_SHEET);
       try {
-        await preloadCardPreviewDataUrls(panelIds.slice(0, initialVisibleEnd));
-      } catch {
-        /* best-effort */
-      }
-      for (let i = 0; i < initialVisibleEnd; i++) {
-        if (cancelled) return;
-        texList[i] = await getBinderTextureForCatalogId(panelIds[i]!);
-      }
-
-      const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true, controlProfile });
-      next.snapBinderFullyOpen();
-      next.onClearDoctrineSelection = () => setActiveDoctrineSlot(null);
-      next.onPageChange = (c, t) => setPage({ c, t });
-      next.onCodexPointerDrag = (ev: CodexPointerDragEvent) => {
+        const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
+        orderedRef.current = panelIds;
+        const texList: THREE.Texture[] = panelIds.map(() => makeDeferredBinderTexture());
+        binderPanelTexturesRef.current = texList;
+        const next = new CardBinderEngine(canvas, texList, { codexHandDragMode: true, controlProfile });
+        next.snapBinderFullyOpen();
+        next.jumpToSpread(BINDER_INITIAL_SPREAD_INDEX);
+        next.onClearDoctrineSelection = () => setActiveDoctrineSlot(null);
+        next.onPageChange = (c, t) => setPage({ c, t });
+        next.onCodexPointerDrag = (ev: CodexPointerDragEvent) => {
         if (ev.phase === "start") {
           const id = orderedRef.current[ev.pickIndex];
           if (!id || !validIds.has(id)) return;
           codexDragBusyRef.current = true;
           setDragOverSlot(null);
           setDragOverHandZone(false);
-          setCodexDrag({ catalogId: id, x: ev.clientX, y: ev.clientY });
+          codexDragPosRef.current = { x: ev.clientX, y: ev.clientY };
+          setCodexDrag({ catalogId: id });
           return;
         }
         if (ev.phase === "move") {
-          setCodexDrag((d) => (d ? { ...d, x: ev.clientX, y: ev.clientY } : d));
+          moveCodexGhost(ev.clientX, ev.clientY);
           const track = handTrackRef.current;
           const strip = doctrineStripHitRef.current;
           if (!track) {
@@ -360,52 +533,89 @@ export function DoctrineBinderPicker({
         }
         if (ev.phase === "end") {
           const id = orderedRef.current[ev.pickIndex];
+          const from = ev.pickIndex;
           codexDragBusyRef.current = false;
           setCodexDrag(null);
           const track = handTrackRef.current;
           const strip = doctrineStripHitRef.current;
           const zr = strip?.getBoundingClientRect();
           const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
-          let dropSlot: number | null = null;
-          let explicitHandSlot = false;
+          let handDropHandled = false;
           if (track && id && validIds.has(id)) {
             const pointed = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
-            if (pointed !== null) {
-              dropSlot = pointed;
-              explicitHandSlot = true;
-            } else if (inZone) {
-              const s = slotsRef.current;
-              const firstEmpty = s.findIndex((x) => x == null);
-              if (firstEmpty >= 0) dropSlot = firstEmpty;
-              else {
-                const handRow = track.querySelector(".doctrine-hand--match") as HTMLElement | null;
-                const r = handRow?.getBoundingClientRect() ?? zr;
-                if (r) {
-                  const t = (ev.clientX - r.left) / Math.max(1e-6, r.width);
-                  dropSlot = Math.min(
-                    DOCTRINE_SLOT_COUNT - 1,
-                    Math.max(0, Math.floor(t * DOCTRINE_SLOT_COUNT)),
-                  );
+            if (pointed == null) {
+              const to = next.pickAt(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
+              if (to != null && to >= 0 && to !== from) {
+                const o = orderedRef.current;
+                const idTo = o[to];
+                if (idTo && validIds.has(idTo) && o[from] && validIds.has(o[from]!)) {
+                  const texArr = binderPanelTexturesRef.current;
+                  if (texArr && from < texArr.length && to < texArr.length) {
+                    const t0 = o[from]!;
+                    const t1 = o[to]!;
+                    o[from] = t1;
+                    o[to] = t0;
+                    const a = texArr[from]!;
+                    const bT = texArr[to]!;
+                    texArr[from] = bT;
+                    texArr[to] = a;
+                    next.setTextures(texArr);
+                    const nextPick = swapBinderSlotPicks(binderSlotPickRef.current, from, to);
+                    setBinderSlotPick(nextPick);
+                    try {
+                      const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slotsRef.current));
+                      saveDoctrinePickerState(norm, nextPick);
+                    } catch {
+                      /* best-effort */
+                    }
+                    handDropHandled = true;
+                  }
                 }
               }
             }
-            if (dropSlot !== null) {
-              const bp = [...binderSlotPickRef.current];
-              while (bp.length < DOCTRINE_SLOT_COUNT) bp.push(null);
-              const b = bp.slice(0, DOCTRINE_SLOT_COUNT);
-              const nextSlots = [...slotsRef.current];
-              nextSlots[dropSlot] = id;
-              b[dropSlot] = ev.pickIndex;
-              if (explicitHandSlot) {
-                setActiveDoctrineSlot(dropSlot);
-                setBinderSlotPick(b);
-                setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(nextSlots)));
-              } else {
-                const sorted = sortPickerHandByFluxCost(nextSlots, b);
-                const landed = sorted.binderPick.findIndex((p, i) => p === ev.pickIndex && sorted.slots[i] === id);
-                setActiveDoctrineSlot(landed >= 0 ? landed : null);
-                setBinderSlotPick(sorted.binderPick);
-                setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots)));
+            if (!handDropHandled) {
+              let dropSlot: number | null = null;
+              let explicitHandSlot = false;
+              if (pointed !== null) {
+                dropSlot = pointed;
+                explicitHandSlot = true;
+              } else if (inZone) {
+                const s = slotsRef.current;
+                const firstEmpty = s.findIndex((x) => x == null);
+                if (firstEmpty >= 0) {
+                  dropSlot = firstEmpty;
+                } else {
+                  const handRow = track.querySelector(".doctrine-hand--match") as HTMLElement | null;
+                  const r = handRow?.getBoundingClientRect() ?? zr;
+                  if (r) {
+                    const t = (ev.clientX - r.left) / Math.max(1e-6, r.width);
+                    dropSlot = Math.min(
+                      DOCTRINE_SLOT_COUNT - 1,
+                      Math.max(0, Math.floor(t * DOCTRINE_SLOT_COUNT)),
+                    );
+                  }
+                }
+              }
+              if (dropSlot !== null) {
+                const bp = [...binderSlotPickRef.current];
+                while (bp.length < DOCTRINE_SLOT_COUNT) bp.push(null);
+                const b = bp.slice(0, DOCTRINE_SLOT_COUNT);
+                const nextSlots = [...slotsRef.current];
+                nextSlots[dropSlot] = id;
+                b[dropSlot] = ev.pickIndex;
+                if (explicitHandSlot) {
+                  setActiveDoctrineSlot(dropSlot);
+                  setBinderSlotPick(b);
+                  setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(nextSlots)));
+                } else {
+                  const sorted = sortPickerHandByFluxCost(nextSlots, b);
+                  const landed = sorted.binderPick.findIndex(
+                    (p, i) => p === ev.pickIndex && sorted.slots[i] === id,
+                  );
+                  setActiveDoctrineSlot(landed >= 0 ? landed : null);
+                  setBinderSlotPick(sorted.binderPick);
+                  setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots)));
+                }
               }
             }
           }
@@ -419,46 +629,80 @@ export function DoctrineBinderPicker({
           setDragOverSlot(null);
           setDragOverHandZone(false);
         }
-      };
-      const rc = wrap.getBoundingClientRect();
-      next.resize(rc.width, rc.height);
-      if (next.onPageChange) next.onPageChange(next.pageIndex, next.pageCount);
+        };
+        const rc = wrap.getBoundingClientRect();
+        next.resize(rc.width, rc.height);
+        if (next.onPageChange) next.onPageChange(next.pageIndex, next.pageCount);
 
-      if (cancelled) {
-        next.dispose();
-        return;
-      }
+        if (cancelled) {
+          next.dispose();
+          return;
+        }
 
-      eng = next;
-      engineRef.current = next;
-      setBinderEngineForUi(next);
-      ro = new ResizeObserver((es) => {
-        for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
-      });
-      ro.observe(wrap);
-      setLoading(false);
-
-      const hydratePanelTextures = (start: number): void => {
-        if (cancelled || engineRef.current !== next) return;
-        void (async () => {
-          const chunk = controlProfile.mode === "mobile" ? 9 : 18;
-          const end = Math.min(panelIds.length, start + chunk);
-          const preloadIds = panelIds.slice(start, end);
-          try {
-            await preloadCardPreviewDataUrls(preloadIds);
-          } catch {
-            /* best-effort */
-          }
-          for (let i = start; i < end; i++) {
-            if (cancelled || engineRef.current !== next) return;
-            texList[i] = await getBinderTextureForCatalogId(panelIds[i]!);
-          }
+        eng = next;
+        engineRef.current = next;
+        setBinderEngineForUi(next);
+        ro = new ResizeObserver((es) => {
+          for (const e of es) engineRef.current?.resize(e.contentRect.width, e.contentRect.height);
+        });
+        ro.observe(wrap);
+        const hydratePanelTextures = (start: number): void => {
           if (cancelled || engineRef.current !== next) return;
-          next.setTextures(texList);
-          if (end < panelIds.length) afterIdle(() => hydratePanelTextures(end));
-        })();
-      };
-      if (initialVisibleEnd < panelIds.length) afterIdle(() => hydratePanelTextures(initialVisibleEnd));
+          void (async () => {
+            const chunk = controlProfile.mode === "mobile" ? 9 : 18;
+            const o = orderedRef.current;
+            const end = Math.min(o.length, start + chunk);
+            const preloadIds = o.slice(start, end);
+            try {
+              await preloadCardPreviewDataUrls(preloadIds);
+            } catch {
+              /* best-effort */
+            }
+            for (let i = start; i < end; i++) {
+              if (cancelled || engineRef.current !== next) return;
+              const cid = o[i]!;
+              try {
+                texList[i] = await getBinderTextureForCatalogId(cid);
+              } catch (err) {
+                console.warn("[binder] failed to hydrate deferred card texture", cid, err);
+              }
+            }
+            if (cancelled || engineRef.current !== next) return;
+            next.setTextures(texList);
+            if (end < o.length) afterIdle(() => hydratePanelTextures(end));
+          })();
+        };
+
+        const initialArtEnd = Math.min(panelIds.length, BINDER_INITIAL_ART_CELLS);
+        const initialIds = [...new Set(panelIds.slice(0, initialArtEnd))];
+        const initialTextures = new Map<string, THREE.Texture>();
+        await Promise.all(
+          initialIds.map(async (id) => {
+            if (cancelled || engineRef.current !== next) return;
+            try {
+              initialTextures.set(id, await getBinderTextureForCatalogId(id));
+            } catch (err) {
+              console.warn("[binder] failed to hydrate initial card texture", id, err);
+            }
+          }),
+        );
+        for (let i = 0; i < initialArtEnd; i++) {
+          const tex = initialTextures.get(panelIds[i]!);
+          if (tex) texList[i] = tex;
+        }
+        if (cancelled || engineRef.current !== next) return;
+        next.setTextures(texList);
+        setLoading(false);
+        onReady?.();
+        if (initialArtEnd < panelIds.length) afterIdle(() => hydratePanelTextures(initialArtEnd));
+      } catch (err) {
+        console.error("[binder] failed to initialize doctrine picker", err);
+        if (!cancelled) {
+          setLoadingError("Binder failed to initialize. Hard refresh or use Quick Match while assets recover.");
+          setLoading(false);
+          onReady?.();
+        }
+      }
     })();
 
     return () => {
@@ -466,9 +710,10 @@ export function DoctrineBinderPicker({
       ro?.disconnect();
       eng?.dispose();
       engineRef.current = null;
+      binderPanelTexturesRef.current = null;
       setBinderEngineForUi(null);
     };
-  }, [controlProfile]);
+  }, [controlProfile, onReady]);
 
   useLayoutEffect(() => {
     if (loading) return;
@@ -824,14 +1069,47 @@ export function DoctrineBinderPicker({
     })();
   }, [slots, binderSlotPick, onStart, mapUrl]);
 
+  const commitQuickMatchStart = useCallback(
+    (normSlots: (string | null)[], pickSnapshot: (number | null)[], url: string) => {
+      setActiveDoctrineSlot(null);
+      saveDoctrinePickerState(normSlots, pickSnapshot);
+      try {
+        localStorage.setItem(MAP_URL_STORAGE_KEY, url);
+        localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      setPrematchSetupOpen(false);
+      setPortalTransitioning(true);
+      void (async () => {
+        await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+        onStart(normSlots, url);
+      })();
+    },
+    [onStart],
+  );
+
   const quickMatchAndStart = useCallback(() => {
     if (loading || portalTransitioning) return;
+    const userFiltered = padDoctrineSlotsLocal(slots.map((id) => (id && validIds.has(id) ? id : null)));
+    const userNorm = normalizeDoctrineSlotsForMatch(userFiltered);
+    const filled = userNorm.filter(Boolean).length;
+    if (filled >= MIN_FILLED) {
+      if (filled < DOCTRINE_SLOT_COUNT) {
+        setQuickfillConfirmOpen(true);
+        return;
+      }
+      commitQuickMatchStart(userNorm, binderSlotPick, mapUrl);
+      return;
+    }
+
     const raw = padDoctrineSlotsLocal([...QUICK_MATCH_DOCTRINE_SLOTS]);
     const norm = normalizeDoctrineSlotsForMatch(raw);
     if (norm.filter(Boolean).length < MIN_FILLED) return;
     const emptyPick = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null as number | null);
     const sorted = sortPickerHandByFluxCost(norm, emptyPick);
-    const finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
+    let finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
+    finalSlots = fillDoctrineSlotsWithDuplicatePicks(finalSlots);
     const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
     setActiveDoctrineSlot(null);
     setBinderSlotPick(sorted.binderPick);
@@ -850,7 +1128,7 @@ export function DoctrineBinderPicker({
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
       onStart(finalSlots, mapPick.url);
     })();
-  }, [loading, portalTransitioning, onStart]);
+  }, [loading, portalTransitioning, onStart, commitQuickMatchStart, slots, binderSlotPick, mapUrl]);
   useEffect(() => {
     if (loading) return;
     let shouldPlay = false;
@@ -875,6 +1153,11 @@ export function DoctrineBinderPicker({
           {loading ? (
             <div className="binder-picker-loading" role="status" aria-live="polite" aria-busy="true">
               Loading…
+            </div>
+          ) : null}
+          {loadingError ? (
+            <div className="binder-picker-loading binder-picker-loading--error" role="alert">
+              {loadingError}
             </div>
           ) : null}
           <canvas
@@ -1000,7 +1283,7 @@ export function DoctrineBinderPicker({
                 <button
                   type="button"
                   className="binder-picker-quickmatch"
-                  disabled={loading || portalTransitioning}
+                  disabled={loading || portalTransitioning || quickfillConfirmOpen}
                   title="Fill all doctrine slots with a starter mix of towers and spells, pick a random battlefield, and start"
                   onClick={quickMatchAndStart}
                 >
@@ -1016,6 +1299,16 @@ export function DoctrineBinderPicker({
                   onClick={() => setPrematchSetupOpen((o) => !o)}
                 >
                   Match select
+                </button>
+                <button
+                  type="button"
+                  className="binder-picker-setup-toggle binder-picker-setup-toggle--rail binder-picker-lore-toggle"
+                  title="Open the optional lore / how-to-play comic"
+                  onClick={() => {
+                    void showComicLoreModal();
+                  }}
+                >
+                  Lore / how to play
                 </button>
               </div>
               <div className="binder-picker-vibejam-insert">
@@ -1156,7 +1449,7 @@ export function DoctrineBinderPicker({
         <div
           ref={codexGhostRef}
           className="binder-picker-codex-ghost"
-          style={{ left: codexDrag.x + 14, top: codexDrag.y + 14 }}
+          style={{ left: codexDragPosRef.current.x + 14, top: codexDragPosRef.current.y + 14 }}
           aria-hidden
         >
           <div
@@ -1196,6 +1489,58 @@ export function DoctrineBinderPicker({
             >
               Stay here
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {quickfillConfirmOpen ? (
+        <div
+          className="binder-portal-exit-toast"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="binder-quickfill-title"
+          onClick={() => setQuickfillConfirmOpen(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()}>
+            <div className="binder-portal-exit-toast__title" id="binder-quickfill-title">
+              Fill remaining doctrine slots?
+            </div>
+            <p>
+              Quickmatch runs smoother with all ten slots filled. Fill the empty slots by repeating cards from your
+              loadout (duplicates allowed), then jump in?
+            </p>
+            <div className="binder-portal-exit-toast__actions">
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  const userFiltered = padDoctrineSlotsLocal(
+                    slotsRef.current.map((id) => (id && validIds.has(id) ? id : null)),
+                  );
+                  const expanded = fillDoctrineSlotsWithDuplicatePicks(userFiltered);
+                  setSlots(expanded);
+                  setQuickfillConfirmOpen(false);
+                  commitQuickMatchStart(expanded, binderSlotPickRef.current, mapUrlRef.current);
+                }}
+              >
+                Yes — fill and start
+              </button>
+              <button
+                type="button"
+                className="binder-portal-exit-toast__secondary"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  const userFiltered = padDoctrineSlotsLocal(
+                    slotsRef.current.map((id) => (id && validIds.has(id) ? id : null)),
+                  );
+                  const userNorm = normalizeDoctrineSlotsForMatch(userFiltered);
+                  setQuickfillConfirmOpen(false);
+                  commitQuickMatchStart(userNorm, binderSlotPickRef.current, mapUrlRef.current);
+                }}
+              >
+                No — start as-is
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

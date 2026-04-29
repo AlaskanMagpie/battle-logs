@@ -1622,6 +1622,16 @@ export class CardBinderEngine {
     this._v();
   }
 
+  /** Jump without animation to a specific codex spread. */
+  jumpToSpread(index: number): void {
+    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl !== 0) return;
+    const next = Math.min(Math.max(0, Math.round(index)), Math.max(0, this.chunks.length - 1));
+    if (this.cur === next) return;
+    this.cancelPendingCatalogPick();
+    this.cur = next;
+    this._v();
+  }
+
   /** Jump without animation (only when idle). */
   jumpToLastSpread(): void {
     if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS || this.fl !== 0) return;
@@ -2740,6 +2750,7 @@ export class CardBinderEngine {
     this._clearCodexLongPressTimer();
     this.codexPulledPickIndices.clear();
     this._disposeObject(this.roomGroup);
+    if (this.portalAssetRoot) this.portalAssetRoot = null;
     this.S.remove(this.roomGroup);
     for (const ch of [...this.marginHitGroup.children]) {
       const m = ch as THREE.Mesh;

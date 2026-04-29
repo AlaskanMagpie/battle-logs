@@ -4,11 +4,12 @@ import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
   ENEMY_RELAY_MAX_HP,
-  ENEMY_SETUP_STARTING_FLUX,
   FORWARD_PLACE_RADIUS,
   HERO_FOLLOW_RADIUS,
   HERO_MAX_HP,
   HERO_MAP_OBSTACLE_RADIUS,
+  HERO_SPAWN_FORWARD_FROM_KEEP,
+  HERO_SPAWN_SIDE_FROM_KEEP,
   HERO_SPEED,
   HERO_TELEPORT_COOLDOWN_SEC,
   STRUCTURE_MAP_OBSTACLE_RADIUS,
@@ -27,7 +28,7 @@ import {
   ATTACK_RANGE_CLOSE_MAX,
   ATTACK_RANGE_MEDIUM_MAX,
 } from "./constants";
-import { enemyDamageScalar, enemyHpScalar } from "./difficulty";
+import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
@@ -225,6 +226,11 @@ export interface HeroRuntime {
   attackCooldownTicksRemaining: number;
   /** Monotonic cast counter used only for hero strike visual variety. */
   strikeSequence: number;
+  /**
+   * Doctrine spell queued same tick — `heroSystem` applies facing toward this world point **after**
+   * movement so locomotion does not overwrite cast aim (intents run before movement).
+   */
+  spellFacingToward?: { x: number; z: number };
 }
 
 export interface EnemyRelayRuntime {
@@ -345,6 +351,7 @@ export interface UnitAutoOrderRuntime {
 }
 
 export interface MatchStats {
+  /** Player-placed doctrine structures only (not enemy wizard builds). */
   structuresBuilt: number;
   structuresLost: number;
   unitsProduced: number;
@@ -406,7 +413,6 @@ export interface GameState {
   /** Remaining placements per doctrine slot (match start). */
   doctrineChargesRemaining: number[];
   doctrineCooldownTicks: number[];
-  doctrineCommandUses: number[];
   selectedDoctrineIndex: number | null;
   /** @deprecated No longer set by gameplay; kept for replay/checksum compat. */
   selectedStructureId: number | null;
@@ -605,6 +611,85 @@ export function isKeep(st: StructureRuntime): boolean {
   return st.team === "player" && st.catalogId === KEEP_ID;
 }
 
+/**
+ * Horizontal yaw (radians) so a structure mesh faces **across the map** toward the opposing team's
+ * home anchor (relay slots → starts → heroes). Matches “face the fight,” not camera billboard.
+ */
+export function structureFacingYawRad(s: GameState, st: StructureRuntime): number {
+  const m = s.map;
+  let tx: number;
+  let tz: number;
+  if (st.team === "player") {
+    const er = m.enemyRelaySlots[0];
+    if (er) {
+      tx = er.x;
+      tz = er.z;
+    } else if (m.enemyStart) {
+      tx = m.enemyStart.x;
+      tz = m.enemyStart.z;
+    } else {
+      tx = s.enemyHero.x;
+      tz = s.enemyHero.z;
+    }
+  } else {
+    const pr = m.playerRelaySlots[0];
+    if (pr) {
+      tx = pr.x;
+      tz = pr.z;
+    } else {
+      const pk = findKeep(s);
+      if (pk) {
+        tx = pk.x;
+        tz = pk.z;
+      } else if (m.playerStart) {
+        tx = m.playerStart.x;
+        tz = m.playerStart.z;
+      } else {
+        tx = s.hero.x;
+        tz = s.hero.z;
+      }
+    }
+  }
+  let dx = tx - st.x;
+  let dz = tz - st.z;
+  let len = Math.hypot(dx, dz);
+  if (len < 0.01) {
+    if (st.team === "player") {
+      dx = s.enemyHero.x - st.x;
+      dz = s.enemyHero.z - st.z;
+    } else {
+      dx = s.hero.x - st.x;
+      dz = s.hero.z - st.z;
+    }
+    len = Math.hypot(dx, dz);
+  }
+  if (len < 1e-6) return 0;
+  return Math.atan2(dx / len, dz / len);
+}
+
+/** Wizard spawn/respawn disk — offset from the Keep anchor toward the field so the GLB clears the HQ mesh. */
+export function heroStandPositionNearKeepAnchor(anchor: Vec2, map: MapData, team: "player" | "enemy"): Vec2 {
+  const h = map.world.halfExtents;
+  const margin = 12;
+  const fwd = HERO_SPAWN_FORWARD_FROM_KEEP;
+  const side = team === "player" ? HERO_SPAWN_SIDE_FROM_KEEP : -HERO_SPAWN_SIDE_FROM_KEEP;
+  let dx = 0;
+  let dz = 0;
+  if (Math.abs(anchor.x) > 8) {
+    dx = -Math.sign(anchor.x) * fwd;
+    dz += side;
+  } else if (Math.abs(anchor.z) > 8) {
+    dz = -Math.sign(anchor.z) * fwd;
+    dx += team === "player" ? side : -side;
+  } else {
+    dx = team === "player" ? fwd : -fwd;
+    dz += team === "player" ? side * 0.5 : -side * 0.5;
+  }
+  const x = Math.max(-h + margin, Math.min(h - margin, anchor.x + dx));
+  const z = Math.max(-h + margin, Math.min(h - margin, anchor.z + dz));
+  return { x, z };
+}
+
 function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
   const charges: number[] = [];
   const cd: number[] = [];
@@ -641,7 +726,7 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
   });
 }
 
-/** Spawn the Wizard Keep at playerStart — complete immediately, no build time,
+/** Spawn the Wizard Keep at the player HQ anchor — complete immediately, no build time,
  *  no flux cost. This is the permanent base that anchors the wizard. */
 /** Random Mana node layout: TAP_NODES_PER_SIDE on x<0, same on x>0; ignores map.json tapSlots. */
 export function generateProceduralTaps(map: MapData, rngScratch: { v: number }): TapRuntime[] {
@@ -770,10 +855,11 @@ export function mapWithRuntimeTapSlots(map: MapData, taps: TapRuntime[]): MapDat
   return stripAuthorBoundaryDecor({ ...map, tapSlots });
 }
 
-function spawnKeep(state: GameState): void {
+function spawnKeep(state: GameState, anchor: Vec2): void {
   const entry = getCatalogEntry(KEEP_ID);
   if (!entry || !isStructureEntry(entry)) return;
-  const p = state.map.playerStart ?? { x: 0, z: 0 };
+  /** HQ mesh stays at the authored anchor; the hero stands offset via `heroStandPositionNearKeepAnchor`. */
+  const p = { x: anchor.x, z: anchor.z };
   const periodTicks = Math.max(1, Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
   state.structures.push({
     id: state.nextId.structure++,
@@ -847,10 +933,14 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
 
   const hpMult = enemyHpScalar(mapResolved);
   const dmgMult = enemyDamageScalar(mapResolved);
+  const enemyEconomyMult = normalizeMapDifficulty(mapResolved.difficulty).enemyEconomyMult;
+  const enemyStartingFlux = Math.max(0, Math.round(PLAYER_STARTING_FLUX * enemyEconomyMult));
 
-  /** Plan: spawn at first player relay slot when the map defines one; else `playerStart` (with Keep). */
+  /** HQ anchor: first player relay when present, else `playerStart`. */
   const relay0 = mapResolved.playerRelaySlots[0];
-  const heroSpawn = relay0 != null ? { x: relay0.x, z: relay0.z } : (mapResolved.playerStart ?? { x: 0, z: 0 });
+  const playerKeepAnchor: Vec2 =
+    relay0 != null ? { x: relay0.x, z: relay0.z } : (mapResolved.playerStart ?? { x: 0, z: 0 });
+  const heroSpawn = heroStandPositionNearKeepAnchor(playerKeepAnchor, mapResolved, "player");
   const hero: HeroRuntime = {
     x: heroSpawn.x,
     z: heroSpawn.z,
@@ -870,9 +960,12 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     strikeSequence: 0,
   };
 
-  const enemySpawn =
-    mapResolved.enemyStart ??
-    ({ x: -heroSpawn.x, z: heroSpawn.z } as Vec2);
+  const enemyRelay0 = mapResolved.enemyRelaySlots[0];
+  const enemyKeepAnchor: Vec2 =
+    enemyRelay0 != null
+      ? { x: enemyRelay0.x, z: enemyRelay0.z }
+      : (mapResolved.enemyStart ?? ({ x: -playerKeepAnchor.x, z: playerKeepAnchor.z } as Vec2));
+  const enemySpawn = heroStandPositionNearKeepAnchor(enemyKeepAnchor, mapResolved, "enemy");
   const enemyHero: HeroRuntime = {
     x: enemySpawn.x,
     z: enemySpawn.z,
@@ -896,12 +989,12 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   resolveCircleAgainstMapObstacles(mapResolved, enemyHero, HERO_MAP_OBSTACLE_RADIUS);
 
   const portalExit = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, heroSpawn.x + 13),
-    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, heroSpawn.z - 12)),
+    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x + 13),
+    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z - 12)),
   };
   const portalReturn = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, heroSpawn.x - 11),
-    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, heroSpawn.z + 11)),
+    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x - 11),
+    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z + 11)),
   };
 
   const state: GameState = {
@@ -910,7 +1003,8 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     phase: "playing",
     flux: PLAYER_STARTING_FLUX,
     salvage: 0,
-    enemyFlux: ENEMY_SETUP_STARTING_FLUX,
+    /** Same `enemyEconomyMult` as tap income / passive (default 0.6 = 60% of human opening budget). */
+    enemyFlux: enemyStartingFlux,
     taps,
     enemyRelays,
     structures: [],
@@ -919,7 +1013,6 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     doctrineSlotCatalogIds: slots,
     doctrineChargesRemaining: rt.charges,
     doctrineCooldownTicks: rt.cd,
-    doctrineCommandUses: Array.from({ length: DOCTRINE_SLOT_COUNT }, () => 0),
     selectedDoctrineIndex: null,
     selectedStructureId: null,
     selectedUnitId: null,
@@ -971,7 +1064,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     },
   };
 
-  spawnKeep(state);
+  spawnKeep(state, playerKeepAnchor);
 
   const defaultOffsets: Vec2[] = [
     { x: 4, z: 0 },
@@ -1187,8 +1280,7 @@ export type DoctrinePlayabilityKind =
   | "enemy"
   | "terrain"
   | "invalid"
-  | "empty"
-  | "long_cooldown";
+  | "empty";
 
 export interface DoctrinePlayability {
   ok: boolean;
@@ -1198,7 +1290,6 @@ export interface DoctrinePlayability {
   liveLabel: string;
   missingMana?: number;
   cooldownSeconds?: number;
-  longCooldown?: boolean;
 }
 
 function blocked(kind: DoctrinePlayabilityKind, reason: string, liveLabel: string, extra?: Partial<DoctrinePlayability>): DoctrinePlayability {
@@ -1255,19 +1346,10 @@ export function doctrineCardPlayability(
   }
 
   if (isCommandEntry(entry)) {
-    const used = s.doctrineCommandUses[slotIndex] ?? 0;
-    const usesLeft = Math.max(0, entry.maxCharges - used);
-    if (usesLeft <= 0) {
-      return {
-        ok: true,
-        kind: "long_cooldown",
-        reason: null,
-        hint: "Playable now, but this extra cast triggers the long cooldown.",
-        liveLabel: "Long CD",
-        longCooldown: true,
-      };
-    }
-    return ready(`Ready — ${usesLeft} normal cast${usesLeft === 1 ? "" : "s"} before the long cooldown.`, `Cast ${usesLeft}`);
+    return ready(
+      pos ? `Click map to cast (${entry.fluxCost} Mana).` : `Ready — ${entry.fluxCost} Mana per cast.`,
+      `${entry.fluxCost}`,
+    );
   }
 
   if (isStructureEntry(entry)) {
@@ -1280,7 +1362,7 @@ export function doctrineCardPlayability(
 export function canUseDoctrineSlot(s: GameState, slotIndex: number): string | null {
   const id = slotIndex >= 0 && slotIndex < DOCTRINE_SLOT_COUNT ? (s.doctrineSlotCatalogIds[slotIndex] ?? null) : null;
   const play = doctrineCardPlayability(s, id, null, slotIndex);
-  if (play.kind === "mana" || play.kind === "long_cooldown") return null;
+  if (play.kind === "mana") return null;
   return play.reason;
 }
 
@@ -1320,8 +1402,7 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
 /**
  * Specific, player-facing explanation of why a card cannot be used right now.
  * Mirrors the shared doctrine card gates: cooldown, Mana, territory, enemy
- * proximity, and terrain. A null result means playable; command long-cooldown
- * warnings are exposed through `doctrineCardPlayability`.
+ * proximity, and terrain. A null result means playable.
  */
 export function placementFailureReason(
   s: GameState,

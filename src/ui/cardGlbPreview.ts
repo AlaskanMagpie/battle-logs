@@ -8,6 +8,34 @@ function glbPreviewCacheKey(catalogId: string): string {
   return `${catalogId}@hud_${CARD_ART_CACHE_BUSTER}`;
 }
 
+/**
+ * Match plain `<img>` behavior for same-origin `/assets/` URLs. Setting `crossOrigin="anonymous"`
+ * forces a CORS-enabled fetch; many static hosts omit `Access-Control-Allow-Origin`, which breaks
+ * Image.decode in binder/HUD even though unauthenticated `<img src>` works (same bug class as “hand OK, binder blank”).
+ */
+export function configureImageCrossOriginForSrc(img: HTMLImageElement, src: string): void {
+  if (src.startsWith("data:")) return;
+  try {
+    const loc = globalThis.location;
+    if (!loc?.href) return;
+    const resolved = new URL(src, loc.href);
+    if (resolved.origin !== loc.origin) img.crossOrigin = "anonymous";
+  } catch {
+    /* relative vs broken URL — leave default (same-origin) */
+  }
+}
+
+/** True if the URL decodes to a drawable bitmap (same-origin / CORS-safe for canvas + binder). */
+function probeCardArtUrlLoads(src: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    configureImageCrossOriginForSrc(img, src);
+    img.onload = (): void => resolve(img.naturalWidth > 0 && img.naturalHeight > 0);
+    img.onerror = (): void => resolve(false);
+    img.src = src;
+  });
+}
+
 /** One shared WebGL studio — `getCardPreviewDataUrl` must never run concurrently or pivots fight. */
 let previewSerial: Promise<void> = Promise.resolve();
 
@@ -66,8 +94,12 @@ export async function getCardPreviewDataUrl(catalogId: string): Promise<string |
 
     const cardArtUrl = await getCardArtUrl(catalogId);
     if (cardArtUrl) {
-      dataUrlCache.set(ck, cardArtUrl);
-      return cardArtUrl;
+      const ok = await probeCardArtUrlLoads(cardArtUrl);
+      if (ok) {
+        dataUrlCache.set(ck, cardArtUrl);
+        return cardArtUrl;
+      }
+      /* Stale manifest entry or missing file — fall through to tower GLB snapshot. */
     }
 
     const assetUrl = await getCatalogPreviewAssetUrl(catalogId);
@@ -127,6 +159,17 @@ export async function preloadCardPreviewDataUrls(catalogIds: readonly string[]):
     seen.add(id);
     await getCardPreviewDataUrl(id);
   }
+}
+
+/** Release the offscreen GLB→PNG WebGL context before starting the main match renderer. */
+export function disposeCardPreviewStudio(): void {
+  if (!studio) return;
+  try {
+    studio.renderer.dispose();
+  } catch {
+    /* ignore */
+  }
+  studio = null;
 }
 
 function portraitFallbackEl(img: HTMLImageElement): HTMLElement | null {

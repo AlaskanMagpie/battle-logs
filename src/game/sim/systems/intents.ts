@@ -352,16 +352,13 @@ function tryPlaceStructure(
 }
 
 function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEntry): void {
-  const used = s.doctrineCommandUses[slotIdx] ?? 0;
-  const exhausted = used >= cmd.maxCharges;
   s.flux -= cmd.fluxCost;
   if (cmd.salvagePctOnCast > 0) {
     s.salvage += cmd.fluxCost * (cmd.salvagePctOnCast / 100);
   }
-  s.doctrineCommandUses[slotIdx] = used + 1;
   s.stats.commandsCast += 1;
   if (cmd.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * (exhausted ? 3 : 1) * TICK_HZ);
+    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * TICK_HZ);
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
@@ -472,8 +469,6 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
     return;
   }
   const fx = cmd.effect;
-  const usesLeft = Math.max(0, cmd.maxCharges - (s.doctrineCommandUses[slotIdx] ?? 0));
-  const castSuffix = usesLeft > 0 ? `${usesLeft - 1} free uses left.` : "exhausted cast - triple cooldown.";
   switch (fx.type) {
     case "aoe_line_damage": {
       const hx = s.hero.x;
@@ -516,6 +511,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
         hits++;
       }
+      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       consumeCommandSlot(s, slotIdx, cmd);
       const mx = (hx + ex) * 0.5;
       const mz = (hz + ez) * 0.5;
@@ -543,7 +539,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         impactRadius: hw * 2,
         visualSeed: s.tick + hits * 17,
       });
-      s.lastMessage = `${cmd.name} — reclaimed a ${Math.round(L)}u line, hit ${hits}; ${castSuffix}`;
+      s.lastMessage = `${cmd.name} — reclaimed a ${Math.round(L)}u line, hit ${hits}.`;
       return;
     }
     case "aoe_damage": {
@@ -563,6 +559,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           recordDamageDealtBy(s, "player", dd);
         }
       }
+      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
@@ -591,7 +588,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         impactRadius: r,
         rangeBand: classifyAttackRangeBand(r),
       });
-      s.lastMessage = `${cmd.name} detonated; ${castSuffix}`;
+      s.lastMessage = `${cmd.name} detonated.`;
       return;
     }
     case "aoe_tactics_field": {
@@ -607,6 +604,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         enemyDamageMult: fx.enemyDamageMult,
         enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
       });
+      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
@@ -627,7 +625,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         impactRadius: fx.radius,
         rangeBand: classifyAttackRangeBand(fx.radius),
       });
-      s.lastMessage = `${cmd.name}: ${fx.durationSeconds}s control field — allies empowered, enemies hindered; ${castSuffix}`;
+      s.lastMessage = `${cmd.name}: ${fx.durationSeconds}s control field — allies empowered, enemies hindered.`;
       return;
     }
     case "aoe_shatter_chain": {
@@ -727,7 +725,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         } else {
           const uid = Number(bestKey.slice(2));
           const u = s.units.find((x) => x.id === uid);
-          if (damageEnemyUnitFromCommand(s, u, dmg)) {
+          if (u && damageEnemyUnitFromCommand(s, u, dmg)) {
             applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
           }
         }
@@ -739,11 +737,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         s.lastMessage = `${cmd.name}: no enemies in the cast ring — try dropping closer.`;
         return;
       }
+      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       consumeCommandSlot(s, slotIdx, cmd);
-      s.lastMessage = `${cmd.name}: ${hits} chain strike${hits === 1 ? "" : "s"} (lightning); ${castSuffix}`;
+      s.lastMessage = `${cmd.name}: ${hits} chain strike${hits === 1 ? "" : "s"} (lightning).`;
       return;
     }
     case "noop": {
+      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       s.lastMessage = `${cmd.name} spent.`;
@@ -871,7 +871,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.rallyClickPending = false;
       s.teleportClickPending = false;
       s.lastMessage = e
-        ? `Selected ${e.name} — ${isCommandEntry(e) ? "click to cast." : "click map to summon."}`
+        ? `Selected ${e.name} — ${isCommandEntry(e) ? "click map to cast (Esc cancels)" : "click map to summon (Esc cancels)"}.`
         : `Selected ${id}`;
     } else if (it.type === "begin_rally_click") {
       if (s.phase !== "playing") continue;
@@ -902,10 +902,9 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
-      s.selectedUnitId = null;
       s.rallyClickPending = false;
       s.teleportClickPending = false;
-      s.lastMessage = "Cleared placement selection.";
+      s.lastMessage = "Cancelled — pick units or a card again.";
     } else if (it.type === "try_click_world") {
       handleWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true, it.pickedUnitId);
     } else if (it.type === "select_units") {

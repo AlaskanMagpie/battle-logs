@@ -309,7 +309,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <div class="hud-endgame-stat hud-endgame-stat--time"><dt>Time</dt><dd id="hud-endgame-stat-time">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--score"><dt>Score</dt><dd id="hud-endgame-stat-score">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--best"><dt>Best local</dt><dd id="hud-endgame-stat-best">—</dd></div>
-          <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Structures built</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Structures you built</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--structures-lost"><dt>Structures lost</dt><dd id="hud-endgame-stat-structures-lost">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--units-produced"><dt>Units produced</dt><dd id="hud-endgame-stat-units-produced">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--units-lost"><dt>Units lost</dt><dd id="hud-endgame-stat-units-lost">—</dd></div>
@@ -473,7 +473,9 @@ export function updateHud(state: GameState): void {
   if (mode) {
     if (state.pendingPlacementCatalogId) {
       const e = getCatalogEntry(state.pendingPlacementCatalogId);
-      mode.textContent = e ? `Placing ${e.name}` : "Placing card";
+      mode.textContent = e
+        ? `Placing ${e.name} — Esc or right-click cancels`
+        : "Placing card — Esc or right-click cancels";
     } else {
       mode.textContent = state.rallyClickPending
         ? "Set rally"
@@ -522,7 +524,7 @@ export function updateHud(state: GameState): void {
     let label = "";
     if (state.pendingPlacementCatalogId) {
       const e = getCatalogEntry(state.pendingPlacementCatalogId);
-      if (e) label = `Selected: ${e.name}`;
+    if (e) label = `Selected: ${e.name} — Esc cancels`;
     } else if (state.teleportClickPending) {
       label = "Teleport armed - click your half";
     } else if (state.rallyClickPending) {
@@ -670,12 +672,12 @@ export function updateHud(state: GameState): void {
       "slot-locked",
       "slot-need-mana",
       "slot-blocked",
-      "slot-long-cooldown",
       "slot-sigwarn",
       "slot-await-infra",
       "disabled",
       "slot--hand-collapsed",
       "slot--hand-pull",
+      "active",
     );
     b.removeAttribute("data-slot-tone");
     const id = state.doctrineSlotCatalogIds[i] ?? null;
@@ -732,12 +734,13 @@ export function updateHud(state: GameState): void {
     const play = doctrineCardPlayability(state, id, null, i);
     if (play.kind === "cooldown") b.classList.add("slot-locked");
     else if (play.kind === "mana") b.classList.add("slot-need-mana");
-    else if (play.kind === "long_cooldown") b.classList.add("slot-long-cooldown", "slot-ready");
     else if (!play.ok) b.classList.add("slot-blocked");
     else b.classList.add("slot-ready");
 
+    if (state.selectedDoctrineIndex === i) b.classList.add("active");
+
     if (live) {
-      const cls = play.ok ? (play.longCooldown ? "live-warn" : "live-info") : play.kind === "mana" ? "live-warn" : "live-bad";
+      const cls = play.ok ? "live-info" : play.kind === "mana" ? "live-warn" : "live-bad";
       live.innerHTML = play.liveLabel ? `<span class="${cls}">${escapeHudHtml(play.liveLabel)}</span>` : "";
     }
 

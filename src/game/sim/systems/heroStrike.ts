@@ -25,6 +25,7 @@ import {
 } from "../../state";
 import type { Vec2 } from "../../types";
 import { applyAttackImpulse } from "./combat";
+import { applyHeroFacingTowardWorld } from "./heroFacing";
 import { dist2 } from "./helpers";
 
 export type PlayerHeroStrikeTag =
@@ -191,6 +192,7 @@ function runHeroArcaneLineSweep(
     if ((t.anchorHp ?? 0) <= 0) shatterTapAnchor(s, t);
   }
 
+  applyHeroFacingTowardWorld(s, ex, ez);
   h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
   emitPlayerHeroStrikeFx(s, { x: ex, z: ez }, from, "player_arcane_sweep");
   pushFx(s, {
@@ -252,6 +254,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   }
 
   if (bestU) {
+    applyHeroFacingTowardWorld(s, bestU.x, bestU.z);
     const swarmMult = bestU.sizeClass === "Swarm" ? HERO_ATTACK_SWARM_MULT : 1;
     const dealt = HERO_ATTACK_DAMAGE * swarmMult;
     bestU.hp -= dealt;
@@ -269,6 +272,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
 
   const eh = s.enemyHero;
   if (eh.hp > 0 && dist2(h, eh) <= r2) {
+    applyHeroFacingTowardWorld(s, eh.x, eh.z);
     eh.hp -= HERO_ATTACK_DAMAGE;
     recordDamageDealtBy(s, "player", HERO_ATTACK_DAMAGE);
     h.attackCooldownTicksRemaining = HERO_ATTACK_COOLDOWN_TICKS;
@@ -288,6 +292,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     }
   }
   if (bestEr) {
+    applyHeroFacingTowardWorld(s, bestEr.x, bestEr.z);
     const dealt = HERO_ATTACK_DAMAGE * 0.65;
     bestEr.hp -= dealt;
     recordDamageDealtBy(s, "player", dealt);
@@ -308,6 +313,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     }
   }
   if (bestSt) {
+    applyHeroFacingTowardWorld(s, bestSt.x, bestSt.z);
     const nearTapMult = enemyStructureNearEnemyOwnedTap(s, bestSt)
       ? HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT
       : 1;
@@ -332,6 +338,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
     }
   }
   if (bestTap) {
+    applyHeroFacingTowardWorld(s, bestTap.x, bestTap.z);
     const dealt = HERO_ATTACK_DAMAGE * 0.42;
     bestTap.anchorHp = Math.max(0, (bestTap.anchorHp ?? 0) - dealt);
     recordDamageDealtBy(s, "player", dealt);

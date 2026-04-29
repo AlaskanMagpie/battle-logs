@@ -13,7 +13,7 @@
     "azure_spear_swarm_run_fast.glb",
     "azure_spear_swarm_running.glb",
     "azure_spear_swarm_walking.glb",
-    "bastion_keep_building.glb",
+    "bastion_keep_compressed.glb",
     "driftwood_oasis_compressed.glb",
     "lanternbound_line_attack_triple_combo.glb",
     "lanternbound_line_bow_charge.glb",
@@ -310,7 +310,8 @@
       ]
     },
     {
-      "file": "bastion_keep_building.glb",
+      "file": "bastion_keep_compressed.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []

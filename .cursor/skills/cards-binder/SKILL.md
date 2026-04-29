@@ -27,7 +27,7 @@ Do **not** leave the task at “you should run sync” — **run** `npm run card
 
 ## Naming (failure mode #1)
 
-- Card files: **`public/assets/cards/{catalogId}.{ext}`** — stem **must** match `entry.id` in `src/game/catalog.ts` (e.g. Root Sanctum → `bastion_keep.png`), **not** display title.
+- Card files: **`public/assets/cards/{catalogId}.{ext}`** — stem **must** match `entry.id` in `src/game/catalog.ts` (e.g. Rootbound Crag → `bastion_keep.png`), **not** display title.
 - Allowed extensions: `.png`, `.webp`, `.jpg`, `.jpeg`, `.svg` (see `scripts/sync-card-manifest.mjs`).
 - **Duplicate stems:** if both `watchtower.png` and `watchtower.svg` exist, sync **prefers** `.png` > `.webp` > `.jpg`/`.jpeg` > `.svg` so final art wins over placeholders.
 

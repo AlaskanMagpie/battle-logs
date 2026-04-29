@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "localhost": "node scripts/reset-localhost-dev.mjs",
+    "dev:reset": "node scripts/reset-localhost-dev.mjs",
     "dev:lan": "vite --host",
     "assets:sync-cards": "node scripts/sync-card-manifest.mjs",
     "cards:pipeline": "node scripts/cards-pipeline.mjs",
@@ -23,6 +25,7 @@
     "three": "^0.175.0"
   },
   "devDependencies": {
+    "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.175.0",

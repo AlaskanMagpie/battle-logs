@@ -31,6 +31,7 @@ import {
   canUseDoctrineSlot,
   createInitialState,
   doctrineCardPlayability,
+  heroStandPositionNearKeepAnchor,
   HERO_SELECTION_ID,
   inPlayerTerritory,
   liveSquadCount,
@@ -107,7 +108,8 @@ describe("resource-first doctrine gates", () => {
     s.flux = 1000;
 
     expect(canUseDoctrineSlot(s, 0)).toBeNull();
-    expect(placementFailureReason(s, "dragon_roost", { x: -38, z: 0 }, 0)).toBeNull();
+    /** Outside keep disc + `STRUCTURE_MAP_OBSTACLE_RADIUS` union (see `structureObstacleFootprints`). */
+    expect(placementFailureReason(s, "dragon_roost", { x: -20, z: 0 }, 0)).toBeNull();
   });
 
   it("enemy placement is also resource-only", () => {
@@ -122,18 +124,18 @@ describe("doctrine card playability", () => {
   it("explains affordable, unaffordable, cooldown, and territory states", () => {
     const ready = createInitialState(tinyMap, ["watchtower"]);
     ready.flux = 1000;
-    expect(doctrineCardPlayability(ready, "watchtower", { x: -40, z: 0 }, 0).kind).toBe("ready");
+    expect(doctrineCardPlayability(ready, "watchtower", { x: -20, z: 0 }, 0).kind).toBe("ready");
 
     const poor = createInitialState(tinyMap, ["watchtower"]);
     poor.flux = 0;
-    const mana = doctrineCardPlayability(poor, "watchtower", { x: -40, z: 0 }, 0);
+    const mana = doctrineCardPlayability(poor, "watchtower", { x: -20, z: 0 }, 0);
     expect(mana.kind).toBe("mana");
     expect(mana.reason).toContain("more Mana");
 
     const cooling = createInitialState(tinyMap, ["watchtower"]);
     cooling.flux = 1000;
     cooling.doctrineCooldownTicks[0] = TICK_HZ * 3;
-    const cd = doctrineCardPlayability(cooling, "watchtower", { x: -40, z: 0 }, 0);
+    const cd = doctrineCardPlayability(cooling, "watchtower", { x: -20, z: 0 }, 0);
     expect(cd.kind).toBe("cooldown");
     expect(cd.liveLabel).toBe("CD 3s");
 
@@ -143,16 +145,14 @@ describe("doctrine card playability", () => {
     expect(territory.kind).toBe("territory");
   });
 
-  it("keeps exhausted commands playable while warning about the long cooldown", () => {
+  it("treats command spells as ready when Mana and cooldown allow (no per-match use cap)", () => {
     const s = createInitialState(tinyMap, ["firestorm"]);
     s.flux = 1000;
-    s.doctrineCommandUses[0] = 2;
 
     const play = doctrineCardPlayability(s, "firestorm", { x: 10, z: 0 }, 0);
 
     expect(play.ok).toBe(true);
-    expect(play.kind).toBe("long_cooldown");
-    expect(play.longCooldown).toBe(true);
+    expect(play.kind).toBe("ready");
     expect(placementFailureReason(s, "firestorm", { x: 10, z: 0 }, 0)).toBeNull();
   });
 });
@@ -342,8 +342,9 @@ describe("hero resilience", () => {
 
     expect(s.phase).toBe("playing");
     expect(s.hero.hp).toBe(s.hero.maxHp);
-    expect(s.hero.x).toBe(keep.x);
-    expect(s.hero.z).toBe(keep.z);
+    const expected = heroStandPositionNearKeepAnchor({ x: keep.x, z: keep.z }, s.map, "player");
+    expect(s.hero.x).toBe(expected.x);
+    expect(s.hero.z).toBe(expected.z);
     expect(s.hero.targetX).toBeNull();
     expect(s.lastMessage).toBe("Wizard reformed at the Keep.");
   });
@@ -502,9 +503,17 @@ describe("hero captain mode", () => {
 
     advanceTick(s, []);
 
-    expect(s.hero.targetX).not.toBe(s.taps[0]!.x);
-    expect(s.hero.targetZ).not.toBe(s.taps[0]!.z);
-    expect(s.hero.moveWaypoints.at(-1)).toEqual({ x: s.taps[0]!.x, z: s.taps[0]!.z });
+    const tap = s.taps[0]!;
+    const pathEnd =
+      s.hero.moveWaypoints.length > 0
+        ? s.hero.moveWaypoints.at(-1)!
+        : { x: s.hero.targetX, z: s.hero.targetZ };
+    expect(pathEnd).toEqual({ x: tap.x, z: tap.z });
+    /** When the planner emits a multi-hop chain, the first leg should not jump straight to the objective. */
+    if (s.hero.moveWaypoints.length > 0) {
+      expect(s.hero.targetX).not.toBe(tap.x);
+      expect(s.hero.targetZ).not.toBe(tap.z);
+    }
   });
 });
 

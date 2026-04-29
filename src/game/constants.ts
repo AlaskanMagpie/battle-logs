@@ -1,8 +1,11 @@
 /** Simulation ticks per second — higher = smoother movement/combat cadence (balance uses per-tick scaling). */
 export const TICK_HZ = 20;
 
-/** Match ends by damage score when wall clock reaches this duration (`ticks / TICK_HZ` seconds). */
-export const MATCH_DURATION_TICKS = 3 * 60 * TICK_HZ;
+/** Maximum `playing` phase length in wall-clock seconds (time-limit tie-break uses this cap). */
+export const MATCH_MAX_DURATION_SEC = 3 * 60;
+
+/** Sim ticks until `timeLimitCheck` may end the match (`MATCH_MAX_DURATION_SEC` of game time at `TICK_HZ`). */
+export const MATCH_DURATION_TICKS = MATCH_MAX_DURATION_SEC * TICK_HZ;
 
 /** Cast FX (lightning, rings, etc.) are forcibly removed after this many wall-clock seconds. */
 export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
@@ -22,14 +25,18 @@ export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
 export const PRODUCED_UNIT_SIEGE_RAM = "siege_ram";
 export const PRODUCED_UNIT_RECLAMATION_WRAITH = "reclamation_wraith";
 
-/** Enemy wizard initial Mana pool. */
-export const ENEMY_SETUP_STARTING_FLUX = 500;
+/** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
+export const PLAYER_STARTING_FLUX = 280;
 
 /** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2s at default TICK_HZ. */
 export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 40;
 
-/** Baseline Mana/sec for the rival wizard (scaled slightly by `map.difficulty`). */
-export const ENEMY_AI_PASSIVE_FLUX_PER_SEC = 2.5;
+/**
+ * Rival Mana trickle so the AI does not brick if map flow stalls.
+ * Keep small — economy should come from claimed nodes like the player (see `economy.ts`).
+ * Previously 2.5/sec felt like infinite Mana vs player doctrine casts (~3 from starting pool).
+ */
+export const ENEMY_AI_PASSIVE_FLUX_PER_SEC = 0.28;
 
 /** While the rival has fewer than this many claimed nodes and neutral nodes remain, keep this much Mana in reserve so claims are not priced out by builds. */
 export const ENEMY_AI_CLAIM_RESERVE_TAP_GOAL = 2;
@@ -108,11 +115,16 @@ export const FORWARD_PLACE_RADIUS = 10;
 
 export const ENEMY_RELAY_MAX_HP = 520;
 
-/** Wizard Keep — permanent base structure spawned at playerStart. Acts as the
+/** Wizard Keep — permanent base structure spawned at the player HQ anchor (`playerRelaySlots[0]` or `playerStart`). Acts as the
  *  player's HP anchor and slowly produces a small free T1 guard trickle. */
 export const KEEP_MAX_HP = 900;
 export const KEEP_SWARM_PERIOD_SEC = 12;
 export const KEEP_ID = "wizard_keep";
+
+/** Hero wizard stands this far from the HQ anchor toward the map midline (clear of the Keep mesh). */
+export const HERO_SPAWN_FORWARD_FROM_KEEP = 26;
+/** Lateral offset from the anchor so the hero is slightly to the side, not dead-center on the door. */
+export const HERO_SPAWN_SIDE_FROM_KEEP = 11;
 
 /** Army-wide population ceiling for player and rival structure production. */
 export const GLOBAL_POP_CAP = 1000;
@@ -149,9 +161,6 @@ export const SPELL_AOE_KNOCKBACK = 4.2;
 
 /** Exponential decay per second for unit knockback velocity. */
 export const KNOCKBACK_DECAY_PER_SEC = 7.5;
-
-/** Enough for an early Mana node claim plus a first resource-gated structure. */
-export const PLAYER_STARTING_FLUX = 280;
 
 export const STRUCTURE_AGGRO_BLOCK_RADIUS = 15;
 

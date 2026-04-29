@@ -127,7 +127,7 @@ function createHatchManaMaterial(tex: THREE.Texture): THREE.ShaderMaterial {
 
 /** Ground decal + occlusion hatch + slowly rotated SVG dash overlay. */
 export function createManaNodeGroundBand(
-  textures: ManaNodeTextureSet,
+  _textures: ManaNodeTextureSet,
   spinTex: THREE.Texture,
   initialTex: THREE.Texture,
 ): ManaNodeGroundBand {

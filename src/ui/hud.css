@@ -867,14 +867,25 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 .hud-endgame-actions {
   position: absolute;
-  inset: 0;
+  left: 0;
+  right: 0;
+  top: 84.15%;
+  height: 7.45%;
+  box-sizing: border-box;
+  padding: 0 11.65%;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 5.65%;
   pointer-events: none;
 }
 .hud-endgame-action {
-  position: absolute;
-  /* Inset to match the inner lit plates on end-victory / end-defeat art (frames are wider/taller). */
-  top: 84.15%;
-  height: 7.45%;
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  height: 100%;
   border: 0;
   margin: 0;
   padding: 0;
@@ -882,19 +893,12 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   font-size: 0;
   line-height: 0;
   background: transparent;
+  box-shadow: none;
   cursor: pointer;
   pointer-events: auto;
   border-radius: 6px;
   appearance: none;
   -webkit-appearance: none;
-}
-.hud-endgame-action--rematch {
-  left: 11.65%;
-  width: 35.45%;
-}
-.hud-endgame-action--edit {
-  left: 52.75%;
-  width: 35.45%;
 }
 .hud-endgame-action:focus-visible {
   outline: 2px solid rgba(122, 205, 255, 0.98);
@@ -1680,6 +1684,21 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
     inset 0 0 0 1px rgba(0, 0, 0, 0.7);
 }
 
+.tcg--slot-preview .slot-card-shell:has(.tcg-card-preview-img:not([hidden])) {
+  padding: 0;
+}
+
+.tcg--slot-preview .slot-card-shell:has(.tcg-card-preview-img:not([hidden])) .slot-card-art {
+  flex: 1 1 100%;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
+.tcg--slot-preview .slot-card-shell:has(.tcg-card-preview-img:not([hidden])) .slot-card-title,
+.tcg--slot-preview .slot-card-shell:has(.tcg-card-preview-img:not([hidden])) .slot-card-subtitle {
+  display: none;
+}
+
 .tcg--slot-preview .slot-card-art > .dm-art {
   position: absolute;
   inset: 0;
@@ -1703,8 +1722,12 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 
 .tcg--slot-preview .slot-card-art .tcg-card-preview-img {
-  object-fit: cover;
+  object-fit: contain;
   z-index: 2;
+}
+
+.tcg--slot-preview .slot-card-art .tcg-card-preview-img:not([hidden]) ~ .card-art-overlay {
+  display: block;
 }
 
 .tcg--slot-preview .slot-card-art .tcg-portrait-fallback {
@@ -1836,6 +1859,254 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .slot-card-stat--uses b,
 .slot-card-stat--effect b {
   color: #f4d5ff;
+}
+
+.card-art-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  font-family: "Georgia", "Times New Roman", serif;
+}
+
+.card-art-overlay__hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.card-art-overlay__value,
+.card-art-overlay__label {
+  paint-order: stroke fill;
+  stroke: rgba(0, 0, 0, 0.92);
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.card-art-overlay__value {
+  fill: #fff7ee;
+  stroke-width: 2.1px;
+  font-weight: 900;
+  font-size: 6.8px;
+  letter-spacing: -0.04em;
+  filter: drop-shadow(0 0.8px 0.8px rgba(0, 0, 0, 0.9));
+}
+
+.card-art-overlay__label {
+  fill: rgba(255, 237, 190, 0.95);
+  stroke-width: 1.1px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 2.25px;
+  font-weight: 850;
+  letter-spacing: 0.11em;
+}
+
+/* Strokes scale with field resize (inner group uses transform scale). */
+.card-art-overlay__text-scale .card-art-overlay__value,
+.card-art-overlay__text-scale .card-art-overlay__label {
+  vector-effect: none;
+}
+
+.card-art-overlay__field--xl .card-art-overlay__value {
+  font-size: 7.9px;
+}
+
+.card-art-overlay__field--sm .card-art-overlay__value {
+  font-size: 4.0px;
+}
+
+.card-art-overlay__field--sm .card-art-overlay__label {
+  font-size: 1.8px;
+}
+
+.card-art-overlay__field--tone-hp .card-art-overlay__value {
+  fill: #ffddd6;
+}
+
+.card-art-overlay__field--tone-build .card-art-overlay__value,
+.card-art-overlay__field--tone-cooldown .card-art-overlay__value {
+  fill: #d9ecff;
+}
+
+.card-art-overlay__field--tone-prod .card-art-overlay__value {
+  fill: #ffe38b;
+}
+
+.card-art-overlay__field--tone-batch .card-art-overlay__value,
+.card-art-overlay__field--tone-uses .card-art-overlay__value {
+  fill: #ead7ff;
+}
+
+.card-art-overlay__field--tone-salvage .card-art-overlay__value {
+  fill: #caffdf;
+}
+
+.is-card-overlay-calibrating .card-art-overlay {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+/* Hit rects stay invisible during calibration — crosshair + copied coords only (see cardArtOverlay). */
+.is-card-overlay-calibrating .card-art-overlay__hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.is-card-overlay-editing .card-art-overlay {
+  pointer-events: auto;
+}
+
+.is-card-overlay-editing .card-art-overlay__field {
+  cursor: grab;
+}
+
+.is-card-overlay-editing .card-art-overlay__field:active {
+  cursor: grabbing;
+}
+
+.is-card-overlay-editing .card-art-overlay__hit {
+  fill: rgba(80, 190, 255, 0.16);
+  stroke: rgba(120, 220, 255, 0.78);
+  stroke-width: 0.35px;
+  vector-effect: non-scaling-stroke;
+}
+
+.is-card-overlay-editing .card-art-overlay__field--selected .card-art-overlay__hit {
+  fill: rgba(255, 214, 103, 0.24);
+  stroke: rgba(255, 232, 145, 0.96);
+  stroke-width: 0.55px;
+}
+
+.card-art-overlay__handles {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.is-card-overlay-editing .card-art-overlay__handles {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.card-art-overlay__handle {
+  fill: rgba(255, 248, 220, 0.95);
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 0.35px;
+  vector-effect: non-scaling-stroke;
+}
+
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="nw"],
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="se"] {
+  cursor: nwse-resize;
+}
+
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="ne"],
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="sw"] {
+  cursor: nesw-resize;
+}
+
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="n"],
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="s"] {
+  cursor: ns-resize;
+}
+
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="e"],
+.is-card-overlay-editing .card-art-overlay__handle[data-overlay-handle="w"] {
+  cursor: ew-resize;
+}
+
+.card-overlay-editor-panel {
+  position: fixed;
+  right: 14px;
+  top: 14px;
+  z-index: 65000;
+  width: min(320px, calc(100vw - 28px));
+  padding: 12px;
+  border: 1px solid rgba(120, 220, 255, 0.55);
+  border-radius: 12px;
+  color: #ecf8ff;
+  background:
+    linear-gradient(135deg, rgba(5, 10, 18, 0.94), rgba(15, 30, 42, 0.9)),
+    radial-gradient(110% 120% at 0% 0%, rgba(80, 190, 255, 0.2), transparent 48%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.46);
+  font: 700 12px/1.35 system-ui, Segoe UI, sans-serif;
+  pointer-events: auto;
+}
+
+/** Docked in asset lab sidebar — flow layout, full width of host, no viewport float. */
+.card-overlay-editor-panel.card-overlay-editor-panel--docked {
+  position: relative;
+  right: auto;
+  top: auto;
+  z-index: 1;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.card-overlay-editor-panel__eyebrow {
+  margin-bottom: 9px;
+  color: #9ee8ff;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.card-overlay-editor-panel__row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  margin: 5px 0;
+}
+
+.card-overlay-editor-panel__row strong {
+  color: rgba(236, 248, 255, 0.7);
+  text-transform: uppercase;
+}
+
+.card-overlay-editor-panel__row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-overlay-editor-panel__status {
+  min-height: 34px;
+  margin: 10px 0;
+  padding: 8px;
+  border: 1px solid rgba(158, 232, 255, 0.24);
+  border-radius: 8px;
+  color: rgba(236, 248, 255, 0.86);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.card-overlay-editor-panel__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.card-overlay-editor-panel__actions button {
+  flex: 1 1 0;
+  min-height: 34px;
+  border: 1px solid rgba(158, 232, 255, 0.35);
+  border-radius: 8px;
+  color: #ecf8ff;
+  background: rgba(40, 116, 150, 0.42);
+  font: 900 11px/1 system-ui, Segoe UI, sans-serif;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.card-overlay-editor-panel__actions button:hover:not(:disabled) {
+  border-color: rgba(255, 232, 145, 0.75);
+  background: rgba(92, 72, 24, 0.5);
+}
+
+.card-overlay-editor-panel__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .slot-card-title,
@@ -3365,6 +3636,41 @@ button.hud-btn--armed::after {
   min-height: 0;
   width: 100%;
   height: auto;
+}
+.card-detail-pop-fit--art {
+  background: transparent;
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.6);
+}
+.card-detail-pop-fit--loading {
+  min-height: 220px;
+  align-items: center;
+  color: rgba(232, 228, 220, 0.86);
+  font: 700 13px/1 system-ui, Segoe UI, sans-serif;
+  letter-spacing: 0.04em;
+}
+.card-detail-pop-card-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(100dvh - 32px);
+  object-fit: contain;
+  border-radius: 14px;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.card-detail-pop-card-frame {
+  position: relative;
+  width: 100%;
+  line-height: 0;
+}
+.card-detail-pop-card-frame .card-art-overlay {
+  display: block;
+}
+.card-detail-pop-card-frame .card-art-overlay__value {
+  stroke-width: 2.3px;
+}
+.card-detail-pop-card-frame .card-art-overlay__label {
+  stroke-width: 1.2px;
 }
 
 /* ═══ Doctrine card blueprint (dc-*) — portrait rail + stat bar + rows (matches design mock) ═══ */

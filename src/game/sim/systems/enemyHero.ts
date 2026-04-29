@@ -49,6 +49,7 @@ import { isStructureEntry } from "../../types";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { structureObstacleFootprints } from "../../structureObstacles";
 import { applyAttackImpulse } from "./combat";
+import { applyEnemyHeroFacingTowardWorld } from "./heroFacing";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap, claimFluxRewardForTap } from "./homeDistance";
 
@@ -208,7 +209,6 @@ function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: numbe
     localPopCapBonus: 0,
   };
   s.structures.push(st);
-  s.stats.structuresBuilt += 1;
   s.enemyAiLastBuildCatalogId = catalogId;
   emitFx(s, "lightning", pos);
   logGame("combat", `Enemy wizard built ${def.name} at (${pos.x.toFixed(0)}, ${pos.z.toFixed(0)})`, s.tick);
@@ -360,6 +360,11 @@ export function enemyHeroSystem(s: GameState): void {
     }
   }
 
+  if (h.claimChannelTarget !== null) {
+    const tap = s.taps[h.claimChannelTarget];
+    if (tap) applyEnemyHeroFacingTowardWorld(s, tap.x, tap.z);
+  }
+
   attemptEnemyAiBuild(s);
   enemyHeroTryStrike(s);
 }
@@ -375,6 +380,7 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const from = { x: h.x, z: h.z };
   if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
+    applyEnemyHeroFacingTowardWorld(s, s.hero.x, s.hero.z);
     s.hero.hp = Math.max(0, s.hero.hp - damage);
     recordDamageDealtBy(s, "enemy", damage);
     h.attackCooldownTicksRemaining = cooldown;
@@ -393,6 +399,7 @@ function enemyHeroTryStrike(s: GameState): void {
     }
   }
   if (bestU) {
+    applyEnemyHeroFacingTowardWorld(s, bestU.x, bestU.z);
     const swarmMult = bestU.sizeClass === "Swarm" ? ENEMY_HERO_STRIKE_SWARM_MULT : 1;
     const dealt = damage * swarmMult;
     bestU.hp -= dealt;
@@ -415,6 +422,7 @@ function enemyHeroTryStrike(s: GameState): void {
     }
   }
   if (bestTap) {
+    applyEnemyHeroFacingTowardWorld(s, bestTap.x, bestTap.z);
     const cur = bestTap.anchorHp ?? 0;
     const dealt = damage * 0.42;
     bestTap.anchorHp = Math.max(0, cur - dealt);
@@ -427,6 +435,7 @@ function enemyHeroTryStrike(s: GameState): void {
 
   const keep = findKeep(s);
   if (keep && dist2(h, keep) <= r2) {
+    applyEnemyHeroFacingTowardWorld(s, keep.x, keep.z);
     const dealt = damage * 0.45;
     keep.hp -= dealt;
     recordDamageDealtBy(s, "enemy", dealt);

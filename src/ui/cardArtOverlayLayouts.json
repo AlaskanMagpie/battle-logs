@@ -1,0 +1,284 @@
+{
+  "profiles": {
+    "structure": {
+      "fields": {}
+    },
+    "command": {
+      "fields": {}
+    }
+  },
+  "cards": {
+    "outpost": {
+      "fields": {
+        "mana": {
+          "x": 13.7,
+          "y": 14.6,
+          "width": 18.1,
+          "height": 12.9
+        },
+        "cooldown": {
+          "x": 59.3,
+          "y": 82.9,
+          "width": 16.1,
+          "height": 12.4
+        },
+        "hp": {
+          "x": 24.9,
+          "y": 82.8,
+          "width": 17,
+          "height": 10
+        },
+        "prod": {
+          "x": 41.5,
+          "y": 104.1,
+          "width": 24.8,
+          "height": 14.6
+        },
+        "batch": {
+          "x": 89.6,
+          "y": 82.5,
+          "width": 24,
+          "height": 10
+        }
+      }
+    },
+    "watchtower": {
+      "fields": {
+        "mana": {
+          "x": 16.9,
+          "y": 14.9,
+          "width": 19.5,
+          "height": 13.9
+        },
+        "cooldown": {
+          "x": 49.4,
+          "y": 100.2,
+          "width": 19.3,
+          "height": 14.8
+        },
+        "hp": {
+          "x": 19.8,
+          "y": 99.8,
+          "width": 17,
+          "height": 10
+        },
+        "prod": {
+          "x": 83.7,
+          "y": 124.7,
+          "width": 21,
+          "height": 12.3
+        },
+        "batch": {
+          "x": 85.3,
+          "y": 99,
+          "width": 29.7,
+          "height": 12.3
+        }
+      }
+    },
+    "bastion_keep": {
+      "fields": {
+        "mana": {
+          "x": 15.6,
+          "y": 13.8,
+          "width": 16.9,
+          "height": 12.1
+        },
+        "cooldown": {
+          "x": 49.3,
+          "y": 97.4,
+          "width": 18.3,
+          "height": 14.1
+        },
+        "hp": {
+          "x": 19.8,
+          "y": 97.4,
+          "width": 17,
+          "height": 10
+        },
+        "prod": {
+          "x": 87.3,
+          "y": 123.9,
+          "width": 20.3,
+          "height": 12
+        },
+        "batch": {
+          "x": 85,
+          "y": 97.1,
+          "width": 30.5,
+          "height": 12.8
+        }
+      }
+    },
+    "verdant_citadel": {
+      "fields": {
+        "mana": {
+          "x": 17,
+          "y": 15.3,
+          "width": 15,
+          "height": 10.7
+        },
+        "cooldown": {
+          "x": 50.2,
+          "y": 102.1,
+          "width": 14.8,
+          "height": 11.4
+        },
+        "hp": {
+          "x": 21.1,
+          "y": 102.5,
+          "width": 17,
+          "height": 10
+        },
+        "prod": {
+          "x": 87.7,
+          "y": 122.5,
+          "width": 16.3,
+          "height": 9.6
+        },
+        "batch": {
+          "x": 84.9,
+          "y": 103,
+          "width": 31.9,
+          "height": 13.3
+        }
+      }
+    },
+    "recycle": {
+      "fields": {
+        "mana": {
+          "x": 18.8,
+          "y": 15.1,
+          "width": 18.4,
+          "height": 13.1
+        },
+        "cooldown": {
+          "x": 51.7,
+          "y": 134.2,
+          "width": 28,
+          "height": 21.6
+        },
+        "uses": {
+          "x": 84.6,
+          "y": 11.5,
+          "width": 32.5,
+          "height": 19.1
+        },
+        "salvage": {
+          "x": 50,
+          "y": 93,
+          "width": 17,
+          "height": 10
+        },
+        "effect": {
+          "x": 75,
+          "y": 103.2,
+          "width": 24,
+          "height": 10
+        }
+      }
+    },
+    "firestorm": {
+      "fields": {
+        "mana": {
+          "x": 20.4,
+          "y": 16.6,
+          "width": 19.6,
+          "height": 14
+        },
+        "cooldown": {
+          "x": 36.1,
+          "y": 131.5,
+          "width": 26.7,
+          "height": 20.5
+        },
+        "uses": {
+          "x": 84.7,
+          "y": 12.2,
+          "width": 28,
+          "height": 16.4
+        },
+        "salvage": {
+          "x": 50,
+          "y": 93,
+          "width": 17,
+          "height": 10
+        },
+        "effect": {
+          "x": 75,
+          "y": 103.2,
+          "width": 24,
+          "height": 10
+        }
+      }
+    },
+    "fortify": {
+      "fields": {
+        "mana": {
+          "x": 20.1,
+          "y": 16.5,
+          "width": 22,
+          "height": 15.7
+        },
+        "cooldown": {
+          "x": 53.4,
+          "y": 132.2,
+          "width": 27,
+          "height": 20.7
+        },
+        "uses": {
+          "x": 86.2,
+          "y": 9.9,
+          "width": 29.2,
+          "height": 17.2
+        },
+        "salvage": {
+          "x": 50,
+          "y": 93,
+          "width": 17,
+          "height": 10
+        },
+        "effect": {
+          "x": 75,
+          "y": 103.2,
+          "width": 24,
+          "height": 10
+        }
+      }
+    },
+    "shatter": {
+      "fields": {
+        "mana": {
+          "x": 20.3,
+          "y": 17.9,
+          "width": 20.3,
+          "height": 14.5
+        },
+        "cooldown": {
+          "x": 50.8,
+          "y": 134.2,
+          "width": 26.2,
+          "height": 20.1
+        },
+        "uses": {
+          "x": 85,
+          "y": 12,
+          "width": 28.5,
+          "height": 16.7
+        },
+        "salvage": {
+          "x": 82.2,
+          "y": 135.2,
+          "width": 18.2,
+          "height": 10.8
+        },
+        "effect": {
+          "x": 80.6,
+          "y": 134.1,
+          "width": 20.5,
+          "height": 8.6
+        }
+      }
+    }
+  }
+}
