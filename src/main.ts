@@ -972,6 +972,9 @@ function runMatch(
       hitX: number;
       hitZ: number;
       moved: boolean;
+      longPressArmed: boolean;
+      longPressTriggered: boolean;
+      longPressTimer: number | null;
     } | null = null;
 
     const cancelRightHold = (): void => {
@@ -1011,7 +1014,15 @@ function runMatch(
     const isMobilePointer = (ev: PointerEvent): boolean =>
       CONTROL_PROFILE.mode === "mobile" && ev.pointerType !== "mouse";
 
+    const clearMobileTapLongPressTimer = (tap: NonNullable<typeof mobileTap>): void => {
+      if (tap.longPressTimer != null) {
+        window.clearTimeout(tap.longPressTimer);
+        tap.longPressTimer = null;
+      }
+    };
+
     const cancelMobileTap = (): void => {
+      if (mobileTap) clearMobileTapLongPressTimer(mobileTap);
       mobileTap = null;
     };
 
@@ -1093,7 +1104,38 @@ function runMatch(
           hitX: hit.x,
           hitZ: hit.z,
           moved: false,
+          longPressArmed: !state.teleportClickPending,
+          longPressTriggered: false,
+          longPressTimer: null,
         };
+        if (mobileTap.longPressArmed) {
+          mobileTap.longPressTimer = window.setTimeout(() => {
+            if (!mobileTap || mobileTap.pointerId !== ev.pointerId || mobileTap.moved || mobileCameraDrag) return;
+            mobileTap.longPressTriggered = true;
+            mobileTap.longPressTimer = null;
+            if (state.selectedUnitIds.length > 0) {
+              rightHold = {
+                pointerId: ev.pointerId,
+                lastMs: performance.now(),
+                startX: mobileTap.startX,
+                startY: mobileTap.startY,
+                startHitX: mobileTap.hitX,
+                startHitZ: mobileTap.hitZ,
+                hitX: mobileTap.hitX,
+                hitZ: mobileTap.hitZ,
+                shiftKey: false,
+                altKey: false,
+                hasSelection: true,
+                dragFollow: false,
+                formationDragging: false,
+              };
+              state.lastMessage = "Touch hold: drag to shape formation, release to command.";
+            } else {
+              pendingIntents.push({ type: "hero_move", x: mobileTap.hitX, z: mobileTap.hitZ, shiftKey: false });
+              state.lastMessage = "Touch hold: hero move issued.";
+            }
+          }, CONTROL_PROFILE.longPressMs);
+        }
         try {
           canvas.setPointerCapture(ev.pointerId);
         } catch {
@@ -1183,7 +1225,7 @@ function runMatch(
           } catch {
             /* ignore */
           }
-          if (!snap.moved) issueMobileTapCommand(ev, snap);
+          if (!snap.moved && !snap.longPressTriggered) issueMobileTapCommand(ev, snap);
         }
         return;
       }
@@ -1296,6 +1338,7 @@ function runMatch(
           const dy = ev.clientY - mobileTap.startY;
           if (!mobileTap.moved && dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
             mobileTap.moved = true;
+            clearMobileTapLongPressTimer(mobileTap);
           }
           const rectM = canvas.getBoundingClientRect();
           const hitM = renderer.pickGround(ev.clientX, ev.clientY, rectM);
