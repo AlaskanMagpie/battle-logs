@@ -9,6 +9,7 @@ import {
 } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
 import { readLocalLeaderboard, scoreMatchResult } from "../game/leaderboard";
+import { formatMatchDurationFromTicks, simSecondsFromMatchTick } from "../game/matchDisplay";
 import {
   claimedTapCount,
   doctrineCardPlayability,
@@ -19,14 +20,11 @@ import {
 } from "../game/state";
 import { isStructureEntry } from "../game/types";
 import {
-  CARD_PREVIEW_HOVER_MS,
-  onDoctrineCardPreviewHoverLeave,
   showDoctrineCardDetail,
 } from "./cardDetailPop";
 import type { ControlProfile } from "../controlProfile";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
-import { doctrineSlotHudTone } from "./doctrineSlotHudTone";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
 const HAND_ACTIVE_LIFT = 5;
@@ -241,75 +239,179 @@ function campCoreSummary(state: GameState): string {
   return bits.length ? bits.join(" · ") : "";
 }
 
+function hudSvgText(
+  className: string,
+  text: string,
+  id?: string,
+  opts?: { anchor?: "middle" | "start" },
+): string {
+  const idAttr = id ? ` id="${escapeHudHtml(id)}"` : "";
+  const anchor = opts?.anchor ?? "middle";
+  const x = anchor === "start" ? "4" : "80";
+  const ta = anchor === "start" ? "start" : "middle";
+  const preserve = anchor === "start" ? "xMinYMid meet" : "xMidYMid meet";
+  return `<svg class="hud-svg-text ${className}" viewBox="0 0 160 24" preserveAspectRatio="${preserve}" aria-hidden="true"><text${idAttr} x="${x}" y="16" text-anchor="${ta}">${escapeHudHtml(text)}</text></svg>`;
+}
+
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
   const { controlProfile, onRematch, onEditDoctrine, onCameraFollowToggle, pushIntent } = api;
   root.dataset.controlProfile = controlProfile?.mode ?? "desktop";
   root.innerHTML = `
     <header class="hud-chrome" aria-label="Match status">
       <aside class="hud-match-side-controls" aria-label="Commands and battle log">
-        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-rally" type="button" title="Arm rally point (R). Next LMB on the map sets where all units march in Offense; G clears march.">
+        <button
+          class="hud-btn hud-btn--ghost hud-btn--side-art"
+          id="btn-rally"
+          type="button"
+          title="Rally: arm a march point (R). In Offense, the next left-click on the map sets where your army walks; use G to clear the march when needed."
+        >
           <span class="hud-side-sprite hud-side-sprite--rally" aria-hidden="true"></span>
-          <span class="hud-side-copy"><span class="hud-side-eyebrow">Rally</span><b>Map</b></span>
+          <span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">Rally <kbd class="hud-side-hk">R</kbd></span
+            ><span class="hud-side-hint">Set army march on map (Offense)</span
+            ><span class="hud-side-value">Map</span></span
+          >
         </button>
-        <button class="hud-btn hud-btn--ghost hud-btn--stance hud-btn--side-art" id="btn-stance" type="button" aria-pressed="false" title="Toggle army stance (G). Offense: engage nearby foes. Defense: gather on the Wizard.">
+        <button
+          class="hud-btn hud-btn--ghost hud-btn--stance hud-btn--side-art"
+          id="btn-stance"
+          type="button"
+          aria-pressed="false"
+          title="Stance: Offense (seek fights) or Defense (gather on Wizard) — G."
+        >
           <span class="hud-side-sprite hud-side-sprite--stance" aria-hidden="true"></span>
-          <span class="hud-side-copy"><span class="hud-side-eyebrow">Stance</span><b>Offense</b></span>
+          <span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">Stance <kbd class="hud-side-hk">G</kbd></span
+            ><span class="hud-side-hint">Offense vs gather on Wizard</span
+            ><span class="hud-side-value">Offense</span></span
+          >
         </button>
-        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-formation" type="button" title="Cycle RMB-drag formation (V). Drag RMB with squads selected to set the line; hold Shift for wider ranks.">
+        <button
+          class="hud-btn hud-btn--ghost hud-btn--side-art"
+          id="btn-formation"
+          type="button"
+          title="Formation: V cycles preset. With squads selected, RMB drag sets the shape; Shift = wider ranks."
+        >
           <span class="hud-side-sprite hud-side-sprite--formation" aria-hidden="true"></span>
-          <span class="hud-side-copy"><span class="hud-side-eyebrow">Formation</span><b>Line</b></span>
+          <span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">Shape <kbd class="hud-side-hk">V</kbd></span
+            ><span class="hud-side-hint">RMB drag on selected units</span
+            ><span class="hud-side-value">Line</span></span
+          >
         </button>
         <button
           class="hud-btn hud-btn--ghost hud-btn--side-art"
           id="btn-camera-follow"
           type="button"
           aria-pressed="true"
-          title="Lock camera on wizard (scroll to zoom only) vs free orbit. Same as C."
+          title="Camera: follow Wizard (scroll = zoom) or free orbit (MMB) — C to toggle."
         >
           <span class="hud-side-sprite hud-side-sprite--camera" aria-hidden="true"></span>
-          <span class="hud-side-copy"><span class="hud-side-eyebrow">Camera</span><b>lock</b></span>
+          <span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">View <kbd class="hud-side-hk">C</kbd></span
+            ><span class="hud-side-hint">Lock on wizard vs free cam</span
+            ><span class="hud-side-value">lock</span></span
+          >
         </button>
-        <button class="hud-btn hud-btn--ghost hud-btn--side-art" id="btn-teleport" type="button" aria-pressed="false" title="Teleport Wizard squad (T). Click your half; carries nearby friendly troops.">
+        <button
+          class="hud-btn hud-btn--ghost hud-btn--side-art"
+          id="btn-teleport"
+          type="button"
+          aria-pressed="false"
+          title="Teleport: T arms a squad blink on your side; carries nearby troops. Cooldown shown on the button."
+        >
           <span class="hud-side-sprite hud-side-sprite--teleport" aria-hidden="true"></span>
-          <span class="hud-side-copy"><span class="hud-side-eyebrow">Teleport</span><b>Ready</b></span>
+          <span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">Blink <kbd class="hud-side-hk">T</kbd></span
+            ><span class="hud-side-hint">Jump squad + nearby allies</span
+            ><span class="hud-side-value">Ready</span></span
+          >
         </button>
-        <button class="hud-btn hud-btn--ghost" id="btn-captain" type="button" aria-pressed="${initial.heroCaptainEnabled ? "true" : "false"}" title="Captain mode: the Wizard picks nearby objectives when idle. Default on for mobile.">
-          <span class="hud-side-ico hud-side-ico--captain" aria-hidden="true"><i></i><em>A</em></span><span class="hud-side-copy"><span class="hud-side-eyebrow">Captain</span><b>${initial.heroCaptainEnabled ? "auto" : "manual"}</b></span>
+        <button
+          class="hud-btn hud-btn--ghost"
+          id="btn-captain"
+          type="button"
+          aria-pressed="${initial.heroCaptainEnabled ? "true" : "false"}"
+          title="Captain: when on, the Wizard auto-picks objectives when idle. Turn off for full manual control."
+        >
+          <span class="hud-side-ico hud-side-ico--captain" aria-hidden="true"><i></i><span class="hud-capt-ico-let">A</span></span
+          ><span class="hud-side-copy"
+            ><span class="hud-side-eyebrow">Captain <kbd class="hud-side-hk">A</kbd></span
+            ><span class="hud-side-hint">Auto path when idle</span
+            ><span class="hud-side-value">${initial.heroCaptainEnabled ? "on" : "off"}</span></span
+          >
         </button>
       </aside>
-      <div class="hud-brand" aria-hidden="true"><span class="hud-brand__mark">A</span></div>
+      <div class="hud-brand" aria-hidden="true">${hudSvgText("hud-svg-brand", "A")}</div>
       <div class="hud-chrome__cluster hud-chrome__cluster--main">
         <div class="hud-chrome__stats">
-          <span class="hud-stat hud-stat--econ hud-stat--mana"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Mana</span><strong id="flux">0</strong></span></span>
-          <span class="hud-stat hud-stat--econ hud-stat--salvage"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Salvage</span><strong id="salvage">0</strong></span></span>
-          <span class="hud-stat hud-stat--econ hud-stat--pop"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Pop</span><strong id="pop">0</strong></span></span>
-          <span class="hud-stat hud-stat--field hud-stat--nodes"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt"><span>Nodes</span><strong id="nodes">0</strong></span></span>
-          <span class="hud-stat hud-stat--mode"><span class="hud-stat__txt"><span>Mode</span><strong id="mode">idle</strong></span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--mana"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Mana")}${hudSvgText("hud-svg-value", "0", "flux")}</span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--salvage"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Salvage")}${hudSvgText("hud-svg-value", "0", "salvage")}</span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--pop"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Pop")}${hudSvgText("hud-svg-value", "0", "pop")}</span></span>
+          <span class="hud-stat hud-stat--field hud-stat--nodes"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Nodes")}${hudSvgText("hud-svg-value", "0", "nodes")}</span></span>
+          <span class="hud-stat hud-stat--mode"><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Mode")}${hudSvgText("hud-svg-value hud-svg-value--mode", "idle", "mode")}</span></span>
         </div>
-        <div class="hud-chrome__phase" id="phase">playing · tick 0</div>
+        <div
+          class="hud-chrome__phase"
+          role="status"
+          aria-live="polite"
+          aria-label="Match time remaining and total damage dealt in this match"
+        >
+          <div class="hud-phase__row hud-phase__row--time">
+            <span class="hud-phase__kicker">Time left (match clock)</span>
+            <span class="hud-phase-timer" id="hud-phase-timer">0s</span>
+          </div>
+          <div
+            class="hud-phase__row hud-phase__row--damage"
+            title="Total hit-point damage in this match: first number = damage you dealt to the enemy, second = damage they dealt to you. Used to break ties if the match timer runs out."
+          >
+            <span class="hud-phase__kicker">Damage: you <span aria-hidden="true">|</span> enemy</span>
+            <span class="hud-phase-stats">
+              <span class="hud-phase-stats-you" id="hud-phase-dmg-p">0</span>
+              <span class="hud-phase-stats-sep" aria-hidden="true">/</span>
+              <span class="hud-phase-stats-en" id="hud-phase-dmg-e">0</span>
+            </span>
+          </div>
+        </div>
+        <div class="hud-territory-key" role="group" aria-label="Territory map key">
+          <div class="hud-territory-key__row">
+            <span class="hud-territory-key__swatch hud-territory-key__swatch--yours" aria-hidden="true"></span>
+            <span class="hud-territory-key__txt">Your territory — build &amp; deploy</span>
+          </div>
+          <div class="hud-territory-key__row">
+            <span class="hud-territory-key__swatch hud-territory-key__swatch--enemy" aria-hidden="true"></span>
+            <span class="hud-territory-key__txt">Enemy zone — hostile</span>
+          </div>
+        </div>
       </div>
       <div class="hud-chrome__cluster hud-chrome__cluster--status">
         <div class="hud-chrome__readout hud-status-card hud-status-card--hostiles" id="hud-readout" aria-label="Enemy intelligence"></div>
         <div class="hud-chrome__vitals">
-          <div class="hud-vital hud-status-card" id="hud-hero-hp"><span class="hud-vital__ico" aria-hidden="true">W</span><span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><strong id="hud-hero-hp-val">100%</strong></div>
-          <div class="hud-vital hud-status-card" id="hud-keep-hp"><span class="hud-vital__ico" aria-hidden="true">K</span><span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><strong id="hud-keep-hp-val">100%</strong></div>
+          <div class="hud-vital hud-status-card" id="hud-hero-hp"><span class="hud-vital__ico" aria-hidden="true">${hudSvgText("hud-svg-icon-letter", "W")}</span>${hudSvgText("hud-svg-vital-label hud-vital__lbl", "Wizard")}<span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span>${hudSvgText("hud-svg-vital-value", "100%", "hud-hero-hp-val")}</div>
+          <div class="hud-vital hud-status-card" id="hud-keep-hp"><span class="hud-vital__ico" aria-hidden="true">${hudSvgText("hud-svg-icon-letter", "K")}</span>${hudSvgText("hud-svg-vital-label hud-vital__lbl", "Keep")}<span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span>${hudSvgText("hud-svg-vital-value", "100%", "hud-keep-hp-val")}</div>
         </div>
       </div>
       <div class="hud-chrome__objective" id="hud-objective" hidden role="status">
         <span class="hud-chrome__objective-icon" aria-hidden="true"></span>
-        <span class="hud-chrome__objective-body"><span class="hud-chrome__objective-k">Next</span><span class="hud-chrome__objective-t" id="hud-objective-text"></span></span>
+        <span class="hud-chrome__objective-body">${hudSvgText("hud-svg-objective-label hud-chrome__objective-k", "Next Objective")}${hudSvgText("hud-svg-objective-text hud-chrome__objective-t", "", "hud-objective-text", { anchor: "start" })}</span>
       </div>
       <div class="hud-select-tag" id="hud-select-tag" hidden></div>
     </header>
     <div class="hud-endgame" id="hud-endgame" hidden>
-      <div class="hud-endgame-panel">
+      <div
+        class="hud-endgame-panel"
+        aria-labelledby="hud-endgame-title"
+        aria-describedby="hud-endgame-reason"
+      >
         <img class="hud-endgame-art" id="hud-endgame-art" src="/assets/hud/end-victory.png" alt="" />
         <h2 class="hud-endgame-title sr-only" id="hud-endgame-title">Match over</h2>
+        <p class="hud-endgame-reason" id="hud-endgame-reason" role="status" hidden></p>
         <dl class="hud-endgame-stats" id="hud-endgame-stats" aria-label="Match results">
           <div class="hud-endgame-stat hud-endgame-stat--time"><dt>Time</dt><dd id="hud-endgame-stat-time">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--score"><dt>Score</dt><dd id="hud-endgame-stat-score">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--best"><dt>Best local</dt><dd id="hud-endgame-stat-best">—</dd></div>
-          <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Structures you built</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--damage"><dt>Damage you vs enemy</dt><dd id="hud-endgame-stat-damage">—</dd></div>
+          <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Doctrine structures placed</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--structures-lost"><dt>Structures lost</dt><dd id="hud-endgame-stat-structures-lost">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--units-produced"><dt>Units produced</dt><dd id="hud-endgame-stat-units-produced">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--units-lost"><dt>Units lost</dt><dd id="hud-endgame-stat-units-lost">—</dd></div>
@@ -341,6 +443,16 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
       </div>
     </footer>
+    <a
+      class="hud-vibejam-link"
+      href="https://vibej.am/"
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Vibe Jam 2026"
+      aria-label="Vibe Jam 2026"
+    >
+      🎮 Vibe Jam 2026
+    </a>
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
@@ -362,39 +474,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   }
 
   hydrateCardPreviewImages(doctrineTrack);
-
-  let doctrineHoverTimer: ReturnType<typeof setTimeout> | null = null;
-  let doctrineHoverId: string | null = null;
-  const clearDoctrineHover = (): void => {
-    if (doctrineHoverTimer) clearTimeout(doctrineHoverTimer);
-    doctrineHoverTimer = null;
-    doctrineHoverId = null;
-  };
-  doctrineTrack.addEventListener("mouseover", (ev) => {
-    if (!(ev.target instanceof Element)) return;
-    const slot = ev.target.closest(".slot");
-    if (!(slot instanceof HTMLElement) || !doctrineTrack.contains(slot)) return;
-    if (slot.classList.contains("slot-empty") || slot.classList.contains("slot-locked")) return;
-    const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
-    const id = card?.getAttribute("data-catalog-id");
-    if (!id) return;
-    if (doctrineHoverId === id) return;
-    clearDoctrineHover();
-    doctrineHoverId = id;
-    doctrineHoverTimer = setTimeout(() => {
-      doctrineHoverTimer = null;
-      showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
-    }, CARD_PREVIEW_HOVER_MS);
-  });
-  doctrineTrack.addEventListener("mouseout", (ev) => {
-    if (!(ev.target instanceof Element)) return;
-    const slot = ev.target.closest(".slot");
-    if (!(slot instanceof HTMLElement) || !doctrineTrack.contains(slot)) return;
-    const rel = ev.relatedTarget;
-    if (rel instanceof Node && slot.contains(rel)) return;
-    clearDoctrineHover();
-    onDoctrineCardPreviewHoverLeave(ev);
-  });
 
   doctrineTrack.addEventListener("dblclick", (ev) => {
     if (!(ev.target instanceof Element)) return;
@@ -446,7 +525,9 @@ export function updateHud(state: GameState): void {
   const pop = document.querySelector("#pop");
   const nodes = document.querySelector("#nodes");
   const mode = document.querySelector("#mode");
-  const phase = document.querySelector("#phase");
+  const phaseTimer = document.querySelector("#hud-phase-timer");
+  const phaseDmgP = document.querySelector("#hud-phase-dmg-p");
+  const phaseDmgE = document.querySelector("#hud-phase-dmg-e");
   const msg = document.querySelector("#msg");
   const captain = document.querySelector("#btn-captain");
   const nodeIncome = playerManaIncomePerSec(state);
@@ -486,20 +567,22 @@ export function updateHud(state: GameState): void {
             : "Idle";
     }
   }
-  if (phase) {
+  if (phaseTimer && phaseDmgP && phaseDmgE) {
     const dp = Math.round(state.stats.damageDealtPlayer);
     const de = Math.round(state.stats.damageDealtEnemy);
+    phaseDmgP.textContent = String(dp);
+    phaseDmgE.textContent = String(de);
     if (state.phase === "playing") {
       const sec = Math.max(0, (MATCH_DURATION_TICKS - state.tick) / TICK_HZ);
-      phase.textContent = `${state.phase} · ${sec.toFixed(0)}s · ${dp}↔${de} dmg`;
+      phaseTimer.textContent = `${sec.toFixed(0)}s`;
     } else {
-      phase.textContent = `${state.phase} · tick ${state.tick} · ${dp}↔${de} dmg`;
+      phaseTimer.textContent = state.phase;
     }
   }
   if (captain) {
     captain.setAttribute("aria-pressed", state.heroCaptainEnabled ? "true" : "false");
-    const copy = captain.querySelector<HTMLElement>(".hud-side-copy b");
-    if (copy) copy.textContent = state.heroCaptainEnabled ? "auto" : "manual";
+    const copy = captain.querySelector<HTMLElement>(".hud-side-value");
+    if (copy) copy.textContent = state.heroCaptainEnabled ? "on" : "off";
     captain.classList.toggle("active", state.heroCaptainEnabled);
   }
   if (msg) msg.textContent = state.lastMessage;
@@ -507,7 +590,7 @@ export function updateHud(state: GameState): void {
   const stanceBtn = document.querySelector<HTMLButtonElement>("#btn-stance");
   if (stanceBtn) {
     const def = state.armyStance === "defense";
-    const copy = stanceBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    const copy = stanceBtn.querySelector<HTMLElement>(".hud-side-value");
     if (copy) copy.textContent = def ? "Defense" : "Offense";
     stanceBtn.setAttribute("aria-pressed", def ? "true" : "false");
     stanceBtn.classList.toggle("hud-btn--stance-defense", def);
@@ -515,7 +598,7 @@ export function updateHud(state: GameState): void {
 
   const formationBtn = document.querySelector<HTMLButtonElement>("#btn-formation");
   if (formationBtn) {
-    const copy = formationBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    const copy = formationBtn.querySelector<HTMLElement>(".hud-side-value");
     if (copy) copy.textContent = state.formationPreset[0]!.toUpperCase() + state.formationPreset.slice(1);
   }
 
@@ -540,7 +623,7 @@ export function updateHud(state: GameState): void {
 
   const rallyBtn = document.querySelector<HTMLButtonElement>("#btn-rally");
   if (rallyBtn) {
-    const copy = rallyBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    const copy = rallyBtn.querySelector<HTMLElement>(".hud-side-value");
     if (copy) copy.textContent = state.rallyClickPending ? "Click map" : "Map";
     rallyBtn.setAttribute("aria-pressed", state.rallyClickPending ? "true" : "false");
     rallyBtn.classList.toggle("hud-btn--armed", state.rallyClickPending);
@@ -550,7 +633,7 @@ export function updateHud(state: GameState): void {
   if (teleportBtn) {
     const cd = heroTeleportCooldownSeconds(state);
     const cooling = state.heroTeleportCooldownTicks > 0;
-    const copy = teleportBtn.querySelector<HTMLElement>(".hud-side-copy b");
+    const copy = teleportBtn.querySelector<HTMLElement>(".hud-side-value");
     if (copy) copy.textContent = cooling ? `${cd}s` : state.teleportClickPending ? "Click" : "Ready";
     teleportBtn.disabled = cooling;
     teleportBtn.setAttribute("aria-pressed", state.teleportClickPending ? "true" : "false");
@@ -561,11 +644,14 @@ export function updateHud(state: GameState): void {
   if (readout) {
     const coreLine = campCoreSummary(state);
     const n = enemyCount(state);
-    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><span class="hud-readout__body"><span class="hud-readout__hostiles">Hostiles <strong class="hud-ink-hostile">${n}</strong> alive</span>${
-      coreLine
-        ? ` <span class="hud-readout__sep" aria-hidden="true">·</span> <span class="hud-readout__camps"><span class="hud-readout__camps-k">Enemy camps</span> ${coreLine}</span>`
-        : ""
-    }</span>`;
+    const nEsc = escapeHudHtml(String(n));
+    const coreBlock =
+      coreLine.length > 0
+        ? `<div class="hud-readout__camps" role="status"><span class="hud-readout__camps-lbl">Enemy camp cores</span><span class="hud-readout__camps-val">${escapeHudHtml(
+            coreLine,
+          )}</span></div>`
+        : "";
+    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles alive (enemy units in play)</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
   }
 
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");
@@ -616,11 +702,16 @@ export function updateHud(state: GameState): void {
   const endTitle = document.querySelector("#hud-endgame-title");
   const endArt = document.querySelector<HTMLImageElement>("#hud-endgame-art");
   const endStats = document.querySelector("#hud-endgame-stats");
+  const endReason = document.querySelector<HTMLElement>("#hud-endgame-reason");
   if (end && endTitle && endStats && endArt) {
     if (state.phase === "playing") {
       end.hidden = true;
       end.classList.remove("hud-endgame--win", "hud-endgame--lose");
       endTitle.textContent = "Match over";
+      if (endReason) {
+        endReason.textContent = "";
+        endReason.hidden = true;
+      }
     } else {
       const won = state.phase === "win";
       end.hidden = false;
@@ -628,23 +719,52 @@ export function updateHud(state: GameState): void {
       end.classList.toggle("hud-endgame--lose", !won);
       endTitle.textContent = won ? "Victory" : "Defeat";
       endArt.src = won ? "/assets/hud/end-victory.png" : "/assets/hud/end-defeat.png";
-      const mins = (state.tick / TICK_HZ / 60).toFixed(1);
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
-      const setStat = (id: string, value: string | number): void => {
+      const timeSec = simSecondsFromMatchTick(state.tick);
+      const setEndStat = (id: string, value: string | number, title?: string): void => {
         const el = document.querySelector<HTMLElement>(`#hud-endgame-stat-${id}`);
-        if (el) el.textContent = String(value);
+        if (!el) return;
+        el.textContent = String(value);
+        if (title) el.setAttribute("title", title);
+        else el.removeAttribute("title");
       };
-      setStat("time", `${mins} min`);
-      setStat("score", scoreMatchResult(state));
-      setStat("best", best ? best.score : "—");
-      setStat("structures-built", st.structuresBuilt);
-      setStat("structures-lost", st.structuresLost);
-      setStat("units-produced", st.unitsProduced);
-      setStat("units-lost", st.unitsLost);
-      setStat("enemy-kills", st.enemyKills);
-      setStat("commands-cast", st.commandsCast);
-      setStat("salvage-recovered", Math.floor(st.salvageRecovered));
+      setEndStat(
+        "time",
+        formatMatchDurationFromTicks(state.tick),
+        `Match time in the simulation: ${timeSec < 10 ? timeSec.toFixed(2) : timeSec.toFixed(1)} s of game at ${TICK_HZ} ticks per second (same as the match clock). This is not wall-clock time if the game tab was throttled or paused.`,
+      );
+      setEndStat(
+        "score",
+        scoreMatchResult(state),
+        "Post-match score: win bonus + enemy kills×14 + claimed nodes×180 + doctrine buildings placed×55 − your unit losses×5 − one point per sim minute. Same value as best local when this run is stored.",
+      );
+      setEndStat("best", best ? best.score : "—", "Highest post-match score stored in this browser (last 10 runs).");
+      setEndStat(
+        "damage",
+        `${Math.round(st.damageDealtPlayer)} / ${Math.round(st.damageDealtEnemy)}`,
+        "Total damage you dealt to enemy vs damage enemies dealt to your team (sim totals).",
+      );
+      setEndStat(
+        "structures-built",
+        st.structuresBuilt,
+        "Doctrine or Captain auto-placed buildings. The pre-placed Wizard Keep is not included.",
+      );
+      setEndStat("structures-lost", st.structuresLost, "Player buildings destroyed in the sim (the Keep can count if destroyed).");
+      setEndStat("units-produced", st.unitsProduced, "Player units spawned from your production (swarm/line/… batches count each unit).");
+      setEndStat("units-lost", st.unitsLost, "Your troop casualties (squad sizes count).");
+      setEndStat("enemy-kills", st.enemyKills, "Enemy units and troops eliminated (squad sizes count).");
+      setEndStat("commands-cast", st.commandsCast, "Command doctrine cards cast (spells, not building placements).");
+      setEndStat(
+        "salvage-recovered",
+        Math.round(st.salvageRecovered),
+        "Salvage that entered your salvage pool: refunds when your non-Keep buildings were lost, and salvage from command effects that add to the pool.",
+      );
+      if (endReason) {
+        const how = (state.matchEndDetail ?? state.lastMessage).trim();
+        endReason.textContent = how;
+        endReason.hidden = !how.length;
+      }
     }
   }
 
@@ -654,13 +774,6 @@ export function updateHud(state: GameState): void {
   const isDeck2x8 = doctrineTrack.classList.contains("doctrine-track--deck2x8");
   const isDeck10 = doctrineTrack.classList.contains("doctrine-track--deck10");
   const isRail = doctrineTrack.classList.contains("doctrine-track--rail");
-
-  const idTotalCount = new Map<string, number>();
-  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-    const id = state.doctrineSlotCatalogIds[i] ?? null;
-    if (!id || !getCatalogEntry(id)) continue;
-    idTotalCount.set(id, (idTotalCount.get(id) ?? 0) + 1);
-  }
 
   buttons.forEach((b) => {
     const i = Number(b.dataset.slotIndex);
@@ -723,14 +836,6 @@ export function updateHud(state: GameState): void {
       return;
     }
 
-    const total = idTotalCount.get(id) ?? 1;
-    if (total > 1) {
-      const dup = document.createElement("span");
-      dup.className = "slot-dup-count";
-      dup.textContent = `x${total}`;
-      b.appendChild(dup);
-    }
-
     const play = doctrineCardPlayability(state, id, null, i);
     if (play.kind === "cooldown") b.classList.add("slot-locked");
     else if (play.kind === "mana") b.classList.add("slot-need-mana");
@@ -747,7 +852,6 @@ export function updateHud(state: GameState): void {
     const hk = i === 9 ? "0" : String(i + 1);
     b.title = `${play.reason ?? play.hint} (key ${hk})`;
     b.setAttribute("aria-disabled", play.reason ? "true" : "false");
-    b.dataset.slotTone = doctrineSlotHudTone(e);
   });
 
   if (!isDeck2x8 && !isDeck10 && !isRail) {

@@ -15,8 +15,9 @@ import {
 import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
 import { resetCardArtManifestCache } from "../cardArtManifest";
 import {
-  CARD_PREVIEW_HOVER_MS,
-  onDoctrineCardPreviewHoverLeave,
+  CARD_PREVIEW_BINDER_HAND_MS,
+  CARD_PREVIEW_BINDER_HAND_SLOP_PX,
+  closeDoctrineCardDetail,
   showDoctrineCardDetail,
 } from "../cardDetailPop";
 import { doctrineSlotButtonInnerHtml, tcgCardSlotHtml } from "../doctrineCard";
@@ -824,15 +825,54 @@ export function DoctrineBinderPicker({
     const track = handTrackRef.current;
     if (!track) return;
 
-    let doctrineHoverTimer: ReturnType<typeof setTimeout> | null = null;
-    let doctrineHoverId: string | null = null;
-    const clearDoctrineHover = (): void => {
-      if (doctrineHoverTimer) clearTimeout(doctrineHoverTimer);
-      doctrineHoverTimer = null;
-      doctrineHoverId = null;
+    const slop2 = CARD_PREVIEW_BINDER_HAND_SLOP_PX * CARD_PREVIEW_BINDER_HAND_SLOP_PX;
+    let arm: {
+      pointerId: number;
+      startX: number;
+      startY: number;
+      slot: HTMLElement;
+      catalogId: string;
+      timer: number | null;
+    } | null = null;
+
+    const detachWin = (): void => {
+      window.removeEventListener("pointermove", onWinMove);
+      window.removeEventListener("pointerup", onWinEnd);
+      window.removeEventListener("pointercancel", onWinEnd);
     };
 
-    const onOver = (ev: MouseEvent): void => {
+    const clear = (): void => {
+      if (arm?.timer != null) clearTimeout(arm.timer);
+      detachWin();
+      arm = null;
+    };
+
+    const onWinMove = (ev: PointerEvent): void => {
+      if (!arm || ev.pointerId !== arm.pointerId) return;
+      const dx = ev.clientX - arm.startX;
+      const dy = ev.clientY - arm.startY;
+      if (dx * dx + dy * dy < slop2) return;
+      if (arm.timer != null) {
+        clearTimeout(arm.timer);
+        arm.timer = null;
+      }
+      closeDoctrineCardDetail();
+      detachWin();
+      arm = null;
+    };
+
+    const onWinEnd = (ev: PointerEvent): void => {
+      if (!arm || ev.pointerId !== arm.pointerId) return;
+      if (arm.timer != null) {
+        clearTimeout(arm.timer);
+        arm.timer = null;
+      }
+      detachWin();
+      arm = null;
+    };
+
+    const onDown = (ev: PointerEvent): void => {
+      if (ev.button !== 0) return;
       if (!(ev.target instanceof Element)) return;
       const slot = ev.target.closest(".slot");
       if (!(slot instanceof HTMLElement) || !track.contains(slot)) return;
@@ -840,30 +880,33 @@ export function DoctrineBinderPicker({
       const card = slot.querySelector(".doctrine-card-compact[data-catalog-id]");
       const id = card?.getAttribute("data-catalog-id");
       if (!id) return;
-      if (doctrineHoverId === id) return;
-      clearDoctrineHover();
-      doctrineHoverId = id;
-      doctrineHoverTimer = setTimeout(() => {
-        doctrineHoverTimer = null;
-        showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
-      }, CARD_PREVIEW_HOVER_MS);
-    };
-    const onOut = (ev: MouseEvent): void => {
-      if (!(ev.target instanceof Element)) return;
-      const slot = ev.target.closest(".slot");
-      if (!(slot instanceof HTMLElement) || !track.contains(slot)) return;
-      const rel = ev.relatedTarget;
-      if (rel instanceof Node && slot.contains(rel)) return;
-      clearDoctrineHover();
-      onDoctrineCardPreviewHoverLeave(ev);
+      clear();
+      const pid = ev.pointerId;
+      const sx = ev.clientX;
+      const sy = ev.clientY;
+      arm = {
+        pointerId: pid,
+        startX: sx,
+        startY: sy,
+        slot,
+        catalogId: id,
+        timer: window.setTimeout(() => {
+          if (!arm || arm.pointerId !== pid) return;
+          arm.timer = null;
+          detachWin();
+          showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
+          arm = null;
+        }, CARD_PREVIEW_BINDER_HAND_MS),
+      };
+      window.addEventListener("pointermove", onWinMove);
+      window.addEventListener("pointerup", onWinEnd);
+      window.addEventListener("pointercancel", onWinEnd);
     };
 
-    track.addEventListener("mouseover", onOver);
-    track.addEventListener("mouseout", onOut);
+    track.addEventListener("pointerdown", onDown, true);
     return () => {
-      clearDoctrineHover();
-      track.removeEventListener("mouseover", onOver);
-      track.removeEventListener("mouseout", onOut);
+      clear();
+      track.removeEventListener("pointerdown", onDown, true);
     };
   }, [loading, slots]);
 
@@ -947,7 +990,7 @@ export function DoctrineBinderPicker({
     const rect = e.currentTarget.getBoundingClientRect();
     const eng = engineRef.current;
     if (!eng) return;
-    const portalAction = eng.pickVibePortalAction(e.clientX, e.clientY, rect);
+    const portalAction = e.button === 0 ? eng.pickVibePortalAction(e.clientX, e.clientY, rect) : null;
     if (portalAction === "enter") {
       e.preventDefault();
       e.stopPropagation();
@@ -1034,15 +1077,24 @@ export function DoctrineBinderPicker({
   const pickForMe = useCallback(() => {
     const pool = QUICK_PICK_IDS.filter((id) => validIds.has(id));
     if (!pool.length) return;
-    const filled: (string | null)[] = [];
+    const raw: (string | null)[] = [];
     for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-      filled.push(pool[i % pool.length]!);
+      raw.push(pool[Math.floor(Math.random() * pool.length)]!);
     }
-    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(filled));
+    let norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
+    norm = fillDoctrineSlotsWithDuplicatePicks(norm);
+    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    setMapUrl(mapPick.url);
     setActiveDoctrineSlot(null);
     setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
     setSlots(norm);
     saveDoctrinePickerState(norm, null);
+    try {
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const saveDoctrine = useCallback(() => {
@@ -1282,60 +1334,64 @@ export function DoctrineBinderPicker({
               <div className="binder-picker-rail-actions__stack">
                 <button
                   type="button"
-                  className="binder-picker-quickmatch"
+                  className="binder-picker-rail-btn binder-picker-rail-btn--quickmatch"
+                  aria-label="Quickmatch"
                   disabled={loading || portalTransitioning || quickfillConfirmOpen}
                   title="Fill all doctrine slots with a starter mix of towers and spells, pick a random battlefield, and start"
                   onClick={quickMatchAndStart}
                 >
-                  Quickmatch
+                  <span className="binder-picker-rail-btn__inner">
+                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
+                      ⚔
+                    </span>
+                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
+                      <text x="80" y="16" textAnchor="middle">
+                        Quick Match
+                      </text>
+                    </svg>
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="binder-picker-setup-toggle binder-picker-setup-toggle--rail"
+                  className="binder-picker-rail-btn binder-picker-rail-btn--match"
+                  aria-label="Match select"
                   aria-expanded={prematchSetupOpen}
                   aria-controls="binder-prematch-setup-panel"
                   id="binder-prematch-setup-trigger"
                   title="Match select: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
                   onClick={() => setPrematchSetupOpen((o) => !o)}
                 >
-                  Match select
+                  <span className="binder-picker-rail-btn__inner">
+                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
+                      ✶
+                    </span>
+                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
+                      <text x="80" y="16" textAnchor="middle">
+                        Match Setup
+                      </text>
+                    </svg>
+                  </span>
                 </button>
                 <button
                   type="button"
-                  className="binder-picker-setup-toggle binder-picker-setup-toggle--rail binder-picker-lore-toggle"
+                  className="binder-picker-rail-btn binder-picker-rail-btn--lore"
+                  aria-label="Lore / how to play"
                   title="Open the optional lore / how-to-play comic"
                   onClick={() => {
                     void showComicLoreModal();
                   }}
                 >
-                  Lore / how to play
+                  <span className="binder-picker-rail-btn__inner">
+                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
+                      ●
+                    </span>
+                    <svg className="binder-picker-rail-btn__label binder-picker-rail-btn__label--long" viewBox="0 0 190 24" preserveAspectRatio="none" aria-hidden="true">
+                      <text x="95" y="16" textAnchor="middle" textLength="172" lengthAdjust="spacingAndGlyphs">
+                        Lore / How To Play
+                      </text>
+                    </svg>
+                  </span>
                 </button>
-              </div>
-              <div className="binder-picker-vibejam-insert">
-                {prematchReturnHref ? (
-                  <a
-                    className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                    href={prematchReturnHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Return to the page that linked you here (portal continuity)"
-                  >
-                    ← Return
-                  </a>
-                ) : null}
-                <a
-                  className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                  href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={
-                    portalContext.enteredViaPortal
-                      ? "Exit to Vibe Jam with continuity params"
-                      : "Vibe Jam 2026"
-                  }
-                >
-                  🎮 Vibe Jam 2026
-                </a>
               </div>
               {prematchSetupOpen ? (
                 <aside
@@ -1347,10 +1403,6 @@ export function DoctrineBinderPicker({
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div className="binder-picker-setup-panel__inner">
-                    <p className="binder-picker-setup-catalog-hint">
-                      Codex mixes <strong>structures</strong> (towers, production you place on the map) and{" "}
-                      <strong>spells / commands</strong> (one-shot effects, Mana, and per-slot cooldown after casting).
-                    </p>
                     <div className="binder-picker-nav">
                         <button
                           type="button"
@@ -1372,14 +1424,6 @@ export function DoctrineBinderPicker({
                           onClick={() => engineRef.current?.flipNext()}
                         >
                           Next
-                        </button>
-                        <button
-                          type="button"
-                          className="binder-picker-btn"
-                          title="Reset camera"
-                          onClick={() => engineRef.current?.resetCam()}
-                        >
-                          View
                         </button>
                         {layoutCalibrateAllowed ? (
                           <button
@@ -1415,11 +1459,17 @@ export function DoctrineBinderPicker({
                     </div>
                     <div className="binder-picker-toolbar-main">
                       <div className="binder-picker-toolbar-actions">
+                        <button
+                          type="button"
+                          className="binder-picker-btn"
+                          disabled={loading}
+                          title="Random full doctrine row (codex cards) and a random battlefield — does not start the match"
+                          onClick={pickForMe}
+                        >
+                          Pick for me
+                        </button>
                         <button type="button" className="binder-picker-btn" disabled={loading} onClick={resetDefaults}>
                           Reset
-                        </button>
-                        <button type="button" className="binder-picker-btn" disabled={loading} onClick={pickForMe}>
-                          Pick for me
                         </button>
                         <button type="button" className="binder-picker-btn" disabled={loading} onClick={saveDoctrine}>
                           Save
@@ -1440,6 +1490,32 @@ export function DoctrineBinderPicker({
                   </div>
                 </aside>
               ) : null}
+            </div>
+            <div className="binder-picker-vibejam-insert binder-picker-vibejam-insert--floated">
+              {prematchReturnHref ? (
+                <a
+                  className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
+                  href={prematchReturnHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Return to the page that linked you here (portal continuity)"
+                >
+                  ← Return
+                </a>
+              ) : null}
+              <a
+                className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
+                href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={
+                  portalContext.enteredViaPortal
+                    ? "Exit to Vibe Jam with continuity params"
+                    : "Vibe Jam 2026"
+                }
+              >
+                🎮 Vibe Jam 2026
+              </a>
             </div>
           </div>
         ) : null}
@@ -1473,7 +1549,7 @@ export function DoctrineBinderPicker({
             Visit the next Vibe Jam game?
           </div>
           <p>
-            Thanks for visiting Battle Logs. Hope you had fun here, and have fun at the next game.
+            Thanks for playing Doctrine. Hope you had fun here, and have fun at the next game.
           </p>
           <div className="binder-portal-exit-toast__actions">
             <button type="button" onClick={goToVibeJam}>

@@ -44,11 +44,11 @@
   z-index: 45;
   display: flex;
   flex-direction: row;
-  align-items: stretch;
+  align-items: flex-end;
   gap: 16px;
   width: 100%;
   box-sizing: border-box;
-  padding: 8px max(10px, env(safe-area-inset-right, 0px)) max(10px, env(safe-area-inset-bottom, 0px))
+  padding: 8px max(10px, env(safe-area-inset-right, 0px)) max(3px, env(safe-area-inset-bottom, 0px))
     max(10px, env(safe-area-inset-left, 0px));
   background: linear-gradient(to top, rgba(5, 7, 12, 0.88), rgba(5, 7, 12, 0.44) 58%, transparent);
   pointer-events: none;
@@ -60,6 +60,37 @@
   padding: 0;
   overflow: visible;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+}
+
+/**
+ * Fill stretched rail height and pin the deck row to the bottom edge so spare vertical space
+ * sits above the cards (not as a dead gap under them).
+ */
+#doctrine-picker .binder-picker-doctrine-hand-rail.doctrine-wrap.doctrine-wrap--rail {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-shrink: 1;
+}
+
+#doctrine-picker .binder-picker-hand-zone {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+#doctrine-picker .binder-picker-hand-zone .doctrine-view {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
 }
 
 /**
@@ -69,9 +100,15 @@
  */
 #doctrine-picker .binder-picker-doctrine-hand-rail .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
   overflow-x: hidden;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 0;
+  height: auto;
   --hand-rail-pr: max(8px, env(safe-area-inset-right, 0px));
   --hand-card-w: min(
-    400px,
+    520px,
     max(
       56px,
       calc((100% - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)
@@ -80,57 +117,162 @@
   --hand-card-h: calc(var(--hand-card-w) * var(--tcg-aspect-h) / var(--tcg-aspect-w));
 }
 
-/* Fixed-width action column so Quickmatch / Match select never sit above the doctrine strip. */
+/* Fixed-width action column; Vibe Jam is positioned separately. */
 .binder-picker-rail-actions {
   position: relative;
   z-index: 30;
-  flex: 0 0 clamp(150px, 19vw, 210px);
-  width: clamp(150px, 19vw, 210px);
-  max-width: clamp(150px, 22vw, 230px);
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  align-items: stretch;
-  gap: 10px;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 0;
   min-height: 0;
+  margin-bottom: calc(44px + env(safe-area-inset-bottom, 0px));
   pointer-events: auto;
 }
 
 .binder-picker-rail-actions__stack {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  flex: 1 1 auto;
-  justify-content: flex-end;
+  gap: 7px;
+  width: auto;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  align-items: center;
   min-height: 0;
 }
 
-.binder-picker-quickmatch {
+/** Prematch rail — named action tiles. */
+.binder-picker-rail-btn {
+  --binder-rail-btn-w: clamp(188px, 25vmin, 222px);
+  --binder-rail-btn-h: clamp(46px, 8.5vmin, 54px);
   appearance: none;
-  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  width: auto;
   box-sizing: border-box;
-  border: 1px solid rgba(120, 210, 160, 0.55);
-  background: linear-gradient(180deg, rgba(44, 118, 88, 0.96) 0%, rgba(22, 58, 46, 0.99) 100%);
-  color: #f2fff7;
-  font-family: inherit;
-  font-size: clamp(13px, 1.85vw, 15px);
-  font-weight: 780;
-  padding: 10px 14px;
-  border-radius: 12px;
   cursor: pointer;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.38);
-  text-align: center;
-  line-height: 1.25;
+  display: block;
+  line-height: 1;
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.55));
 }
 
-.binder-picker-quickmatch:hover:not(:disabled) {
-  filter: brightness(1.07);
+.binder-picker-rail-btn:focus {
+  outline: none;
 }
 
-.binder-picker-quickmatch:disabled {
-  opacity: 0.45;
+.binder-picker-rail-btn:focus-visible {
+  outline: 2px solid rgba(160, 210, 255, 0.95);
+  outline-offset: 4px;
+}
+
+.binder-picker-rail-btn:hover:not(:disabled) .binder-picker-rail-btn__inner {
+  filter: brightness(1.06);
+}
+
+.binder-picker-rail-btn:active:not(:disabled) .binder-picker-rail-btn__inner {
+  filter: brightness(0.94);
+}
+
+.binder-picker-rail-btn:disabled {
+  opacity: 0.52;
   cursor: not-allowed;
+}
+
+.binder-picker-rail-btn:disabled .binder-picker-rail-btn__inner {
+  filter: saturate(0.55);
+}
+
+.binder-picker-rail-btn__inner {
+  display: grid;
+  grid-template-columns: clamp(30px, 5.8vmin, 36px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: var(--binder-rail-btn-w);
+  height: var(--binder-rail-btn-h);
+  box-sizing: border-box;
+  border-radius: 8px;
+  padding: 4px 9px 4px 4px;
+  background: linear-gradient(
+    165deg,
+    #f0dfa8 0%,
+    #c9a050 22%,
+    #8e6630 52%,
+    #d2aa58 78%,
+    #6a471c 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 -2px 5px rgba(0, 0, 0, 0.42);
+}
+
+.binder-picker-rail-btn__glyph {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: calc(var(--binder-rail-btn-h) - 8px);
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.38);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 -10px 22px rgba(0, 0, 0, 0.22);
+  font-size: clamp(16px, 3.2vmin, 21px);
+  line-height: 1;
+  color: #f8fafc;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.85),
+    0 0 10px rgba(0, 0, 0, 0.35);
+}
+
+.binder-picker-rail-btn__label {
+  display: block;
+  width: 100%;
+  height: 24px;
+  min-width: 0;
+  overflow: hidden;
+  color: #fff3d5;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(12px, 2.05vmin, 15px);
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.binder-picker-rail-btn__label text {
+  fill: currentColor;
+  paint-order: stroke fill;
+  stroke: rgba(0, 0, 0, 0.82);
+  stroke-width: 3px;
+}
+
+.binder-picker-rail-btn__label--long {
+  font-size: clamp(10.5px, 1.75vmin, 13px);
+  letter-spacing: 0.035em;
+}
+
+.binder-picker-rail-btn--quickmatch .binder-picker-rail-btn__glyph {
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.35), transparent 45%),
+    linear-gradient(180deg, #2bbf78 0%, #148053 42%, #0a4f36 100%);
+}
+
+.binder-picker-rail-btn--match .binder-picker-rail-btn__glyph {
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.28), transparent 45%),
+    linear-gradient(180deg, #3d8dde 0%, #235cab 45%, #143d72 100%);
+}
+
+.binder-picker-rail-btn--lore .binder-picker-rail-btn__glyph {
+  background:
+    radial-gradient(circle at 35% 28%, rgba(120, 200, 255, 0.22), transparent 48%),
+    linear-gradient(180deg, #1e2a44 0%, #12192c 48%, #070b14 100%);
+  color: #9fd0ff;
 }
 
 .binder-picker-vibejam-insert {
@@ -142,6 +284,16 @@
   justify-content: flex-end;
   gap: 6px;
   max-width: 100%;
+}
+
+.binder-picker-vibejam-insert--floated {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right, 0px));
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
+  z-index: 46;
+  pointer-events: auto;
+  margin: 0;
+  padding: 0;
 }
 
 .binder-picker-vibejam-link {
@@ -176,7 +328,7 @@
   width: 100%;
   box-sizing: border-box;
   min-height: 0;
-  padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   border-radius: 0;
   transition: box-shadow 0.12s ease, background-color 0.12s ease;
 }
@@ -346,86 +498,65 @@
   cursor: default;
 }
 
-.binder-picker-setup-toggle {
-  appearance: none;
-  border: 1px solid rgba(120, 175, 255, 0.35);
-  background: linear-gradient(180deg, rgba(52, 72, 110, 0.95) 0%, rgba(32, 44, 72, 0.98) 100%);
-  color: #f2f6ff;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 650;
-  padding: 11px 20px;
-  border-radius: 999px;
-  cursor: pointer;
-  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.35);
-}
-
-.binder-picker-setup-toggle:hover {
-  filter: brightness(1.06);
-}
-
-/* Match select rail: same rounded-rect + type scale as Quickmatch (base toggle uses 999px later in file). */
-.binder-picker-setup-toggle.binder-picker-setup-toggle--rail {
-  flex: 0 0 auto;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 48px;
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: clamp(13px, 1.85vw, 15px);
-  font-weight: 780;
-  letter-spacing: 0.02em;
-  text-transform: none;
-  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.38);
-  text-align: center;
-  line-height: 1.25;
-}
-
 @media (max-width: 720px) {
   .binder-picker-prematch-bottom {
-    flex-wrap: wrap;
-    row-gap: 10px;
+    flex-wrap: nowrap;
+    gap: 8px;
+    align-items: flex-end;
+    padding-bottom: max(3px, env(safe-area-inset-bottom, 0px));
   }
 
   .binder-picker-doctrine-hand-rail {
-    flex: 1 1 100%;
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
     max-width: none;
+    min-width: 0;
   }
 
   .binder-picker-rail-actions {
-    flex: 1 1 100%;
-    width: 100%;
+    flex: 0 0 auto;
+    width: auto;
     max-width: none;
     min-width: 0;
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex-direction: column;
+    flex-wrap: nowrap;
     align-items: flex-end;
     justify-content: flex-end;
-    gap: 10px;
+    gap: 7px;
+    margin-left: auto;
+    margin-bottom: calc(44px + env(safe-area-inset-bottom, 0px));
   }
 
   .binder-picker-rail-actions__stack {
-    flex: 1 1 auto;
-    flex-direction: row;
-    flex-wrap: wrap;
+    flex: 0 0 auto;
+    flex-direction: column;
+    flex-wrap: nowrap;
     justify-content: flex-end;
-    gap: 10px;
+    align-items: flex-end;
+    gap: 7px;
     min-width: 0;
   }
 
-  .binder-picker-quickmatch,
-  .binder-picker-setup-toggle.binder-picker-setup-toggle--rail {
-    flex: 1 1 calc(50% - 5px);
-    min-width: min(200px, 100%);
+  .binder-picker-rail-btn {
+    flex: 0 0 auto;
+    min-width: 0;
     max-width: none;
+    --binder-rail-btn-w: clamp(184px, 50vw, 220px);
+    --binder-rail-btn-h: clamp(46px, 12vw, 54px);
   }
 
-  .binder-picker-vibejam-insert {
+  .binder-picker-vibejam-insert--floated {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    flex: 1 1 100%;
+    width: 100%;
     flex-direction: row;
     flex-wrap: wrap;
     justify-content: flex-end;
-    width: auto;
+    margin-top: 0;
+    margin-left: 0;
+    padding-top: 4px;
   }
 }
 
@@ -434,7 +565,7 @@
   right: 0;
   bottom: calc(100% + 10px);
   z-index: 50;
-  width: min(400px, calc(100vw - 28px));
+  width: min(360px, calc(100vw - 28px));
   max-height: min(72dvh, 520px);
   overflow-y: auto;
   border-radius: 12px;
@@ -447,21 +578,21 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
-  padding: 12px 14px 14px;
+  gap: 12px;
+  padding: 12px;
 }
 
 .binder-picker-toolbar-main {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px 18px;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .binder-picker-toolbar-map {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -512,6 +643,8 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  justify-content: flex-end;
+  width: 100%;
 }
 
 .binder-picker-btn {
@@ -691,12 +824,12 @@
 /* Page controls (floating setup panel or legacy toolbar). */
 .binder-picker-nav {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
   justify-content: center;
-  padding: 0 0 8px;
-  margin: 0 0 6px;
+  padding: 0 0 10px;
+  margin: 0;
   border-bottom: 1px solid rgba(60, 48, 36, 0.1);
 }
 

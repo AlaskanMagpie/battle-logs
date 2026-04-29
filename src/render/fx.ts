@@ -848,7 +848,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   }
   const halfAngle = (m.wide ? 0.34 : 0.15) * Math.PI * classAngle;
   const seg = Math.max(8, Math.round((m.wide ? 16 : 12) * Math.min(1.1, classAngle)));
-  const life = 0.28 * classLife;
+  const life = 0.42 * classLife;
   const pal = elementalCombatPalette(m);
   const group = new THREE.Group();
   group.position.set(m.ax, 0.08, m.az);
@@ -872,8 +872,8 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     return mesh;
   };
 
-  const mid = mkCone(1, m.sizeClass === "Swarm" ? 0.16 : 0.24, 0);
-  const core = mkCone(0.52, m.sizeClass === "Swarm" ? 0.24 : 0.36, -0.03);
+  const mid = mkCone(1, m.sizeClass === "Swarm" ? 0.2 : 0.3, 0);
+  const core = mkCone(0.52, m.sizeClass === "Swarm" ? 0.3 : 0.43, -0.03);
   if (m.sizeClass !== "Swarm") group.add(mid);
   group.add(core);
 
@@ -1041,7 +1041,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     });
     const mesh = new THREE.Mesh(g, mat);
     mesh.position.set(Math.sin(ang) * rad * 0.35, 0.2 + v * 0.35, Math.cos(ang) * rad * 0.35);
-    const burst = 1.2 + rnd(m.visualSeed, i + 40) * 2.1;
+    const burst = 0.8 + rnd(m.visualSeed, i + 40) * 1.45;
     sparks.push({
       mesh,
       vx: Math.sin(ang) * burst,
@@ -1056,10 +1056,10 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     const p = Math.min(1, t / life);
     const breathe = 1 + Math.sin(t * 28) * 0.04 * (1 - p);
     group.scale.setScalar(breathe);
-    (mid.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.16 : 0.24) * (1 - p * 0.92);
-    (core.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.24 : 0.36) * (1 - p * 0.85);
-    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.62 : 0.46) * (1 - p * 0.82);
-    (rim.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p);
+    (mid.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.2 : 0.3) * (1 - p * 0.92);
+    (core.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.3 : 0.43) * (1 - p * 0.85);
+    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.72 : 0.54) * (1 - p * 0.82);
+    (rim.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p);
     for (const mat of extraMats) {
       if ("opacity" in mat) mat.opacity = (m.sizeClass === "Titan" ? 0.32 : 0.46) * (1 - p);
     }

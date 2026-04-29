@@ -1,14 +1,40 @@
-import { HERO_CLAIM_RADIUS, HERO_MAP_OBSTACLE_RADIUS, HERO_WASD_SPEED, TAP_YIELD_MAX, TICK_HZ } from "../../constants";
+import { getCatalogEntry } from "../../catalog";
+import {
+  ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
+  ENEMY_AI_MIN_BUILD_SEP,
+  FORWARD_STRUCTURE_HP_MULT,
+  HERO_CLAIM_RADIUS,
+  HERO_MAP_OBSTACLE_RADIUS,
+  HERO_WASD_SPEED,
+  TAP_YIELD_MAX,
+  TICK_HZ,
+} from "../../constants";
 import { logGame } from "../../gameLog";
 import { planChainedPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
-import { armTapClaimAnchor, findKeep, heroStandPositionNearKeepAnchor, pushFx, tacticsFieldSpeedMult, type GameState } from "../../state";
+import {
+  armTapClaimAnchor,
+  canPlaceStructureHere,
+  findKeep,
+  heroStandPositionNearKeepAnchor,
+  nearFriendlyInfra,
+  nearFriendlyForward,
+  nearSafeDeployAura,
+  pushFx,
+  rand,
+  tacticsFieldSpeedMult,
+  territorySources,
+  type GameState,
+  type StructureRuntime,
+} from "../../state";
 import { structureObstacleFootprints } from "../../structureObstacles";
+import { isStructureEntry, type Vec2 } from "../../types";
 import { dist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
 import { applyHeroFacingTowardWorld } from "./heroFacing";
 import { tryPlayerHeroStrike } from "./heroStrike";
 
 const HERO_CAPTAIN_IDLE_TICKS = Math.round(1.2 * TICK_HZ);
+const HERO_CAPTAIN_BUILD_INTERVAL_TICKS = ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS;
 
 /** Neutral tap index within `HERO_CLAIM_RADIUS` of the Wizard (closest wins). */
 export function findNeutralTapIndexNearHero(s: GameState): number | null {
@@ -143,11 +169,148 @@ function nearestHeroCaptainObjective(s: GameState): { x: number; z: number } | n
   return best;
 }
 
+function emitCaptainSummonFx(s: GameState, catalogId: string, pos: Vec2): void {
+  const e = getCatalogEntry(catalogId);
+  const sigs = e && isStructureEntry(e) ? e.signalTypes : [];
+  const v = sigs.includes("Vanguard") ? 1 : 0;
+  const b = sigs.includes("Bastion") ? 1 : 0;
+  const r = sigs.includes("Reclaim") ? 1 : 0;
+  pushFx(s, { kind: "lightning", x: pos.x, z: pos.z });
+  if (v >= b && v >= r) pushFx(s, { kind: "spark_burst", x: pos.x, z: pos.z });
+  else if (b >= r) pushFx(s, { kind: "ground_crack", x: pos.x, z: pos.z });
+  else pushFx(s, { kind: "reclaim_pulse", x: pos.x, z: pos.z });
+}
+
+function minDist2ToPlayerStructures(s: GameState, pos: Vec2): number {
+  let m = Infinity;
+  for (const st of s.structures) {
+    if (st.team !== "player") continue;
+    const d = dist2(pos, st);
+    if (d < m) m = d;
+  }
+  return m;
+}
+
+function captainAutoBuildChoices(s: GameState): { catalogId: string; slotIndex: number; weight: number }[] {
+  const counts = new Map<string, number>();
+  for (const st of s.structures) {
+    if (st.team !== "player") continue;
+    counts.set(st.catalogId, (counts.get(st.catalogId) ?? 0) + 1);
+  }
+
+  const out: { catalogId: string; slotIndex: number; weight: number }[] = [];
+  for (let slotIndex = 0; slotIndex < s.doctrineSlotCatalogIds.length; slotIndex++) {
+    const catalogId = s.doctrineSlotCatalogIds[slotIndex];
+    if (!catalogId) continue;
+    const e = getCatalogEntry(catalogId);
+    if (!e || !isStructureEntry(e)) continue;
+    if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) continue;
+    if (s.flux < e.fluxCost) continue;
+    const costWeight = 1 / Math.sqrt(Math.max(28, e.fluxCost));
+    const diversityWeight = 1 / (1 + (counts.get(catalogId) ?? 0) * 0.65);
+    out.push({ catalogId, slotIndex, weight: costWeight * diversityWeight });
+  }
+  return out;
+}
+
+function pickCaptainAutoBuildChoice(
+  s: GameState,
+  choices: readonly { catalogId: string; slotIndex: number; weight: number }[],
+): { catalogId: string; slotIndex: number } | null {
+  const sum = choices.reduce((a, c) => a + c.weight, 0);
+  if (sum <= 0) return null;
+  let r = rand(s) * sum;
+  for (const c of choices) {
+    r -= c.weight;
+    if (r <= 0) return c;
+  }
+  return choices[choices.length - 1] ?? null;
+}
+
+function placeCaptainStructure(s: GameState, catalogId: string, slotIndex: number, pos: Vec2): boolean {
+  if (canPlaceStructureHere(s, catalogId, pos, slotIndex)) return false;
+  const def = getCatalogEntry(catalogId);
+  if (!def || !isStructureEntry(def)) return false;
+
+  s.flux -= def.fluxCost;
+  const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
+  const placementForward = !infra && nearFriendlyForward(s, pos);
+  const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
+  const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
+  const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
+  const objective = nearestHeroCaptainObjective(s);
+  const rallyFrom = objective ?? { x: s.map.world.halfExtents * 0.55, z: 0 };
+  let rdx = rallyFrom.x - pos.x;
+  let rdz = rallyFrom.z - pos.z;
+  const rlen = Math.hypot(rdx, rdz) || 1;
+  rdx /= rlen;
+  rdz /= rlen;
+  const rallyLead = 16;
+  const st: StructureRuntime = {
+    id: s.nextId.structure++,
+    team: "player",
+    catalogId,
+    x: pos.x,
+    z: pos.z,
+    hp: hp0,
+    maxHp: hp0,
+    buildTicksRemaining: buildTicks,
+    buildTotalTicks: buildTicks,
+    complete: false,
+    productionTicksRemaining: Math.round(def.productionSeconds * TICK_HZ),
+    doctrineSlotIndex: slotIndex,
+    rallyX: pos.x + rdx * rallyLead,
+    rallyZ: pos.z + rdz * rallyLead,
+    placementForward,
+    damageReductionUntilTick: 0,
+    productionSilenceUntilTick: 0,
+    holdOrders: false,
+    localPopCapBonus: 0,
+  };
+  s.structures.push(st);
+  s.stats.structuresBuilt += 1;
+  if (def.chargeCooldownSeconds > 0) {
+    s.doctrineCooldownTicks[slotIndex] = Math.round(def.chargeCooldownSeconds * TICK_HZ);
+  }
+  emitCaptainSummonFx(s, catalogId, pos);
+  logGame("combat", `Captain mode built ${def.name} at (${pos.x.toFixed(0)}, ${pos.z.toFixed(0)})`, s.tick);
+  s.lastMessage = `Captain mode: ${def.name} summoned automatically.`;
+  return true;
+}
+
+function attemptCaptainAutoBuild(s: GameState): void {
+  if (s.phase !== "playing") return;
+  if (s.pendingPlacementCatalogId !== null || s.selectedDoctrineIndex !== null) return;
+  if (s.tick % HERO_CAPTAIN_BUILD_INTERVAL_TICKS !== 0) return;
+  const choices = captainAutoBuildChoices(s);
+  if (!choices.length) return;
+  const sources = territorySources(s);
+  if (!sources.length) return;
+  const half = s.map.world.halfExtents;
+  const sep2 = ENEMY_AI_MIN_BUILD_SEP * ENEMY_AI_MIN_BUILD_SEP;
+  for (let attempt = 0; attempt < 22; attempt++) {
+    const source = sources[Math.min(sources.length - 1, Math.floor(rand(s) * sources.length))];
+    if (!source) continue;
+    const pos = {
+      x: source.x + (rand(s) - 0.5) * 32,
+      z: source.z + (rand(s) - 0.5) * 32,
+    };
+    if (Math.abs(pos.x) > half - 8 || Math.abs(pos.z) > half - 8) continue;
+    if (minDist2ToPlayerStructures(s, pos) < sep2) continue;
+    for (let k = 0; k < 8; k++) {
+      const choice = pickCaptainAutoBuildChoice(s, choices);
+      if (!choice) return;
+      if (placeCaptainStructure(s, choice.catalogId, choice.slotIndex, pos)) return;
+    }
+  }
+}
+
 function applyHeroCaptainMode(s: GameState): void {
   const h = s.hero;
   if (!s.heroCaptainEnabled || h.hp <= 0) return;
-  if (h.targetX !== null || h.targetZ !== null || h.moveWaypoints.length > 0 || h.claimChannelTarget !== null) return;
   if (s.tick - s.heroCaptainLastManualTick < HERO_CAPTAIN_IDLE_TICKS) return;
+  attemptCaptainAutoBuild(s);
+  if (h.targetX !== null || h.targetZ !== null || h.moveWaypoints.length > 0 || h.claimChannelTarget !== null) return;
   const target = nearestHeroCaptainObjective(s);
   if (!target) return;
   setHeroMovePath(s, target);

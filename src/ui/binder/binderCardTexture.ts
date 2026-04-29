@@ -4,7 +4,7 @@ import { productionBatchSizeForClass } from "../../game/sim/systems/helpers";
 import type { CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
-import { drawCardArtOverlayOnCanvasRect, isCardOverlayFieldVisible, overlayVisibilityStampForCatalog } from "../cardArtOverlay";
+import { isCardOverlayFieldVisible, overlayVisibilityStampForCatalog } from "../cardArtOverlay";
 import { CARD_ART_CACHE_BUSTER } from "../cardArtManifest";
 import { getCardPreviewDataUrl, configureImageCrossOriginForSrc } from "../cardGlbPreview";
 import { binderPanelPixelSize } from "./CardBinderEngine";
@@ -14,7 +14,7 @@ import { drawSpellBinderHero } from "./binderSpellHeroCanvas";
 const cache = new Map<string, Promise<THREE.CanvasTexture>>();
 /** GLB hero snapshot per structure id (reused for animated spell repaints). */
 const structureHeroImageByCatalogId = new Map<string, HTMLImageElement>();
-/** Catalog ids whose `/assets/cards/*.png` art fills the whole binder panel (no generated stats strip). */
+/** Catalog ids whose `/assets/cards/*` art fills the whole binder panel (no generated stats strip). */
 const manifestFullCardArtCatalogIds = new Set<string>();
 
 function binderTextureCacheKey(catalogId: string): string {
@@ -90,7 +90,94 @@ function drawImageContain(
   ctx.drawImage(img, 0, 0, iw, ih, dx, dy, dw, dh);
 }
 
-async function loadImage(src: string): Promise<HTMLImageElement> {
+function authoredSpellGlowPalette(e: CommandCatalogEntry, hue: number): { core: string; rim: string; hot: string } {
+  switch (e.effect.type) {
+    case "aoe_damage":
+      return { core: "rgba(255, 118, 20, 0.42)", rim: "rgba(255, 210, 88, 0.56)", hot: "rgba(255, 248, 196, 0.72)" };
+    case "aoe_shatter_chain":
+      return { core: "rgba(116, 156, 255, 0.42)", rim: "rgba(190, 220, 255, 0.58)", hot: "rgba(245, 250, 255, 0.72)" };
+    case "aoe_tactics_field":
+      return { core: "rgba(52, 160, 255, 0.34)", rim: "rgba(118, 226, 255, 0.52)", hot: "rgba(218, 250, 255, 0.68)" };
+    case "aoe_line_damage":
+      return { core: "rgba(198, 80, 255, 0.36)", rim: "rgba(255, 122, 224, 0.52)", hot: "rgba(255, 230, 255, 0.68)" };
+    default:
+      return {
+        core: `hsla(${hue}, 72%, 52%, 0.34)`,
+        rim: `hsla(${hue}, 86%, 72%, 0.52)`,
+        hot: "rgba(255,255,255,0.66)",
+      };
+  }
+}
+
+function drawAuthoredSpellBinderMotion(
+  ctx: CanvasRenderingContext2D,
+  e: CommandCatalogEntry,
+  w: number,
+  h: number,
+  hue: number,
+  t: number,
+): void {
+  const pal = authoredSpellGlowPalette(e, hue);
+  const cx = w * 0.5;
+  const cy = h * 0.245;
+  const baseR = w * 0.205;
+  const pulse = (Math.sin(t * Math.PI * 2 * 0.9) + 1) * 0.5;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.translate(cx, cy);
+
+  for (let i = 0; i < 3; i++) {
+    const p = (t * (0.12 + i * 0.035) + i / 3) % 1;
+    const r = baseR * (0.72 + p * 0.58);
+    ctx.globalAlpha = (0.42 + 0.22 * pulse) * (1 - p);
+    ctx.strokeStyle = i === 0 ? pal.hot : i === 1 ? pal.rim : pal.core;
+    ctx.lineWidth = Math.max(1.2, w * (0.006 - i * 0.001));
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.rotate(t * (e.effect.type === "aoe_shatter_chain" ? -0.9 : 0.65));
+  ctx.globalAlpha = 0.48 + pulse * 0.28;
+  ctx.strokeStyle = pal.rim;
+  ctx.lineWidth = Math.max(1, w * 0.004);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const r0 = baseR * 0.38;
+    const r1 = baseR * (0.82 + pulse * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
+    ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
+    ctx.stroke();
+  }
+
+  const orbA = t * Math.PI * 2 * 0.42;
+  const orbR = baseR * 0.58;
+  const orbX = Math.cos(orbA) * orbR;
+  const orbY = Math.sin(orbA) * orbR;
+  const orb = ctx.createRadialGradient(orbX, orbY, 0, orbX, orbY, baseR * 0.18);
+  orb.addColorStop(0, pal.hot);
+  orb.addColorStop(0.45, pal.rim);
+  orb.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = orb;
+  ctx.beginPath();
+  ctx.arc(orbX, orbY, baseR * 0.18, 0, Math.PI * 2);
+  ctx.fill();
+
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, baseR * 0.68);
+  core.addColorStop(0, pal.hot);
+  core.addColorStop(0.28, pal.core);
+  core.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = 0.28 + pulse * 0.18;
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(0, 0, baseR * 0.68, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+async function loadRasterImage(src: string): Promise<HTMLImageElement> {
   const img = new Image();
   configureImageCrossOriginForSrc(img, src);
   await new Promise<void>((resolve, reject) => {
@@ -101,11 +188,48 @@ async function loadImage(src: string): Promise<HTMLImageElement> {
   return img;
 }
 
+function isSameOriginSvgAsset(src: string): boolean {
+  if (!/\.svg(?:[?#]|$)/i.test(src)) return false;
+  try {
+    const resolved = new URL(src, globalThis.location?.href);
+    return resolved.origin === globalThis.location?.origin;
+  } catch {
+    return false;
+  }
+}
+
+function svgWithExplicitIntrinsicSize(raw: string): string {
+  const m = raw.match(/<svg\b([^>]*)>/i);
+  if (!m) return raw;
+  const attrs = m[1] ?? "";
+  if (/\swidth\s*=/.test(attrs) && /\sheight\s*=/.test(attrs)) return raw;
+  const vb = attrs.match(/\sviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  const w = vb?.[1] ?? "512";
+  const h = vb?.[2] ?? "768";
+  const widthAttr = /\swidth\s*=/.test(attrs) ? "" : ` width="${w}"`;
+  const heightAttr = /\sheight\s*=/.test(attrs) ? "" : ` height="${h}"`;
+  const parAttr = /\spreserveAspectRatio\s*=/.test(attrs) ? "" : ` preserveAspectRatio="xMidYMid meet"`;
+  return raw.replace(/<svg\b([^>]*)>/i, `<svg$1${widthAttr}${heightAttr}${parAttr}>`);
+}
+
+async function loadImage(src: string): Promise<HTMLImageElement> {
+  if (!isSameOriginSvgAsset(src)) return loadRasterImage(src);
+  const res = await fetch(src, { cache: "force-cache" });
+  if (!res.ok) throw new Error("card svg load failed");
+  const svg = svgWithExplicitIntrinsicSize(await res.text());
+  const blobUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    return await loadRasterImage(blobUrl);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
 const SPELL_TEX_USERDATA_DEAD = "binderSpellDead";
 
 /**
- * Full panel paint. Manifest full-bleed cards: draw art + stat overlay on canvas (avoids SVG-as-image + external href).
+ * Full panel paint. Manifest full-bleed cards already include their print text/art.
  */
 function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HTMLCanvasElement {
   const { w, h } = binderPanelPixelSize();
@@ -122,16 +246,16 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
     return c;
   }
 
+  const hue = catalogPreviewTypeHue(e);
   const mappedImg = structureHeroImageByCatalogId.get(catalogId);
   if (mappedImg && manifestFullCardArtCatalogIds.has(catalogId)) {
     ctx.fillStyle = "#080b11";
     ctx.fillRect(0, 0, w, h);
     drawImageContain(ctx, mappedImg, 0, 0, w, h);
-    drawCardArtOverlayOnCanvasRect(ctx, catalogId, 0, 0, w, h);
+    if (isCommandEntry(e)) drawAuthoredSpellBinderMotion(ctx, e as CommandCatalogEntry, w, h, hue, spellTimeSec);
     return c;
   }
 
-  const hue = catalogPreviewTypeHue(e);
   const pad = Math.max(6, Math.round(w * 0.032));
   // Match `.tcg--slot-preview .slot-card-art`: flex fills almost all of the shell above title/subtitle.
   // At 48% the spell AoE canvas sat in a much shorter band than the hand, so rings read “too high”.
@@ -335,6 +459,7 @@ async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTextur
   const entry = getCatalogEntry(catalogId);
   if (entry && isCommandEntry(entry)) {
     wrapSpellTextureDispose(tex);
+    /** Authored SVG spells and procedural fallback spells both repaint so animated spell art stays alive in the 3D binder. */
     startSpellBinderTextureLoop(catalogId, tex);
   }
 

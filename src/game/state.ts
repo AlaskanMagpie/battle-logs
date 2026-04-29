@@ -3,6 +3,7 @@ import { logGame } from "./gameLog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
+  ENEMY_CAMP_INITIAL_DEFENDER_CAP,
   ENEMY_RELAY_MAX_HP,
   FORWARD_PLACE_RADIUS,
   HERO_FOLLOW_RADIUS,
@@ -351,11 +352,12 @@ export interface UnitAutoOrderRuntime {
 }
 
 export interface MatchStats {
-  /** Player-placed doctrine structures only (not enemy wizard builds). */
+  /** Doctrine or Captain-placed player buildings (excludes the pre-spawned Wizard Keep). */
   structuresBuilt: number;
   structuresLost: number;
   unitsProduced: number;
   unitsLost: number;
+  /** Salvage that entered the pool: player building loss refunds + command effects that add salvage. */
   salvageRecovered: number;
   enemyKills: number;
   commandsCast: number;
@@ -445,6 +447,11 @@ export interface GameState {
   globalRallyZ: number;
   enemyCampAwake: Record<string, boolean>;
   lastMessage: string;
+  /**
+   * When `phase` is win/lose, why the match ended. Not reused for HUD toasts, so it is not
+   * overwritten by gameplay messages after the fact. Not part of replay checksums.
+   */
+  matchEndDetail: string | null;
   /** Seeded RNG state (xorshift32). */
   rngState: number;
   /** Per-match counters for end-screen / telemetry. */
@@ -1030,8 +1037,9 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     globalRallyActive: false,
     globalRallyX: 0,
     globalRallyZ: 0,
-    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, true])),
+    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, false])),
     lastMessage: "Battle on — claim nodes, summon towers, break the enemy.",
+    matchEndDetail: null,
     rngState: rngScratch.v >>> 0,
     stats: {
       structuresBuilt: 0,
@@ -1077,10 +1085,13 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     if (typeof camp.coreMaxHp === "number" && camp.coreMaxHp > 0) {
       state.enemyCampCoreHp[camp.id] = camp.coreMaxHp;
     }
-    const roster = camp.roster ?? defaultOffsets.map((o, i) => ({
+    const authoredRoster = camp.roster ?? defaultOffsets.map((o, i) => ({
       sizeClass: (i % 2 === 0 ? "Line" : "Swarm") as UnitSizeClass,
       offset: o,
     }));
+    const openingRoster = authoredRoster.filter((r) => r.sizeClass === "Swarm");
+    const initialCount = Math.max(0, Math.min(camp.initialUnitCount ?? ENEMY_CAMP_INITIAL_DEFENDER_CAP, openingRoster.length));
+    const roster = openingRoster.slice(0, initialCount);
     for (const r of roster) {
       const base = unitStatsForCatalog(r.sizeClass);
       const hp = Math.max(1, Math.round(base.maxHp * hpMult));

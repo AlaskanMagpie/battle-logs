@@ -682,13 +682,16 @@ export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deck
   const portrait = catalogPortraitSvg(catalogId, hue, cmd, svgKey);
   const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
   const art = dmHeroArt(catalogId, portrait, true, cmd ? e : undefined);
+  const hudHand = variant === "hud";
   const subtitle = cmd
-    ? isCardOverlayFieldVisible(catalogId, "effect")
-      ? commandSlotEffectLabel(e as CommandCatalogEntry)
-      : ""
+    ? hudHand
+      ? ""
+      : isCardOverlayFieldVisible(catalogId, "effect")
+        ? commandSlotEffectLabel(e as CommandCatalogEntry)
+        : ""
     : structureProductionLine(e as StructureCatalogEntry);
   const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
-  const overlay = cardArtOverlayHtml(catalogId);
+  const overlay = cardArtOverlayHtml(catalogId, { handSlot: hudHand });
 
   return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact ${kindClass} ${previewTypeClass} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="slot-card-shell" title="${escapeHtml(title)}">

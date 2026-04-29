@@ -7,16 +7,32 @@ import { cardArtOverlayHtml } from "./cardArtOverlay";
 /** @deprecated Long-press to open detail was removed. */
 export const CARD_DETAIL_HOLD_MS = 0;
 
-/** Hover preview only after the pointer rests this long (ms). */
-export const CARD_PREVIEW_HOVER_MS = 320;
+/**
+ * Full card preview (docked) only after the pointer is held this long on a doctrine slot
+ * (no quick hover). Moving past the drag threshold cancels the timer and uses cast/drag instead.
+ */
+export const CARD_PREVIEW_LONG_PRESS_MS = 520;
+
+/**
+ * Prematch binder / doctrine picker — DOM hand strip only.
+ * Longer than match HUD (`CARD_PREVIEW_LONG_PRESS_MS`) and codex lift (~400ms in `CardBinderEngine`)
+ * so full-card preview does not compete with grabbing a codex card.
+ */
+export const CARD_PREVIEW_BINDER_HAND_MS = 1050;
+
+/** Cancel binder-hand preview only after movement exceeds this (same “stay put” idea as codex long-press slop). */
+export const CARD_PREVIEW_BINDER_HAND_SLOP_PX = 22;
+
+/** @deprecated Use `CARD_PREVIEW_LONG_PRESS_MS` — preview is no longer hover-timed. */
+export const CARD_PREVIEW_HOVER_MS = CARD_PREVIEW_LONG_PRESS_MS;
 
 let layer: HTMLElement | null = null;
 let detailResizeRo: ResizeObserver | null = null;
 let detailRenderToken = 0;
 
-/** True while the open dialog was opened from a hover preview (not button / long-press). */
+/** True when the open dialog was opened from a long-press / docked preview (not dblclick / direct open). */
 let detailOpenedFromHover = false;
-/** Catalog tile / deck slot / HUD slot — preview stays only while the pointer is inside this rect (screen space). */
+/** Screen bounds used for dismissing the docked preview (doctrine hand slot, etc.). */
 let hoverPreviewSourceEl: HTMLElement | null = null;
 
 /** When the dimmer covers the source tile, it stops getting `mouseout` — use global pointer checks vs. source rect. */
@@ -47,6 +63,21 @@ function pointerInsideHoverSource(clientX: number, clientY: number): boolean {
   );
 }
 
+/** Hover preview stays open while the pointer is over the rail slot or the floating preview panel. */
+function pointerInsideHoverDismissSafeZone(clientX: number, clientY: number): boolean {
+  if (pointerInsideHoverSource(clientX, clientY)) return true;
+  const body = layer?.querySelector("#card-detail-pop-body");
+  if (!(body instanceof HTMLElement)) return false;
+  const r = body.getBoundingClientRect();
+  const pad = 8;
+  return (
+    clientX >= r.left - pad &&
+    clientX <= r.right + pad &&
+    clientY >= r.top - pad &&
+    clientY <= r.bottom + pad
+  );
+}
+
 function armHoverOutsideDismiss(): void {
   disarmHoverOutsideDismiss();
   if (!detailOpenedFromHover || !hoverPreviewSourceEl || !layer || layer.hasAttribute("hidden")) return;
@@ -56,7 +87,7 @@ function armHoverOutsideDismiss(): void {
       disarmHoverOutsideDismiss();
       return;
     }
-    if (!pointerInsideHoverSource(ev.clientX, ev.clientY)) closePop();
+    if (!pointerInsideHoverDismissSafeZone(ev.clientX, ev.clientY)) closePop();
   };
 
   hoverDismissPointerDown = (ev: PointerEvent) => {
@@ -64,7 +95,7 @@ function armHoverOutsideDismiss(): void {
       disarmHoverOutsideDismiss();
       return;
     }
-    if (!pointerInsideHoverSource(ev.clientX, ev.clientY)) closePop();
+    if (!pointerInsideHoverDismissSafeZone(ev.clientX, ev.clientY)) closePop();
   };
 
   const opts: AddEventListenerOptions = { capture: true, passive: true };
@@ -80,6 +111,7 @@ export function onDoctrineCardPreviewHoverLeave(ev: MouseEvent): void {
   const rel = ev.relatedTarget;
   const src = hoverPreviewSourceEl;
   if (src && rel instanceof Node && src.contains(rel)) return;
+  if (rel instanceof Node && layer.contains(rel)) return;
   closePop();
 }
 
@@ -168,39 +200,56 @@ function closePop(): void {
   if (body) body.innerHTML = "";
 }
 
-function ensureLayer(): HTMLElement {
-  if (layer) return layer;
-  const el = document.createElement("div");
-  el.id = "card-detail-pop";
-  el.className = "card-detail-pop";
-  el.setAttribute("hidden", "");
-  el.setAttribute("aria-hidden", "true");
-  el.innerHTML = `
-    <button type="button" class="card-detail-pop-backdrop" aria-label="Close card details"></button>
-    <div class="card-detail-pop-body" id="card-detail-pop-body" role="dialog" aria-modal="true" aria-label="Card details" tabindex="-1"></div>
-  `;
-  document.body.appendChild(el);
-  layer = el;
+function wireCardDetailPopEvents(el: HTMLElement): void {
+  if (el.dataset.detailPopWired === "1") return;
+  el.dataset.detailPopWired = "1";
 
-  const backdropBtn = el.querySelector(".card-detail-pop-backdrop") as HTMLButtonElement;
+  const backdropBtn = el.querySelector(".card-detail-pop-backdrop") as HTMLButtonElement | null;
+  if (!backdropBtn) return;
+
   backdropBtn.addEventListener("click", closePop);
   /* Full-screen dimmer: dismiss on press everywhere under the card (incl. catalog chrome). */
   backdropBtn.addEventListener(
     "pointerdown",
     (ev: PointerEvent) => {
-      if (!layer || layer.hasAttribute("hidden")) return;
+      const L = layer;
+      if (!L || L.hasAttribute("hidden")) return;
       ev.preventDefault();
       closePop();
     },
     { capture: true },
   );
   window.addEventListener("keydown", (ev: KeyboardEvent) => {
-    if (ev.key === "Escape" && !el.hasAttribute("hidden")) {
+    const L = layer;
+    if (ev.key === "Escape" && L && !L.hasAttribute("hidden")) {
       ev.preventDefault();
       closePop();
     }
   });
+}
 
+function ensureLayer(): HTMLElement {
+  const nodes = document.querySelectorAll(".card-detail-pop");
+  nodes.forEach((n, i) => {
+    if (i > 0) (n as HTMLElement).remove();
+  });
+
+  let el = nodes[0] as HTMLElement | undefined;
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "card-detail-pop";
+    el.className = "card-detail-pop";
+    el.setAttribute("hidden", "");
+    el.setAttribute("aria-hidden", "true");
+    el.innerHTML = `
+    <button type="button" class="card-detail-pop-backdrop" aria-label="Close card details"></button>
+    <div class="card-detail-pop-body" id="card-detail-pop-body" role="dialog" aria-modal="true" aria-label="Card details" tabindex="-1"></div>
+  `;
+    document.body.appendChild(el);
+  } else if (!el.id) el.id = "card-detail-pop";
+
+  layer = el;
+  wireCardDetailPopEvents(el);
   return el;
 }
 
@@ -213,7 +262,7 @@ export function closeDoctrineCardDetail(): void {
 }
 
 export type ShowDoctrineCardDetailOpts = {
-  /** When true, preview dismisses as soon as the pointer leaves `hoverSourceEl`’s screen rect. */
+  /** When true, preview uses the docked rail mode and dismisses when the pointer leaves the slot/preview. */
   fromHover?: boolean;
   /** Required with `fromHover` — the catalog tile, picker deck slot, or HUD slot bounds. */
   hoverSourceEl?: HTMLElement;

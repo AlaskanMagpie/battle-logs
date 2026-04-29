@@ -14,9 +14,16 @@ type UnitAnimationProfile = {
   roles?: Partial<Record<UnitAnimationRole, string>>;
   files?: string[];
 };
+type UnitGlbInspection = {
+  file: string;
+  skinnedMeshes?: number;
+  bones?: number;
+  animations?: { movingTracks?: number }[];
+};
 type UnitGlbManifest = {
   files: string[];
   animationProfiles?: UnitAnimationProfile[];
+  inspections?: UnitGlbInspection[];
 };
 
 let manifest: UnitGlbManifest | undefined;
@@ -70,9 +77,27 @@ function animatedProfileFiles(m: UnitGlbManifest): Set<string> {
   return out;
 }
 
+function manifestInspectionForFile(m: UnitGlbManifest, file: string): UnitGlbInspection | null {
+  return (m.inspections ?? []).find((i) => i.file === file) ?? null;
+}
+
+function isRiggedUnitFallbackFile(m: UnitGlbManifest, file: string): boolean {
+  const inspection = manifestInspectionForFile(m, file);
+  if (!inspection) return false;
+  if ((inspection.skinnedMeshes ?? 0) <= 0 || (inspection.bones ?? 0) <= 0) return false;
+  return (inspection.animations ?? []).some((a) => (a.movingTracks ?? 0) > 0);
+}
+
 function productionArtFiles(m: UnitGlbManifest): string[] {
   const animatedFiles = animatedProfileFiles(m);
-  return m.files.filter((f) => !animatedFiles.has(f) && !isPreviewUnitFile(f) && !f.endsWith("_building.glb"));
+  return m.files.filter(
+    (f) => !animatedFiles.has(f) && !isPreviewUnitFile(f) && !f.endsWith("_building.glb") && isRiggedUnitFallbackFile(m, f),
+  );
+}
+
+function towerArtFiles(m: UnitGlbManifest): string[] {
+  const animatedFiles = animatedProfileFiles(m);
+  return m.files.filter((f) => !animatedFiles.has(f) && !f.endsWith("_building.glb"));
 }
 
 function animationProfileForClass(kind: UnitSizeClass | "hero", m: UnitGlbManifest): UnitAnimationProfile | null {
@@ -119,6 +144,7 @@ function attackFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string 
 }
 
 function idleFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | undefined, m: UnitGlbManifest): string | null {
+  if (kind === "hero" && m.files.includes(LANTERNBOUND_LINE_IDLE_FILE)) return LANTERNBOUND_LINE_IDLE_FILE;
   const profileFile = roleFileForUnit(kind, producedUnitId, "idle", m);
   if (profileFile) return profileFile;
   const files = m.files;
@@ -137,6 +163,11 @@ function deathFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string |
   if (kind === "Swarm") return files.includes(AZURE_SPEAR_SWARM_DEATH_FILE) ? AZURE_SPEAR_SWARM_DEATH_FILE : null;
   if (kind === "Line") return files.includes(LANTERNBOUND_LINE_DEATH_FILE) ? LANTERNBOUND_LINE_DEATH_FILE : null;
   return null;
+}
+
+function runFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | undefined, m: UnitGlbManifest): string | null {
+  if (kind === "hero" && m.files.includes(LANTERNBOUND_LINE_RUN_FILE)) return LANTERNBOUND_LINE_RUN_FILE;
+  return roleFileForUnit(kind, producedUnitId, "run", m);
 }
 
 function pickFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | undefined, m: UnitGlbManifest): string | null {
@@ -169,7 +200,7 @@ function attackPlaybackSeconds(kind: UnitSizeClass | "hero", producedUnitId?: st
     case "Titan":
       return 3.35;
     case "hero":
-      return 1.48;
+      return 1.78;
   }
 }
 
@@ -260,6 +291,24 @@ function animClipLeafLower(name: string): string {
   return (parts[parts.length - 1] ?? t).trim().toLowerCase();
 }
 
+/**
+ * Meshy/Blender exports often end clip names with `|baselayer` — the semantic token is a middle segment
+ * (`Armature|Running|baselayer`). Scan every segment plus simple-title fallback (`Running`, `Idle`).
+ */
+function starboundHeroAnimKind(name: string): "running" | "walking" | "idle" | null {
+  const segments = name.split(/[|/\\]/u).map((s) => s.trim().toLowerCase());
+  for (const seg of segments) {
+    if (seg === "running" || seg === "run" || seg === "runfast") return "running";
+    if (seg === "walking" || seg === "walk" || seg === "walking_man") return "walking";
+    if (seg === "idle") return "idle";
+  }
+  const leaf = animClipLeafLower(name);
+  if (leaf === "running" || leaf === "run" || leaf === "runfast") return "running";
+  if (leaf === "walking" || leaf === "walk" || leaf === "walking_man") return "walking";
+  if (leaf === "idle") return "idle";
+  return null;
+}
+
 function starboundHeroForbiddenLocoName(name: string): boolean {
   const h = name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   return /\b(kick|lunge|sweep|spin|jump|360|weapon|combo|mage|spell|cast|soell|dab|taunt|dance|flip)\b/.test(h);
@@ -275,17 +324,25 @@ function starboundHeroLocomotionClip(
 ): THREE.AnimationClip | null {
   const okTracks = (c: THREE.AnimationClip) => movingTrackCount(c) > 0;
   if (role === "run") {
-    const byLeaf = animations.filter((c) => animClipLeafLower(c.name) === "running" && okTracks(c));
-    const running = byLeaf.find((c) => !starboundHeroForbiddenLocoName(c.name)) ?? byLeaf[0];
-    if (running) return running;
-    const walking = animations.find(
-      (c) => animClipLeafLower(c.name) === "walking" && okTracks(c) && !starboundHeroForbiddenLocoName(c.name),
+    const defaultRun = animations.find((c) => {
+      const h = c.name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+      return /\bdefault\b.*\brun(n?ing)?\b|\brun(n?ing)?\b.*\bdefault\b/.test(h) && okTracks(c);
+    });
+    if (defaultRun && !starboundHeroForbiddenLocoName(defaultRun.name)) return defaultRun;
+    const runners = animations.filter(
+      (c) => starboundHeroAnimKind(c.name) === "running" && okTracks(c) && !starboundHeroForbiddenLocoName(c.name),
     );
-    return walking ?? null;
+    if (runners[0]) return runners[0];
+    const walking = animations.find(
+      (c) =>
+        starboundHeroAnimKind(c.name) === "walking" && okTracks(c) && !starboundHeroForbiddenLocoName(c.name),
+    );
+    if (walking) return walking;
+    return null;
   }
   const idles = animations.filter((c) => {
     if (!okTracks(c)) return false;
-    if (animClipLeafLower(c.name) !== "idle") return false;
+    if (starboundHeroAnimKind(c.name) !== "idle") return false;
     if (/\bswim\b/i.test(c.name)) return false;
     if (starboundHeroForbiddenLocoName(c.name)) return false;
     return true;
@@ -340,14 +397,12 @@ function clipForRole(
     if (role === "run" || role === "idle") {
       const picked = starboundHeroLocomotionClip(animations, role);
       if (picked) return picked;
+      return null;
     }
     if (role === "attack") {
-      const weapon = animations.find(
-        (c) => /weapon_combo/i.test(c.name) && !/_1$/i.test(c.name.trim()) && movingTrackCount(c) > 0,
-      );
-      if (weapon) return weapon;
-      const weapon1 = animations.find((c) => /weapon_combo_1/i.test(c.name) && movingTrackCount(c) > 0);
-      if (weapon1) return weapon1;
+      const beam = animations.find((c) => /mage_soell_cast_3|spell[_\s-]?beam|beam/i.test(c.name) && movingTrackCount(c) > 0);
+      if (beam) return beam;
+      return null;
     }
   }
   let best = animations[0]!;
@@ -371,6 +426,8 @@ function isStarboundHeroFile(file: string): boolean {
 /** Spell / kick / dance flourishes for strike roulette — excludes plain locomotion clips by name. */
 function isHeroStrikeRouletteClip(clip: THREE.AnimationClip): boolean {
   if (movingTrackCount(clip) < 2) return false;
+  const kind = starboundHeroAnimKind(clip.name);
+  if (kind === "running" || kind === "walking" || kind === "idle") return false;
   const hay = clip.name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   if (/\b(death|die|dying|fall|falling)\b/.test(hay)) return false;
   const leaf = animClipLeafLower(clip.name);
@@ -397,6 +454,7 @@ function registerStarboundHeroStrikePool(
   const strikeDurations: number[] = [];
   for (const raw of animations) {
     if (excludedClipNames.has(raw.name)) continue;
+    if (!/mage_soell_cast_3|spell[_\s-]?beam|beam/i.test(raw.name)) continue;
     if (!isHeroStrikeRouletteClip(raw)) continue;
     const clip = safeClip(raw);
     const action = mixer.clipAction(clip);
@@ -546,6 +604,7 @@ async function loadManifest(): Promise<UnitGlbManifest> {
         return {
           files: j.files ?? [],
           animationProfiles: j.animationProfiles ?? [],
+          inspections: j.inspections ?? [],
         };
       } catch {
         return { files: [] };
@@ -655,6 +714,8 @@ type AttachGlbOpts = {
   teamTint?: TeamId;
   /** Optional secondary clip GLB whose first animation plays as the unit's attack action. */
   attackFile?: string | null;
+  /** Optional secondary clip GLB whose first animation plays while moving. */
+  runFile?: string | null;
   /** Optional secondary clip GLB whose first animation plays while idle/standing. */
   idleFile?: string | null;
   /** Optional secondary clip GLB whose first animation plays while dying before disposal. */
@@ -696,6 +757,17 @@ async function attachGlbByFile(
         );
       }
     }
+    const runFile = opts?.runFile ?? file;
+    const idleFile = opts?.idleFile;
+    const attackFile = opts?.attackFile;
+    const deathFile = opts?.deathFile;
+    const roleTemplateFor = (roleFile: string): Promise<GltfTemplate> =>
+      roleFile === file ? Promise.resolve(template) : loadGltfTemplate(`/assets/units/${roleFile}`);
+    const runTemplatePromise = roleTemplateFor(runFile);
+    const idleTemplatePromise = idleFile ? roleTemplateFor(idleFile) : null;
+    const attackTemplatePromise = attackFile ? roleTemplateFor(attackFile) : null;
+    const deathTemplatePromise = deathFile ? roleTemplateFor(deathFile) : null;
+
     const inst = cloneSkeleton(template.root);
     cloneInstanceMaterials(inst);
     setShadowRecursive(inst, true, true);
@@ -716,15 +788,16 @@ async function attachGlbByFile(
     parent.userData["glbClampChecksRemaining"] = 2;
     const strikeExcludeClipNames = new Set<string>();
     let mixer: THREE.AnimationMixer | null = null;
-    if (template.animations.length > 0) {
-      const clipRaw = clipForRole(template.animations, "run", file);
+    const runTemplate = await runTemplatePromise;
+    if (runTemplate.animations.length > 0) {
+      const clipRaw = clipForRole(runTemplate.animations, "run", runFile);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer = new THREE.AnimationMixer(inst);
         const clip = safeClip(clipRaw, true);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopRepeat, Infinity);
-        setLoopPlayback(action, clip, "run", file);
+        setLoopPlayback(action, clip, "run", runFile);
         action.reset();
         action.enabled = true;
         action.setEffectiveWeight(1);
@@ -735,10 +808,9 @@ async function attachGlbByFile(
         parent.userData["glbBaseState"] = "run";
       }
     }
-    const loadIdle = !!opts?.idleFile;
+    const loadIdle = !!idleFile;
     if (loadIdle) {
-      const idleFile = opts.idleFile!;
-      const idleTemplate = idleFile === file ? template : await loadGltfTemplate(`/assets/units/${idleFile}`);
+      const idleTemplate = await idleTemplatePromise!;
       const clipRaw = clipForRole(idleTemplate.animations, "idle", idleFile);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
@@ -754,13 +826,13 @@ async function attachGlbByFile(
       }
     }
     const attackPlaybackFloor = Math.max(opts?.attackPlaybackSeconds ?? 1.48, 1.48);
-    if (opts?.attackFile) {
-      const attackTemplate = await loadGltfTemplate(`/assets/units/${opts.attackFile}`);
-      const clipRaw = clipForRole(attackTemplate.animations, "attack", opts.attackFile);
+    if (attackFile) {
+      const attackTemplate = await attackTemplatePromise!;
+      const clipRaw = clipForRole(attackTemplate.animations, "attack", attackFile);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw, opts.attackFile.includes("amber_geode_monks_attack"));
+        const clip = safeClip(clipRaw, attackFile.includes("amber_geode_monks_attack"));
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = false;
@@ -773,13 +845,13 @@ async function attachGlbByFile(
         parent.userData["glbAttackDuration"] = playback;
       }
     }
-    if (opts?.deathFile) {
-      const deathTemplate = await loadGltfTemplate(`/assets/units/${opts.deathFile}`);
-      const clipRaw = clipForRole(deathTemplate.animations, "death", opts.deathFile);
+    if (deathFile) {
+      const deathTemplate = await deathTemplatePromise!;
+      const clipRaw = clipForRole(deathTemplate.animations, "death", deathFile);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw, opts.deathFile.includes("amber_geode_monks_death"));
+        const clip = safeClip(clipRaw, deathFile.includes("amber_geode_monks_death"));
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
@@ -855,6 +927,7 @@ export async function attachGlbForClass(
     producedUnitId !== undefined && producedUnitId.length > 0 ? `${kind}:${producedUnitId}` : kind;
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
     ...(teamTint ? { teamTint } : {}),
+    runFile: runFileForUnit(kind, producedUnitId, m),
     attackFile: attackFileForUnit(kind, producedUnitId, m),
     idleFile: idleFileForUnit(kind, producedUnitId, m),
     deathFile: deathFileForUnit(kind, producedUnitId, m),
@@ -919,7 +992,7 @@ function towerManifestIndex(catalogId: string): number {
 function pickTowerFile(catalogId: string, m: UnitGlbManifest): string | null {
   const override = TOWER_GLB_OVERRIDES[catalogId];
   if (override && m.files.includes(override)) return override;
-  const towerFiles = productionArtFiles(m);
+  const towerFiles = towerArtFiles(m);
   if (!towerFiles.length) return null;
   return towerFiles[towerManifestIndex(catalogId) % towerFiles.length] ?? null;
 }

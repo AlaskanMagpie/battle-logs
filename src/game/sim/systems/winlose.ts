@@ -10,7 +10,8 @@ export function loseCheck(s: GameState): void {
   const keep = findKeep(s);
   if (!keep) {
     s.phase = "lose";
-    s.lastMessage = "Defeat — the Wizard Keep has fallen.";
+    s.matchEndDetail = "You lost: your Wizard Keep (base) was destroyed.";
+    s.lastMessage = s.matchEndDetail;
   }
 }
 
@@ -21,13 +22,18 @@ export function resolveMatchTimeLimit(s: GameState): void {
   const e = s.stats.damageDealtEnemy;
   if (p > e) {
     s.phase = "win";
-    s.lastMessage = `Time — victory by damage (${Math.round(p)} vs ${Math.round(e)}).`;
+    s.matchEndDetail = `You won on the clock: you dealt more total damage than the enemy (${Math.round(p)} vs ${Math.round(
+      e,
+    )}).`;
+    s.lastMessage = s.matchEndDetail;
   } else if (e > p) {
     s.phase = "lose";
-    s.lastMessage = `Time — defeat by damage (${Math.round(p)} vs ${Math.round(e)}).`;
+    s.matchEndDetail = `You lost on the clock: the enemy dealt more total damage (${Math.round(p)} vs ${Math.round(e)}).`;
+    s.lastMessage = s.matchEndDetail;
   } else {
     s.phase = "lose";
-    s.lastMessage = `Time — stalemate (${Math.round(p)} damage each).`;
+    s.matchEndDetail = `You lost on the clock: a damage tie (${Math.round(p)} each) counts as a defeat.`;
+    s.lastMessage = s.matchEndDetail;
   }
 }
 
@@ -41,7 +47,8 @@ export function winCheck(s: GameState): void {
   if (s.phase !== "playing") return;
   if (s.enemyHero.hp <= 0) {
     s.phase = "win";
-    s.lastMessage = "Victory — the rival Wizard has fallen.";
+    s.matchEndDetail = "You won: the enemy Wizard was defeated.";
+    s.lastMessage = s.matchEndDetail;
     return;
   }
   const relaysDead =
@@ -60,10 +67,11 @@ export function winCheck(s: GameState): void {
     });
   if (relaysDead || enemiesDead || coresDestroyed) {
     s.phase = "win";
-    s.lastMessage = coresDestroyed
-      ? "Victory — camp core destroyed."
+    s.matchEndDetail = coresDestroyed
+      ? "You won: the enemy camp core was destroyed."
       : relaysDead
-        ? "Victory — Dark Fortresses shattered."
-        : "Victory — hostile force routed.";
+        ? "You won: every Dark Fortress (enemy relay) was destroyed."
+        : "You won: the last hostile field units were eliminated.";
+    s.lastMessage = s.matchEndDetail;
   }
 }

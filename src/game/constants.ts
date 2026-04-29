@@ -31,6 +31,9 @@ export const PLAYER_STARTING_FLUX = 280;
 /** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2s at default TICK_HZ. */
 export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 40;
 
+/** Opening grace before the rival wizard can spend Mana on auto-deploys. Gives the player time to read/build. */
+export const ENEMY_AI_FIRST_BUILD_DELAY_TICKS = Math.round(18 * TICK_HZ);
+
 /**
  * Rival Mana trickle so the AI does not brick if map flow stalls.
  * Keep small — economy should come from claimed nodes like the player (see `economy.ts`).
@@ -57,6 +60,9 @@ export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
 
 /** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */
 export const ENEMY_UNIT_HUNT_DETECT = 118;
+
+/** Initial sleeping defenders per camp. Zero means maps open with objectives/buildings, not loose enemy body blobs. */
+export const ENEMY_CAMP_INITIAL_DEFENDER_CAP = 0;
 
 /** Scales enemy hunt radius with `map.world.halfExtents` (large arenas need larger acquire). */
 export const ENEMY_HUNT_DETECT_MAP_MULT = 0.42;
@@ -92,9 +98,9 @@ export const UNIT_FORMATION_SPACING = 3.2;
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
 export const ENEMY_TAP_WEDGE_MARGIN_X = 52;
 
-/** Rival wizard melee — tuned slightly below player strike. */
-export const ENEMY_HERO_STRIKE_DAMAGE = 32;
-export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 22;
+/** Rival wizard melee — slower, clearer hits; damage is scaled to preserve prior DPS. */
+export const ENEMY_HERO_STRIKE_DAMAGE = 47;
+export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 32;
 /** Global enemy pressure scalars for balance passes. */
 export const ENEMY_DAMAGE_MULT = 0.75;
 export const ENEMY_PRODUCTION_RATE_MULT = 0.75;
@@ -186,10 +192,10 @@ export const ENEMY_UNIT_STRUCTURE_DAMAGE_MULT = 0.35;
 export const UNIT_TAP_ANCHOR_DAMAGE_MULT = 0.42;
 /** Normal units attack on cadence, not every sim tick. Damage is scaled by cooldown, so slower swings hit harder. */
 export const UNIT_ATTACK_COOLDOWN_TICKS = {
-  Swarm: 48,
-  Line: 62,
-  Heavy: 78,
-  Titan: 96,
+  Swarm: 60,
+  Line: 80,
+  Heavy: 100,
+  Titan: 124,
 } as const;
 /** Per-hit lift over old per-tick DPS so slower attacks feel decisive when they land. */
 export const UNIT_ATTACK_DAMAGE_MULT = {
@@ -261,7 +267,7 @@ export const ENEMY_WAVE_GLOBAL_CAP = 8000;
 export const REINFORCEMENT_WAVE_BATCH = 4;
 
 /** Player-controlled hero. */
-export const HERO_SPEED = 11;
+export const HERO_SPEED = 7.2;
 /** Max queued RMB destinations after the current move (Shift+right-click). */
 export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;
@@ -289,17 +295,17 @@ export const HOME_CLAIM_FLUX_MULT_MAX = 1.72;
 export const HOME_TAP_YIELD_MULT_MAX = 1.65;
 export const HERO_MAX_HP = 500;
 /** WASD strafe/forward uses same speed scale as click-move. */
-export const HERO_WASD_SPEED = 11;
+export const HERO_WASD_SPEED = HERO_SPEED;
 /** Circle radius vs `map.decor` with `blocksMovement` for wizard pathing (world units). */
 export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
 /** Structure ghost center must stay outside blocking decor by at least this radius. */
 export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
 /** Uniform scale for structure meshes in the battle view (silhouettes, tower GLBs, Keep/relay props). Gameplay radii unchanged. */
 export const STRUCTURE_MESH_VISUAL_SCALE = 4;
-/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~1.4s wall time — deliberate swings). */
+/** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~2s wall time — deliberate swings). */
 export const HERO_ATTACK_RANGE = 18;
-export const HERO_ATTACK_DAMAGE = 96;
-export const HERO_ATTACK_COOLDOWN_TICKS = 28;
+export const HERO_ATTACK_DAMAGE = 137;
+export const HERO_ATTACK_COOLDOWN_TICKS = 40;
 /** Tactical recall/blink: moves Wizard plus nearby friendly troops, never into the enemy half. */
 export const HERO_TELEPORT_COOLDOWN_SEC = 30;
 export const HERO_TELEPORT_UNIT_RADIUS = 16;

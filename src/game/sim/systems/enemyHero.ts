@@ -2,6 +2,7 @@ import { getCatalogEntry } from "../../catalog";
 import {
   ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
   ENEMY_AI_BUILD_CATALOG_IDS,
+  ENEMY_AI_FIRST_BUILD_DELAY_TICKS,
   ENEMY_AI_BUILD_RESERVE_AFTER_CLAIM_FEE,
   ENEMY_AI_CLAIM_RESERVE_TAP_GOAL,
   ENEMY_AI_MIN_BUILD_SEP,
@@ -250,6 +251,7 @@ function enemyAiBuildIntervalTicks(s: GameState): number {
 
 function attemptEnemyAiBuild(s: GameState): void {
   if (s.phase !== "playing") return;
+  if (s.tick < ENEMY_AI_FIRST_BUILD_DELAY_TICKS) return;
   if (s.tick % enemyAiBuildIntervalTicks(s) !== 0) return;
   const half = s.map.world.halfExtents;
   const sources = enemyTerritorySources(s);

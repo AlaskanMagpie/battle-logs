@@ -432,6 +432,32 @@ describe("local leaderboard", () => {
   });
 });
 
+describe("enemy opening balance", () => {
+  it("does not spawn loose camp defenders at match start", () => {
+    const map: MapData = {
+      ...tinyMap,
+      enemyCamps: [
+        {
+          id: "camp_big",
+          origin: { x: 70, z: 12 },
+          aggroRadius: 60,
+          wakeRadius: 35,
+          roster: [
+            { sizeClass: "Heavy", offset: { x: 0, z: 0 } },
+            { sizeClass: "Titan", offset: { x: 2, z: 0 } },
+            { sizeClass: "Swarm", offset: { x: -2, z: 0 } },
+          ],
+        },
+      ],
+    };
+    const s = createInitialState(map, []);
+    const enemies = s.units.filter((u) => u.team === "enemy");
+
+    expect(enemies).toHaveLength(0);
+    expect(s.enemyCampAwake.camp_big).toBe(false);
+  });
+});
+
 describe("hero node claiming", () => {
   it("channels and claims while the Wizard is still moving inside the node ring", () => {
     const s = createInitialState(tinyMap, []);
@@ -514,6 +540,32 @@ describe("hero captain mode", () => {
       expect(s.hero.targetX).not.toBe(tap.x);
       expect(s.hero.targetZ).not.toBe(tap.z);
     }
+  });
+
+  it("auto-places a doctrine structure while Captain mode is enabled", () => {
+    const s = createInitialState(tinyMap, ["outpost", "watchtower"]);
+    s.flux = 1000;
+    s.heroCaptainEnabled = true;
+    s.heroCaptainLastManualTick = -9999;
+    const before = s.stats.structuresBuilt;
+
+    advanceTick(s, []);
+
+    expect(s.stats.structuresBuilt).toBe(before + 1);
+    expect(s.structures.some((st) => st.team === "player" && (st.catalogId === "outpost" || st.catalogId === "watchtower"))).toBe(
+      true,
+    );
+    expect(s.lastMessage).toContain("Captain mode");
+  });
+
+  it("does not auto-place doctrine structures when Captain mode is disabled", () => {
+    const s = createInitialState(tinyMap, ["outpost", "watchtower"]);
+    s.flux = 1000;
+    s.heroCaptainEnabled = false;
+
+    advanceTick(s, []);
+
+    expect(s.stats.structuresBuilt).toBe(0);
   });
 });
 

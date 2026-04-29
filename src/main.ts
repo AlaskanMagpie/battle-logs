@@ -37,6 +37,11 @@ import {
 } from "./ui/doctrineDrag";
 import { mountDoctrinePicker } from "./ui/doctrinePicker";
 import { installCardArtOverlayCalibrator } from "./ui/cardArtOverlay";
+import {
+  CARD_PREVIEW_LONG_PRESS_MS,
+  closeDoctrineCardDetail,
+  showDoctrineCardDetail,
+} from "./ui/cardDetailPop";
 import { attachDoctrineHandPeek, mountHud, updateHud } from "./ui/hud";
 import { hideRulesToast, showRulesToast } from "./ui/rulesToast";
 import {
@@ -188,7 +193,7 @@ function mountMatchSkyboxAdjuster(renderer: GameRenderer, signal: AbortSignal): 
 function syncCameraFollowUi(root: HTMLElement, follow: boolean): void {
   const btn = root.querySelector("#btn-camera-follow");
   if (!btn) return;
-  const copy = btn.querySelector<HTMLElement>(".hud-side-copy b");
+  const copy = btn.querySelector<HTMLElement>(".hud-side-value text, .hud-side-value");
   if (copy) copy.textContent = follow ? "lock" : "free";
   btn.setAttribute("aria-pressed", follow ? "true" : "false");
 }
@@ -341,10 +346,17 @@ function wireDoctrineDragToMap(
     catalogId: string;
     captureEl: HTMLElement;
     sourceCardHtml: string | null;
+    longPressTimer: number | null;
   } | null = null;
 
   function clearPending(): void {
-    if (pending) releasePointerSafe(pending.captureEl, pending.pointerId);
+    if (pending) {
+      if (pending.longPressTimer != null) {
+        clearTimeout(pending.longPressTimer);
+        pending.longPressTimer = null;
+      }
+      releasePointerSafe(pending.captureEl, pending.pointerId);
+    }
     pending = null;
   }
 
@@ -353,6 +365,11 @@ function wireDoctrineDragToMap(
     const dx = ev.clientX - pending.startX;
     const dy = ev.clientY - pending.startY;
     if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+    if (pending.longPressTimer != null) {
+      clearTimeout(pending.longPressTimer);
+      pending.longPressTimer = null;
+    }
+    closeDoctrineCardDetail();
     const snap = pending;
     pending = null;
     window.removeEventListener("pointermove", onPendingMove);
@@ -386,6 +403,10 @@ function wireDoctrineDragToMap(
     window.removeEventListener("pointerup", onPendingUp);
     window.removeEventListener("pointercancel", onPendingUp);
     const snap = pending;
+    if (snap.longPressTimer != null) {
+      clearTimeout(snap.longPressTimer);
+      snap.longPressTimer = null;
+    }
     pending = null;
     releasePointerSafe(snap.captureEl, ev.pointerId);
     const dx = ev.clientX - snap.startX;
@@ -570,6 +591,11 @@ function wireDoctrineDragToMap(
       catalogId: id,
       captureEl: slot,
       sourceCardHtml: (slot.querySelector(".doctrine-card-compact") as HTMLElement | null)?.outerHTML ?? null,
+      longPressTimer: window.setTimeout(() => {
+        if (!pending || pending.pointerId !== ev.pointerId) return;
+        pending.longPressTimer = null;
+        showDoctrineCardDetail(id, { fromHover: true, hoverSourceEl: slot });
+      }, CARD_PREVIEW_LONG_PRESS_MS),
     };
     window.addEventListener("pointermove", onPendingMove);
     window.addEventListener("pointerup", onPendingUp);

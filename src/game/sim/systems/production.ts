@@ -9,27 +9,21 @@ import {
   type StructureRuntime,
   type UnitRuntime,
 } from "../../state";
-import { isStructureEntry } from "../../types";
+import { isStructureEntry, type StructureCatalogEntry } from "../../types";
 import { productionBatchSizeForClass, unitStatsForCatalog } from "./helpers";
 
 /** Slightly wider ring than +/-1 so units clear the tower footprint / GLB hull. */
 const SPAWN_JITTER = 3.5;
 
-export function availableProductionSlots(_s: GameState, st: StructureRuntime): number {
-  const def = getCatalogEntry(st.catalogId);
-  if (!def || !isStructureEntry(def)) return 0;
-  return productionBatchSizeForClass(def.producedSizeClass);
-}
-
-function pushSpawnedUnitBody(
+function pushSpawnedUnitFromStructureDef(
   s: GameState,
-  st: StructureRuntime,
+  def: StructureCatalogEntry,
+  center: { x: number; z: number },
+  structureId: number | null,
   team: "player" | "enemy",
   batchIndex: number,
   batchTotal: number,
 ): void {
-  const def = getCatalogEntry(st.catalogId);
-  if (!def || !isStructureEntry(def)) return;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
   const antiClasses =
     def.producedAntiClasses && def.producedAntiClasses.length > 0
@@ -44,9 +38,9 @@ function pushSpawnedUnitBody(
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
-    structureId: st.id,
-    x: st.x + Math.cos(angle) * radius,
-    z: st.z + Math.sin(angle) * radius,
+    structureId,
+    x: center.x + Math.cos(angle) * radius,
+    z: center.z + Math.sin(angle) * radius,
     hp: stStats.maxHp,
     maxHp: stStats.maxHp,
     sizeClass: def.producedSizeClass,
@@ -68,6 +62,44 @@ function pushSpawnedUnitBody(
   };
   s.units.push(u);
   if (team === "player") s.stats.unitsProduced += 1;
+}
+
+export function availableProductionSlots(_s: GameState, st: StructureRuntime): number {
+  const def = getCatalogEntry(st.catalogId);
+  if (!def || !isStructureEntry(def)) return 0;
+  return productionBatchSizeForClass(def.producedSizeClass);
+}
+
+function pushSpawnedUnitBody(
+  s: GameState,
+  st: StructureRuntime,
+  team: "player" | "enemy",
+  batchIndex: number,
+  batchTotal: number,
+): void {
+  const def = getCatalogEntry(st.catalogId);
+  if (!def || !isStructureEntry(def)) return;
+  pushSpawnedUnitFromStructureDef(s, def, { x: st.x, z: st.z }, st.id, team, batchIndex, batchTotal);
+}
+
+/**
+ * Spawns one full production batch (same size class / count as a completed building) with **no** structure.
+ * Used by enemy wizard AI to skip tower meshes until infrastructure visuals are redone.
+ */
+export function spawnEnemyBatchFromStructureCatalogId(
+  s: GameState,
+  catalogId: string,
+  pos: { x: number; z: number },
+): number {
+  const def = getCatalogEntry(catalogId);
+  if (!def || !isStructureEntry(def)) return 0;
+  const n = productionBatchSizeForClass(def.producedSizeClass);
+  if (n <= 0) return 0;
+  for (let i = 0; i < n; i++) {
+    pushSpawnedUnitFromStructureDef(s, def, pos, null, "enemy", i, n);
+  }
+  s.stats.enemyUnitsSpawned += n;
+  return n;
 }
 
 function pushSpawnedBatch(s: GameState, st: StructureRuntime, team: "player" | "enemy", count: number): void {

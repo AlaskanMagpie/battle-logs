@@ -292,15 +292,17 @@ export function drawCardArtOverlayOnCanvasRect(
   const fields = fieldsForEntry(entry, catalogId);
   if (!fields.length) return;
 
-  const pxPerUx = destW / CARD_OVERLAY_WIDTH;
-  const pxPerUy = destH / CARD_OVERLAY_HEIGHT;
+  /** Match SVG `preserveAspectRatio="xMidYMid meet"` — uniform scale + centered letterboxing. */
+  const scale = Math.min(destW / CARD_OVERLAY_WIDTH, destH / CARD_OVERLAY_HEIGHT);
+  const ox = destX + (destW - scale * CARD_OVERLAY_WIDTH) / 2;
+  const oy = destY + (destH - scale * CARD_OVERLAY_HEIGHT) / 2;
 
   ctx.save();
   for (const field of fields) {
     const { sy: fsy } = fieldTextScale(field, entry);
-    const fontPx = Math.max(6.5, baseValueFontUserUnits(field) * fsy * pxPerUy);
-    const cx = destX + field.x * pxPerUx;
-    const cy = destY + field.y * pxPerUy;
+    const fontPx = Math.max(6.5, baseValueFontUserUnits(field) * fsy * scale);
+    const cx = ox + field.x * scale;
+    const cy = oy + field.y * scale;
     const anchor = field.anchor ?? "middle";
     ctx.textAlign = anchor === "start" ? "left" : anchor === "end" ? "right" : "center";
     ctx.textBaseline = "middle";
@@ -371,10 +373,9 @@ function referenceBoxDims(field: OverlayField, entry: CatalogEntry): { rw: numbe
 function fieldTextScale(field: OverlayField, entry: CatalogEntry): { sx: number; sy: number } {
   const { w, h } = fieldBoxDims(field);
   const { rw, rh } = referenceBoxDims(field, entry);
-  return {
-    sx: clamp(w / rw, 0.15, 12),
-    sy: clamp(h / rh, 0.15, 12),
-  };
+  /** Uniform scale only — non-uniform sx/sy skewed text vs calibrated PNG slots (asset lab saves box size, not independent X/Y stretch). */
+  const u = clamp(Math.min(w / rw, h / rh), 0.15, 12);
+  return { sx: u, sy: u };
 }
 
 type ResizeHandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
@@ -567,16 +568,24 @@ function handlesSvg(field: OverlayField): string {
     .join("")}</g>`;
 }
 
-export function cardArtOverlayHtml(catalogId: string, opts?: { calibrate?: boolean }): string {
+export type CardArtOverlayHtmlOpts = {
+  calibrate?: boolean;
+  /** In-match HUD slots: hide FX shape labels (AOE/LINE/FIELD) — stats stay on rules text / detail pop. */
+  handSlot?: boolean;
+};
+
+export function cardArtOverlayHtml(catalogId: string, opts?: CardArtOverlayHtmlOpts): string {
   const entry = getCatalogEntry(catalogId);
   if (!entry) return "";
   const calibrate = opts?.calibrate === true || cardArtOverlayCalibrationEnabled();
   const edit = cardArtOverlayEditEnabled();
-  const fields = fieldsForEntry(entry, catalogId);
+  let fields = fieldsForEntry(entry, catalogId);
+  if (opts?.handSlot) fields = fields.filter((f) => f.id !== "effect");
   const classes = ["card-art-overlay", calibrate ? "card-art-overlay--calibrate" : "", edit ? "card-art-overlay--edit" : ""]
     .filter(Boolean)
     .join(" ");
-  return `<svg class="${classes}" data-card-art-overlay="${escapeHtml(catalogId)}" viewBox="0 0 ${CARD_OVERLAY_WIDTH} ${CARD_OVERLAY_HEIGHT}" preserveAspectRatio="none" aria-hidden="true">
+  /** `meet` keeps uniform scale vs card art; `none` stretched X/Y independently and misaligned labels (binder-style glitch). */
+  return `<svg class="${classes}" data-card-art-overlay="${escapeHtml(catalogId)}" viewBox="0 0 ${CARD_OVERLAY_WIDTH} ${CARD_OVERLAY_HEIGHT}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
     ${fields.map((f) => fieldSvg(f, entry)).join("")}
   </svg>`;
 }

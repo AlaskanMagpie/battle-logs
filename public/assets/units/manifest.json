@@ -14,7 +14,11 @@
     "azure_spear_swarm_running.glb",
     "azure_spear_swarm_walking.glb",
     "bastion_keep_compressed.glb",
+    "chrono tower.glb",
+    "dragon's roost.glb",
     "driftwood_oasis_compressed.glb",
+    "fallen gates tower.glb",
+    "geode monks tower.glb",
     "lanternbound_line_attack_triple_combo.glb",
     "lanternbound_line_bow_charge.glb",
     "lanternbound_line_combat_stance.glb",
@@ -22,23 +26,19 @@
     "lanternbound_line_idle.glb",
     "lanternbound_line_running.glb",
     "lanternbound_line_walking.glb",
+    "lava tower.glb",
+    "oasis.glb",
+    "snow tower.glb",
     "starbound_arcanist_hero.glb",
-    "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
-    "unit_019d52a3-d2f8-7a51-b535-c938ad8c9658.glb",
-    "unit_019d52a3-fcd5-7a59-b02f-1ddf2759467d.glb",
-    "unit_019d52bf-a84c-7d9b-8954-b14bb09d832d.glb",
-    "unit_019d52c1-8465-7dc8-9a06-cd2e141b7c9c.glb",
-    "unit_019d52e0-45f9-75c0-81d9-bc1d41b7e040.glb",
-    "unit_019d5725-bd92-76a8-9319-10d218650e10.glb",
-    "unit_019d5754-b79c-7b2b-8ebf-461625c02e37.glb",
-    "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
-    "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb",
+    "town levy tower.glb",
+    "trade tower.glb",
     "verdant_citadel_titan_base.glb",
     "verdant_gatekeeper_reference_running.glb",
     "verdant_gatekeeper_reference_walking.glb",
     "verdant_gatekeeper_titan_attack.glb",
     "verdant_gatekeeper_titan_model.glb",
-    "verdant_gatekeeper_titan_run.glb"
+    "verdant_gatekeeper_titan_run.glb",
+    "watchtower.glb"
   ],
   "animationProfiles": [
     {
@@ -317,8 +317,32 @@
       "animations": []
     },
     {
+      "file": "chrono tower.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "dragon's roost.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
       "file": "driftwood_oasis_compressed.glb",
       "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "fallen gates tower.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "geode monks tower.glb",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -422,6 +446,24 @@
       ]
     },
     {
+      "file": "lava tower.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "oasis.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "snow tower.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
       "file": "starbound_arcanist_hero.glb",
       "skinnedMeshes": 1,
       "bones": 24,
@@ -513,61 +555,13 @@
       ]
     },
     {
-      "file": "unit_019d5259-ba01-7812-ad89-a88a5ac82d04.glb",
+      "file": "town levy tower.glb",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
-      "file": "unit_019d52a3-d2f8-7a51-b535-c938ad8c9658.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d52a3-fcd5-7a59-b02f-1ddf2759467d.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d52bf-a84c-7d9b-8954-b14bb09d832d.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d52c1-8465-7dc8-9a06-cd2e141b7c9c.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d52e0-45f9-75c0-81d9-bc1d41b7e040.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d5725-bd92-76a8-9319-10d218650e10.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d5754-b79c-7b2b-8ebf-461625c02e37.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d5768-0e26-7a58-8caa-8c8d82b405a8.glb",
-      "skinnedMeshes": 0,
-      "bones": 0,
-      "animations": []
-    },
-    {
-      "file": "unit_019d5aa9-9b00-7e58-8742-5cbd290821ca.glb",
+      "file": "trade tower.glb",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -648,6 +642,12 @@
           "scaleTracks": 24
         }
       ]
+    },
+    {
+      "file": "watchtower.glb",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
     }
   ]
 }

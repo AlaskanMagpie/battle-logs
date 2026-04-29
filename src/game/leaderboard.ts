@@ -1,3 +1,4 @@
+import { TICK_HZ } from "./constants";
 import type { GameState } from "./state";
 
 export const LOCAL_LEADERBOARD_KEY = "signalWars_localLeaderboard_v1";
@@ -19,7 +20,8 @@ export interface LocalLeaderboardEntry {
 export function scoreMatchResult(s: GameState): number {
   const victory = s.phase === "win" ? 2500 : 0;
   const nodesClaimed = s.taps.filter((t) => t.active && t.ownerTeam === "player").length;
-  const timePenalty = Math.floor(s.tick / 60);
+  /** One penalty per full sim minute of match time (`tick` is sim steps at `TICK_HZ`, not wall seconds). */
+  const timePenalty = Math.floor(s.tick / TICK_HZ / 60);
   return Math.max(
     0,
     victory + s.stats.enemyKills * 14 + nodesClaimed * 180 + s.stats.structuresBuilt * 55 - s.stats.unitsLost * 5 - timePenalty,

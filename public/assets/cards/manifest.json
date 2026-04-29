@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "cards": {
     "bastion_keep": "/assets/cards/bastion_keep.png",
-    "firestorm": "/assets/cards/firestorm.png",
-    "fortify": "/assets/cards/fortify.png",
+    "firestorm": "/assets/cards/firestorm.svg",
+    "fortify": "/assets/cards/fortify.svg",
     "outpost": "/assets/cards/outpost.png",
-    "recycle": "/assets/cards/recycle.png",
-    "shatter": "/assets/cards/shatter.png",
+    "recycle": "/assets/cards/recycle.svg",
+    "shatter": "/assets/cards/shatter.svg",
     "verdant_citadel": "/assets/cards/verdant_citadel.png",
     "watchtower": "/assets/cards/watchtower.png",
     "wizard_keep": "/assets/cards/wizard_keep.svg"

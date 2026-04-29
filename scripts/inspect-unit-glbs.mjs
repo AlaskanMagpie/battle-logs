@@ -68,7 +68,12 @@ for (const profile of manifest.animationProfiles ?? []) {
 
 console.log("\n[file diagnostics]");
 for (const file of manifest.files) {
-  const d = await inspect(file);
-  const clips = d.clips.map((c) => `${c.name} ${c.duration}s moving=${c.movingTracks}`).join("; ") || "no clips";
-  console.log(`${d.file}: skinned=${d.skinned} bones=${d.bones} ${clips}`);
+  try {
+    const d = await inspect(file);
+    const clips = d.clips.map((c) => `${c.name} ${c.duration}s moving=${c.movingTracks}`).join("; ") || "no clips";
+    console.log(`${d.file}: skinned=${d.skinned} bones=${d.bones} ${clips}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`${file}: inspect-error=${message}`);
+  }
 }

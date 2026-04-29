@@ -95,7 +95,7 @@ export function showComicLoreModal(): Promise<void> {
           <div class="comic-intro__count" aria-live="polite"></div>
           <div class="comic-intro__controls">
             <button type="button" class="comic-intro__fit-toggle">Fit screen</button>
-            <button type="button" class="comic-intro__zoom-out" title="Zoom out (Ctrl/⌘/Alt + scroll)">−</button>
+            <button type="button" class="comic-intro__zoom-out" title="Zoom out (scroll wheel; add Ctrl/⌘/Alt if the page is scrolling)">−</button>
             <button type="button" class="comic-intro__zoom-reset" title="Reset zoom">100%</button>
             <button type="button" class="comic-intro__zoom-in" title="Zoom in">+</button>
             <button type="button" class="comic-intro__bgm" aria-pressed="false">BGM Off</button>
@@ -269,7 +269,13 @@ export function showComicLoreModal(): Promise<void> {
     });
 
     wheelHandler = (ev: WheelEvent): void => {
-      if (!(ev.ctrlKey || ev.metaKey || ev.altKey)) return;
+      const canScrollY = scrollEl.scrollHeight > scrollEl.clientHeight + 2;
+      const canScrollX = scrollEl.scrollWidth > scrollEl.clientWidth + 2;
+      const modifierZoom = ev.ctrlKey || ev.metaKey || ev.altKey;
+      // After "Fit screen", content often fits exactly — no overflow so native wheel does nothing.
+      // Treat wheel as zoom whenever the pane cannot scroll; keep plain wheel = scroll when it can.
+      const useWheelForZoom = modifierZoom || (!canScrollY && !canScrollX);
+      if (!useWheelForZoom) return;
       ev.preventDefault();
       const dir = ev.deltaY > 0 ? 1 : -1;
       const factor = Math.exp(-dir * 0.18);

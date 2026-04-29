@@ -354,7 +354,9 @@ function tryPlaceStructure(
 function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEntry): void {
   s.flux -= cmd.fluxCost;
   if (cmd.salvagePctOnCast > 0) {
-    s.salvage += cmd.fluxCost * (cmd.salvagePctOnCast / 100);
+    const toPool = cmd.fluxCost * (cmd.salvagePctOnCast / 100);
+    s.salvage += toPool;
+    s.stats.salvageRecovered += toPool;
   }
   s.stats.commandsCast += 1;
   if (cmd.chargeCooldownSeconds > 0) {

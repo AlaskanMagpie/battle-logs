@@ -54,4 +54,15 @@ describe("unit combat ranges", () => {
     expect(heavy.dmgPerTick).toBe(0.42);
     expect(titan.dmgPerTick).toBe(0.92);
   });
+
+  it("keeps lighter units faster than heavier units", () => {
+    const swarm = unitStatsForCatalog("Swarm");
+    const line = unitStatsForCatalog("Line");
+    const heavy = unitStatsForCatalog("Heavy");
+    const titan = unitStatsForCatalog("Titan");
+
+    expect(swarm.speedPerSec).toBeGreaterThan(line.speedPerSec);
+    expect(line.speedPerSec).toBeGreaterThan(heavy.speedPerSec);
+    expect(heavy.speedPerSec).toBeGreaterThan(titan.speedPerSec);
+  });
 });

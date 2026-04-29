@@ -7,7 +7,7 @@ type CardArtManifest = {
  * Bump when changing `public/assets/cards/manifest.json` or any card file so browsers
  * cannot keep stale `/assets/cards/*` responses across refreshes.
  */
-export const CARD_ART_CACHE_BUSTER = "20";
+export const CARD_ART_CACHE_BUSTER = "21";
 
 let manifest: CardArtManifest | null | undefined;
 let manifestPromise: Promise<CardArtManifest | null> | null = null;
