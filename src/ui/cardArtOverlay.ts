@@ -249,6 +249,9 @@ function mergedOverlayFields(entry: CatalogEntry, catalogId: string): OverlayFie
 }
 
 function fieldsForEntry(e: CatalogEntry, catalogId: string): OverlayField[] {
+  // Authored spell cards already include their own rules text. Never stamp generated
+  // SVG labels like "100%", "AOE", "FIELD", or "LINE" over them.
+  if (isCommandEntry(e)) return [];
   return mergedOverlayFields(e, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
 }
 
@@ -581,6 +584,7 @@ export function cardArtOverlayHtml(catalogId: string, opts?: CardArtOverlayHtmlO
   const edit = cardArtOverlayEditEnabled();
   let fields = fieldsForEntry(entry, catalogId);
   if (opts?.handSlot) fields = fields.filter((f) => f.id !== "effect");
+  if (!fields.length) return "";
   const classes = ["card-art-overlay", calibrate ? "card-art-overlay--calibrate" : "", edit ? "card-art-overlay--edit" : ""]
     .filter(Boolean)
     .join(" ");

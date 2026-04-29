@@ -454,8 +454,6 @@ export class CardBinderEngine {
   private readonly ndc = new THREE.Vector2();
   private binderPlacement = readBinderPlacement();
   private vibePortalPlacement = readVibePortalPlacement();
-  /** Debug ingest throttle (`performance.now()` ms). */
-  private _dbgFlipLogLast = 0;
 
   onPageChange: ((page: number, total: number) => void) | null = null;
   onPickCatalogIndex: ((index: number | null) => void) | null = null;
@@ -1386,21 +1384,6 @@ export class CardBinderEngine {
   }
 
   private _sf(): void {
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "flip",
-        location: "CardBinderEngine.ts:_sf",
-        message: "flip_layout_start",
-        data: { cur: this.cur, fl: this.fl, drag: this.drag },
-        timestamp: Date.now(),
-        runId: "binder-retest",
-      }),
-    }).catch(() => {});
-    // #endregion
     this._cl(this.fp);
     this.fp = null;
     const s = this.cur;
@@ -1504,21 +1487,6 @@ export class CardBinderEngine {
   }
 
   private _done(): void {
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "flip",
-        location: "CardBinderEngine.ts:_done",
-        message: "flip_complete",
-        data: { fl: this.fl, curBefore: this.cur, ang: this.ang, vel: this.vel },
-        timestamp: Date.now(),
-        runId: "binder-retest",
-      }),
-    }).catch(() => {});
-    // #endregion
     if (this.fl === 1) this.cur++;
     else if (this.fl === -1) this.cur--;
     this.fl = 0;
@@ -1531,21 +1499,6 @@ export class CardBinderEngine {
   }
 
   private _canc(): void {
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "flip",
-        location: "CardBinderEngine.ts:_canc",
-        message: "flip_cancel",
-        data: { cur: this.cur, ang: this.ang },
-        timestamp: Date.now(),
-        runId: "binder-retest",
-      }),
-    }).catch(() => {});
-    // #endregion
     this.fl = 0;
     this.ang = 0;
     this.vel = 0;
@@ -1564,21 +1517,6 @@ export class CardBinderEngine {
     if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
     if (this.cur >= this.chunks.length - 1) return;
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "flip",
-        location: "CardBinderEngine.ts:flipNext",
-        message: "flip_next_ui",
-        data: { cur: this.cur },
-        timestamp: Date.now(),
-        runId: "binder-retest",
-      }),
-    }).catch(() => {});
-    // #endregion
     this.fl = 1;
     this.ang = 0;
     this.vel = 0;
@@ -1591,21 +1529,6 @@ export class CardBinderEngine {
     if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
     if (this.cur <= 0) return;
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "flip",
-        location: "CardBinderEngine.ts:flipPrev",
-        message: "flip_prev_ui",
-        data: { cur: this.cur },
-        timestamp: Date.now(),
-        runId: "binder-retest",
-      }),
-    }).catch(() => {});
-    // #endregion
     this.fl = -1;
     this.ang = 0;
     this.vel = 0;
@@ -1844,21 +1767,6 @@ export class CardBinderEngine {
     let v0 = this.dragAngVelSmooth;
     if (!Number.isFinite(v0) || Math.abs(v0) < FLIP_DRAG_ANG_VEL_DEADBAND) v0 = 0;
     this.vel = THREE.MathUtils.clamp(v0 * FLIP_RELEASE_ANG_VEL_BLEND, -FLIP_MAX_ANG_VEL, FLIP_MAX_ANG_VEL);
-    // #region agent log
-    fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-      body: JSON.stringify({
-        sessionId: "b91e25",
-        hypothesisId: "impulse",
-        location: "CardBinderEngine.ts:_settleActivePageDrag",
-        message: "release_spring_seed",
-        data: { tgt: this.tgt, ang: this.ang, v0, vel: this.vel, pv },
-        timestamp: Date.now(),
-        runId: "impulse-transfer",
-      }),
-    }).catch(() => {});
-    // #endregion
     this.dragAngVelSmooth = 0;
     this.dragAngVelPrevT = 0;
   }
@@ -2647,36 +2555,6 @@ export class CardBinderEngine {
         if (Math.abs(this.vel) < 0.36) this._canc();
       }
     }
-    // #region agent log
-    if (this.fp && (this.fl !== 0 || this.drag)) {
-      const t = performance.now();
-      if (t - this._dbgFlipLogLast >= 56) {
-        this._dbgFlipLogLast = t;
-        fetch("http://127.0.0.1:7536/ingest/bef92781-28ef-46f8-965d-ec6701871e09", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b91e25" },
-          body: JSON.stringify({
-            sessionId: "b91e25",
-            hypothesisId: "flip",
-            location: "CardBinderEngine.ts:_tick",
-            message: "flip_motion_sample",
-            data: {
-              cur: this.cur,
-              fl: this.fl,
-              drag: this.drag,
-              ang: this.ang,
-              vel: this.vel,
-              tgt: this.tgt,
-              dt,
-              distTgt: this.tgt !== null ? Math.abs(this.tgt - this.ang) : null,
-            },
-            timestamp: Date.now(),
-            runId: "binder-retest",
-          }),
-        }).catch(() => {});
-      }
-    }
-    // #endregion
     if (this.fp) this._aa(this.ang);
     this._tickPortal(performance.now());
     this.yaw = THREE.MathUtils.clamp(this.yaw, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);

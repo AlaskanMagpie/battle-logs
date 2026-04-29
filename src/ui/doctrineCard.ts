@@ -652,21 +652,6 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
 </div>`;
 }
 
-function commandSlotEffectLabel(e: CommandCatalogEntry): string {
-  switch (e.effect.type) {
-    case "aoe_damage":
-      return "AOE";
-    case "aoe_line_damage":
-      return "LINE";
-    case "aoe_shatter_chain":
-      return "CHAIN";
-    case "aoe_tactics_field":
-      return "FIELD";
-    case "noop":
-      return "SPELL";
-  }
-}
-
 /** Full-preview doctrine face for clickable hand slots: art first, rules reduced to overlaid stat badges. */
 export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deckSlotIndex?: number): string {
   const e = getCatalogEntry(catalogId);
@@ -684,11 +669,7 @@ export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deck
   const art = dmHeroArt(catalogId, portrait, true, cmd ? e : undefined);
   const hudHand = variant === "hud";
   const subtitle = cmd
-    ? hudHand
-      ? ""
-      : isCardOverlayFieldVisible(catalogId, "effect")
-        ? commandSlotEffectLabel(e as CommandCatalogEntry)
-        : ""
+    ? ""
     : structureProductionLine(e as StructureCatalogEntry);
   const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
   const overlay = cardArtOverlayHtml(catalogId, { handSlot: hudHand });
