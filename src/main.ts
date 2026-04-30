@@ -58,11 +58,11 @@ import { applyControlProfileToDocument, getControlProfile } from "./controlProfi
 import { findHumanMatch, getActiveBattleRoom } from "./net/matchmaking";
 import { attachOnlineMatchRoom, type OnlineMatchSession } from "./net/onlineMatch";
 import {
+  clampMatchmakingStrictTimeoutMs,
   clampMatchmakingTimeoutMs,
   makeClientMatchId,
   normalizeMatchMode,
   type MatchLaunchOptions,
-  type MatchMode,
 } from "./net/protocol";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
@@ -615,6 +615,59 @@ function wireDoctrineDragToMap(
   });
 }
 
+const MATCHMAKING_OVERLAY_ID = "signal-wars-matchmaking-overlay";
+
+function removeMatchmakingOverlay(): void {
+  document.getElementById(MATCHMAKING_OVERLAY_ID)?.remove();
+}
+
+/** Full-screen shim after the binder hides: Colyseus join can take a moment; user can cancel back to prematch. */
+function openMatchmakingOverlay(opts: { strict: boolean; onLeave: () => void }): () => void {
+  removeMatchmakingOverlay();
+  const el = document.createElement("div");
+  el.id = MATCHMAKING_OVERLAY_ID;
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-modal", "true");
+  el.setAttribute("aria-labelledby", "signal-wars-matchmaking-title");
+  el.style.cssText = [
+    "position:fixed",
+    "inset:0",
+    "z-index:99999",
+    "display:flex",
+    "align-items:center",
+    "justify-content:center",
+    "background:rgba(8,10,14,0.78)",
+    "backdrop-filter:blur(6px)",
+    "font:600 15px system-ui,Segoe UI,sans-serif",
+    "color:#f3eadc",
+  ].join(";");
+  const panel = document.createElement("div");
+  panel.style.cssText =
+    "max-width:min(92vw,420px);padding:22px 24px;border-radius:14px;border:1px solid rgba(212,190,140,0.35);background:rgba(18,16,24,0.96);box-shadow:0 14px 44px rgba(0,0,0,0.55);text-align:center;";
+  const title = document.createElement("h2");
+  title.id = "signal-wars-matchmaking-title";
+  title.textContent = opts.strict ? "Waiting for a human opponent" : "Finding a human opponent…";
+  title.style.cssText =
+    "margin:0 0 10px;font-size:clamp(15px,3.5vmin,20px);font-weight:700;color:#ebe4d6;font-family:Georgia,serif;";
+  const sub = document.createElement("p");
+  sub.style.cssText = "margin:0 0 18px;line-height:1.45;font-size:14px;color:rgba(235,228,214,0.88);";
+  sub.textContent = opts.strict
+    ? "Human-only queue: there is no AI fallback if the wait expires. You can leave any time."
+    : "Short queue: if no one pairs in time, you will start against an AI rival.";
+  const leave = document.createElement("button");
+  leave.type = "button";
+  leave.textContent = "Leave — back to doctrine";
+  leave.style.cssText =
+    "cursor:pointer;padding:10px 18px;border-radius:10px;border:1px solid rgba(244,180,96,0.5);background:rgba(40,28,12,0.92);color:#ffe8c8;font-weight:650;font-family:inherit;";
+  leave.addEventListener("click", () => opts.onLeave());
+  panel.appendChild(title);
+  panel.appendChild(sub);
+  panel.appendChild(leave);
+  el.appendChild(panel);
+  document.body.appendChild(el);
+  return () => removeMatchmakingOverlay();
+}
+
 function runMatch(
   initialDoctrine: (string | null)[],
   mapUrl: string,
@@ -633,29 +686,62 @@ function runMatch(
       fallbackReason: launchOptions.fallbackReason,
       room: launchOptions.room,
     };
-    if (requestedMode === "matchmake") {
-      const result = await findHumanMatch({
-        timeoutMs: clampMatchmakingTimeoutMs(params.get("matchTimeoutMs")),
-        mapUrl,
-        doctrineSlots: initialDoctrine,
-        username: portalContext.params.username,
+    const needsHumanQueue = requestedMode === "matchmake" || requestedMode === "matchmake_strict";
+    const matchmakingAbort = new AbortController();
+    let dismissMatchmakingOverlay: (() => void) | null = null;
+    if (needsHumanQueue) {
+      dismissMatchmakingOverlay = openMatchmakingOverlay({
+        strict: requestedMode === "matchmake_strict",
+        onLeave: () => matchmakingAbort.abort(),
       });
-      if (result.mode === "pvp") {
-        resolvedLaunch = {
-          mode: "pvp",
-          matchId: result.room.matchId,
-          seat: result.room.seat,
-          queueState: "matched",
-          room: result.room,
-        };
-      } else {
-        resolvedLaunch = {
-          mode: "fallback_ai",
-          matchId,
-          queueState: "fallback_ai",
-          fallbackReason: result.reason,
-        };
+    }
+    try {
+      if (needsHumanQueue) {
+        const strict = requestedMode === "matchmake_strict";
+        const result = await findHumanMatch({
+          timeoutMs: strict
+            ? clampMatchmakingStrictTimeoutMs(params.get("matchStrictTimeoutMs"))
+            : clampMatchmakingTimeoutMs(params.get("matchTimeoutMs")),
+          mapUrl,
+          doctrineSlots: initialDoctrine,
+          username: portalContext.params.username,
+          abortSignal: matchmakingAbort.signal,
+          strictHumanMatch: strict,
+        });
+        if (result.mode === "search_aborted") {
+          dismissMatchmakingOverlay?.();
+          mountPortalPicker();
+          return;
+        }
+        if (result.mode === "human_not_found") {
+          dismissMatchmakingOverlay?.();
+          try {
+            sessionStorage.setItem("signalWarsPrematchFlash", result.message);
+          } catch {
+            /* ignore */
+          }
+          mountPortalPicker();
+          return;
+        }
+        if (result.mode === "pvp") {
+          resolvedLaunch = {
+            mode: "pvp",
+            matchId: result.room.matchId,
+            seat: result.room.seat,
+            queueState: "matched",
+            room: result.room,
+          };
+        } else {
+          resolvedLaunch = {
+            mode: "fallback_ai",
+            matchId,
+            queueState: "fallback_ai",
+            fallbackReason: result.reason,
+          };
+        }
       }
+    } finally {
+      dismissMatchmakingOverlay?.();
     }
     const loadedMap = await loadMapMerged(mapUrl);
     const difficultyOverride = queryDifficultyOverride(window.location.search);
@@ -875,7 +961,7 @@ function runMatch(
         damage: completed.stats.damageDealtPlayer,
         phase: completed.phase,
         durationTicks: completed.tick,
-        matchMode: resolvedLaunch.mode === "matchmake" ? "ai" : resolvedLaunch.mode,
+        matchMode: resolvedLaunch.mode,
         mapId: map.mapId ?? mapUrl,
         clientMatchId: resolvedLaunch.matchId,
       })
@@ -934,6 +1020,7 @@ function runMatch(
         leaderboardRecordedPhase = state.phase;
       }
       updateHud(state);
+      syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
 
       rafId = requestAnimationFrame(tick);
     };
@@ -1093,6 +1180,7 @@ function runMatch(
     } | null = null;
     let leftSelect: { pointerId: number; startX: number; startY: number; dragging: boolean } | null = null;
     let chordDrag: { pointerId: number; lastX: number; lastY: number } | null = null;
+    let middlePanDrag: { pointerId: number; startX: number; startY: number; releasedFollow: boolean } | null = null;
     const mobilePointers = new Map<number, { x: number; y: number }>();
     let mobileCameraDrag: { pointerId: number; lastX: number; lastY: number } | null = null;
     let mobileTap: {
@@ -1273,8 +1361,11 @@ function runMatch(
         }
         return;
       }
+      // Middle + modifier rotates through OrbitControls; rotation should keep camera follow locked.
+      if (ev.button === 1 && (ev.shiftKey || ev.ctrlKey || ev.metaKey)) return;
       // Middle = camera pan (OrbitControls); this is an explicit camera takeover, not a map click.
       if (ev.button === 1) {
+        middlePanDrag = { pointerId: ev.pointerId, startX: ev.clientX, startY: ev.clientY, releasedFollow: false };
         if (renderer.releaseCameraFollowLock()) {
           state.lastMessage = "Camera free — lock on wizard with Camera/C or select a unit and press Z.";
           syncCameraFollowUi(hudRoot, false);
@@ -1402,6 +1493,7 @@ function runMatch(
           }
         }
       }
+      if (middlePanDrag && ev.pointerId === middlePanDrag.pointerId) middlePanDrag = null;
       if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
       if (rightHold && ev.pointerId === rightHold.pointerId) {
         const snap = rightHold;
@@ -1452,6 +1544,7 @@ function runMatch(
       }
       hideSelectBox();
       if (leftSelect && ev.pointerId === leftSelect.pointerId) leftSelect = null;
+      if (middlePanDrag && ev.pointerId === middlePanDrag.pointerId) middlePanDrag = null;
       if (chordDrag && ev.pointerId === chordDrag.pointerId) chordDrag = null;
       if (rightHold && ev.pointerId === rightHold.pointerId) {
         cancelRightHold();
@@ -1492,6 +1585,18 @@ function runMatch(
           }
           return;
         }
+      }
+      if (middlePanDrag && ev.pointerId === middlePanDrag.pointerId) {
+        const dx = ev.clientX - middlePanDrag.startX;
+        const dy = ev.clientY - middlePanDrag.startY;
+        if (!middlePanDrag.releasedFollow && dx * dx + dy * dy >= DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) {
+          middlePanDrag.releasedFollow = true;
+          if (renderer.releaseCameraFollowLockNow()) {
+            state.lastMessage = "Camera free - lock on wizard with Camera/C or select a unit and press Z.";
+            syncCameraFollowUi(hudRoot, false);
+          }
+        }
+        return;
       }
       if (chordDrag) {
         const dx = ev.clientX - chordDrag.lastX;
@@ -1622,7 +1727,7 @@ installCardArtOverlayCalibrator();
 const params = new URLSearchParams(window.location.search);
 const portalContext = parsePortalContext(params);
 const quickMatch = params.get("quickMatch") === "1" || params.get("testMatch") === "1";
-const mountPortalPicker = (onReady?: () => void): void => {
+function mountPortalPicker(onReady?: () => void): void {
   pickerRoot.style.display = "";
   if (portalContext.enteredViaPortal) {
     try {
@@ -1635,10 +1740,10 @@ const mountPortalPicker = (onReady?: () => void): void => {
     runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext, {
       mode,
       matchId: makeClientMatchId(),
-      queueState: mode === "matchmake" ? "searching" : "idle",
+      queueState: mode === "matchmake" || mode === "matchmake_strict" ? "searching" : "idle",
     });
   }, portalContext, onReady);
-};
+}
 
 async function boot(): Promise<void> {
   if (quickMatch) {
@@ -1659,7 +1764,7 @@ async function boot(): Promise<void> {
     runMatch([...slotRow], mapUrl, mountPortalPicker, portalContext, {
       mode,
       matchId: makeClientMatchId(),
-      queueState: mode === "matchmake" ? "searching" : "idle",
+      queueState: mode === "matchmake" || mode === "matchmake_strict" ? "searching" : "idle",
     });
   } else {
     mountPortalPicker();

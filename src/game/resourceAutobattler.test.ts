@@ -22,8 +22,9 @@ import {
   FORMATION_ASSEMBLY_TICKS,
   FORMATION_MARCH_SPEED_MULT,
   PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
+  PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
-  PRODUCED_UNIT_SIEGE_RAM,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
@@ -108,19 +109,19 @@ function unit(id: number, team: "player" | "enemy", sizeClass: UnitSizeClass, st
 
 describe("resource-first doctrine gates", () => {
   it("ignores old tier and signal metadata when Mana, cooldown, and territory pass", () => {
-    const s = createInitialState(tinyMap, ["dragon_roost"]);
+    const s = createInitialState(tinyMap, ["verdant_citadel"]);
     s.flux = 1000;
 
     expect(canUseDoctrineSlot(s, 0)).toBeNull();
     /** Outside keep disc + `STRUCTURE_MAP_OBSTACLE_RADIUS` union (see `structureObstacleFootprints`). */
-    expect(placementFailureReason(s, "dragon_roost", { x: -20, z: 0 }, 0)).toBeNull();
+    expect(placementFailureReason(s, "verdant_citadel", { x: -20, z: 0 }, 0)).toBeNull();
   });
 
   it("enemy placement is also resource-only", () => {
     const s = createInitialState(tinyMap, []);
     s.enemyFlux = 1000;
 
-    expect(canPlaceEnemyStructureAt(s, "ironhold_citadel", { x: 78, z: 4 })).toBeNull();
+    expect(canPlaceEnemyStructureAt(s, "bastion_keep", { x: 78, z: 4 })).toBeNull();
   });
 });
 
@@ -165,9 +166,9 @@ describe("batch production", () => {
   it.each([
     ["watchtower", "Swarm", 4, PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS],
     ["emberroot_bastion", "Line", 3, PRODUCED_UNIT_LAVA_WIZARD_MONKS],
-    ["outpost", "Line", 3, undefined],
-    ["siege_works", "Heavy", 2, PRODUCED_UNIT_SIEGE_RAM],
-    ["dragon_roost", "Titan", 1, undefined],
+    ["outpost", "Line", 3, PRODUCED_UNIT_LANTERNBOUND_LINE],
+    ["bastion_keep", "Heavy", 2, PRODUCED_UNIT_AMBER_GEODE_MONKS],
+    ["verdant_citadel", "Titan", 1, undefined],
   ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);

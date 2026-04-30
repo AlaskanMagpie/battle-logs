@@ -11,7 +11,7 @@ export interface DamageLeaderboardEntry {
   damage: number;
   phase: GamePhase;
   duration_ticks: number;
-  match_mode: Exclude<MatchMode, "matchmake">;
+  match_mode: Exclude<MatchMode, "matchmake" | "matchmake_strict">;
   map_id: string | null;
   client_match_id: string | null;
 }
@@ -31,7 +31,7 @@ type DamageLeaderboardInsert = {
   damage: number;
   phase: GamePhase;
   duration_ticks: number;
-  match_mode: Exclude<MatchMode, "matchmake">;
+  match_mode: Exclude<MatchMode, "matchmake" | "matchmake_strict">;
   map_id: string | null;
   client_match_id: string | null;
 };
@@ -64,7 +64,7 @@ export function normalizeDamageSubmission(input: DamageLeaderboardSubmission): D
     damage,
     phase: input.phase,
     duration_ticks,
-    match_mode: input.matchMode === "matchmake" ? "ai" : input.matchMode,
+    match_mode: input.matchMode === "matchmake" || input.matchMode === "matchmake_strict" ? "ai" : input.matchMode,
     map_id,
     client_match_id,
   };

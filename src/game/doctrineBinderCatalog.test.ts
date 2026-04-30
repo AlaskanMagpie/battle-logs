@@ -5,8 +5,10 @@ import {
   BINDER_CODEX_SPREAD_COUNT,
 } from "../ui/binder/CardBinderEngine";
 import {
+  KEEP_ID,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
 } from "./constants";
 import { productionBatchSizeForClass } from "./sim/systems/helpers";
@@ -24,8 +26,16 @@ describe("Doctrine binder catalog", () => {
     expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET).toBe(90);
   });
 
-  it("includes enough structures to fill more than one 3×3 page", () => {
-    expect(STRUCTURE_CATALOG_IDS.length).toBeGreaterThan(9);
+  it("only exposes the home base and current full-art structure cards", () => {
+    expect(STRUCTURE_CATALOG_IDS).toEqual([
+      KEEP_ID,
+      "outpost",
+      "watchtower",
+      "bastion_keep",
+      "verdant_citadel",
+      "emberroot_bastion",
+      "aionroot_observatory",
+    ]);
   });
 
   it("sortCatalogIds preserves structure-only ids for every sort key", () => {
@@ -72,6 +82,21 @@ describe("Doctrine binder catalog", () => {
   it("only Emberroot Bastion uses the lava wizard monks spawn profile (emberbound ascetic merged clips)", () => {
     const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS).map((s) => s.id);
     expect(ids).toEqual(["emberroot_bastion"]);
+  });
+
+  it("maps Driftwood Oasis to Line lanternbound oasis spellrunners", () => {
+    const entry = getCatalogEntry("outpost");
+    expect(entry).toBeTruthy();
+    expect(isStructureEntry(entry!)).toBe(true);
+    if (!entry || !isStructureEntry(entry)) return;
+    expect(entry.name).toBe("Driftwood Oasis");
+    expect(entry.producedSizeClass).toBe("Line");
+    expect(entry.producedUnitId).toBe(PRODUCED_UNIT_LANTERNBOUND_LINE);
+  });
+
+  it("only Driftwood Oasis uses the lanternbound_line animation profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_LANTERNBOUND_LINE).map((s) => s.id);
+    expect(ids).toEqual(["outpost"]);
   });
 
   it("only Aionroot Observatory uses the Chrono Sentinels spawn profile (astral knight merged clips)", () => {

@@ -42,6 +42,24 @@ import { BINDER_PREMATCH_GOALS_HTML, MATCH_HELP_INNER_HTML } from "../matchHelpC
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
 import "./binderPicker.css";
 
+const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
+
+type PrematchOpponentChoice = "ai" | "matchmake" | "matchmake_strict";
+
+function initialOpponentFromUrl(): PrematchOpponentChoice {
+  if (typeof window === "undefined") return "ai";
+  const o = new URLSearchParams(window.location.search).get("opponent")?.trim().toLowerCase() ?? "";
+  if (o === "matchmake" || o === "pvp") return "matchmake";
+  if (o === "human" || o === "wait" || o === "strict" || o === "matchmake_strict") return "matchmake_strict";
+  return "ai";
+}
+
+function matchModeFromPrematchChoice(c: PrematchOpponentChoice): MatchMode {
+  if (c === "ai") return "ai";
+  if (c === "matchmake") return "matchmake";
+  return "matchmake_strict";
+}
+
 /** Dev-only: 3D room layout sliders. No in-app entry point unless `?binderCalibrate=1` is in the URL. */
 function isBinderLayoutCalibrateMode(): boolean {
   if (typeof window === "undefined") return false;
@@ -351,10 +369,8 @@ export function DoctrineBinderPicker({
   });
   /** Map / page nav / start — floating panel so the binder stays full-bleed. */
   const [prematchSetupOpen, setPrematchSetupOpen] = useState(false);
-  const [opponentMode, setOpponentMode] = useState<"ai" | "matchmake">(() => {
-    if (typeof window === "undefined") return "ai";
-    return new URLSearchParams(window.location.search).get("opponent") === "matchmake" ? "matchmake" : "ai";
-  });
+  const [opponentMode, setOpponentMode] = useState<PrematchOpponentChoice>(initialOpponentFromUrl);
+  const [prematchNotice, setPrematchNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   /** Full doctrine strip (wrap + padding) — generous `getBoundingClientRect` for codex drop hit-testing. */
@@ -397,6 +413,29 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     resetCardArtManifestCache();
   }, []);
+
+  useEffect(() => {
+    try {
+      const m = sessionStorage.getItem(PREMATCH_FLASH_KEY);
+      if (m) {
+        sessionStorage.removeItem(PREMATCH_FLASH_KEY);
+        setPrematchNotice(m);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const mapped = opponentMode === "ai" ? "ai" : opponentMode === "matchmake" ? "matchmake" : "human";
+      url.searchParams.set("opponent", mapped);
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      /* ignore */
+    }
+  }, [opponentMode]);
 
   const clearBinderHowToHoldTimer = useCallback(() => {
     if (binderHowToHoldTimerRef.current != null) {
@@ -1126,7 +1165,7 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(norm, mapUrl, opponentMode);
+      onStart(norm, mapUrl, matchModeFromPrematchChoice(opponentMode));
     })();
   }, [slots, binderSlotPick, onStart, mapUrl, opponentMode]);
 
@@ -1144,7 +1183,7 @@ export function DoctrineBinderPicker({
       setPortalTransitioning(true);
       void (async () => {
         await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-        onStart(normSlots, url, opponentMode);
+        onStart(normSlots, url, matchModeFromPrematchChoice(opponentMode));
       })();
     },
     [onStart, opponentMode],
@@ -1187,7 +1226,7 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(finalSlots, mapPick.url, opponentMode);
+      onStart(finalSlots, mapPick.url, matchModeFromPrematchChoice(opponentMode));
     })();
   }, [loading, portalTransitioning, onStart, commitQuickMatchStart, slots, binderSlotPick, mapUrl, opponentMode]);
   useEffect(() => {
@@ -1209,6 +1248,19 @@ export function DoctrineBinderPicker({
 
   return (
     <div className="binder-picker-root">
+      {prematchNotice ? (
+        <div className="binder-picker-prematch-notice" role="status">
+          <span className="binder-picker-prematch-notice__text">{prematchNotice}</span>
+          <button
+            type="button"
+            className="binder-picker-prematch-notice__dismiss"
+            aria-label="Dismiss notice"
+            onClick={() => setPrematchNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <div className="binder-picker-main">
         <div className="binder-picker-binder-wrap" ref={wrapRef}>
           {loading ? (
@@ -1487,6 +1539,16 @@ export function DoctrineBinderPicker({
                           onChange={() => setOpponentMode("matchmake")}
                         />
                         Find player, fallback to AI
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="binder-opponent-mode"
+                          value="matchmake_strict"
+                          checked={opponentMode === "matchmake_strict"}
+                          onChange={() => setOpponentMode("matchmake_strict")}
+                        />
+                        Wait for human (no AI fallback)
                       </label>
                     </fieldset>
                     <div className="binder-picker-toolbar-main">

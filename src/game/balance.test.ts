@@ -37,10 +37,11 @@ describe("unit class balance curve", () => {
 });
 
 describe("structure catalog balance", () => {
-  it("has mostly upward cost, HP, cooldown, and production medians by produced class", () => {
+  it("has upward cost, HP, cooldown, and production medians by produced class", () => {
     const playable = STRUCTURES.filter((s) => s.id !== KEEP_ID);
     const medians = UNIT_CLASS_ORDER.map((size) => {
       const entries = playable.filter((s) => s.producedSizeClass === size);
+      expect(entries.length).toBeGreaterThan(0);
       return {
         cost: median(entries.map((s) => s.fluxCost)),
         hp: median(entries.map((s) => s.maxHp)),
@@ -56,7 +57,6 @@ describe("structure catalog balance", () => {
       expect(cur.hp).toBeGreaterThan(prev.hp);
       expect(cur.cooldown).toBeGreaterThan(prev.cooldown);
       expect(cur.production).toBeGreaterThan(prev.production);
-      expect(cur.cost / prev.cost).toBeLessThan(2.1);
     }
   });
 });

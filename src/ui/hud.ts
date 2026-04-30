@@ -227,16 +227,20 @@ function computeObjective(state: GameState): string {
 }
 
 function campCoreSummary(state: GameState): string {
-  const bits: string[] = [];
+  const pcts: number[] = [];
   for (const c of state.map.enemyCamps) {
     if (!(typeof c.coreMaxHp === "number" && c.coreMaxHp > 0)) continue;
     const hp = state.enemyCampCoreHp[c.id];
     if (hp === undefined) continue;
     const pct =
       c.coreMaxHp > 0 ? Math.max(0, Math.min(100, Math.round((hp / c.coreMaxHp) * 100))) : Math.round(hp);
-    bits.push(`${c.id.slice(0, 5)}… ${pct}%`);
+    pcts.push(pct);
   }
-  return bits.length ? bits.join(" · ") : "";
+  if (pcts.length === 0) return "";
+  if (pcts.length === 1) return `1 core ${pcts[0]}%`;
+  const avg = Math.round(pcts.reduce((sum, pct) => sum + pct, 0) / pcts.length);
+  const min = Math.min(...pcts);
+  return min === avg ? `${pcts.length} cores ${avg}%` : `${pcts.length} cores avg ${avg}%`;
 }
 
 function hudSvgText(
@@ -363,6 +367,39 @@ function hudResourceIcon(kind: "mana" | "salvage" | "pop" | "nodes"): string {
     `<circle ${shared} cx="10" cy="31" r="4"/>`,
     `<circle ${shared} cx="38" cy="31" r="4"/>`,
     `<path ${shared} d="M21 12 13 28M27 12l8 16M15 31h18"/>`,
+    `</svg>`,
+  ].join("")}</span>`;
+}
+
+function hudStatusIcon(kind: "hostiles" | "wizard" | "keep"): string {
+  const common = `class="hud-status-icon hud-status-icon--${kind}" viewBox="0 0 48 48" aria-hidden="true" focusable="false"`;
+  const shared = `fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"`;
+  if (kind === "hostiles") {
+    return `<span class="hud-status-card__ico">${[
+      `<svg ${common}>`,
+      `<path class="hud-status-icon__glow" d="M24 5 39 13v12c0 10-6 16-15 20C15 41 9 35 9 25V13Z"/>`,
+      `<path ${shared} d="M24 6 38 14v11c0 9-5 15-14 19-9-4-14-10-14-19V14Z"/>`,
+      `<path ${shared} d="M16 20h16M18 30h12"/>`,
+      `<path ${shared} d="M18 20l-4-5M30 20l4-5"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "wizard") {
+    return `<span class="hud-vital__ico">${[
+      `<svg ${common}>`,
+      `<path class="hud-status-icon__glow" d="M24 5 34 20 42 39H6l8-19Z"/>`,
+      `<path ${shared} d="M24 5 33 20 40 39H8l7-19Z"/>`,
+      `<path ${shared} d="M24 8v25M17 22h14"/>`,
+      `<path ${shared} d="M15 39c4-5 14-5 18 0"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  return `<span class="hud-vital__ico">${[
+    `<svg ${common}>`,
+    `<path class="hud-status-icon__glow" d="M10 42V20l14-10 14 10v22Z"/>`,
+    `<path ${shared} d="M10 42V20l14-10 14 10v22"/>`,
+    `<path ${shared} d="M16 42V27h16v15M18 18V9M30 18V9M14 13h20"/>`,
+    `<path ${shared} d="M24 27v15"/>`,
     `</svg>`,
   ].join("")}</span>`;
 }
@@ -501,8 +538,8 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
       <div class="hud-chrome__cluster hud-chrome__cluster--status">
         <div class="hud-chrome__readout hud-status-card hud-status-card--hostiles" id="hud-readout" aria-label="Enemy intelligence"></div>
         <div class="hud-chrome__vitals">
-          <div class="hud-vital hud-status-card" id="hud-hero-hp"><span class="hud-vital__ico" aria-hidden="true">${hudSvgText("hud-svg-icon-letter", "W")}</span>${hudSvgText("hud-svg-vital-label hud-vital__lbl", "Wizard")}<span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span>${hudSvgText("hud-svg-vital-value", "100%", "hud-hero-hp-val")}</div>
-          <div class="hud-vital hud-status-card" id="hud-keep-hp"><span class="hud-vital__ico" aria-hidden="true">${hudSvgText("hud-svg-icon-letter", "K")}</span>${hudSvgText("hud-svg-vital-label hud-vital__lbl", "Keep")}<span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span>${hudSvgText("hud-svg-vital-value", "100%", "hud-keep-hp-val")}</div>
+          <div class="hud-vital hud-status-card" id="hud-hero-hp">${hudStatusIcon("wizard")}<span class="hud-vital__lbl">Wizard</span><span class="bar"><span class="bar-fill" id="hud-hero-hp-fill"></span></span><span class="hud-vital__value" id="hud-hero-hp-val">100%</span></div>
+          <div class="hud-vital hud-status-card" id="hud-keep-hp">${hudStatusIcon("keep")}<span class="hud-vital__lbl">Keep</span><span class="bar"><span class="bar-fill" id="hud-keep-hp-fill"></span></span><span class="hud-vital__value" id="hud-keep-hp-val">100%</span></div>
         </div>
       </div>
       <div class="hud-chrome__objective" id="hud-objective" hidden role="status">
@@ -764,7 +801,7 @@ export function updateHud(state: GameState): void {
             coreLine,
           )}</span></div>`
         : "";
-    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
+    readout.innerHTML = `${hudStatusIcon("hostiles")}<div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
   }
 
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");

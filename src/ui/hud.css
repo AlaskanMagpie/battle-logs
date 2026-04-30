@@ -8700,6 +8700,277 @@ button.hud-btn--armed::after {
   }
 }
 
+/* Apr 30 HUD status final cascade: readable hostiles/camps and meaningful vitals icons. */
+.hud-chrome .hud-chrome__cluster--status {
+  grid-template-columns: minmax(158px, 0.42fr) minmax(0, 1fr);
+  gap: clamp(5px, 0.55vw, 8px);
+  overflow: hidden;
+}
+
+.hud-chrome .hud-chrome__readout {
+  min-width: 0;
+  height: 100%;
+  padding: clamp(5px, 0.62vw, 8px) clamp(7px, 0.78vw, 11px);
+  display: grid;
+  grid-template-columns: clamp(27px, 2.3vw, 36px) minmax(0, 1fr);
+  column-gap: clamp(6px, 0.7vw, 10px);
+  align-items: center;
+  overflow: hidden;
+}
+
+.hud-chrome .hud-status-card__ico,
+.hud-chrome .hud-vital__ico {
+  position: relative;
+  width: clamp(27px, 2.3vw, 36px);
+  height: clamp(27px, 2.3vw, 36px);
+  min-width: 0;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #9feaff;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  filter:
+    drop-shadow(0 0 7px rgba(85, 215, 255, 0.4))
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9));
+}
+
+.hud-chrome .hud-status-card--hostiles .hud-status-card__ico {
+  color: #ff8a82;
+  filter:
+    drop-shadow(0 0 8px rgba(255, 70, 72, 0.45))
+    drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9));
+}
+
+.hud-chrome .hud-status-icon {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+
+.hud-chrome .hud-status-icon__glow {
+  fill: rgba(92, 210, 255, 0.14);
+  stroke: rgba(145, 232, 255, 0.48);
+  stroke-width: 1.6;
+}
+
+.hud-chrome .hud-status-icon--hostiles .hud-status-icon__glow {
+  fill: rgba(255, 70, 80, 0.16);
+  stroke: rgba(255, 142, 134, 0.5);
+}
+
+.hud-chrome .hud-status-icon--keep {
+  color: #a388ff;
+}
+
+.hud-chrome .hud-status-icon--keep .hud-status-icon__glow {
+  fill: rgba(130, 88, 255, 0.15);
+  stroke: rgba(180, 152, 255, 0.5);
+}
+
+.hud-chrome .hud-readout__body {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(35px, 0.62fr) minmax(20px, 0.38fr);
+  align-content: center;
+  overflow: hidden;
+}
+
+.hud-chrome .hud-readout__hostiles {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(11px, auto) minmax(24px, 1fr);
+  justify-items: start;
+  align-items: center;
+  overflow: hidden;
+}
+
+.hud-chrome .hud-readout__hostiles-lbl {
+  max-width: 100%;
+  color: #ffe2d7;
+  font: 900 clamp(11px, 0.9vw, 14px) / 1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.95);
+}
+
+.hud-chrome .hud-readout__hostiles-val {
+  max-width: 100%;
+  color: #ff4e55;
+  font: 900 clamp(27px, 2.7vw, 42px) / 0.86 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.95),
+    0 0 12px rgba(255, 58, 64, 0.36);
+}
+
+.hud-chrome .hud-readout__camps {
+  min-width: 0;
+  max-height: 100%;
+  margin-top: 2px;
+  padding-top: 4px;
+  display: grid;
+  grid-template-rows: minmax(9px, auto) minmax(13px, 1fr);
+  gap: 1px;
+  border-top: 1px solid rgba(255, 120, 120, 0.24);
+  overflow: hidden;
+}
+
+.hud-chrome .hud-readout__camps-lbl {
+  max-width: 100%;
+  color: #f5c7b5;
+  font: 900 clamp(9px, 0.72vw, 11px) / 1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.hud-chrome .hud-readout__camps-val {
+  max-width: 100%;
+  color: #ffd8cf;
+  font: 900 clamp(11px, 0.86vw, 13px) / 1.05 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+}
+
+.hud-chrome .hud-chrome__vitals {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: clamp(3px, 0.42vw, 5px);
+  overflow: hidden;
+}
+
+.hud-chrome .hud-vital {
+  min-width: 0;
+  height: auto;
+  min-height: 0;
+  padding: clamp(3px, 0.45vw, 6px) clamp(6px, 0.75vw, 10px);
+  display: grid;
+  grid-template-columns: clamp(27px, 2.3vw, 36px) minmax(62px, 0.28fr) minmax(74px, 1fr) minmax(70px, auto);
+  column-gap: clamp(6px, 0.7vw, 10px);
+  align-items: center;
+  overflow: hidden;
+}
+
+.hud-chrome .hud-vital__lbl {
+  min-width: 0;
+  max-width: 100%;
+  color: #9ee1ff;
+  font: 900 clamp(11px, 0.9vw, 14px) / 1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.hud-chrome .hud-vital .bar {
+  width: 100%;
+  min-width: 0;
+  height: clamp(8px, 0.78vw, 11px);
+  border-radius: 2px;
+}
+
+.hud-chrome .hud-vital__value {
+  min-width: 68px;
+  max-width: 100%;
+  color: #f7f1e7;
+  font: 900 clamp(13px, 1.02vw, 16px) / 1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.95),
+    0 0 8px rgba(120, 212, 255, 0.16);
+}
+
+@media (max-width: 1180px) {
+  .hud-chrome .hud-chrome__cluster--status {
+    grid-template-columns: minmax(132px, 0.24fr) minmax(0, 1fr);
+  }
+
+  .hud-chrome .hud-chrome__vitals {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .hud-chrome .hud-chrome__cluster--status {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .hud-chrome .hud-chrome__readout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 3px 5px;
+  }
+
+  .hud-chrome .hud-status-card__ico {
+    display: none;
+  }
+
+  .hud-chrome .hud-readout__body {
+    grid-template-rows: 1fr;
+  }
+
+  .hud-chrome .hud-readout__hostiles {
+    grid-template-rows: minmax(9px, auto) minmax(18px, 1fr);
+  }
+
+  .hud-chrome .hud-readout__hostiles-lbl {
+    display: block;
+    font-size: 8px;
+  }
+
+  .hud-chrome .hud-readout__hostiles-val {
+    font-size: 20px;
+  }
+
+  .hud-chrome .hud-readout__camps {
+    display: none;
+  }
+
+  .hud-chrome .hud-vital {
+    grid-template-columns: 22px minmax(37px, 0.32fr) minmax(46px, 1fr) minmax(44px, auto);
+    column-gap: 4px;
+    padding: 2px 5px;
+  }
+
+  .hud-chrome .hud-vital__ico {
+    width: 22px;
+    height: 22px;
+  }
+
+  .hud-chrome .hud-vital__lbl,
+  .hud-chrome .hud-vital__value {
+    font-size: 9px;
+  }
+
+  .hud-chrome .hud-vital__value {
+    min-width: 44px;
+  }
+}
+
 /* Apr 30 final resource strip override: placed after all legacy HUD packages. */
 .hud-chrome .hud-chrome__cluster--main {
   grid-template-columns: minmax(0, 1fr) minmax(146px, clamp(146px, 12vw, 174px));

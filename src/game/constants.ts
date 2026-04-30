@@ -21,6 +21,8 @@ export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
 
 /** `StructureCatalogEntry.producedUnitId` / `UnitRuntime.producedUnitId` — matches `animationProfiles` id in `public/assets/units/manifest.json`. Cragrunner swarm uses `azure_spear_swarm`. */
 export const PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS = "azure_spear_swarm";
+/** Driftwood Oasis — multi-GLB Oasis Spellrunners (`lanternbound_line_*` split clips in manifest). */
+export const PRODUCED_UNIT_LANTERNBOUND_LINE = "lanternbound_line";
 export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
 /**
  * Line squad for Emberroot Bastion — `animationProfiles` id in `public/assets/units/manifest.json`
@@ -29,8 +31,6 @@ export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
 export const PRODUCED_UNIT_LAVA_WIZARD_MONKS = "emberbound_ascetic_merged_animations";
 /** Aionroot Observatory — `astral_knight_merged_animations.glb` (Meshy Astral Knight merged clips). */
 export const PRODUCED_UNIT_CHRONO_SENTINELS = "astral_knight_merged_animations";
-export const PRODUCED_UNIT_SIEGE_RAM = "siege_ram";
-export const PRODUCED_UNIT_RECLAMATION_WRAITH = "reclamation_wraith";
 
 /** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
 export const PLAYER_STARTING_FLUX = 280;
@@ -59,10 +59,9 @@ export const ENEMY_AI_MIN_BUILD_SEP = 11;
 export const ENEMY_AI_BUILD_CATALOG_IDS: readonly string[] = [
   "outpost",
   "watchtower",
-  "root_bunker",
-  "menders_hut",
-  "salvage_yard",
-  "war_camp",
+  "emberroot_bastion",
+  "aionroot_observatory",
+  "bastion_keep",
 ];
 
 /** Enemy camp units: hunt player targets within this world radius (larger = more aggressive). */

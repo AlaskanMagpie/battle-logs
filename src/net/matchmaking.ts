@@ -13,6 +13,10 @@ export interface MatchmakingClientOptions {
   mapUrl: string;
   doctrineSlots: (string | null)[];
   username?: string;
+  /** When set, user can cancel from UI; room is left and `search_aborted` is returned. */
+  abortSignal?: AbortSignal;
+  /** If true, never return `fallback_ai` — timeouts and errors become `human_not_found` instead. */
+  strictHumanMatch?: boolean;
 }
 
 type BattleRoomState = {
@@ -49,6 +53,25 @@ function fallback(reason: MatchmakingFallbackReason): MatchmakingResult {
     invalid_response: "Multiplayer room returned invalid setup; starting against AI.",
   };
   return { mode: "fallback_ai", reason, message: copy[reason] };
+}
+
+function abortPromise(signal: AbortSignal | undefined): Promise<"abort"> {
+  if (!signal) return new Promise(() => {});
+  if (signal.aborted) return Promise.resolve("abort");
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve("abort"), { once: true });
+  });
+}
+
+function humanNotFound(
+  reason: "timeout" | "server_unavailable" | "invalid_response",
+): Extract<MatchmakingResult, { mode: "human_not_found" }> {
+  const messages: Record<"timeout" | "server_unavailable" | "invalid_response", string> = {
+    timeout: "No human opponent joined within the wait window.",
+    server_unavailable: "Could not reach the multiplayer server.",
+    invalid_response: "Matchmaking finished but the room did not return a valid start payload.",
+  };
+  return { mode: "human_not_found", reason, message: messages[reason] };
 }
 
 function roomPayload(room: Room<BattleRoomState>, request: MatchmakingRequest): MatchFoundPayload | null {
@@ -98,8 +121,11 @@ function messagePayload(room: Room<BattleRoomState>, message: MatchFoundMessage,
 
 export async function findHumanMatch(options: MatchmakingClientOptions): Promise<MatchmakingResult> {
   activeBattleRoom = null;
+  const strict = options.strictHumanMatch ?? false;
   const endpoint = configuredEndpoint(options.endpoint);
-  if (!endpoint) return fallback("server_unavailable");
+  if (!endpoint) {
+    return strict ? humanNotFound("server_unavailable") : fallback("server_unavailable");
+  }
   const request: MatchmakingRequest = {
     version: MULTIPLAYER_PROTOCOL_VERSION,
     mapUrl: options.mapUrl,
@@ -116,30 +142,55 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
   const timeoutPromise = new Promise<"timeout">((resolve) => {
     window.setTimeout(() => resolve("timeout"), options.timeoutMs);
   });
+  const abortSig = options.abortSignal;
   try {
-    const result = await Promise.race([joinPromise, timeoutPromise]);
-    if (result === "timeout") {
+    const first = await Promise.race([joinPromise, timeoutPromise, abortPromise(abortSig)]);
+    if (first === "abort") {
       void joinPromise.then((room) => room.leave(true)).catch(() => undefined);
-      return fallback("timeout");
+      return { mode: "search_aborted" };
     }
+    if (first === "timeout") {
+      void joinPromise.then((room) => room.leave(true)).catch(() => undefined);
+      return strict ? humanNotFound("timeout") : fallback("timeout");
+    }
+    const result = first;
+    const fallbackMs = Math.min(800, options.timeoutMs);
     const payload = await Promise.race([
-      new Promise<MatchFoundPayload | null>((resolve) => {
-        const fallbackTimer = window.setTimeout(() => resolve(roomPayload(result, request)), Math.min(800, options.timeoutMs));
+      new Promise<MatchFoundPayload | null | "abort">((resolve) => {
+        let settled = false;
+        let fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
+        const finish = (v: MatchFoundPayload | null | "abort") => {
+          if (settled) return;
+          settled = true;
+          if (fallbackTimer != null) window.clearTimeout(fallbackTimer);
+          abortSig?.removeEventListener("abort", onAbort);
+          resolve(v);
+        };
+        const onAbort = () => finish("abort");
+        if (abortSig?.aborted) {
+          finish("abort");
+        } else {
+          if (abortSig) abortSig.addEventListener("abort", onAbort, { once: true });
+          fallbackTimer = window.setTimeout(() => finish(roomPayload(result, request)), fallbackMs);
+        }
         result.onMessage("match_found", (message: MatchFoundMessage) => {
-          window.clearTimeout(fallbackTimer);
-          resolve(messagePayload(result, message, request));
+          finish(messagePayload(result, message, request));
         });
       }),
       timeoutPromise.then(() => null),
     ]);
+    if (payload === "abort") {
+      void result.leave(true);
+      return { mode: "search_aborted" };
+    }
     if (!payload) {
       void result.leave(true);
-      return fallback("invalid_response");
+      return strict ? humanNotFound("invalid_response") : fallback("invalid_response");
     }
     activeBattleRoom = result;
     return { mode: "pvp", room: payload };
   } catch {
     if (joinedRoom) void joinedRoom.leave(true);
-    return fallback("server_unavailable");
+    return strict ? humanNotFound("server_unavailable") : fallback("server_unavailable");
   }
 }

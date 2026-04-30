@@ -26,11 +26,39 @@
       }
       .al-banner {
         flex-shrink: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 12px 16px;
         padding: 10px 14px;
         border-bottom: 1px solid #2a3545;
         background: #121822;
         font-size: 13px;
         line-height: 1.45;
+      }
+      .al-banner__exit {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(106, 166, 255, 0.45);
+        background: #1a2740;
+        color: #dbeaff;
+        font-size: 12px;
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .al-banner__exit:hover {
+        border-color: #8ab8ff;
+        background: #223252;
+        color: #fff;
+      }
+      .al-banner__body {
+        flex: 1 1 240px;
+        min-width: 0;
       }
       .al-banner code {
         color: #9ec5ff;
@@ -367,8 +395,11 @@
   <body>
       <div class="al-root" id="al-root">
       <header class="al-banner">
-        Unlisted asset lab — GLB viewer, animation clips, and card stat overlays. Saving overlay layouts to the repo only works in local dev and
-        requires a write key configured as <code>CARD_OVERLAY_WRITE_KEY</code> (see maintainer / team). Do not share keys or expose them in screenshots.
+        <a class="al-banner__exit" href="/" title="Return to the doctrine binder / main game (tower flow)">← Back to doctrine / tower</a>
+        <div class="al-banner__body">
+          Unlisted asset lab — GLB viewer, animation clips, and card stat overlays. Saving overlay layouts to the repo only works in local dev and
+          requires a write key configured as <code>CARD_OVERLAY_WRITE_KEY</code> (see maintainer / team). Do not share keys or expose them in screenshots.
+        </div>
       </header>
       <div class="al-workbench">
         <aside class="al-sidebar" id="al-sidebar">

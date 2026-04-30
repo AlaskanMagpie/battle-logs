@@ -30,6 +30,15 @@ describe("damage leaderboard submission normalization", () => {
         matchMode: "ai",
       }),
     ).toBeNull();
+
+    expect(
+      normalizeDamageSubmission({
+        damage: 10,
+        phase: "win",
+        durationTicks: 1,
+        matchMode: "matchmake_strict",
+      }),
+    ).toMatchObject({ match_mode: "ai" });
   });
 
   it("clamps public write fields to safe bounds", () => {

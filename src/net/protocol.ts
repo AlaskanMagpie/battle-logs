@@ -3,7 +3,7 @@ import type { GamePhase } from "../game/types";
 
 export const MULTIPLAYER_PROTOCOL_VERSION = 1;
 
-export type MatchMode = "ai" | "matchmake" | "pvp" | "fallback_ai";
+export type MatchMode = "ai" | "matchmake" | "matchmake_strict" | "pvp" | "fallback_ai";
 export type MatchSeat = "player" | "enemy";
 export type QueueState = "idle" | "searching" | "matched" | "starting" | "fallback_ai" | "cancelled" | "error";
 
@@ -40,7 +40,23 @@ export interface MatchmakingHumanPayload {
   room: MatchFoundPayload;
 }
 
-export type MatchmakingResult = MatchmakingHumanPayload | MatchmakingFallbackPayload;
+/** User cancelled from the matchmaking overlay (Leave) before a match was ready. */
+export interface MatchmakingSearchAbortedPayload {
+  mode: "search_aborted";
+}
+
+/** Patient human-only queue: no AI fallback when online matchmaking does not complete. */
+export interface MatchmakingHumanNotFoundPayload {
+  mode: "human_not_found";
+  reason: "timeout" | "server_unavailable" | "invalid_response";
+  message: string;
+}
+
+export type MatchmakingResult =
+  | MatchmakingHumanPayload
+  | MatchmakingFallbackPayload
+  | MatchmakingSearchAbortedPayload
+  | MatchmakingHumanNotFoundPayload;
 
 export interface SeatIntentBatch {
   seat: MatchSeat;
@@ -72,6 +88,7 @@ export interface MatchLaunchOptions {
 
 export function normalizeMatchMode(raw: string | null | undefined): MatchMode {
   const value = raw?.trim().toLowerCase();
+  if (value === "human" || value === "wait" || value === "strict" || value === "matchmake_strict") return "matchmake_strict";
   if (value === "matchmake" || value === "pvp") return "matchmake";
   if (value === "fallback_ai") return "fallback_ai";
   return "ai";
@@ -81,6 +98,13 @@ export function clampMatchmakingTimeoutMs(raw: string | null | undefined): numbe
   const n = Number(raw);
   if (!Number.isFinite(n)) return 4_000;
   return Math.max(1_000, Math.min(10_000, Math.round(n)));
+}
+
+/** Longer waits for “human only” queue (`matchmake_strict`). Default 5 minutes; max 30. */
+export function clampMatchmakingStrictTimeoutMs(raw: string | null | undefined): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 300_000;
+  return Math.max(30_000, Math.min(1_800_000, Math.round(n)));
 }
 
 export function makeClientMatchId(): string {

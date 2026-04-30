@@ -632,8 +632,9 @@ async function loadCatalogPair(catalogId: string): Promise<void> {
   }
 
   if (unitFile) {
-    const doctrineRow = getDoctrineForCard(catalogId);
-    const useMergedCatalogClips = !doctrineRow.unitGlb.trim();
+    /** Merge idle/attack/death GLBs (same rig) whenever the effective unit file is still the catalog route — not only when the dropdown says "Default". Picking the default file explicitly used to skip merge and left role dropdowns with a single run clip. */
+    const routedUnitFile = routed.unitFile;
+    const useMergedCatalogClips = Boolean(routedUnitFile && unitFile === routedUnitFile);
     const extraFiles = useMergedCatalogClips ? await getAssetLabUnitExtraAnimationFiles(catalogId) : [];
     const ok =
       useMergedCatalogClips && extraFiles.length > 0

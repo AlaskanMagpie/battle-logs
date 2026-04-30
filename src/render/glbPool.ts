@@ -1262,21 +1262,17 @@ export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = 
 export const TOWER_GLB_TARGET_EXTENT = unitMeshLinearSize("Titan") * STRUCTURE_MESH_VISUAL_SCALE;
 
 /**
- * First 10 structure catalog ids map 1:1 to `manifest.json` `files[0..9]` once the
- * log-tower GLBs are present under `public/assets/units/`. Any other structure id
- * picks a file by stable hash modulo length.
+ * Active structure catalog ids map to stable tower art fallbacks. Removed placeholder
+ * cards no longer participate here, but their compressed GLBs remain in the manifest for reuse.
  */
 const TOWER_GLB_MANIFEST_ORDER = [
   KEEP_ID,
   "outpost",
   "watchtower",
-  "root_bunker",
-  "menders_hut",
-  "siege_works",
   "bastion_keep",
-  "salvage_yard",
-  "war_camp",
-  "dragon_roost",
+  "verdant_citadel",
+  "emberroot_bastion",
+  "aionroot_observatory",
 ] as const;
 
 const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {

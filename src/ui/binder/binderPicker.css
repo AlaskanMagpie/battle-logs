@@ -960,3 +960,42 @@
   gap: 6px;
   margin-top: 4px;
 }
+
+.binder-picker-prematch-notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(212, 190, 140, 0.45);
+  background: rgba(28, 22, 14, 0.92);
+  color: #f3eadc;
+  font-size: 14px;
+  line-height: 1.45;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+}
+
+.binder-picker-prematch-notice__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.binder-picker-prematch-notice__dismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ebe4d6;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.binder-picker-prematch-notice__dismiss:hover {
+  background: rgba(255, 255, 255, 0.14);
+}

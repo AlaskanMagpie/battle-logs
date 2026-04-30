@@ -1037,6 +1037,8 @@ export class GameRenderer {
   private cameraFollowHero = true;
   private cameraFollowUnitId: number | null = null;
   private cameraFramedState: GameState | null = null;
+  private cameraFollowReleaseArmed = false;
+  private readonly cameraFollowReleaseTarget = new THREE.Vector3();
   private lastCameraLimitsHalf = 0;
 
   /** `performance.now()` when intro began; null = idle. */
@@ -1166,6 +1168,7 @@ export class GameRenderer {
       MIDDLE: MOUSE.PAN,
       RIGHT: -1,
     };
+    this.controls.addEventListener("change", () => this.releaseCameraFollowIfUserPanned());
   }
 
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
@@ -1278,8 +1281,6 @@ export class GameRenderer {
   }
 
   rotateCameraByPixels(dx: number, dy: number): void {
-    this.cameraFollowHero = false;
-    this.cameraFollowUnitId = null;
     const target = this.controls.target;
     const off = this.camera.position.clone().sub(target);
     const sph = new THREE.Spherical().setFromVector3(off);
@@ -1360,10 +1361,27 @@ export class GameRenderer {
   }
 
   releaseCameraFollowLock(): boolean {
+    return false;
+  }
+
+  releaseCameraFollowLockNow(): boolean {
     const wasLocked = this.cameraFollowHero || this.cameraFollowUnitId !== null;
+    this.cameraFollowReleaseArmed = false;
     this.cameraFollowHero = false;
     this.cameraFollowUnitId = null;
     return wasLocked;
+  }
+
+  private releaseCameraFollowIfUserPanned(): void {
+    if (!this.cameraFollowReleaseArmed) return;
+    if (!this.cameraFollowHero && this.cameraFollowUnitId === null) {
+      this.cameraFollowReleaseArmed = false;
+      return;
+    }
+    if (this.controls.target.distanceToSquared(this.cameraFollowReleaseTarget) < 0.01) return;
+    this.cameraFollowReleaseArmed = false;
+    this.cameraFollowHero = false;
+    this.cameraFollowUnitId = null;
   }
 
   isMatchIntroActive(): boolean {

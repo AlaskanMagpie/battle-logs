@@ -23,11 +23,11 @@ const tinyMap: MapData = {
 };
 
 describe("doctrine match global pop cap", () => {
-  it("war_camp in loadout raises effective army cap", () => {
-    const slots = Array.from({ length: 10 }, (_, i) => (i === 0 ? "war_camp" : null));
+  it("removed placeholder ids are ignored for army cap", () => {
+    const slots = Array.from({ length: 10 }, (_, i) => (i === 0 ? "removed_placeholder" : null));
     const s = createInitialState(tinyMap, slots);
-    expect(s.globalPopCapBonus).toBe(400);
-    expect(effectiveGlobalPopCap(s)).toBe(GLOBAL_POP_CAP + 400);
+    expect(s.globalPopCapBonus).toBe(0);
+    expect(effectiveGlobalPopCap(s)).toBe(GLOBAL_POP_CAP);
   });
 
   it("empty slots use base cap only", () => {
