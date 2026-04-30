@@ -310,10 +310,21 @@ export interface UnitRuntime {
   /** Knockback velocity XZ (world units/sec), decayed in movement. */
   vxImpulse: number;
   vzImpulse: number;
+  /** Temporary elemental crowd-control / aftermath reads applied by spells. */
+  spellStatuses?: UnitSpellStatus[];
   /** Normal attacks are event-based; when positive this squad is winding up/recovering. */
   attackCooldownTicksRemaining?: number;
   /** Last sim tick this squad committed a normal attack, consumed by renderer animations. */
   lastAttackTick?: number;
+}
+
+export type UnitSpellStatusKind = "frozen" | "rooted" | "chilled" | "burning" | "winded";
+
+export interface UnitSpellStatus {
+  kind: UnitSpellStatusKind;
+  untilTick: number;
+  /** Strength is 0..1 for renderer opacity / sim slow severity. */
+  strength: number;
 }
 
 export function maxSquadCount(u: UnitRuntime): number {
@@ -343,12 +354,28 @@ export interface UnitOrderRuntime {
    * move/fight there until your team owns the node or this unit dies — no "arrived and idle" early exit.
    */
   captureTapIndex?: number;
+  /** Shared moving formation anchor, if this command came from RMB-drag formation. */
+  formationGroupId?: number;
+  /** Desired slot offset from the shared formation anchor. */
+  formationOffsetX?: number;
+  formationOffsetZ?: number;
 }
 
 export interface UnitAutoOrderRuntime {
   x: number;
   z: number;
   waypoints: Vec2[];
+}
+
+export interface FormationMarchRuntime {
+  id: number;
+  issuedTick: number;
+  anchorX: number;
+  anchorZ: number;
+  goalX: number;
+  goalZ: number;
+  speedPerSec: number;
+  memberIds: number[];
 }
 
 export interface MatchStats {
@@ -410,7 +437,7 @@ export interface GameState {
   enemyRelays: EnemyRelayRuntime[];
   structures: StructureRuntime[];
   units: UnitRuntime[];
-  nextId: { structure: number; unit: number };
+  nextId: { structure: number; unit: number; formation: number };
   doctrineSlotCatalogIds: (string | null)[];
   /** Remaining placements per doctrine slot (match start). */
   doctrineChargesRemaining: number[];
@@ -439,6 +466,8 @@ export interface GameState {
   armyStance: ArmyStance;
   /** Player-selected RMB drag formation preset. */
   formationPreset: UnitFormationKind;
+  /** Active player-issued formation marches keyed by `UnitOrderRuntime.formationGroupId`. */
+  formationMarches: FormationMarchRuntime[];
   /** After R / rally button: next map click sets `globalRally*`. */
   rallyClickPending: boolean;
   /** When true (offense only), player units march to `globalRallyX/Z` until stance toggles. */
@@ -495,6 +524,45 @@ export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: 
     else m *= zf.enemySpeedMult;
   }
   return team === "player" ? Math.min(1.45, m) : Math.max(0.5, m);
+}
+
+export function pruneUnitSpellStatuses(s: GameState): void {
+  for (const u of s.units) {
+    if (!u.spellStatuses?.length) continue;
+    u.spellStatuses = u.spellStatuses.filter((st) => st.untilTick > s.tick);
+    if (u.spellStatuses.length === 0) delete u.spellStatuses;
+  }
+}
+
+export function applyUnitSpellStatus(
+  s: GameState,
+  u: UnitRuntime,
+  kind: UnitSpellStatusKind,
+  durationTicks: number,
+  strength = 1,
+): void {
+  if (u.hp <= 0 || durationTicks <= 0) return;
+  const untilTick = s.tick + Math.max(1, Math.round(durationTicks));
+  const clamped = Math.max(0, Math.min(1, strength));
+  const arr = (u.spellStatuses ??= []);
+  const existing = arr.find((st) => st.kind === kind);
+  if (existing) {
+    existing.untilTick = Math.max(existing.untilTick, untilTick);
+    existing.strength = Math.max(existing.strength, clamped);
+  } else {
+    arr.push({ kind, untilTick, strength: clamped });
+  }
+}
+
+export function unitSpellStatusSpeedMult(u: UnitRuntime): number {
+  let mult = 1;
+  for (const st of u.spellStatuses ?? []) {
+    if (st.kind === "frozen") mult *= 0.04 + (1 - st.strength) * 0.18;
+    else if (st.kind === "rooted") mult *= 0.16 + (1 - st.strength) * 0.24;
+    else if (st.kind === "chilled") mult *= 1 - 0.45 * st.strength;
+    else if (st.kind === "winded") mult *= 1 - 0.24 * st.strength;
+  }
+  return Math.max(0.02, mult);
 }
 
 /** Outgoing attack damage multiplier for a team at (x,z). */
@@ -1016,7 +1084,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     enemyRelays,
     structures: [],
     units: [],
-    nextId: { structure: 1, unit: 1 },
+    nextId: { structure: 1, unit: 1, formation: 1 },
     doctrineSlotCatalogIds: slots,
     doctrineChargesRemaining: rt.charges,
     doctrineCooldownTicks: rt.cd,
@@ -1033,6 +1101,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     pendingPlacementCatalogId: null,
     armyStance: "offense",
     formationPreset: "line",
+    formationMarches: [],
     rallyClickPending: false,
     globalRallyActive: false,
     globalRallyX: 0,

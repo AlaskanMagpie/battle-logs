@@ -5,9 +5,16 @@ import { normalizeDoctrineSlotsForMatch } from "./state";
 /**
  * Same binder codex allow-list as `DoctrineBinderPicker` — structures shown in the codex + commands.
  */
-const FULL_ART_STRUCTURE_CARD_IDS = ["outpost", "watchtower", "bastion_keep", "verdant_citadel"] as const;
+const FULL_ART_STRUCTURE_CARD_IDS = [
+  "outpost",
+  "watchtower",
+  "bastion_keep",
+  "verdant_citadel",
+  "emberroot_bastion",
+  "aionroot_observatory",
+] as const;
 const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
-/** Quick match / binder codex: four Unity structure cards + command spells only (no legacy catalog towers). */
+/** Quick match / binder codex: full-art structure cards in the codex + command spells only (no legacy catalog towers). */
 const DOCTRINE_BINDER_GRID_IDS = new Set<string>([...FULL_ART_STRUCTURE_CARD_IDS, ...COMMAND_CARD_IDS]);
 
 /** Same minimum filled slots as prematch **Start match** / Quickmatch fallback. */
@@ -15,7 +22,7 @@ export const QUICK_MATCH_MIN_FILLED = 4;
 
 /**
  * Default “jump in” doctrine for URL `?quickMatch=1` and prematch **Quickmatch** fallback —
- * the four full-art structure cards (one per unit class) + all command spells.
+ * the full-art structure cards in the binder codex + all command spells.
  * Trailing nulls are placeholders only; {@link fillDoctrineSlotsWithDuplicatePicks} completes the row.
  * Length must equal {@link DOCTRINE_SLOT_COUNT}.
  */
@@ -24,12 +31,12 @@ export const QUICK_MATCH_DOCTRINE_SLOTS: readonly (string | null)[] = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "emberroot_bastion",
+  "aionroot_observatory",
   "firestorm",
   "fortify",
   "recycle",
   "shatter",
-  null,
-  null,
 ];
 
 if (QUICK_MATCH_DOCTRINE_SLOTS.length !== DOCTRINE_SLOT_COUNT) {

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { bufferForThreeGlbLoader } from "./glbNodeTextureDecode.mjs";
 
 globalThis.self ??= globalThis;
 const originalWarn = console.warn.bind(console);
@@ -36,7 +37,7 @@ function movingTrackCount(clip) {
 }
 
 async function inspect(file) {
-  const buf = fs.readFileSync(path.join(unitsDir, file));
+  const buf = await bufferForThreeGlbLoader(fs.readFileSync(path.join(unitsDir, file)));
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   const gltf = await new Promise((resolve, reject) => loader.parse(ab, "", resolve, reject));
   let skinned = 0;

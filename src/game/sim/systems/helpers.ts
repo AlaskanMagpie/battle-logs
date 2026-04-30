@@ -56,13 +56,13 @@ export function unitStatsForCatalog(size: UnitSizeClass): {
 } {
   switch (size) {
     case "Swarm":
-      return { maxHp: 34, speedPerSec: 10.5, range: 10, dmgPerTick: 0.1, pop: 1 };
+      return { maxHp: 36, speedPerSec: 10.6, range: 10, dmgPerTick: 0.105, pop: 1 };
     case "Line":
-      return { maxHp: 72, speedPerSec: 7.2, range: 12, dmgPerTick: 0.19, pop: 2 };
+      return { maxHp: 78, speedPerSec: 7.4, range: 12, dmgPerTick: 0.2, pop: 2 };
     case "Heavy":
-      return { maxHp: 170, speedPerSec: 4.8, range: 15, dmgPerTick: 0.42, pop: 4 };
+      return { maxHp: 168, speedPerSec: 5.0, range: 15, dmgPerTick: 0.4, pop: 4 };
     case "Titan":
-      return { maxHp: 420, speedPerSec: 3.2, range: 19, dmgPerTick: 0.92, pop: 8 };
+      return { maxHp: 360, speedPerSec: 3.7, range: 19, dmgPerTick: 0.78, pop: 8 };
   }
 }
 

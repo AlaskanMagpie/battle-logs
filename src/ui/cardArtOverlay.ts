@@ -11,7 +11,7 @@ type OverlayField = {
   x: number;
   y: number;
   width?: number;
-  /** Hit box height in overlay units (viewBox height 140). */
+  /** Hit box height in overlay units (viewBox height — matches `CARD_OVERLAY_HEIGHT`). */
   height?: number;
   tone?: "mana" | "hp" | "prod" | "batch" | "cooldown" | "uses" | "salvage";
   size?: "xl" | "lg" | "md" | "sm";
@@ -36,8 +36,37 @@ type OverlayLayoutConfig = {
   cards?: Record<string, OverlayCardLayout>;
 };
 
+/** Normalized card face — **2:3** with `tcgCardPrint` / binder panel (`TCG_FULL_CARD_W:H`) so DOM + canvas `meet` match authored PNG/SVG art (legacy was 100×140 and letterboxed inside 2:3, drifting stats). */
 const CARD_OVERLAY_WIDTH = 100;
-const CARD_OVERLAY_HEIGHT = 140;
+const CARD_OVERLAY_HEIGHT = 150;
+
+export type CardArtContainRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Same geometry as CSS `object-fit: contain`. Use this whenever authored card art
+ * and overlay coordinates must share one letterboxed rectangle.
+ */
+export function containCardArtRect(
+  boxX: number,
+  boxY: number,
+  boxW: number,
+  boxH: number,
+  intrinsicW = CARD_OVERLAY_WIDTH,
+  intrinsicH = CARD_OVERLAY_HEIGHT,
+): CardArtContainRect {
+  if (boxW <= 0 || boxH <= 0) return { x: boxX, y: boxY, w: Math.max(0, boxW), h: Math.max(0, boxH) };
+  const iw = intrinsicW > 0 && Number.isFinite(intrinsicW) ? intrinsicW : CARD_OVERLAY_WIDTH;
+  const ih = intrinsicH > 0 && Number.isFinite(intrinsicH) ? intrinsicH : CARD_OVERLAY_HEIGHT;
+  const scale = Math.min(boxW / iw, boxH / ih);
+  const w = iw * scale;
+  const h = ih * scale;
+  return {
+    x: boxX + (boxW - w) / 2,
+    y: boxY + (boxH - h) / 2,
+    w,
+    h,
+  };
+}
 
 /** Legacy global defaults (asset lab used to write here). Used only when a card has no per-card override for that field. */
 const OVERLAY_FIELD_VISIBILITY_LEGACY_KEY = "battleLogs.cardOverlay.fieldVisibility";
@@ -104,19 +133,19 @@ export function overlayVisibilityStampForCatalog(catalogId: string): string {
 let overlayLayouts: OverlayLayoutConfig = overlayLayoutsJson as OverlayLayoutConfig;
 
 const DEFAULT_STRUCTURE_FIELDS = {
-  mana: { x: 16.7, y: 24.0, width: 14 },
-  cooldown: { x: 84.5, y: 18.0, width: 13 },
-  hp: { x: 23.6, y: 89.8, width: 17 },
-  prod: { x: 24.0, y: 103.2, width: 17 },
-  batch: { x: 75.0, y: 103.2, width: 24 },
+  mana: { x: 16.7, y: 25.7, width: 14 },
+  cooldown: { x: 84.5, y: 19.3, width: 13 },
+  hp: { x: 23.6, y: 96.2, width: 17 },
+  prod: { x: 24.0, y: 110.6, width: 17 },
+  batch: { x: 75.0, y: 110.6, width: 24 },
 } as const;
 
 const DEFAULT_COMMAND_FIELDS = {
-  mana: { x: 16.7, y: 24.0, width: 14 },
-  cooldown: { x: 84.5, y: 18.0, width: 13 },
-  uses: { x: 24.0, y: 93.0, width: 17 },
-  salvage: { x: 50.0, y: 93.0, width: 17 },
-  effect: { x: 75.0, y: 103.2, width: 24 },
+  mana: { x: 16.7, y: 25.7, width: 14 },
+  cooldown: { x: 84.5, y: 19.3, width: 13 },
+  uses: { x: 24.0, y: 99.6, width: 17 },
+  salvage: { x: 50.0, y: 99.6, width: 17 },
+  effect: { x: 75.0, y: 110.6, width: 24 },
 } as const;
 
 function clamp(n: number, min: number, max: number): number {
@@ -249,9 +278,8 @@ function mergedOverlayFields(entry: CatalogEntry, catalogId: string): OverlayFie
 }
 
 function fieldsForEntry(e: CatalogEntry, catalogId: string): OverlayField[] {
-  // Authored spell cards already include their own rules text. Never stamp generated
-  // SVG labels like "100%", "AOE", "FIELD", or "LINE" over them.
-  if (isCommandEntry(e)) return [];
+  // Same stat fields as canvas binder (`drawCardArtOverlayOnCanvasRect`). Authored card
+  // SVGs may have text stripped when rasterized — overlays keep mana / CD / salvage readable.
   return mergedOverlayFields(e, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
 }
 
@@ -302,15 +330,19 @@ export function drawCardArtOverlayOnCanvasRect(
 
   ctx.save();
   for (const field of fields) {
-    const { sy: fsy } = fieldTextScale(field, entry);
-    const fontPx = Math.max(6.5, baseValueFontUserUnits(field) * fsy * scale);
+    const { sx: fsu } = fieldTextScale(field, entry);
+    const fontPx = Math.max(6.5, baseValueFontUserUnits(field) * fsu * scale);
     const cx = ox + field.x * scale;
     const cy = oy + field.y * scale;
     const anchor = field.anchor ?? "middle";
     ctx.textAlign = anchor === "start" ? "left" : anchor === "end" ? "right" : "center";
-    ctx.textBaseline = "middle";
     ctx.font = `900 ${fontPx}px Georgia, "Times New Roman", serif`;
     ctx.letterSpacing = `${-0.04 * fontPx}px`;
+    const m = ctx.measureText(field.value);
+    const asc = m.actualBoundingBoxAscent > 0 ? m.actualBoundingBoxAscent : fontPx * 0.72;
+    const desc = m.actualBoundingBoxDescent > 0 ? m.actualBoundingBoxDescent : fontPx * 0.22;
+    ctx.textBaseline = "alphabetic";
+    const yBaseline = cy + (desc - asc) / 2;
     const fill = field.tone ? TONE_VALUE_FILL[field.tone] ?? "#fff7ee" : "#fff7ee";
     ctx.lineJoin = "round";
     ctx.lineWidth = Math.max(1.6, fontPx * 0.31);
@@ -319,8 +351,8 @@ export function drawCardArtOverlayOnCanvasRect(
     ctx.shadowColor = "rgba(0,0,0,0.9)";
     ctx.shadowBlur = Math.max(1, fontPx * 0.12);
     ctx.shadowOffsetY = Math.max(0.5, fontPx * 0.1);
-    ctx.strokeText(field.value, cx, cy);
-    ctx.fillText(field.value, cx, cy);
+    ctx.strokeText(field.value, cx, yBaseline);
+    ctx.fillText(field.value, cx, yBaseline);
     ctx.shadowBlur = 0;
     ctx.shadowOffsetY = 0;
   }

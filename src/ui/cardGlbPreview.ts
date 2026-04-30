@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { getCatalogPreviewAssetUrl, loadGltfTemplateRoot } from "../render/glbPool";
+import { containCardArtRect } from "./cardArtOverlay";
 import { CARD_ART_CACHE_BUSTER, getCardArtUrl } from "./cardArtManifest";
 
 const dataUrlCache = new Map<string, string | null>();
@@ -176,6 +177,57 @@ function portraitFallbackEl(img: HTMLImageElement): HTMLElement | null {
   return img.parentElement?.querySelector(".tcg-portrait-fallback") as HTMLElement | null;
 }
 
+const overlayFitObservers = new WeakMap<HTMLElement, ResizeObserver>();
+
+function overlayFitFrameFor(el: Element): HTMLElement | null {
+  return el.closest(".slot-card-art, .card-detail-pop-card-frame") as HTMLElement | null;
+}
+
+function setOverlayFitVars(frame: HTMLElement, img: HTMLImageElement | null): void {
+  const clear = (): void => {
+    frame.style.removeProperty("--overlay-fit-left");
+    frame.style.removeProperty("--overlay-fit-top");
+    frame.style.removeProperty("--overlay-fit-width");
+    frame.style.removeProperty("--overlay-fit-height");
+  };
+  if (!img || img.hasAttribute("hidden") || img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+    clear();
+    return;
+  }
+  const w = frame.clientWidth;
+  const h = frame.clientHeight;
+  if (w <= 0 || h <= 0) {
+    clear();
+    return;
+  }
+  const r = containCardArtRect(0, 0, w, h, img.naturalWidth, img.naturalHeight);
+  frame.style.setProperty("--overlay-fit-left", `${r.x}px`);
+  frame.style.setProperty("--overlay-fit-top", `${r.y}px`);
+  frame.style.setProperty("--overlay-fit-width", `${r.w}px`);
+  frame.style.setProperty("--overlay-fit-height", `${r.h}px`);
+}
+
+function syncOverlayFitFrame(frame: HTMLElement): void {
+  const img = frame.querySelector("img.tcg-card-preview-img:not([hidden]), img.card-detail-pop-card-img") as HTMLImageElement | null;
+  setOverlayFitVars(frame, img);
+  if (typeof ResizeObserver !== "undefined" && !overlayFitObservers.has(frame)) {
+    const ro = new ResizeObserver(() => setOverlayFitVars(frame, img));
+    ro.observe(frame);
+    overlayFitObservers.set(frame, ro);
+  }
+}
+
+/** Keep stat overlays pinned to the same object-fit:contain rect as authored card rasters. */
+export function syncCardArtOverlayContainFit(root: ParentNode): void {
+  const frames = new Set<HTMLElement>();
+  if (root instanceof HTMLElement) {
+    const directFrame = root.matches(".slot-card-art, .card-detail-pop-card-frame") ? root : overlayFitFrameFor(root);
+    if (directFrame) frames.add(directFrame);
+  }
+  root.querySelectorAll?.(".slot-card-art, .card-detail-pop-card-frame").forEach((el) => frames.add(el as HTMLElement));
+  frames.forEach(syncOverlayFitFrame);
+}
+
 /**
  * After cloning card HTML (drag ghost, etc.), `src` may already be set while `hidden` and the SVG
  * fallback were serialized from a live node — sync visibility so the raster wins over `.tcg-portrait-fallback`.
@@ -187,6 +239,7 @@ function syncBinderPreviewImgFromExistingSrc(img: HTMLImageElement): void {
   const showRaster = (): void => {
     img.removeAttribute("hidden");
     if (fb) fb.style.display = "none";
+    syncCardArtOverlayContainFit(img);
   };
   const showFallback = (): void => {
     img.setAttribute("hidden", "");
@@ -223,7 +276,9 @@ export function hydrateCardPreviewImages(root: ParentNode): void {
       if (warm) {
         img.removeAttribute("hidden");
         if (fb) fb.style.display = "none";
+        img.onload = () => syncCardArtOverlayContainFit(img);
         img.src = warm;
+        syncCardArtOverlayContainFit(img);
       } else {
         img.setAttribute("hidden", "");
         if (fb) fb.style.display = "";
@@ -240,6 +295,7 @@ export function hydrateCardPreviewImages(root: ParentNode): void {
         const showRaster = (): void => {
           img.removeAttribute("hidden");
           if (fb) fb.style.display = "none";
+          syncCardArtOverlayContainFit(img);
         };
         img.onload = showRaster;
         img.onerror = () => {

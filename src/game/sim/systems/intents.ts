@@ -2,6 +2,7 @@ import { getCatalogEntry } from "../../catalog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
   DOCTRINE_SLOT_COUNT,
+  FORMATION_MARCH_SPEED_MULT,
   FORWARD_STRUCTURE_HP_MULT,
   HERO_MAP_OBSTACLE_RADIUS,
   HERO_MOVE_WAYPOINT_CAP,
@@ -26,6 +27,7 @@ import {
   nearFriendlyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
+  applyUnitSpellStatus,
   pushFx,
   recordDamageDealtBy,
   resetHeroTeleportCooldown,
@@ -48,6 +50,40 @@ import { claimChannelSecForTap } from "./homeDistance";
 const ALT_HOLD_PICK_RADIUS = 6;
 
 const PICK_STRUCTURE = 5;
+
+function applyRadialSpellStatus(
+  s: GameState,
+  center: Vec2,
+  radius: number,
+  kind: "frozen" | "rooted" | "chilled" | "burning" | "winded",
+  seconds: number,
+  strength: number,
+  teams: "enemy" | "all" = "enemy",
+): void {
+  const r2 = radius * radius;
+  for (const u of s.units) {
+    if (u.hp <= 0) continue;
+    if (teams === "enemy" && u.team !== "enemy") continue;
+    if (dist2(u, center) > r2) continue;
+    applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
+  }
+}
+
+function applyLineSpellStatus(
+  s: GameState,
+  from: Vec2,
+  to: Vec2,
+  halfWidth: number,
+  kind: "frozen" | "rooted" | "chilled" | "burning" | "winded",
+  seconds: number,
+  strength: number,
+): void {
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (!pointInCorridor(u.x, u.z, from.x, from.z, to.x, to.z, halfWidth)) continue;
+    applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
+  }
+}
 
 function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includeNearbyIdle: boolean): number[] {
   const out = new Set(ids.filter((id) => id !== HERO_SELECTION_ID));
@@ -207,6 +243,7 @@ function orderPlayerUnitsFormation(
     s.map.world.halfExtents,
   );
   const byId = new Map(slots.map((slot) => [slot.id, slot]));
+  const resolvedSlots: { u: UnitRuntime; target: Vec2 }[] = [];
   for (const u of units) {
     const raw = byId.get(u.id) ?? to;
     const target = { x: raw.x, z: raw.z };
@@ -216,7 +253,65 @@ function orderPlayerUnitsFormation(
       unitSeparationRadiusXZ(u.sizeClass, u.flying),
       structureObstacleFootprints(s),
     );
-    setUnitOrderTarget(u, target, mode, queue);
+    resolvedSlots.push({ u, target });
+  }
+
+  const queuedSlots = resolvedSlots.filter(({ u }) => queue && u.order);
+  const activeSlots = resolvedSlots.filter(({ u }) => !(queue && u.order));
+  if (activeSlots.length > 0) {
+    const groupId = s.nextId.formation++;
+    const anchor = activeSlots.reduce(
+      (acc, { u }) => {
+        acc.x += u.x;
+        acc.z += u.z;
+        return acc;
+      },
+      { x: 0, z: 0 },
+    );
+    anchor.x /= activeSlots.length;
+    anchor.z /= activeSlots.length;
+    const goal = activeSlots.reduce(
+      (acc, { target }) => {
+        acc.x += target.x;
+        acc.z += target.z;
+        return acc;
+      },
+      { x: 0, z: 0 },
+    );
+    goal.x /= activeSlots.length;
+    goal.z /= activeSlots.length;
+    const avgSpeed =
+      activeSlots.reduce((sum, { u }) => sum + u.speedPerSec, 0) / Math.max(1, activeSlots.length);
+
+    s.formationMarches.push({
+      id: groupId,
+      issuedTick: s.tick,
+      anchorX: anchor.x,
+      anchorZ: anchor.z,
+      goalX: goal.x,
+      goalZ: goal.z,
+      speedPerSec: avgSpeed * FORMATION_MARCH_SPEED_MULT,
+      memberIds: activeSlots.map(({ u }) => u.id),
+    });
+
+    for (const { u, target } of activeSlots) {
+      const ox = target.x - goal.x;
+      const oz = target.z - goal.z;
+      u.order = {
+        mode,
+        x: anchor.x + ox,
+        z: anchor.z + oz,
+        waypoints: [],
+        queued: [],
+        formationGroupId: groupId,
+        formationOffsetX: ox,
+        formationOffsetZ: oz,
+      };
+    }
+  }
+
+  for (const { u, target } of queuedSlots) {
+    setUnitOrderTarget(u, target, mode, true);
   }
 
   s.globalRallyActive = false;
@@ -514,6 +609,8 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         hits++;
       }
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
+      applyLineSpellStatus(s, { x: hx, z: hz }, { x: ex, z: ez }, hw, "rooted", 2.4, 0.78);
+      applyLineSpellStatus(s, { x: hx, z: hz }, { x: ex, z: ez }, hw * 1.22, "chilled", 3.1, 0.45);
       consumeCommandSlot(s, slotIdx, cmd);
       const mx = (hx + ex) * 0.5;
       const mz = (hz + ez) * 0.5;
@@ -551,7 +648,9 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
         damageEnemyUnitFromCommand(s, u, fx.damage);
-        applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED);
+        applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED * 1.28);
+        applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
+        applyUnitSpellStatus(s, u, "winded", Math.round(1.2 * TICK_HZ), 0.5);
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
@@ -562,6 +661,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         }
       }
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
+      applyRadialSpellStatus(s, pos, fx.radius, "winded", 2.3, 0.54);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
@@ -691,7 +791,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           fromX: ox,
           fromZ: oz,
           element: "lightning",
-          shape: "bolt",
+          shape: "chain",
           impactRadius: hop === 0 ? fx.castRadius * 0.42 : fx.chainRange * 0.22,
           visualSeed: s.tick + hop * 37,
         });
@@ -731,6 +831,14 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
             applyAttackImpulse(u, { x: ox, z: oz }, SPELL_KNOCKBACK_SPEED * 0.8);
           }
         }
+        applyRadialSpellStatus(
+          s,
+          { x: bx, z: bz },
+          hop === 0 ? fx.castRadius * 0.42 : fx.chainRange * 0.22,
+          hop % 2 === 0 ? "frozen" : "chilled",
+          hop === 0 ? 1.45 : 0.95,
+          hop === 0 ? 0.86 : 0.62,
+        );
         hits++;
         ox = bx;
         oz = bz;

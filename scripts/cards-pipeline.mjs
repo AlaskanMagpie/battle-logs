@@ -1,19 +1,39 @@
 /**
  * Doctrine binder card art pipeline (run via npm run cards:pipeline):
  * 1. Regenerate public/assets/cards/manifest.json from files on disk.
- * 2. If the manifest's card map changed, bump CARD_ART_CACHE_BUSTER in src/ui/cardArtManifest.ts
- *    so browsers refetch JSON and assets (skip with CARDS_PIPELINE_NO_BUMP=1).
+ * 2. If the manifest's card map **or** any card image bytes changed since last run, bump
+ *    CARD_ART_CACHE_BUSTER in src/ui/cardArtManifest.ts so browsers and binder textures
+ *    refetch fresh art (skip with CARDS_PIPELINE_NO_BUMP=1).
  * 3. Run binder-related unit tests.
  */
 import { execSync } from "child_process";
 import { createHash } from "crypto";
-import { existsSync, readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { dirname, extname, join } from "path";
 import { fileURLToPath } from "url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const MANIFEST_PATH = join(ROOT, "public", "assets", "cards", "manifest.json");
 const CARD_ART_TS = join(ROOT, "src", "ui", "cardArtManifest.ts");
+const LAST_ASSET_FP = join(ROOT, "scripts", "last-card-assets.sha256");
+
+const CARD_ART_EXTS = new Set([".png", ".webp", ".jpg", ".jpeg", ".svg"]);
+
+/** SHA-256 of sorted card art file names + raw bytes (re-saving SVG/PNG in place bumps this). */
+function cardArtFilesFingerprint() {
+  const dir = join(ROOT, "public", "assets", "cards");
+  if (!existsSync(dir)) return null;
+  const names = readdirSync(dir)
+    .filter((f) => CARD_ART_EXTS.has(extname(f).toLowerCase()))
+    .sort();
+  const h = createHash("sha256");
+  for (const f of names) {
+    const p = join(dir, f);
+    h.update(f);
+    h.update(readFileSync(p));
+  }
+  return h.digest("hex");
+}
 
 function cardsFingerprint() {
   if (!existsSync(MANIFEST_PATH)) return null;
@@ -41,17 +61,31 @@ function bumpCardArtCacheBuster() {
   console.log(`[cards-pipeline] bumped CARD_ART_CACHE_BUSTER → ${next}`);
 }
 
-const beforeFp = cardsFingerprint();
+const beforeManifestFp = cardsFingerprint();
+const beforeAssetFp = cardArtFilesFingerprint();
 
 execSync("node scripts/sync-card-manifest.mjs", { stdio: "inherit", cwd: ROOT });
 
-const afterFp = cardsFingerprint();
+const afterManifestFp = cardsFingerprint();
+const afterAssetFp = cardArtFilesFingerprint();
+const prevStoredAssetFp = existsSync(LAST_ASSET_FP) ? readFileSync(LAST_ASSET_FP, "utf8").trim() : null;
+
+const manifestChanged = beforeManifestFp !== afterManifestFp;
+const assetsChangedSinceLastRun =
+  afterAssetFp != null && prevStoredAssetFp != null && prevStoredAssetFp !== afterAssetFp;
+const needBaselineFingerprintFile = afterAssetFp != null && prevStoredAssetFp === null;
 
 const skipBump = process.env.CARDS_PIPELINE_NO_BUMP === "1" || process.env.CARDS_PIPELINE_NO_BUMP === "true";
-if (!skipBump && beforeFp !== afterFp) {
+if (!skipBump && (manifestChanged || assetsChangedSinceLastRun)) {
   bumpCardArtCacheBuster();
-} else if (skipBump && beforeFp !== afterFp) {
-  console.log("[cards-pipeline] manifest changed but CARDS_PIPELINE_NO_BUMP set — did not bump cache buster");
+  if (afterAssetFp) writeFileSync(LAST_ASSET_FP, `${afterAssetFp}\n`, "utf8");
+  if (manifestChanged) console.log("[cards-pipeline] manifest card map changed");
+  if (assetsChangedSinceLastRun) console.log("[cards-pipeline] card image bytes changed (includes re-save in place)");
+} else if (skipBump && (manifestChanged || assetsChangedSinceLastRun)) {
+  console.log("[cards-pipeline] art/manifest changed but CARDS_PIPELINE_NO_BUMP set — did not bump cache buster");
+} else if (needBaselineFingerprintFile) {
+  writeFileSync(LAST_ASSET_FP, `${afterAssetFp}\n`, "utf8");
+  console.log("[cards-pipeline] wrote scripts/last-card-assets.sha256 (baseline for future byte-level bumps)");
 }
 
 execSync("npx vitest run src/game/doctrineBinderCatalog.test.ts", { stdio: "inherit", cwd: ROOT });

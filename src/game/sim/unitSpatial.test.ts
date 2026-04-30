@@ -49,10 +49,10 @@ describe("unit combat ranges", () => {
     expect(line.dmgPerTick).toBeLessThan(heavy.dmgPerTick);
     expect(titan.range).toBeGreaterThan(heavy.range);
     expect(titan.dmgPerTick).toBeGreaterThan(heavy.dmgPerTick);
-    expect(swarm.dmgPerTick).toBe(0.1);
-    expect(line.dmgPerTick).toBe(0.19);
-    expect(heavy.dmgPerTick).toBe(0.42);
-    expect(titan.dmgPerTick).toBe(0.92);
+    expect(swarm.dmgPerTick).toBe(0.105);
+    expect(line.dmgPerTick).toBe(0.2);
+    expect(heavy.dmgPerTick).toBe(0.4);
+    expect(titan.dmgPerTick).toBe(0.78);
   });
 
   it("keeps lighter units faster than heavier units", () => {

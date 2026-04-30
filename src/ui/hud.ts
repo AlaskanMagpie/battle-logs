@@ -247,10 +247,124 @@ function hudSvgText(
 ): string {
   const idAttr = id ? ` id="${escapeHudHtml(id)}"` : "";
   const anchor = opts?.anchor ?? "middle";
-  const x = anchor === "start" ? "4" : "80";
+  const isCompactText =
+    className.includes("hud-svg-label") ||
+    className.includes("hud-svg-value") ||
+    className.includes("hud-svg-vital");
+  const viewW = anchor === "start" ? 640 : isCompactText ? 88 : 160;
+  const x = anchor === "start" ? "4" : String(viewW / 2);
   const ta = anchor === "start" ? "start" : "middle";
   const preserve = anchor === "start" ? "xMinYMid meet" : "xMidYMid meet";
-  return `<svg class="hud-svg-text ${className}" viewBox="0 0 160 24" preserveAspectRatio="${preserve}" aria-hidden="true"><text${idAttr} x="${x}" y="16" text-anchor="${ta}">${escapeHudHtml(text)}</text></svg>`;
+  return `<svg class="hud-svg-text ${className}" viewBox="0 0 ${viewW} 24" preserveAspectRatio="${preserve}" aria-hidden="true"><text${idAttr} x="${x}" y="16" text-anchor="${ta}">${escapeHudHtml(text)}</text></svg>`;
+}
+
+function hudCommandIcon(kind: "rally" | "stance" | "formation" | "camera" | "teleport" | "captain"): string {
+  const common = `class="hud-command-icon hud-command-icon--${kind}" viewBox="0 0 64 64" aria-hidden="true" focusable="false"`;
+  const shared = `fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"`;
+  if (kind === "rally") {
+    return `<span class="hud-side-sprite hud-side-sprite--rally">${[
+      `<svg ${common}>`,
+      `<path class="hud-command-icon__halo" d="M32 7 37 18 49 23 37 28 32 39 27 28 15 23 27 18Z"/>`,
+      `<path ${shared} d="M17 51c9-9 21-9 30 0"/>`,
+      `<path ${shared} d="M32 13v34"/>`,
+      `<path ${shared} d="M32 17h15l-5 7 5 7H32"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "stance") {
+    return `<span class="hud-side-sprite hud-side-sprite--stance">${[
+      `<svg ${common}>`,
+      `<path class="hud-command-icon__halo" d="M32 8c9 6 16 8 22 9-1 18-8 30-22 39C18 47 11 35 10 17c6-1 13-3 22-9Z"/>`,
+      `<path ${shared} d="M32 11c8 5 14 7 19 8-1 15-7 25-19 33-12-8-18-18-19-33 5-1 11-3 19-8Z"/>`,
+      `<path ${shared} d="M32 20v24"/>`,
+      `<path ${shared} d="M22 31h20"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "formation") {
+    return `<span class="hud-side-sprite hud-side-sprite--formation">${[
+      `<svg ${common}>`,
+      `<path class="hud-command-icon__halo" d="M32 9 53 47H11Z"/>`,
+      `<path ${shared} d="M32 11v38"/>`,
+      `<path ${shared} d="M16 48c4-8 10-13 16-13s12 5 16 13"/>`,
+      `<circle class="hud-command-icon__dot" cx="32" cy="16" r="4"/>`,
+      `<circle class="hud-command-icon__dot" cx="23" cy="34" r="4"/>`,
+      `<circle class="hud-command-icon__dot" cx="41" cy="34" r="4"/>`,
+      `<circle class="hud-command-icon__dot" cx="14" cy="50" r="3.5"/>`,
+      `<circle class="hud-command-icon__dot" cx="50" cy="50" r="3.5"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "camera") {
+    return `<span class="hud-side-sprite hud-side-sprite--camera">${[
+      `<svg ${common}>`,
+      `<path class="hud-command-icon__halo" d="M11 22h14l4-6h18a6 6 0 0 1 6 6v22a6 6 0 0 1-6 6H17a6 6 0 0 1-6-6Z"/>`,
+      `<path ${shared} d="M13 24h12l4-6h18a5 5 0 0 1 5 5v20a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5V25"/>`,
+      `<circle ${shared} cx="32" cy="35" r="10"/>`,
+      `<path ${shared} d="M47 15v8h8"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "teleport") {
+    return `<span class="hud-side-sprite hud-side-sprite--teleport">${[
+      `<svg ${common}>`,
+      `<path class="hud-command-icon__halo" d="M32 5 46 22 32 59 18 22Z"/>`,
+      `<path ${shared} d="M32 7 44 22 32 56 20 22Z"/>`,
+      `<path ${shared} d="M22 22h20"/>`,
+      `<path ${shared} d="M32 14v32"/>`,
+      `<path ${shared} d="M16 50c8 5 24 5 32 0"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  return `<span class="hud-side-ico hud-side-ico--captain">${[
+    `<svg ${common}>`,
+    `<circle class="hud-command-icon__halo" cx="32" cy="32" r="25"/>`,
+    `<path ${shared} d="M32 8 39 24 56 26 43 37 47 54 32 45 17 54 21 37 8 26 25 24Z"/>`,
+    `<path ${shared} d="M32 18v23"/>`,
+    `<path ${shared} d="M24 42h16"/>`,
+    `</svg>`,
+  ].join("")}</span>`;
+}
+
+function hudResourceIcon(kind: "mana" | "salvage" | "pop" | "nodes"): string {
+  const common = `class="hud-resource-icon hud-resource-icon--${kind}" viewBox="0 0 48 48" aria-hidden="true" focusable="false"`;
+  const shared = `fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"`;
+  if (kind === "mana") {
+    return `<span class="hud-stat__ico">${[
+      `<svg ${common}>`,
+      `<path class="hud-resource-icon__glow" d="M26 4C18 13 14 20 14 28a10 10 0 0 0 20 0c0-6-4-10-8-15 1 8-7 9-4 18"/>`,
+      `<path ${shared} d="M26 5C18 14 15 21 15 28a9 9 0 0 0 18 0c0-6-4-10-8-15 1 8-7 9-4 18"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "salvage") {
+    return `<span class="hud-stat__ico">${[
+      `<svg ${common}>`,
+      `<circle class="hud-resource-icon__glow" cx="24" cy="24" r="14"/>`,
+      `<path ${shared} d="M24 7v7M24 34v7M7 24h7M34 24h7M12 12l5 5M31 31l5 5M36 12l-5 5M17 31l-5 5"/>`,
+      `<circle ${shared} cx="24" cy="24" r="8"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  if (kind === "pop") {
+    return `<span class="hud-stat__ico">${[
+      `<svg ${common}>`,
+      `<path class="hud-resource-icon__glow" d="M12 39c2-8 8-12 12-12s10 4 12 12"/>`,
+      `<circle ${shared} cx="24" cy="15" r="7"/>`,
+      `<path ${shared} d="M10 39c2-8 8-12 14-12s12 4 14 12"/>`,
+      `<path ${shared} d="M9 31c-1-5 2-9 7-10M39 31c1-5-2-9-7-10"/>`,
+      `</svg>`,
+    ].join("")}</span>`;
+  }
+  return `<span class="hud-stat__ico">${[
+    `<svg ${common}>`,
+    `<path class="hud-resource-icon__glow" d="M24 8 39 18v12L24 40 9 30V18Z"/>`,
+    `<circle ${shared} cx="24" cy="10" r="4"/>`,
+    `<circle ${shared} cx="10" cy="31" r="4"/>`,
+    `<circle ${shared} cx="38" cy="31" r="4"/>`,
+    `<path ${shared} d="M21 12 13 28M27 12l8 16M15 31h18"/>`,
+    `</svg>`,
+  ].join("")}</span>`;
 }
 
 export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi): void {
@@ -265,11 +379,11 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           type="button"
           title="Rally: arm a march point (R). In Offense, the next left-click on the map sets where your army walks; use G to clear the march when needed."
         >
-          <span class="hud-side-sprite hud-side-sprite--rally" aria-hidden="true"></span>
+          ${hudCommandIcon("rally")}
           <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">Rally <kbd class="hud-side-hk">R</kbd></span
             ><span class="hud-side-hint">Set army march on map (Offense)</span
-            ><span class="hud-side-value">Map</span></span
+            ><span class="hud-side-value">Rally</span></span
           >
         </button>
         <button
@@ -279,11 +393,11 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-pressed="false"
           title="Stance: Offense (seek fights) or Defense (gather on Wizard) — G."
         >
-          <span class="hud-side-sprite hud-side-sprite--stance" aria-hidden="true"></span>
+          ${hudCommandIcon("stance")}
           <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">Stance <kbd class="hud-side-hk">G</kbd></span
             ><span class="hud-side-hint">Offense vs gather on Wizard</span
-            ><span class="hud-side-value">Offense</span></span
+            ><span class="hud-side-value">Push</span></span
           >
         </button>
         <button
@@ -292,7 +406,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           type="button"
           title="Formation: V cycles preset. With squads selected, RMB drag sets the shape; Shift = wider ranks."
         >
-          <span class="hud-side-sprite hud-side-sprite--formation" aria-hidden="true"></span>
+          ${hudCommandIcon("formation")}
           <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">Shape <kbd class="hud-side-hk">V</kbd></span
             ><span class="hud-side-hint">RMB drag on selected units</span
@@ -306,7 +420,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-pressed="true"
           title="Camera: follow Wizard (scroll = zoom) or free orbit (MMB) — C to toggle."
         >
-          <span class="hud-side-sprite hud-side-sprite--camera" aria-hidden="true"></span>
+          ${hudCommandIcon("camera")}
           <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">View <kbd class="hud-side-hk">C</kbd></span
             ><span class="hud-side-hint">Lock on wizard vs free cam</span
@@ -320,11 +434,11 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-pressed="false"
           title="Teleport: T arms a squad blink on your side; carries nearby troops. Cooldown shown on the button."
         >
-          <span class="hud-side-sprite hud-side-sprite--teleport" aria-hidden="true"></span>
+          ${hudCommandIcon("teleport")}
           <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">Blink <kbd class="hud-side-hk">T</kbd></span
             ><span class="hud-side-hint">Jump squad + nearby allies</span
-            ><span class="hud-side-value">Ready</span></span
+            ><span class="hud-side-value">Blink</span></span
           >
         </button>
         <button
@@ -334,22 +448,22 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-pressed="${initial.heroCaptainEnabled ? "true" : "false"}"
           title="Captain: when on, the Wizard auto-picks objectives when idle. Turn off for full manual control."
         >
-          <span class="hud-side-ico hud-side-ico--captain" aria-hidden="true"><i></i><span class="hud-capt-ico-let">A</span></span
-          ><span class="hud-side-copy"
+          ${hudCommandIcon("captain")}
+          <span class="hud-side-copy"
             ><span class="hud-side-eyebrow">Captain <kbd class="hud-side-hk">A</kbd></span
             ><span class="hud-side-hint">Auto path when idle</span
-            ><span class="hud-side-value">${initial.heroCaptainEnabled ? "on" : "off"}</span></span
+            ><span class="hud-side-value">Auto</span></span
           >
         </button>
       </aside>
       <div class="hud-brand" aria-hidden="true">${hudSvgText("hud-svg-brand", "A")}</div>
       <div class="hud-chrome__cluster hud-chrome__cluster--main">
         <div class="hud-chrome__stats">
-          <span class="hud-stat hud-stat--econ hud-stat--mana"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Mana")}${hudSvgText("hud-svg-value", "0", "flux")}</span></span>
-          <span class="hud-stat hud-stat--econ hud-stat--salvage"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Salvage")}${hudSvgText("hud-svg-value", "0", "salvage")}</span></span>
-          <span class="hud-stat hud-stat--econ hud-stat--pop"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Pop")}${hudSvgText("hud-svg-value", "0", "pop")}</span></span>
-          <span class="hud-stat hud-stat--field hud-stat--nodes"><span class="hud-stat__ico" aria-hidden="true"></span><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Nodes")}${hudSvgText("hud-svg-value", "0", "nodes")}</span></span>
-          <span class="hud-stat hud-stat--mode"><span class="hud-stat__txt">${hudSvgText("hud-svg-label", "Mode")}${hudSvgText("hud-svg-value hud-svg-value--mode", "idle", "mode")}</span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--mana">${hudResourceIcon("mana")}<span class="hud-stat__txt"><span class="hud-stat__label">Mana</span><span class="hud-stat__value" id="flux">0</span></span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--salvage">${hudResourceIcon("salvage")}<span class="hud-stat__txt"><span class="hud-stat__label">Salv</span><span class="hud-stat__value" id="salvage">0</span></span></span>
+          <span class="hud-stat hud-stat--econ hud-stat--pop">${hudResourceIcon("pop")}<span class="hud-stat__txt"><span class="hud-stat__label">Pop</span><span class="hud-stat__value" id="pop">0</span></span></span>
+          <span class="hud-stat hud-stat--field hud-stat--nodes">${hudResourceIcon("nodes")}<span class="hud-stat__txt"><span class="hud-stat__label">Nodes</span><span class="hud-stat__value" id="nodes">0</span></span></span>
+          <span class="hud-stat hud-stat--mode"><span class="hud-stat__txt"><span class="hud-stat__label">Mode</span><span class="hud-stat__value hud-stat__value--mode" id="mode">idle</span></span></span>
         </div>
         <div
           class="hud-chrome__phase"
@@ -358,14 +472,14 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           aria-label="Match time remaining and total damage dealt in this match"
         >
           <div class="hud-phase__row hud-phase__row--time">
-            <span class="hud-phase__kicker">Time left (match clock)</span>
+            <span class="hud-phase__kicker">Time Left</span>
             <span class="hud-phase-timer" id="hud-phase-timer">0s</span>
           </div>
           <div
             class="hud-phase__row hud-phase__row--damage"
             title="Total hit-point damage in this match: first number = damage you dealt to the enemy, second = damage they dealt to you. Used to break ties if the match timer runs out."
           >
-            <span class="hud-phase__kicker">Damage: you <span aria-hidden="true">|</span> enemy</span>
+            <span class="hud-phase__kicker">Damage You / Foe</span>
             <span class="hud-phase-stats">
               <span class="hud-phase-stats-you" id="hud-phase-dmg-p">0</span>
               <span class="hud-phase-stats-sep" aria-hidden="true">/</span>
@@ -410,7 +524,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <div class="hud-endgame-stat hud-endgame-stat--time"><dt>Time</dt><dd id="hud-endgame-stat-time">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--score"><dt>Score</dt><dd id="hud-endgame-stat-score">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--best"><dt>Best local</dt><dd id="hud-endgame-stat-best">—</dd></div>
-          <div class="hud-endgame-stat hud-endgame-stat--damage"><dt>Damage you vs enemy</dt><dd id="hud-endgame-stat-damage">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--structures-built"><dt>Doctrine structures placed</dt><dd id="hud-endgame-stat-structures-built">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--structures-lost"><dt>Structures lost</dt><dd id="hud-endgame-stat-structures-lost">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--units-produced"><dt>Units produced</dt><dd id="hud-endgame-stat-units-produced">—</dd></div>
@@ -582,7 +695,7 @@ export function updateHud(state: GameState): void {
   if (captain) {
     captain.setAttribute("aria-pressed", state.heroCaptainEnabled ? "true" : "false");
     const copy = captain.querySelector<HTMLElement>(".hud-side-value");
-    if (copy) copy.textContent = state.heroCaptainEnabled ? "on" : "off";
+    if (copy) copy.textContent = "Auto";
     captain.classList.toggle("active", state.heroCaptainEnabled);
   }
   if (msg) msg.textContent = state.lastMessage;
@@ -591,7 +704,7 @@ export function updateHud(state: GameState): void {
   if (stanceBtn) {
     const def = state.armyStance === "defense";
     const copy = stanceBtn.querySelector<HTMLElement>(".hud-side-value");
-    if (copy) copy.textContent = def ? "Defense" : "Offense";
+    if (copy) copy.textContent = def ? "Hold" : "Push";
     stanceBtn.setAttribute("aria-pressed", def ? "true" : "false");
     stanceBtn.classList.toggle("hud-btn--stance-defense", def);
   }
@@ -624,7 +737,7 @@ export function updateHud(state: GameState): void {
   const rallyBtn = document.querySelector<HTMLButtonElement>("#btn-rally");
   if (rallyBtn) {
     const copy = rallyBtn.querySelector<HTMLElement>(".hud-side-value");
-    if (copy) copy.textContent = state.rallyClickPending ? "Click map" : "Map";
+    if (copy) copy.textContent = state.rallyClickPending ? "Click" : "Rally";
     rallyBtn.setAttribute("aria-pressed", state.rallyClickPending ? "true" : "false");
     rallyBtn.classList.toggle("hud-btn--armed", state.rallyClickPending);
   }
@@ -634,7 +747,7 @@ export function updateHud(state: GameState): void {
     const cd = heroTeleportCooldownSeconds(state);
     const cooling = state.heroTeleportCooldownTicks > 0;
     const copy = teleportBtn.querySelector<HTMLElement>(".hud-side-value");
-    if (copy) copy.textContent = cooling ? `${cd}s` : state.teleportClickPending ? "Click" : "Ready";
+    if (copy) copy.textContent = cooling ? `${cd}s` : state.teleportClickPending ? "Click" : "Blink";
     teleportBtn.disabled = cooling;
     teleportBtn.setAttribute("aria-pressed", state.teleportClickPending ? "true" : "false");
     teleportBtn.classList.toggle("hud-btn--armed", state.teleportClickPending);
@@ -647,11 +760,11 @@ export function updateHud(state: GameState): void {
     const nEsc = escapeHudHtml(String(n));
     const coreBlock =
       coreLine.length > 0
-        ? `<div class="hud-readout__camps" role="status"><span class="hud-readout__camps-lbl">Enemy camp cores</span><span class="hud-readout__camps-val">${escapeHudHtml(
+        ? `<div class="hud-readout__camps" role="status"><span class="hud-readout__camps-lbl">Camp cores</span><span class="hud-readout__camps-val">${escapeHudHtml(
             coreLine,
           )}</span></div>`
         : "";
-    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles alive (enemy units in play)</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
+    readout.innerHTML = `<span class="hud-status-card__ico" aria-hidden="true">!</span><div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
   }
 
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");
@@ -740,11 +853,6 @@ export function updateHud(state: GameState): void {
         "Post-match score: win bonus + enemy kills×14 + claimed nodes×180 + doctrine buildings placed×55 − your unit losses×5 − one point per sim minute. Same value as best local when this run is stored.",
       );
       setEndStat("best", best ? best.score : "—", "Highest post-match score stored in this browser (last 10 runs).");
-      setEndStat(
-        "damage",
-        `${Math.round(st.damageDealtPlayer)} / ${Math.round(st.damageDealtEnemy)}`,
-        "Total damage you dealt to enemy vs damage enemies dealt to your team (sim totals).",
-      );
       setEndStat(
         "structures-built",
         st.structuresBuilt,

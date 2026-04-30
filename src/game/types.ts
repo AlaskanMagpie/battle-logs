@@ -173,10 +173,39 @@ export type UnitTrait = "lifesteal";
 export type AttackRangeBand = "close" | "medium" | "long";
 
 /** Renderer-facing spell school. Gameplay still lives in `CommandEffect`; this is the visual language. */
-export type SpellFxElement = "fire" | "lightning" | "earth" | "water" | "air" | "arcane" | "reclaim" | "shield";
+export const SPELL_FX_ELEMENTS = [
+  "fire",
+  "lightning",
+  "earth",
+  "water",
+  "air",
+  "lava",
+  "snow",
+  "arcane",
+  "reclaim",
+  "shield",
+] as const;
+
+export type SpellFxElement =
+  (typeof SPELL_FX_ELEMENTS)[number];
+
+export const ELEMENTAL_FX_REQUIRED_SHAPES = ["line", "cone", "aoe", "impact", "surprise"] as const;
+
+export type ElementalFxRequiredShape = (typeof ELEMENTAL_FX_REQUIRED_SHAPES)[number];
 
 /** Renderer-facing spell silhouette. Keeps range/shape readable even when damage rules differ. */
-export type SpellFxShape = "aoe" | "bolt" | "chain" | "cone" | "beam" | "line" | "field" | "meteor" | "impact" | "burst";
+export type SpellFxShape =
+  | "aoe"
+  | "bolt"
+  | "chain"
+  | "cone"
+  | "beam"
+  | "line"
+  | "field"
+  | "meteor"
+  | "impact"
+  | "burst"
+  | "surprise";
 
 /**
  * Spawn/visual profile for units from this structure (`glbPool` animationProfiles id).

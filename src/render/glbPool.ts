@@ -2,7 +2,12 @@ import * as THREE from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { KEEP_ID, STRUCTURE_MESH_VISUAL_SCALE } from "../game/constants";
+import {
+  KEEP_ID,
+  PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  STRUCTURE_MESH_VISUAL_SCALE,
+} from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
@@ -50,6 +55,97 @@ const LANTERNBOUND_LINE_RUN_FILE = "lanternbound_line_running.glb";
 const LANTERNBOUND_LINE_ATTACK_FILE = "lanternbound_line_attack_triple_combo.glb";
 const LANTERNBOUND_LINE_IDLE_FILE = "lanternbound_line_combat_stance.glb";
 const LANTERNBOUND_LINE_DEATH_FILE = "lanternbound_line_dying.glb";
+
+/** Single merged Meshy GLB: locomotion + punch combo + death — clip names must be pinned (generic scoring ties on "charge"/"walk"). */
+function isEmberboundAsceticMergedMotionFile(file: string): boolean {
+  return file.toLowerCase().includes("emberbound_ascetic_merged_animations");
+}
+
+function isAstralKnightMergedMotionFile(file: string): boolean {
+  return file.toLowerCase().includes("astral_knight_merged_animations");
+}
+
+/** Emberbound (lava monks) + Astral (chrono sentinels) — one GLB holds locomotion + combat clips. */
+function isMergedSquadMeshyPackFile(file: string): boolean {
+  return isEmberboundAsceticMergedMotionFile(file) || isAstralKnightMergedMotionFile(file);
+}
+
+/** True when the clip name reads as combat/VFX, not jog/idle (used to filter locomotion picks). */
+function mergedMeshyPackLooksLikeCombatClip(clip: THREE.AnimationClip): boolean {
+  const leaf = animClipLeafLower(clip.name);
+  if (/^attack_\d+$/i.test(leaf)) return true;
+  const hay = clip.name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  return /\b(slash|combo|punch|slam|judgment|judgement|sword|charged|attack|strike|spell|cast|kick|spin|bow|charge|fireball|fire|ground)\b/.test(
+    hay,
+  );
+}
+
+function pickMergedMeshyLocomotionClip(
+  animations: THREE.AnimationClip[],
+  role: "run" | "idle",
+): THREE.AnimationClip | null {
+  const leaf = (c: THREE.AnimationClip) => animClipLeafLower(c.name);
+  const okLoco = (c: THREE.AnimationClip) => movingTrackCount(c) > 0 && !mergedMeshyPackLooksLikeCombatClip(c);
+  if (role === "run") {
+    return (
+      animations.find((c) => leaf(c) === "running" && okLoco(c)) ??
+      animations.find((c) => /\brunning\b/i.test(c.name) && okLoco(c)) ??
+      animations.find((c) => leaf(c) === "walking" && okLoco(c)) ??
+      null
+    );
+  }
+  return (
+    animations.find((c) => leaf(c) === "idle" && okLoco(c)) ??
+    animations.find((c) => /\bidle\b/i.test(c.name) && okLoco(c)) ??
+    animations.find((c) => leaf(c) === "walking" && okLoco(c)) ??
+    null
+  );
+}
+
+function pickMergedMeshyAttackClip(animations: THREE.AnimationClip[], file: string): THREE.AnimationClip | null {
+  const leaf = (c: THREE.AnimationClip) => animClipLeafLower(c.name);
+  const ok = (c: THREE.AnimationClip) => movingTrackCount(c) > 0;
+  const heuristicAttacks = [...animations]
+    .filter((c) => /^Attack_\d+$/i.test(c.name.trim()) && ok(c))
+    .sort((a, b) => {
+      const na = Number(/^Attack_(\d+)$/i.exec(a.name.trim())?.[1] ?? 0);
+      const nb = Number(/^Attack_(\d+)$/i.exec(b.name.trim())?.[1] ?? 0);
+      return na - nb;
+    });
+  if (heuristicAttacks.length) return heuristicAttacks[0]!;
+  if (isEmberboundAsceticMergedMotionFile(file)) {
+    const names = ["Punch_Combo", "Punch_Combo_3", "Punch_Combo_1", "Charged_Ground_Slam"] as const;
+    for (const name of names) {
+      const key = name.toLowerCase();
+      const c = animations.find((x) => x.name === name) ?? animations.find((x) => leaf(x) === key);
+      if (c && ok(c)) return c;
+    }
+  }
+  if (isAstralKnightMergedMotionFile(file)) {
+    const names = ["Double_Combo_Attack", "Charged_Slash", "Sword_Judgment"] as const;
+    for (const name of names) {
+      const key = name.toLowerCase();
+      const c = animations.find((x) => x.name === name) ?? animations.find((x) => leaf(x) === key);
+      if (c && ok(c)) return c;
+    }
+  }
+  return null;
+}
+
+function pickMergedMeshyDeathClip(animations: THREE.AnimationClip[], file: string): THREE.AnimationClip | null {
+  const leaf = (c: THREE.AnimationClip) => animClipLeafLower(c.name);
+  const ok = (c: THREE.AnimationClip) => movingTrackCount(c) > 0;
+  const deathCanon = animations.find((x) => leaf(x) === "death" && ok(x));
+  if (deathCanon) return deathCanon;
+  if (isEmberboundAsceticMergedMotionFile(file)) {
+    const c =
+      animations.find((x) => x.name === "dying_backwards") ??
+      animations.find((x) => leaf(x) === "dying_backwards") ??
+      animations.find((x) => /\b(dying|death|die)\b/i.test(x.name) && ok(x));
+    return c && ok(c) ? c : null;
+  }
+  return animations.find((x) => /\b(dying|death|die|fall)\b/i.test(x.name) && ok(x)) ?? null;
+}
 
 function isAzureSpearSwarmFile(file: string): boolean {
   return file.startsWith(AZURE_SPEAR_SWARM_PREFIX);
@@ -188,6 +284,8 @@ function pickFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | 
 
 function attackPlaybackSeconds(kind: UnitSizeClass | "hero", producedUnitId?: string): number | undefined {
   if (producedUnitId === "amber_geode_monks") return 2.12;
+  if (producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) return 2.28;
+  if (producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS) return 2.42;
   // Never compress attack clips to sim cooldowns. Short Meshy attacks need extra
   // visual recovery so anticipation/release/follow-through can read on screen.
   switch (kind) {
@@ -219,6 +317,8 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
     }
     // Amber golem squad: slightly slower loop read vs frantic short Meshy run cycles.
     if (file.includes("amber_geode_monks_run")) playback *= 1.14;
+    if (isEmberboundAsceticMergedMotionFile(file) && /\brunning\b/i.test(hay)) playback *= 1.06;
+    if (isAstralKnightMergedMotionFile(file) && /\brunning\b/i.test(hay)) playback *= 0.88;
     return playback;
   }
   const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
@@ -226,7 +326,9 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
   if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.55);
   // Idle slot uses walk clip — stretch so stance transitions don't feel twitchy.
   if (file.includes("amber_geode_monks_walk")) playback = Math.max(playback, 1.38);
-  return playback;
+    if (isEmberboundAsceticMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.22);
+    if (isAstralKnightMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.18);
+    return playback;
 }
 
 function setLoopPlayback(action: THREE.AnimationAction, clip: THREE.AnimationClip, role: "run" | "idle", file: string): void {
@@ -239,6 +341,34 @@ function boneLeafFromPositionTrack(trackName: string): string {
   const path = trackName.replace(/\.position$/i, "");
   const dot = path.lastIndexOf(".");
   return dot >= 0 ? path.slice(dot + 1) : path;
+}
+
+/**
+ * Horizontal travel baked on hips/root/pelvis position — runs read higher than idles/attacks
+ * for most Meshy humanoids (same metric as inspect tooling).
+ */
+function hipsRootHorizontalStrideXZ(clip: THREE.AnimationClip): number {
+  let maxRange = 0;
+  for (const track of clip.tracks) {
+    if (!track.name.toLowerCase().endsWith(".position")) continue;
+    const leaf = boneLeafFromPositionTrack(track.name).toLowerCase();
+    if (!/(hips|pelvis|root|rootground)$/i.test(leaf) && !/hips/i.test(leaf)) continue;
+    if (!(track instanceof THREE.VectorKeyframeTrack)) continue;
+    if (track.times.length < 2) continue;
+    const v = track.values;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let i = 0; i < v.length; i += 3) {
+      minX = Math.min(minX, v[i]!);
+      maxX = Math.max(maxX, v[i]!);
+      minZ = Math.min(minZ, v[i + 2]!);
+      maxZ = Math.max(maxZ, v[i + 2]!);
+    }
+    maxRange = Math.max(maxRange, Math.hypot(maxX - minX, maxZ - minZ));
+  }
+  return maxRange;
 }
 
 /**
@@ -289,6 +419,147 @@ function animClipLeafLower(name: string): string {
   const t = name.trim();
   const parts = t.split(/[|/\\]/u);
   return (parts[parts.length - 1] ?? t).trim().toLowerCase();
+}
+
+const mergedPackNormalizedAnimArrays = new WeakSet<THREE.AnimationClip[]>();
+
+function clipNameLooksCompressorCorrupted(name: string): boolean {
+  for (const s of name.split(/[|/\\]/u)) {
+    const L = s.trim().toLowerCase();
+    if (/^clip[_\s-]?\d*$/i.test(L)) return true;
+    if (/^take[_\s-]?\d+$/i.test(L)) return true;
+  }
+  const leaf = animClipLeafLower(name);
+  if (/^animation/i.test(leaf) || /^untitled/i.test(leaf)) return true;
+  if (/^[a-f0-9]{16,}$/i.test(leaf)) return true;
+  return false;
+}
+
+type MergedSemantic = "run" | "walk" | "idle" | "attack" | "death";
+function semanticHintFromClipName(name: string): MergedSemantic | null {
+  const h = name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (/\b(dead|death|die|dying|defeat|ragdoll|knockdown|collapse|falling)\b/.test(h)) return "death";
+  if (/\b(run|running|sprint|jog)\b/.test(h)) return "run";
+  if (/\b(walk|walking|stroll)\b/.test(h)) return "walk";
+  if (/\b(idle|stance|guard|breathe|relax|alert|stand)\b/.test(h)) return "idle";
+  if (
+    /\b(attack|slash|strike|combo|punch|slam|charged|sword|judgment|judgement|hit|swing|cast|spell|kick|fire|blast|smash|cleave|shoot|stab|pummel)\b/.test(
+      h,
+    )
+  )
+    return "attack";
+  return null;
+}
+
+function mergedClipSetNeedsSemanticRemap(animations: THREE.AnimationClip[]): boolean {
+  if (animations.length < 2) return false;
+  let bad = 0;
+  for (const c of animations) {
+    if (clipNameLooksCompressorCorrupted(c.name)) bad++;
+    else if (!semanticHintFromClipName(c.name)) bad++;
+  }
+  return bad >= Math.max(2, Math.ceil(animations.length * 0.35));
+}
+
+function dbgMergedRemap(file: string, prev: string, next: string): void {
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("debugGlbMergedClipRemap") === "1") {
+      console.debug(`[glb] merged clip remap ${file}: "${prev}" → "${next}"`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * One-time per cached clip list: infer locomotion vs combat from **keywords + hips XZ travel + duration**,
+ * then rename garbled Meshy/compressor clips to stable names (`Running`, `Walking`, `Idle`, `Death`, `Attack_n`)
+ * so role pickers stay correct even when segment titles are stripped.
+ */
+function normalizeMergedPackClipNamesOnce(animations: THREE.AnimationClip[], file: string): void {
+  if (!isMergedSquadMeshyPackFile(file) || !animations.length) return;
+  if (mergedPackNormalizedAnimArrays.has(animations)) return;
+  mergedPackNormalizedAnimArrays.add(animations);
+  if (!mergedClipSetNeedsSemanticRemap(animations)) return;
+
+  type Row = { clip: THREE.AnimationClip; stride: number; d: number; hint: MergedSemantic | null };
+  const rows: Row[] = animations.map((clip) => ({
+    clip,
+    stride: hipsRootHorizontalStrideXZ(clip),
+    d: clip.duration,
+    hint: semanticHintFromClipName(clip.name),
+  }));
+  const used = new Set<THREE.AnimationClip>();
+  const roleAssigned = new Set<string>();
+  const ren = (clip: THREE.AnimationClip, next: string, role: string) => {
+    if (used.has(clip)) return;
+    const prev = clip.name;
+    clip.name = next;
+    used.add(clip);
+    roleAssigned.add(role);
+    dbgMergedRemap(file, prev, next);
+  };
+
+  const free = () => rows.filter((r) => !used.has(r.clip) && movingTrackCount(r.clip) > 0);
+  const mxStride = () => Math.max(...free().map((r) => r.stride), 1e-9);
+
+  const byHint = (h: MergedSemantic) => rows.filter((r) => r.hint === h && !used.has(r.clip)).sort((a, b) => b.d - a.d);
+  for (const r of byHint("death")) ren(r.clip, "Death", "death");
+  let atk = 0;
+  for (const r of byHint("attack")) {
+    atk++;
+    ren(r.clip, `Attack_${atk}`, "attack");
+  }
+  const r0 = byHint("run")[0];
+  if (r0) ren(r0.clip, "Running", "run");
+  const w0 = byHint("walk")[0];
+  if (w0) ren(w0.clip, "Walking", "walk");
+  const i0 = byHint("idle")[0];
+  if (i0) ren(i0.clip, "Idle", "idle");
+
+  if (isEmberboundAsceticMergedMotionFile(file)) {
+    const M = mxStride();
+    const cand = free()
+      .filter((r) => r.d < 1.3 && r.stride < M * 0.48)
+      .sort((a, b) => a.d - b.d)[0];
+    if (cand) ren(cand.clip, "Death", "death");
+  }
+
+  const pool = free();
+  if (pool.length) {
+    const M = mxStride();
+    const desc = [...pool].sort((a, b) => b.stride - a.stride);
+    if (!roleAssigned.has("run")) {
+      const pick = desc.find((r) => !mergedMeshyPackLooksLikeCombatClip(r.clip));
+      if (pick) ren(pick.clip, "Running", "run");
+    }
+    if (!roleAssigned.has("walk") && free().length >= 2) {
+      let n = 0;
+      for (const x of desc) {
+        if (mergedMeshyPackLooksLikeCombatClip(x.clip)) continue;
+        n++;
+        if (n === 2) {
+          ren(x.clip, "Walking", "walk");
+          break;
+        }
+      }
+    }
+    if (!roleAssigned.has("idle")) {
+      const pick = [...pool]
+        .sort((a, b) => a.stride - b.stride)
+        .find((x) => x.d > 0.45 && x.stride <= M * 0.52 && !mergedMeshyPackLooksLikeCombatClip(x.clip));
+      if (pick) ren(pick.clip, "Idle", "idle");
+    }
+  }
+
+  let atkN = Math.max(
+    0,
+    ...animations.map((c) => Number(/^Attack_(\d+)$/i.exec(c.name.trim())?.[1] ?? 0)),
+  );
+  for (const r of free().sort((a, b) => b.d - a.d)) {
+    atkN++;
+    ren(r.clip, `Attack_${atkN}`, "attack");
+  }
 }
 
 /**
@@ -354,10 +625,14 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
   if (movingTrackCount(clip) <= 0) return 0;
   const hay = `${file} ${clip.name}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
   const starbound = file.includes("starbound_arcanist_hero");
+  const mergedPack = isMergedSquadMeshyPackFile(file);
   let score = 0;
   if (role === "run") {
     if (/\b(run|running|sprint|runfast|fast|jog)\b/.test(hay)) score += 100;
     if (/\b(walk|walking)\b/.test(hay)) score += 30;
+    if (mergedPack && mergedMeshyPackLooksLikeCombatClip(clip)) {
+      score -= 520;
+    }
     if (starbound) {
       if (/\b(kick|spell|mage|cast|dance|flip|jump|spin|taunt|wave|celebrate|yoga|stretch)\b/.test(hay)) score -= 260;
       if (/\b(attack|slash|strike|combo|fireball|magic)\b/.test(hay)) score -= 200;
@@ -367,6 +642,9 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
     if (/\b(combat[_\s-]?stance|stance|idle|ready|guard)\b/.test(hay)) score += 100;
     if (/\b(walk|walking)\b/.test(hay)) score += 25;
     if (clip.duration < 0.08) score -= 60;
+    if (mergedPack && mergedMeshyPackLooksLikeCombatClip(clip)) {
+      score -= 520;
+    }
     if (starbound) {
       if (/\b(run|running|sprint|jog)\b/.test(hay)) score -= 140;
       if (/\b(kick|spell|mage|cast|dance|flip|jump|attack|slash)\b/.test(hay)) score -= 180;
@@ -403,6 +681,20 @@ function clipForRole(
       const beam = animations.find((c) => /mage_soell_cast_3|spell[_\s-]?beam|beam/i.test(c.name) && movingTrackCount(c) > 0);
       if (beam) return beam;
       return null;
+    }
+  }
+  /** Emberbound + Astral merged packs: locomotion vs combat clips live in one file — pin by leaf; attacks only for attack role. */
+  if (isMergedSquadMeshyPackFile(file)) {
+    normalizeMergedPackClipNamesOnce(animations, file);
+    if (role === "run" || role === "idle") {
+      const loco = pickMergedMeshyLocomotionClip(animations, role);
+      if (loco) return loco;
+    } else if (role === "attack") {
+      const atk = pickMergedMeshyAttackClip(animations, file);
+      if (atk) return atk;
+    } else if (role === "death") {
+      const d = pickMergedMeshyDeathClip(animations, file);
+      if (d) return d;
     }
   }
   let best = animations[0]!;
@@ -778,6 +1070,9 @@ async function attachGlbByFile(
     });
 
     placeholder.visible = false;
+    // Keep the cloned rig hidden until at least one animation/mixer update has posed it.
+    // Otherwise role GLBs can flash their bind pose for a frame while run/idle clips load.
+    inst.visible = false;
     parent.add(inst);
     parent.userData["glbRoot"] = inst;
     parent.userData["glbTargetMaxExtent"] = targetMaxExtent;
@@ -832,7 +1127,12 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw, attackFile.includes("amber_geode_monks_attack"));
+        const clip = safeClip(
+          clipRaw,
+          attackFile.includes("amber_geode_monks_attack") ||
+            isEmberboundAsceticMergedMotionFile(attackFile) ||
+            isAstralKnightMergedMotionFile(attackFile),
+        );
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = false;
@@ -851,7 +1151,12 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(clipRaw, deathFile.includes("amber_geode_monks_death"));
+        const clip = safeClip(
+          clipRaw,
+          deathFile.includes("amber_geode_monks_death") ||
+            isEmberboundAsceticMergedMotionFile(deathFile) ||
+            isAstralKnightMergedMotionFile(deathFile),
+        );
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
@@ -889,6 +1194,7 @@ async function attachGlbByFile(
       const silo = parent.userData[hideKey] as THREE.Object3D | undefined;
       if (silo) silo.visible = false;
     }
+    inst.visible = true;
   } catch {
     placeholder.visible = !opts?.keepPlaceholderHidden;
   } finally {
@@ -980,6 +1286,10 @@ const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
   /** Cragrunner Redoubt — cliff acropolis mesh; `acrobat_compressed.glb` is excluded from generic tower hashing (preview filter). */
   watchtower: "acrobat_compressed.glb",
   bastion_keep: "bastion_keep_compressed.glb",
+  /** Emberroot Bastion — volcanic tower mesh (Draco-compressed). */
+  emberroot_bastion: "lava tower.glb",
+  /** Aionroot Observatory — chrono / observatory tower shell. */
+  aionroot_observatory: "chrono tower.glb",
   verdant_citadel: "verdant_citadel_titan_base.glb",
 };
 

@@ -8,6 +8,8 @@ import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_LAVA_WIZARD_MONKS,
   STRUCTURE_MESH_VISUAL_SCALE,
   TAP_YIELD_MAX,
   TERRITORY_RADIUS,
@@ -79,10 +81,17 @@ const CAMERA_HERO_PIVOT_Y = 1.38;
 const MATCH_INTRO_CAMERA_SEC = 5.4;
 /** If a unit's visual moves more than this, it must be in run/move animation. */
 const UNIT_VISUAL_RUN_EPS = 0.035;
+/** Start/stop hysteresis so formation slot settling and separation nudges do not flicker run/idle. */
+const UNIT_VISUAL_RUN_START_EPS = 0.055;
+const UNIT_VISUAL_RUN_STOP_EPS = 0.018;
 /** Hero GLB run vs idle: same idea as squads — use sim travel per frame, not only click-target flags (Captain / gaps). */
 const HERO_LOCOMOTION_EPS = 0.055;
 /** Time-normalized visual catch-up while running; keeps fixed sim ticks from reading as frame teleports. */
 const UNIT_VISUAL_RUN_CATCHUP_LAMBDA = 14;
+/** Hero uses a slightly tighter catch-up than squads so close camera follow feels smooth but responsive. */
+const HERO_VISUAL_RUN_CATCHUP_LAMBDA = 16;
+/** Exponential smoothing for visual velocity used by procedural lean/bob. */
+const UNIT_VISUAL_SPEED_LAMBDA = 9.5;
 /** Visual systems should advance in normalized frame-sized chunks; avoids pose jumps after stalls/throttling. */
 const RENDER_VISUAL_DT_CAP_SEC = 1 / 30;
 
@@ -92,6 +101,21 @@ const MATCH_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
 const MATCH_SKYBOX_ENABLED = true;
 /** Ground tint when match uses the doctrine equirect as `Scene.background` (fog stays off — see `applyMapVisual`). */
 const MATCH_SKYBOX_GROUND_HEX = 0xc8b6a0;
+
+type UnitMotionVisual = {
+  speed: number;
+  targetSpeed: number;
+  velX: number;
+  velZ: number;
+  bobPhase: number;
+  movingBlend: number;
+  leanPitch: number;
+  leanRoll: number;
+  attackKick: number;
+  attackActive: boolean;
+  moving: boolean;
+  sizeClass: UnitSizeClass;
+};
 
 /**
  * Spell command effect kinds that *could* use a texture on the ground ghost.
@@ -919,7 +943,7 @@ export class GameRenderer {
   private territoryOutline: THREE.LineSegments | null = null;
   private enemyTerritoryOutline: THREE.LineSegments | null = null;
   /** Bumps when only territory *visual* style changes (fill texture, opacities); not derived from sim sources. */
-  private static readonly TERRITORY_OVERLAY_STYLE = "v3";
+  private static readonly TERRITORY_OVERLAY_STYLE = "v4";
   private territoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private enemyTerritoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private heroGroup: THREE.Group | null = null;
@@ -930,6 +954,8 @@ export class GameRenderer {
   private enemyHeroHpBarFg: THREE.Mesh | null = null;
   private heroLocomotionPrev: { x: number; z: number; valid: boolean } = { x: 0, z: 0, valid: false };
   private enemyHeroLocomotionPrev: { x: number; z: number; valid: boolean } = { x: 0, z: 0, valid: false };
+  private heroVisualPos: THREE.Vector2 | null = null;
+  private enemyHeroVisualPos: THREE.Vector2 | null = null;
   /** Per enemy-relay (Dark Fortress) id → marker cylinder. */
   private relayMeshes = new Map<string, THREE.Mesh>();
   /** Wizard-Keep marker (violet ring + HP arc on the ground). */
@@ -998,6 +1024,7 @@ export class GameRenderer {
   private readonly unitPrevAttackTick = new Map<number, number>();
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
   private readonly unitVisualPos = new Map<number, THREE.Vector2>();
+  private readonly unitMotionVisuals = new Map<number, UnitMotionVisual>();
   /** Target chosen on the committed attack tick; cleared when recovery ends so units do not chase stale targets. */
   private readonly unitFaceTargets = new Map<number, Vec2>();
   private readonly unitLodState = new Map<number, { placeholder: boolean; farCullUi: boolean; nextAllowedMs: number }>();
@@ -1033,9 +1060,11 @@ export class GameRenderer {
     const followed = unit ?? (this.cameraFollowHero ? state.hero : null);
     if (!followed) return;
     const t = this.controls.target;
-    const desiredX = followed.x;
+    const visualUnit = unit ? this.unitVisualPos.get(unit.id) : null;
+    const visualHero = !unit && this.cameraFollowHero ? this.heroVisualPos : null;
+    const desiredX = visualUnit?.x ?? visualHero?.x ?? followed.x;
     const desiredY = unit ? Math.max(1.0, unitMeshLinearSize(unit.sizeClass) * 0.8) : CAMERA_HERO_PIVOT_Y;
-    const desiredZ = followed.z;
+    const desiredZ = visualUnit?.y ?? visualHero?.y ?? followed.z;
     const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
     const dx = (desiredX - t.x) * alpha;
     const dy = (desiredY - t.y) * alpha;
@@ -1168,6 +1197,8 @@ export class GameRenderer {
     this.rendererDisposed = true;
     this.heroLocomotionPrev = { x: 0, z: 0, valid: false };
     this.enemyHeroLocomotionPrev = { x: 0, z: 0, valid: false };
+    this.heroVisualPos = null;
+    this.enemyHeroVisualPos = null;
     if (this.matchSkyboxTexture) {
       this.matchSkyboxTexture.dispose();
       this.matchSkyboxTexture = null;
@@ -1326,6 +1357,13 @@ export class GameRenderer {
 
   getCameraFollowHero(): boolean {
     return this.cameraFollowHero;
+  }
+
+  releaseCameraFollowLock(): boolean {
+    const wasLocked = this.cameraFollowHero || this.cameraFollowUnitId !== null;
+    this.cameraFollowHero = false;
+    this.cameraFollowUnitId = null;
+    return wasLocked;
   }
 
   isMatchIntroActive(): boolean {
@@ -3477,8 +3515,8 @@ export class GameRenderer {
 
   private syncTerritory(state: GameState): void {
     /** Higher fill + rim stroke + outline: territory must read on all maps without guessing. */
-    this.syncTerritoryTeam("player", territorySources(state), 0x56c9ff, 0.28);
-    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff5d54, 0.22);
+    this.syncTerritoryTeam("player", territorySources(state), 0x5fd8ff, 0.46);
+    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff665d, 0.3);
   }
 
   private territorySourceKey(sources: { x: number; z: number }[]): string {
@@ -3513,12 +3551,12 @@ export class GameRenderer {
         map: texture,
         transparent: true,
         opacity,
-        depthWrite: true,
+        depthWrite: false,
         depthTest: true,
-        /** Push stamp slightly farther in depth so props/units occlude instead of catching a pale wash. */
+        /** Keep it a decal-like floor read: visible over ground, never competing with units or props. */
         polygonOffset: true,
-        polygonOffsetFactor: 6,
-        polygonOffsetUnits: 6,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
         /** Drop bilinear fringe; rim in mask is mostly handled by clipped stroke. */
         alphaTest: 0.022,
         side: THREE.DoubleSide,
@@ -3583,27 +3621,54 @@ export class GameRenderer {
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, size, size);
     const scale = size / (half * 2);
-    const radius = TERRITORY_RADIUS * scale;
-    for (const p of sources) {
-      const cx = (p.x + half) * scale;
-      const cy = (half - p.z) * scale;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255,255,255,1)";
-      ctx.fill();
-      // Crisp inside-only rim: clip to disk, stroke boundary so the wash doesn't read as a smudge.
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.92)";
-      ctx.lineWidth = Math.max(6, radius * 0.04);
-      ctx.lineJoin = "round";
-      ctx.stroke();
-      ctx.restore();
+    const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
+    const centroid = sources.reduce(
+      (acc, p) => {
+        acc.x += p.x;
+        acc.z += p.z;
+        return acc;
+      },
+      { x: 0, z: 0 },
+    );
+    centroid.x /= sources.length;
+    centroid.z /= sources.length;
+    const maxCentroidD = Math.max(
+      TERRITORY_RADIUS,
+      ...sources.map((p) => Math.hypot(p.x - centroid.x, p.z - centroid.z) + TERRITORY_RADIUS),
+    );
+    const smoothstep = (edge0: number, edge1: number, x: number): number => {
+      const t = Math.max(0, Math.min(1, (x - edge0) / Math.max(0.0001, edge1 - edge0)));
+      return t * t * (3 - 2 * t);
+    };
+
+    const img = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      const wz = half - y / scale;
+      for (let x = 0; x < size; x++) {
+        const wx = x / scale - half;
+        let nearestD2 = Infinity;
+        for (const p of sources) {
+          const dx = wx - p.x;
+          const dz = wz - p.z;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < nearestD2) nearestD2 = d2;
+        }
+        if (nearestD2 > r2) continue;
+
+        const nearestD = Math.sqrt(nearestD2);
+        const edgeT = smoothstep(TERRITORY_RADIUS * 0.54, TERRITORY_RADIUS, nearestD);
+        const centroidT = smoothstep(0, maxCentroidD, Math.hypot(wx - centroid.x, wz - centroid.z));
+        const ripple = 0.5 + 0.5 * Math.sin(wx * 0.34 + wz * 0.22) * Math.sin(wx * 0.11 - wz * 0.28);
+        const alpha = Math.round(255 * Math.min(1, 0.16 + centroidT * 0.3 + edgeT * 0.58 + ripple * 0.08));
+        const i = (y * size + x) * 4;
+        img.data[i] = 255;
+        img.data[i + 1] = 255;
+        img.data[i + 2] = 255;
+        img.data[i + 3] = alpha;
+      }
     }
+    ctx.putImageData(img, 0, 0);
+
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.minFilter = THREE.LinearFilter;
@@ -3710,6 +3775,55 @@ export class GameRenderer {
     g.add(ring);
     (g.userData as Record<string, unknown>)["heroFootRingMesh"] = ring;
 
+    const arrow = new THREE.Group();
+    arrow.name = "hero-down-arrow";
+    const arrowMat = new THREE.MeshBasicMaterial({
+      color: 0x8eeaff,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.62, 1.18, 3), arrowMat);
+    cone.rotation.x = Math.PI;
+    cone.rotation.z = Math.PI / 3;
+    cone.position.y = -0.1;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.72, 10), arrowMat);
+    stem.position.y = 0.64;
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(0.44, 0.6, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x6ae1ff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.68,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.y = 1.12;
+    const outerHalo = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 0.84, 36),
+      new THREE.MeshBasicMaterial({
+        color: 0xbaf7ff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.34,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    outerHalo.rotation.x = -Math.PI / 2;
+    outerHalo.position.y = 1.13;
+    arrow.position.y = 4.15;
+    arrow.add(cone, stem, halo, outerHalo);
+    g.add(arrow);
+    (g.userData as Record<string, unknown>)["heroDownArrow"] = arrow;
+
     return g;
   }
 
@@ -3774,6 +3888,22 @@ export class GameRenderer {
     if (ring) ring.visible = false;
   }
 
+  private syncHeroVisualPosition(h: GameState["hero"], current: THREE.Vector2 | null): THREE.Vector2 {
+    const visual = current ?? new THREE.Vector2(h.x, h.z);
+    const dx = h.x - visual.x;
+    const dz = h.z - visual.y;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 10) {
+      // Teleports/respawns should be instant; only smooth normal locomotion ticks.
+      visual.set(h.x, h.z);
+    } else if (dist > 1e-4) {
+      const catchup = 1 - Math.exp(-HERO_VISUAL_RUN_CATCHUP_LAMBDA * this.visualSyncDt);
+      visual.x += dx * catchup;
+      visual.y += dz * catchup;
+    }
+    return visual;
+  }
+
   private syncHero(state: GameState): void {
     const h = state.hero;
     if (!this.heroGroup) {
@@ -3785,7 +3915,9 @@ export class GameRenderer {
         if (placeholder) void requestGlbForHero(placeholder, "player");
       }
     }
-    this.heroGroup.position.set(h.x, 0, h.z);
+    const visual = this.syncHeroVisualPosition(h, this.heroVisualPos);
+    this.heroVisualPos = visual;
+    this.heroGroup.position.set(visual.x, 0, visual.y);
     this.heroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.heroGroup);
     const clickMove = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -3795,7 +3927,8 @@ export class GameRenderer {
         Math.hypot(h.x - this.heroLocomotionPrev.x, h.z - this.heroLocomotionPrev.z) > HERO_LOCOMOTION_EPS;
     }
     this.heroLocomotionPrev = { x: h.x, z: h.z, valid: true };
-    const moving = clickMove || frameTravel;
+    const visualLag = Math.hypot(h.x - visual.x, h.z - visual.y);
+    const moving = clickMove || frameTravel || visualLag > HERO_LOCOMOTION_EPS;
     if (moving) this.interruptHeroStrikeForRun(this.heroGroup);
     this.setGlbMoveAnimation(this.heroGroup, moving);
     if (this.heroLungeTimer > 0) {
@@ -3828,6 +3961,21 @@ export class GameRenderer {
     const frac = Math.max(0, Math.min(1, h.maxHp > 0 ? h.hp / h.maxHp : 0));
     this.heroHpBarFg.scale.x = Math.max(0.0001, frac);
     this.heroHpBarFg.position.x = -0.88 * (1 - frac);
+
+    const arrow = this.heroGroup.userData["heroDownArrow"] as THREE.Group | undefined;
+    if (arrow) {
+      const t = this.clock.getElapsedTime();
+      arrow.position.y = 4.12 + Math.sin(t * 3.2) * 0.18;
+      arrow.rotation.y = -h.facing + Math.sin(t * 1.2) * 0.06;
+      const cone = arrow.children[0] as THREE.Mesh | undefined;
+      const mat = cone?.material as THREE.MeshBasicMaterial | undefined;
+      if (mat) mat.opacity = 0.82 + Math.sin(t * 3.2) * 0.14;
+      const outerHalo = arrow.children[3] as THREE.Mesh | undefined;
+      if (outerHalo) {
+        const pulse = 1 + (0.12 + Math.sin(t * 2.4) * 0.08);
+        outerHalo.scale.setScalar(pulse);
+      }
+    }
   }
 
   private syncEnemyHero(state: GameState): void {
@@ -3842,8 +3990,13 @@ export class GameRenderer {
       }
     }
     this.enemyHeroGroup.visible = h.hp > 0;
-    if (h.hp <= 0) return;
-    this.enemyHeroGroup.position.set(h.x, 0, h.z);
+    if (h.hp <= 0) {
+      this.enemyHeroVisualPos = null;
+      return;
+    }
+    const visual = this.syncHeroVisualPosition(h, this.enemyHeroVisualPos);
+    this.enemyHeroVisualPos = visual;
+    this.enemyHeroGroup.position.set(visual.x, 0, visual.y);
     this.enemyHeroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.enemyHeroGroup);
     const clickMoveE = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -3853,7 +4006,8 @@ export class GameRenderer {
         Math.hypot(h.x - this.enemyHeroLocomotionPrev.x, h.z - this.enemyHeroLocomotionPrev.z) > HERO_LOCOMOTION_EPS;
     }
     this.enemyHeroLocomotionPrev = { x: h.x, z: h.z, valid: true };
-    const moving = clickMoveE || frameTravelE;
+    const visualLag = Math.hypot(h.x - visual.x, h.z - visual.y);
+    const moving = clickMoveE || frameTravelE || visualLag > HERO_LOCOMOTION_EPS;
     if (moving) this.interruptHeroStrikeForRun(this.enemyHeroGroup);
     this.setGlbMoveAnimation(this.enemyHeroGroup, moving);
 
@@ -3897,6 +4051,7 @@ export class GameRenderer {
         this.unitPrevAttackTick.delete(id);
         this.unitPrevPos.delete(id);
         this.unitVisualPos.delete(id);
+        this.unitMotionVisuals.delete(id);
         this.unitFaceTargets.delete(id);
         this.unitLodState.delete(id);
       }
@@ -3934,12 +4089,23 @@ export class GameRenderer {
       }
       if (isNewAttack) this.playGlbAttackAnimation(g);
       if (attackTick !== undefined) this.unitPrevAttackTick.set(u.id, attackTick);
+      const prevSim = this.unitPrevPos.get(u.id);
+      const simFrameDist = prevSim ? Math.hypot(u.x - prevSim.x, u.z - prevSim.y) : 0;
+      const prevMotion = this.unitMotionVisuals.get(u.id);
+      const wasMoving = prevMotion?.moving ?? false;
       const simDx = u.x - visual.x;
       const simDz = u.z - visual.y;
       const simMoveDist = Math.hypot(simDx, simDz);
       const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
       const forceRunCatchup = simMoveDist > (attackActive ? 9.5 : 0.65);
-      const shouldRun = simMoveDist > UNIT_VISUAL_RUN_EPS && (!attackActive || forceRunCatchup);
+      const orderTargetDist =
+        u.order && u.order.mode !== "stay" ? Math.hypot(u.order.x - u.x, u.order.z - u.z) : 0;
+      const orderedToMove = orderTargetDist > (wasMoving ? 0.35 : 0.75);
+      const travelSignal = Math.max(simFrameDist, simMoveDist);
+      const runThreshold = wasMoving ? UNIT_VISUAL_RUN_STOP_EPS : UNIT_VISUAL_RUN_START_EPS;
+      const shouldRun =
+        (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
+        (!attackActive || forceRunCatchup);
       if (shouldRun && attackActive) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
@@ -3954,6 +4120,8 @@ export class GameRenderer {
       // Always ease the mesh toward sim when it has drifted. Previously we froze `visual` for the
       // whole attack clip while `u.x/u.z` kept stepping — Line (long attacks, slower cadence) read
       // as in-place swings then huge teleports when the timer cleared or catch-up fired.
+      const visualBeforeX = visual.x;
+      const visualBeforeZ = visual.y;
       if (forceRunCatchup) visual.set(u.x, u.z);
       else if (simMoveDist > UNIT_VISUAL_RUN_EPS) {
         const catchup = 1 - Math.exp(-UNIT_VISUAL_RUN_CATCHUP_LAMBDA * this.visualSyncDt);
@@ -3966,6 +4134,15 @@ export class GameRenderer {
       if (!attackActive) this.unitFaceTargets.delete(u.id);
       const faceTarget = attackActive && !shouldRun ? this.unitFaceTargets.get(u.id) : undefined;
       this.faceUnitForState(g, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);
+      this.updateUnitMotionVisual(
+        u.id,
+        u.sizeClass,
+        shouldRun,
+        attackActive,
+        isNewAttack,
+        visual.x - visualBeforeX,
+        visual.y - visualBeforeZ,
+      );
       const hpFrac = u.maxHp > 0 ? u.hp / u.maxHp : 0;
       const selected = state.selectedUnitIds.includes(u.id);
       const h = unitMeshLinearSize(u.sizeClass) * 1.22;
@@ -3980,6 +4157,7 @@ export class GameRenderer {
       fgMat.opacity = selected || hpFrac < 0.995 ? 0.98 : 0.56;
       (pair.bg.material as THREE.MeshBasicMaterial).opacity = selected || hpFrac < 0.995 ? 0.82 : 0.42;
       this.setHpBarPairVisible(g, "u", true);
+      this.syncUnitSpellStatusVisuals(g, u);
       let label = this.unitCountLabels.get(u.id);
       if (!label) {
         label = makeLabelSprite("x1", u.team === "player" ? "#7ec8ff" : "#ff8888");
@@ -4102,6 +4280,187 @@ export class GameRenderer {
     const target = Math.atan2(dx, dz);
     const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
     root.rotation.y += delta * 0.22;
+  }
+
+  private updateUnitMotionVisual(
+    id: number,
+    sizeClass: UnitSizeClass,
+    moving: boolean,
+    attackActive: boolean,
+    newAttack: boolean,
+    visualDx: number,
+    visualDz: number,
+  ): void {
+    const dt = Math.max(1 / 120, this.visualSyncDt);
+    let m = this.unitMotionVisuals.get(id);
+    if (!m) {
+      m = {
+        speed: 0,
+        targetSpeed: 0,
+        velX: 0,
+        velZ: 0,
+        bobPhase: Math.random() * Math.PI * 2,
+        movingBlend: 0,
+        leanPitch: 0,
+        leanRoll: 0,
+        attackKick: 0,
+        attackActive: false,
+        moving: false,
+        sizeClass,
+      };
+      this.unitMotionVisuals.set(id, m);
+    }
+    const rawVx = visualDx / dt;
+    const rawVz = visualDz / dt;
+    const k = 1 - Math.exp(-UNIT_VISUAL_SPEED_LAMBDA * dt);
+    m.velX += (rawVx - m.velX) * k;
+    m.velZ += (rawVz - m.velZ) * k;
+    m.targetSpeed = moving ? Math.hypot(m.velX, m.velZ) : 0;
+    m.moving = moving;
+    m.attackActive = attackActive;
+    m.sizeClass = sizeClass;
+    if (newAttack) m.attackKick = Math.max(m.attackKick, 1);
+  }
+
+  private syncUnitSpellStatusVisuals(root: THREE.Group, u: GameState["units"][number]): void {
+    const ud = root.userData as Record<string, unknown>;
+    const statuses = u.spellStatuses ?? [];
+    const signature = statuses
+      .map((st) => `${st.kind}:${Math.round(st.strength * 100)}`)
+      .sort()
+      .join("|");
+    if (signature && ud["unitSpellStatusFxSig"] === signature && ud["unitSpellStatusFx"]) return;
+    const old = ud["unitSpellStatusFx"] as THREE.Group | undefined;
+    if (old) {
+      root.remove(old);
+      this.disposeObject(old);
+      delete ud["unitSpellStatusFx"];
+      delete ud["unitSpellStatusFxSig"];
+    }
+    if (statuses.length === 0) return;
+    const height = (ud["unitHeight"] as number | undefined) ?? unitMeshLinearSize(u.sizeClass);
+    const radius = Math.max(0.42, unitMeshLinearSize(u.sizeClass) * 0.28);
+    const group = new THREE.Group();
+    group.name = "unit-spell-status-fx";
+    const addRing = (color: number, y: number, opacity: number, scale = 1): void => {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(radius * scale, Math.max(0.025, radius * 0.035), 5, 32),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = y;
+      group.add(ring);
+    };
+    for (const st of statuses) {
+      const strength = Math.max(0.05, Math.min(1, st.strength));
+      if (st.kind === "frozen") {
+        const cage = new THREE.Mesh(
+          new THREE.IcosahedronGeometry(radius * 1.15, 1),
+          new THREE.MeshBasicMaterial({
+            color: 0xbff4ff,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.24 + strength * 0.22,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        );
+        cage.scale.y = Math.max(1.2, height / Math.max(0.1, radius * 1.8));
+        cage.position.y = height * 0.48;
+        group.add(cage);
+        addRing(0xe8fbff, 0.08, 0.42 * strength, 1.1);
+      } else if (st.kind === "rooted") {
+        for (let i = 0; i < 5; i++) {
+          const a = i * 2.399;
+          const vine = new THREE.Mesh(
+            new THREE.TorusGeometry(radius * (0.68 + i * 0.055), 0.025, 4, 18, Math.PI * 1.15),
+            new THREE.MeshBasicMaterial({
+              color: i % 2 ? 0x8affc8 : 0xff66dd,
+              transparent: true,
+              opacity: 0.28 * strength,
+              depthWrite: false,
+              blending: THREE.AdditiveBlending,
+            }),
+          );
+          vine.rotation.set(Math.PI / 2, 0, a);
+          vine.position.y = 0.12 + i * 0.025;
+          group.add(vine);
+        }
+      } else if (st.kind === "chilled") {
+        addRing(0x9ee8ff, 0.1, 0.3 * strength, 0.95);
+        addRing(0xffffff, height * 0.55, 0.16 * strength, 0.55);
+      } else if (st.kind === "burning") {
+        addRing(0xff7a16, 0.12, 0.36 * strength, 0.9);
+        addRing(0xfff0a8, height * 0.32, 0.18 * strength, 0.52);
+      } else if (st.kind === "winded") {
+        addRing(0xd7fff2, height * 0.28, 0.18 * strength, 1.05);
+        addRing(0x8df5d3, height * 0.62, 0.14 * strength, 0.82);
+      }
+    }
+    if (group.children.length === 0) return;
+    root.add(group);
+    ud["unitSpellStatusFx"] = group;
+    ud["unitSpellStatusFxSig"] = signature;
+  }
+
+  private tickUnitProceduralMotion(dt: number): void {
+    const ease = 1 - Math.exp(-10.5 * dt);
+    for (const [id, root] of this.unitMeshes) {
+      const m = this.unitMotionVisuals.get(id);
+      if (!m) continue;
+      m.speed += (m.targetSpeed - m.speed) * ease;
+      m.movingBlend += ((m.moving ? 1 : 0) - m.movingBlend) * (1 - Math.exp(-(m.moving ? 8.5 : 5.2) * dt));
+      m.attackKick = Math.max(0, m.attackKick - dt * 3.2);
+
+      const L = unitMeshLinearSize(m.sizeClass);
+      const cadence = m.sizeClass === "Swarm" ? 7.8 : m.sizeClass === "Line" ? 6.2 : m.sizeClass === "Heavy" ? 4.6 : 3.4;
+      const stride = Math.min(1.8, Math.max(0.35, m.speed / Math.max(1.2, L)));
+      m.bobPhase += dt * cadence * stride * (0.35 + m.movingBlend * 0.65);
+
+      const yaw = root.rotation.y;
+      const localForward = Math.sin(yaw) * m.velX + Math.cos(yaw) * m.velZ;
+      const localSide = Math.cos(yaw) * m.velX - Math.sin(yaw) * m.velZ;
+      const leanScale = (m.sizeClass === "Titan" ? 0.015 : m.sizeClass === "Heavy" ? 0.021 : 0.027) / Math.max(1, L);
+      const targetPitch =
+        THREE.MathUtils.clamp(-localForward * leanScale, -0.13, 0.13) * m.movingBlend -
+        Math.sin(m.attackKick * Math.PI) * (m.sizeClass === "Titan" ? 0.055 : 0.075);
+      const targetRoll =
+        THREE.MathUtils.clamp(-localSide * leanScale, -0.11, 0.11) * m.movingBlend +
+        Math.sin(m.bobPhase) * 0.018 * m.movingBlend;
+      m.leanPitch += (targetPitch - m.leanPitch) * ease;
+      m.leanRoll += (targetRoll - m.leanRoll) * ease;
+
+      const bob = Math.abs(Math.sin(m.bobPhase)) * L * 0.022 * m.movingBlend;
+      const settle = Math.sin(m.attackKick * Math.PI) * L * 0.025;
+      this.applyUnitMotionPose(root, bob - settle, m.leanPitch, m.leanRoll);
+    }
+  }
+
+  private applyUnitMotionPose(root: THREE.Object3D, yOffset: number, pitch: number, roll: number): void {
+    const targets = [
+      root.userData["glbRoot"] as THREE.Object3D | undefined,
+      root.userData["bodyMesh"] as THREE.Object3D | undefined,
+    ].filter((x): x is THREE.Object3D => !!x);
+    for (const target of targets) {
+      const ud = target.userData as Record<string, unknown>;
+      if (ud["unitMotionBaseY"] === undefined) {
+        ud["unitMotionBaseY"] = target.position.y;
+        ud["unitMotionBaseRotX"] = target.rotation.x;
+        ud["unitMotionBaseRotZ"] = target.rotation.z;
+      }
+      const baseY = ud["unitMotionBaseY"] as number;
+      const baseRotX = ud["unitMotionBaseRotX"] as number;
+      const baseRotZ = ud["unitMotionBaseRotZ"] as number;
+      target.position.y = baseY + yOffset;
+      target.rotation.x = baseRotX + pitch;
+      target.rotation.z = baseRotZ + roll;
+    }
   }
 
   private orientHpBars(): void {
@@ -4264,7 +4623,12 @@ export class GameRenderer {
 
   /** Attack clip fade-out / recovery into locomotion (tick end, interrupt, hero run break). */
   private glbAttackOutFadeSec(ud: Record<string, unknown>): number {
-    if (ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS) return 0.42;
+    if (
+      ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
+      ud["producedUnitId"] === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
+      ud["producedUnitId"] === PRODUCED_UNIT_CHRONO_SENTINELS
+    )
+      return 0.42;
     if (ud["sizeClass"] === "Titan") return 0.38;
     if (ud["sizeClass"] === "hero") return 0.28;
     if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.34;
@@ -4273,7 +4637,12 @@ export class GameRenderer {
 
   /** Attack clip fade-in at swing start (overlaps base underlay). */
   private glbAttackInFadeSec(ud: Record<string, unknown>): number {
-    if (ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS) return 0.24;
+    if (
+      ud["producedUnitId"] === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
+      ud["producedUnitId"] === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
+      ud["producedUnitId"] === PRODUCED_UNIT_CHRONO_SENTINELS
+    )
+      return 0.24;
     if (ud["sizeClass"] === "Titan") return 0.22;
     if (ud["sizeClass"] === "hero") return 0.2;
     if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.2;
@@ -4300,6 +4669,7 @@ export class GameRenderer {
     run.play();
     run.crossFadeFrom(strike, fadeSec, false);
     ud["glbBaseState"] = "run";
+    ud["glbBaseFadeUntilMs"] = performance.now() + fadeSec * 1000;
     return true;
   }
 
@@ -4324,7 +4694,12 @@ export class GameRenderer {
     if (root) this.setGlbBaseActionWeight(root, wantIdle && idle ? "idle" : "run", 1);
   }
 
-  private setGlbBaseActionWeight(root: THREE.Object3D, state: "run" | "idle", weight: number): void {
+  private setGlbBaseActionWeight(
+    root: THREE.Object3D,
+    state: "run" | "idle",
+    weight: number,
+    opts?: { preserveActiveFade?: boolean },
+  ): void {
     const ud = root.userData as Record<string, unknown>;
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
@@ -4334,6 +4709,10 @@ export class GameRenderer {
     action.enabled = true;
     action.paused = false;
     action.play();
+    const fadeUntil = ud["glbBaseFadeUntilMs"] as number | undefined;
+    if (opts?.preserveActiveFade && ud["glbBaseState"] === resolvedState && fadeUntil !== undefined && performance.now() < fadeUntil) {
+      return;
+    }
     action.stopFading();
     action.setEffectiveWeight(weight);
     ud["glbBaseState"] = resolvedState;
@@ -4368,8 +4747,11 @@ export class GameRenderer {
     if (ud["glbAttackTimer"] !== undefined) return;
     const titan = ud["sizeClass"] === "Titan";
     const producedId = ud["producedUnitId"] as string | undefined;
-    const geodeMonks = producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS;
-    const minDuration = geodeMonks
+    const punchyLineMonks =
+      producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
+      producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
+      producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
+    const minDuration = punchyLineMonks
       ? 2.02
       : ud["sizeClass"] === "hero"
         ? 1.78
@@ -4500,10 +4882,13 @@ export class GameRenderer {
   /** Base locomotion weight under an active attack crossfade (must match `playGlbAttackAnimation`). */
   private glbBaseUnderlayDuringAttack(ud: Record<string, unknown>): number {
     const producedId = ud["producedUnitId"] as string | undefined;
-    const geodeMonks = producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS;
+    const punchyLineMonks =
+      producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
+      producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
+      producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
     const titan = ud["sizeClass"] === "Titan";
-    // Lower run cross-weight so baked root motion in the slam clip is not double-driven (twitchy).
-    return geodeMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    // Lower run cross-weight so baked root motion in the slam / punch clip is not double-driven (twitchy).
+    return punchyLineMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {
@@ -4518,12 +4903,14 @@ export class GameRenderer {
     // without force catch-up), which reads as constant snapping — especially on Swarm/Line.
     if (inAttack) {
       const pinned = (ud["glbBaseState"] as "run" | "idle" | undefined) ?? "run";
-      this.setGlbBaseActionWeight(root, pinned === "idle" && idle ? "idle" : "run", baseW);
+      this.setGlbBaseActionWeight(root, pinned === "idle" && idle ? "idle" : "run", baseW, {
+        preserveActiveFade: true,
+      });
       return;
     }
     const next = (moving || !idle ? "run" : "idle") as "run" | "idle";
     if (ud["glbBaseState"] === next) {
-      this.setGlbBaseActionWeight(root, next, baseW);
+      this.setGlbBaseActionWeight(root, next, baseW, { preserveActiveFade: true });
       return;
     }
     const from = next === "run" ? idle : run;
@@ -4536,6 +4923,7 @@ export class GameRenderer {
     to.play();
     to.fadeIn(moveFade);
     ud["glbBaseState"] = next;
+    ud["glbBaseFadeUntilMs"] = performance.now() + moveFade * 1000;
   }
 
   render(): void {
@@ -4546,6 +4934,7 @@ export class GameRenderer {
     this.applyHeroCameraFollow(dt);
     this.controls.update();
     this.tickGlbAnimations(dt);
+    this.tickUnitProceduralMotion(dt);
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);

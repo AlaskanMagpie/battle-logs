@@ -12,6 +12,7 @@ import {
   buildVibeJamExitUrlForPrematch,
   type PortalContext,
 } from "../../game/portal";
+import type { MatchMode } from "../../net/protocol";
 import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
 import { resetCardArtManifestCache } from "../cardArtManifest";
 import {
@@ -52,6 +53,8 @@ const FULL_ART_STRUCTURE_CARD_IDS = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "emberroot_bastion",
+  "aionroot_observatory",
 ] as const;
 const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
 /** Codex panel order: updated visual structure cards + legacy spell/command placeholders only. */
@@ -71,6 +74,8 @@ const QUICK_PICK_IDS: readonly string[] = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "emberroot_bastion",
+  "aionroot_observatory",
   "firestorm",
   "fortify",
   "recycle",
@@ -299,7 +304,7 @@ export function DoctrineBinderPicker({
   onReady,
   portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
-  onStart: (slots: (string | null)[], mapUrl: string) => void;
+  onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode) => void;
   onReady?: () => void;
   portalContext?: PortalContext;
 }): ReactElement {
@@ -346,6 +351,10 @@ export function DoctrineBinderPicker({
   });
   /** Map / page nav / start — floating panel so the binder stays full-bleed. */
   const [prematchSetupOpen, setPrematchSetupOpen] = useState(false);
+  const [opponentMode, setOpponentMode] = useState<"ai" | "matchmake">(() => {
+    if (typeof window === "undefined") return "ai";
+    return new URLSearchParams(window.location.search).get("opponent") === "matchmake" ? "matchmake" : "ai";
+  });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   /** Full doctrine strip (wrap + padding) — generous `getBoundingClientRect` for codex drop hit-testing. */
@@ -1117,9 +1126,9 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(norm, mapUrl);
+      onStart(norm, mapUrl, opponentMode);
     })();
-  }, [slots, binderSlotPick, onStart, mapUrl]);
+  }, [slots, binderSlotPick, onStart, mapUrl, opponentMode]);
 
   const commitQuickMatchStart = useCallback(
     (normSlots: (string | null)[], pickSnapshot: (number | null)[], url: string) => {
@@ -1135,10 +1144,10 @@ export function DoctrineBinderPicker({
       setPortalTransitioning(true);
       void (async () => {
         await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-        onStart(normSlots, url);
+        onStart(normSlots, url, opponentMode);
       })();
     },
-    [onStart],
+    [onStart, opponentMode],
   );
 
   const quickMatchAndStart = useCallback(() => {
@@ -1178,9 +1187,9 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(finalSlots, mapPick.url);
+      onStart(finalSlots, mapPick.url, opponentMode);
     })();
-  }, [loading, portalTransitioning, onStart, commitQuickMatchStart, slots, binderSlotPick, mapUrl]);
+  }, [loading, portalTransitioning, onStart, commitQuickMatchStart, slots, binderSlotPick, mapUrl, opponentMode]);
   useEffect(() => {
     if (loading) return;
     let shouldPlay = false;
@@ -1457,6 +1466,29 @@ export function DoctrineBinderPicker({
                         ))}
                       </select>
                     </div>
+                    <fieldset className="binder-picker-toolbar-map" aria-label="Opponent">
+                      <legend>Opponent</legend>
+                      <label>
+                        <input
+                          type="radio"
+                          name="binder-opponent-mode"
+                          value="ai"
+                          checked={opponentMode === "ai"}
+                          onChange={() => setOpponentMode("ai")}
+                        />
+                        AI only
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="binder-opponent-mode"
+                          value="matchmake"
+                          checked={opponentMode === "matchmake"}
+                          onChange={() => setOpponentMode("matchmake")}
+                        />
+                        Find player, fallback to AI
+                      </label>
+                    </fieldset>
                     <div className="binder-picker-toolbar-main">
                       <div className="binder-picker-toolbar-actions">
                         <button

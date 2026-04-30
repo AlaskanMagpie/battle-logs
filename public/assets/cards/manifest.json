@@ -1,7 +1,9 @@
 {
   "schemaVersion": 1,
   "cards": {
+    "aionroot_observatory": "/assets/cards/aionroot_observatory.png",
     "bastion_keep": "/assets/cards/bastion_keep.png",
+    "emberroot_bastion": "/assets/cards/emberroot_bastion.png",
     "firestorm": "/assets/cards/firestorm.svg",
     "fortify": "/assets/cards/fortify.svg",
     "outpost": "/assets/cards/outpost.png",

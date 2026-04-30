@@ -12,6 +12,9 @@ import {
   isUserDoctrineHandViableForQuickMatch,
 } from "./game/quickMatchDoctrine";
 import { recordLocalLeaderboardResult } from "./game/leaderboard";
+import {
+  submitDamageLeaderboardEntry,
+} from "./leaderboard/damageLeaderboard";
 import { captureReplayTick, createReplayCapture, type ReplayCapture } from "./game/replay";
 import {
   canPlaceStructureHere,
@@ -52,6 +55,15 @@ import {
   type Vec2,
 } from "./game/types";
 import { applyControlProfileToDocument, getControlProfile } from "./controlProfile";
+import { findHumanMatch, getActiveBattleRoom } from "./net/matchmaking";
+import { attachOnlineMatchRoom, type OnlineMatchSession } from "./net/onlineMatch";
+import {
+  clampMatchmakingTimeoutMs,
+  makeClientMatchId,
+  normalizeMatchMode,
+  type MatchLaunchOptions,
+  type MatchMode,
+} from "./net/protocol";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
@@ -608,8 +620,43 @@ function runMatch(
   mapUrl: string,
   onReturnToDoctrine: () => void,
   portalContext: PortalContext = parsePortalContext(""),
+  launchOptions: Partial<MatchLaunchOptions> = {},
 ): void {
   void (async () => {
+    const requestedMode = launchOptions.mode ?? "ai";
+    const matchId = launchOptions.matchId ?? makeClientMatchId();
+    let resolvedLaunch: MatchLaunchOptions = {
+      mode: requestedMode,
+      matchId,
+      seat: launchOptions.seat,
+      queueState: launchOptions.queueState ?? "idle",
+      fallbackReason: launchOptions.fallbackReason,
+      room: launchOptions.room,
+    };
+    if (requestedMode === "matchmake") {
+      const result = await findHumanMatch({
+        timeoutMs: clampMatchmakingTimeoutMs(params.get("matchTimeoutMs")),
+        mapUrl,
+        doctrineSlots: initialDoctrine,
+        username: portalContext.params.username,
+      });
+      if (result.mode === "pvp") {
+        resolvedLaunch = {
+          mode: "pvp",
+          matchId: result.room.matchId,
+          seat: result.room.seat,
+          queueState: "matched",
+          room: result.room,
+        };
+      } else {
+        resolvedLaunch = {
+          mode: "fallback_ai",
+          matchId,
+          queueState: "fallback_ai",
+          fallbackReason: result.reason,
+        };
+      }
+    }
     const loadedMap = await loadMapMerged(mapUrl);
     const difficultyOverride = queryDifficultyOverride(window.location.search);
     const map = difficultyOverride
@@ -620,6 +667,37 @@ function runMatch(
     let state: GameState = createInitialState(map, initialDoctrine);
     applyControlProfileDefaults(state);
     configureGamePortals(state, portalContext, window.location.href);
+    if (resolvedLaunch.mode === "pvp") {
+      state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}). Server-authoritative sync is active for room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
+    } else if (resolvedLaunch.mode === "fallback_ai") {
+      state.lastMessage = "No human opponent found quickly — AI rival engaged.";
+    }
+    let onlineSession: OnlineMatchSession | null = null;
+    if (resolvedLaunch.mode === "pvp") {
+      const room = getActiveBattleRoom();
+      if (room) {
+        onlineSession = attachOnlineMatchRoom(room, {
+          matchId: resolvedLaunch.matchId,
+          onSnapshot: (snapshot) => {
+            if (snapshot.phase === "playing") {
+              const syncStats = onlineSession?.stats();
+              const gapCopy = syncStats && syncStats.gaps > 0 ? ` (${syncStats.gaps} net gap${syncStats.gaps === 1 ? "" : "s"})` : "";
+              state.lastMessage = `Online sync tick ${snapshot.serverTick}${gapCopy} — rendering authoritative snapshots.`;
+            }
+          },
+          onOpponentAiTakeover: () => {
+            resolvedLaunch = { ...resolvedLaunch, mode: "fallback_ai", fallbackReason: "opponent_left" };
+            state.lastMessage = "Opponent disconnected — AI has taken over.";
+          },
+          onInvalidMessage: (reason) => {
+            console.warn("[multiplayer] invalid message", reason);
+          },
+          onLifecycle: (event, payload) => {
+            console.info("[multiplayer] lifecycle", event, payload);
+          },
+        });
+      }
+    }
     let replay = createReplayCapture(state, map);
     const matchAbort = new AbortController();
     const signal = matchAbort.signal;
@@ -790,6 +868,19 @@ function runMatch(
     let last = performance.now();
     let rafId = 0;
     let leaderboardRecordedPhase: GameState["phase"] | null = null;
+    const recordCompletedMatch = (completed: GameState): void => {
+      recordLocalLeaderboardResult(completed, portalContext.params.username);
+      void submitDamageLeaderboardEntry({
+        username: portalContext.params.username,
+        damage: completed.stats.damageDealtPlayer,
+        phase: completed.phase,
+        durationTicks: completed.tick,
+        matchMode: resolvedLaunch.mode === "matchmake" ? "ai" : resolvedLaunch.mode,
+        mapId: map.mapId ?? mapUrl,
+        clientMatchId: resolvedLaunch.matchId,
+      })
+        .catch(() => undefined);
+    };
 
     const tick = (now: number): void => {
       const dt = Math.min(0.1, (now - last) / 1000);
@@ -809,6 +900,7 @@ function runMatch(
           const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
           first = false;
           const tickBefore = state.tick;
+          if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
           advanceTick(state, chunk);
           captureReplayTick(replay, tickBefore, chunk, state);
           if (state.portal.pendingRedirectUrl) {
@@ -838,7 +930,7 @@ function runMatch(
       renderer.render();
       markFirstInteractiveOnce(state);
       if (state.phase !== "playing" && leaderboardRecordedPhase !== state.phase) {
-        recordLocalLeaderboardResult(state, portalContext.params.username);
+        recordCompletedMatch(state);
         leaderboardRecordedPhase = state.phase;
       }
       updateHud(state);
@@ -848,6 +940,8 @@ function runMatch(
 
     const rematch = (): void => {
       cancelAnimationFrame(rafId);
+      onlineSession?.dispose();
+      onlineSession = null;
       pendingIntents.length = 0;
       clearGameLog();
       renderer.clearCastFx();
@@ -867,6 +961,8 @@ function runMatch(
 
     const returnToDoctrine = (): void => {
       cancelAnimationFrame(rafId);
+      onlineSession?.dispose();
+      onlineSession = null;
       matchAbort.abort();
       pendingIntents.length = 0;
       clearGameLog();
@@ -1177,7 +1273,14 @@ function runMatch(
         }
         return;
       }
-      // Middle = camera pan (OrbitControls); do not treat as a map click.
+      // Middle = camera pan (OrbitControls); this is an explicit camera takeover, not a map click.
+      if (ev.button === 1) {
+        if (renderer.releaseCameraFollowLock()) {
+          state.lastMessage = "Camera free — lock on wizard with Camera/C or select a unit and press Z.";
+          syncCameraFollowUi(hudRoot, false);
+        }
+        return;
+      }
       if (ev.button !== 0 && ev.button !== 2) return;
       if ((ev.buttons & 1) && (ev.buttons & 2)) {
         beginChordCameraDrag(ev);
@@ -1528,8 +1631,12 @@ const mountPortalPicker = (onReady?: () => void): void => {
       /* ignore */
     }
   }
-  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl) => {
-    runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext);
+  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl, mode = "ai") => {
+    runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext, {
+      mode,
+      matchId: makeClientMatchId(),
+      queueState: mode === "matchmake" ? "searching" : "idle",
+    });
   }, portalContext, onReady);
 };
 
@@ -1548,7 +1655,12 @@ async function boot(): Promise<void> {
         /* ignore */
       }
     }
-    runMatch([...slotRow], mapUrl, mountPortalPicker, portalContext);
+    const mode = normalizeMatchMode(params.get("opponent"));
+    runMatch([...slotRow], mapUrl, mountPortalPicker, portalContext, {
+      mode,
+      matchId: makeClientMatchId(),
+      queueState: mode === "matchmake" ? "searching" : "idle",
+    });
   } else {
     mountPortalPicker();
   }

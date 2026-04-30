@@ -1,4 +1,8 @@
 import {
+  FORMATION_ASSEMBLY_CATCHUP_MULT,
+  FORMATION_ASSEMBLY_TICKS,
+  FORMATION_CATCHUP_RADIUS,
+  FORMATION_TRAVEL_CATCHUP_MULT,
   HERO_FOLLOW_RADIUS,
   KNOCKBACK_DECAY_PER_SEC,
   TICK_HZ,
@@ -24,6 +28,7 @@ import {
   armTapClaimAnchor,
   pushFx,
   tacticsFieldSpeedMult,
+  unitSpellStatusSpeedMult,
   type GameState,
   type StructureRuntime,
   type UnitRuntime,
@@ -411,17 +416,95 @@ function idleOffenseTarget(s: GameState, u: UnitRuntime, st: StructureRuntime | 
   return patrolTarget(s, u, anchor);
 }
 
+function clearFormationOrderFields(u: UnitRuntime): void {
+  if (!u.order) return;
+  delete u.order.formationGroupId;
+  delete u.order.formationOffsetX;
+  delete u.order.formationOffsetZ;
+  u.order.waypoints = [];
+}
+
+function clearFormationMarch(s: GameState, id: number): void {
+  const march = s.formationMarches.find((m) => m.id === id);
+  if (!march) return;
+  s.formationMarches = s.formationMarches.filter((m) => m.id !== id);
+  const ids = new Set(march.memberIds);
+  for (const u of s.units) {
+    if (ids.has(u.id) && u.order?.formationGroupId === id) clearFormationOrderFields(u);
+  }
+}
+
+function activeFormationMarch(s: GameState, u: UnitRuntime): GameState["formationMarches"][number] | null {
+  const id = u.order?.formationGroupId;
+  if (id === undefined) return null;
+  return s.formationMarches.find((m) => m.id === id) ?? null;
+}
+
+function advanceFormationMarches(s: GameState, stepScale: number): void {
+  for (const march of [...s.formationMarches]) {
+    const assembling = s.tick - march.issuedTick <= FORMATION_ASSEMBLY_TICKS;
+    let shouldBreak = false;
+    const keepIds: number[] = [];
+    for (const id of march.memberIds) {
+      const u = s.units.find((x) => x.id === id);
+      if (!u || u.hp <= 0 || u.order?.formationGroupId !== march.id) {
+        if (assembling) {
+          shouldBreak = true;
+          break;
+        }
+        continue;
+      }
+      const scattered = Math.hypot(u.vxImpulse, u.vzImpulse) > 0.2;
+      const controlled = (u.spellStatuses ?? []).some((st) => st.untilTick > s.tick);
+      if (scattered || controlled) {
+        shouldBreak = true;
+        break;
+      }
+      keepIds.push(id);
+    }
+    if (shouldBreak) {
+      clearFormationMarch(s, march.id);
+      continue;
+    }
+    if (keepIds.length !== march.memberIds.length) {
+      march.memberIds = keepIds;
+      if (march.memberIds.length === 0) {
+        clearFormationMarch(s, march.id);
+        continue;
+      }
+    }
+
+    const dx = march.goalX - march.anchorX;
+    const dz = march.goalZ - march.anchorZ;
+    const d = Math.hypot(dx, dz);
+    if (d <= 0.03) {
+      march.anchorX = march.goalX;
+      march.anchorZ = march.goalZ;
+      continue;
+    }
+    const step = march.speedPerSec * UNIT_MOVEMENT_SPEED_SCALE * stepScale;
+    const t = Math.min(1, step / d);
+    march.anchorX += dx * t;
+    march.anchorZ += dz * t;
+  }
+}
+
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
   const half = s.map.world.halfExtents;
   const structureObstacles = structureObstacleFootprints(s);
   const stepU = (u: UnitRuntime) =>
-    u.speedPerSec * stepScale * tacticsFieldSpeedMult(s, u.team, u.x, u.z) * UNIT_MOVEMENT_SPEED_SCALE;
+    u.speedPerSec *
+    stepScale *
+    tacticsFieldSpeedMult(s, u.team, u.x, u.z) *
+    unitSpellStatusSpeedMult(u) *
+    UNIT_MOVEMENT_SPEED_SCALE;
 
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     integrateKnockback(s, u, stepScale, structureObstacles);
   }
+  advanceFormationMarches(s, stepScale);
 
   const anyEnemyCampAwake =
     s.map.enemyCamps.length === 0 || s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
@@ -482,12 +565,34 @@ export function movement(s: GameState): void {
       const foe = u.order.mode === "attack_move"
         ? nearestEnemyUnit(s, u, playerAcquireRadius(half, u.range) ** 2)
         : null;
+      const formation = activeFormationMarch(s, u);
+      if (formation && foe) {
+        clearFormationMarch(s, formation.id);
+      }
       if (foe && dist2(u, foe) > u.range * u.range) {
         moveUnitOnPath(s, u, foe, stepU(u), structureObstacles);
         continue;
       }
       if (foe) {
         clampToWorldAndObstacles(s, u, structureObstacles);
+        continue;
+      }
+      if (formation) {
+        const target = {
+          x: formation.anchorX + (u.order.formationOffsetX ?? 0),
+          z: formation.anchorZ + (u.order.formationOffsetZ ?? 0),
+        };
+        if (dist2(u.order, target) > 1.2 * 1.2) u.order.waypoints = [];
+        u.order.x = target.x;
+        u.order.z = target.z;
+        const error = Math.sqrt(dist2(u, target));
+        const catchingUp = Math.min(1, error / FORMATION_CATCHUP_RADIUS);
+        const catchupCap =
+          s.tick - formation.issuedTick <= FORMATION_ASSEMBLY_TICKS
+            ? FORMATION_ASSEMBLY_CATCHUP_MULT
+            : FORMATION_TRAVEL_CATCHUP_MULT;
+        const step = stepU(u) * (1 + (catchupCap - 1) * catchingUp);
+        moveUnitOnPath(s, u, target, step, structureObstacles);
         continue;
       }
       const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstacles);
@@ -497,6 +602,7 @@ export function movement(s: GameState): void {
           u.order.x = next.x;
           u.order.z = next.z;
           u.order.waypoints = [];
+          clearFormationOrderFields(u);
         } else {
           u.order = undefined;
         }

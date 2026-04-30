@@ -4,7 +4,12 @@ import { productionBatchSizeForClass } from "../../game/sim/systems/helpers";
 import type { CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
-import { isCardOverlayFieldVisible, overlayVisibilityStampForCatalog } from "../cardArtOverlay";
+import {
+  containCardArtRect,
+  drawCardArtOverlayOnCanvasRect,
+  isCardOverlayFieldVisible,
+  overlayVisibilityStampForCatalog,
+} from "../cardArtOverlay";
 import { CARD_ART_CACHE_BUSTER } from "../cardArtManifest";
 import { getCardPreviewDataUrl, configureImageCrossOriginForSrc } from "../cardGlbPreview";
 import { binderPanelPixelSize } from "./CardBinderEngine";
@@ -70,24 +75,8 @@ function drawImageContain(
 ): void {
   const { iw, ih } = intrinsicSize(img);
   if (iw < 1 || ih < 1) return;
-  const ar = iw / ih;
-  const br = boxW / boxH;
-  let dw: number;
-  let dh: number;
-  let dx: number;
-  let dy: number;
-  if (ar > br) {
-    dw = boxW;
-    dh = boxW / ar;
-    dx = boxX;
-    dy = boxY + (boxH - dh) / 2;
-  } else {
-    dh = boxH;
-    dw = boxH * ar;
-    dx = boxX + (boxW - dw) / 2;
-    dy = boxY;
-  }
-  ctx.drawImage(img, 0, 0, iw, ih, dx, dy, dw, dh);
+  const r = containCardArtRect(boxX, boxY, boxW, boxH, iw, ih);
+  ctx.drawImage(img, 0, 0, iw, ih, r.x, r.y, r.w, r.h);
 }
 
 function authoredSpellGlowPalette(e: CommandCatalogEntry, hue: number): { core: string; rim: string; hot: string } {
@@ -259,8 +248,10 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   if (mappedImg && manifestFullCardArtCatalogIds.has(catalogId)) {
     ctx.fillStyle = "#080b11";
     ctx.fillRect(0, 0, w, h);
-    drawImageContain(ctx, mappedImg, 0, 0, w, h);
+    const artRect = containCardArtRect(0, 0, w, h, mappedImg.naturalWidth, mappedImg.naturalHeight);
+    ctx.drawImage(mappedImg, 0, 0, mappedImg.naturalWidth, mappedImg.naturalHeight, artRect.x, artRect.y, artRect.w, artRect.h);
     if (isCommandEntry(e)) drawAuthoredSpellBinderMotion(ctx, e as CommandCatalogEntry, w, h, hue, spellTimeSec);
+    drawCardArtOverlayOnCanvasRect(ctx, catalogId, artRect.x, artRect.y, artRect.w, artRect.h);
     return c;
   }
 

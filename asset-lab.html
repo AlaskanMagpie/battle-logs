@@ -227,11 +227,11 @@
         padding: 2px;
         box-sizing: border-box;
       }
-      /* Fill port width; cap width by available height so 100:140 card fits without excess letterboxing. */
+      /* Fill port width; cap width by available height so 100:150 (2:3) card fits without excess letterboxing. */
       .al-card-zoom-inner {
         transform-origin: center top;
         flex-shrink: 0;
-        width: min(100%, calc(100cqh * 100 / 140));
+        width: min(100%, calc(100cqh * 100 / 150));
         max-width: 100%;
       }
       .al-gutter {
@@ -263,7 +263,7 @@
         position: relative;
         width: 100%;
         margin-inline: auto;
-        aspect-ratio: 100 / 140;
+        aspect-ratio: 100 / 150;
         border-radius: 10px;
         overflow: hidden;
         border: 1px solid #2f3d52;
@@ -541,7 +541,7 @@
                     </div>
                   </div>
                   <p class="al-status" id="al-card-hint" style="margin-top: 8px; max-width: none">
-                    Overlays: normalized 100×140. Use the sidebar zoom slider to scale the card; “Hide stat overlays” toggles the SVG. Calibrate mode logs coords on click.
+                    Overlays: normalized 100×150 (2:3 with print / binder). Use the sidebar zoom slider to scale the card; “Hide stat overlays” toggles the SVG. Calibrate mode logs coords on click.
                   </p>
                 </div>
               </div>

@@ -12,33 +12,33 @@
       "fields": {
         "mana": {
           "x": 13.7,
-          "y": 14.6,
+          "y": 15.6,
           "width": 18.1,
-          "height": 12.9
+          "height": 13.8
         },
         "cooldown": {
           "x": 59.3,
-          "y": 82.9,
+          "y": 88.8,
           "width": 16.1,
-          "height": 12.4
+          "height": 13.3
         },
         "hp": {
           "x": 24.9,
-          "y": 82.8,
+          "y": 88.7,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "prod": {
           "x": 41.5,
-          "y": 104.1,
+          "y": 111.5,
           "width": 24.8,
-          "height": 14.6
+          "height": 15.6
         },
         "batch": {
           "x": 89.6,
-          "y": 82.5,
+          "y": 88.4,
           "width": 24,
-          "height": 10
+          "height": 10.7
         }
       }
     },
@@ -46,33 +46,33 @@
       "fields": {
         "mana": {
           "x": 16.9,
-          "y": 14.9,
+          "y": 16,
           "width": 19.5,
-          "height": 13.9
+          "height": 14.9
         },
         "cooldown": {
           "x": 49.4,
-          "y": 100.2,
+          "y": 107.4,
           "width": 19.3,
-          "height": 14.8
+          "height": 15.9
         },
         "hp": {
           "x": 19.8,
-          "y": 99.8,
+          "y": 106.9,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "prod": {
           "x": 83.7,
-          "y": 124.7,
+          "y": 133.6,
           "width": 21,
-          "height": 12.3
+          "height": 13.2
         },
         "batch": {
           "x": 85.3,
-          "y": 99,
+          "y": 106.1,
           "width": 29.7,
-          "height": 12.3
+          "height": 13.2
         }
       }
     },
@@ -80,33 +80,33 @@
       "fields": {
         "mana": {
           "x": 15.6,
-          "y": 13.8,
+          "y": 14.8,
           "width": 16.9,
-          "height": 12.1
+          "height": 13
         },
         "cooldown": {
           "x": 49.3,
-          "y": 97.4,
+          "y": 104.4,
           "width": 18.3,
-          "height": 14.1
+          "height": 15.1
         },
         "hp": {
           "x": 19.8,
-          "y": 97.4,
+          "y": 104.4,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "prod": {
           "x": 87.3,
-          "y": 123.9,
+          "y": 132.8,
           "width": 20.3,
-          "height": 12
+          "height": 12.9
         },
         "batch": {
           "x": 85,
-          "y": 97.1,
+          "y": 104,
           "width": 30.5,
-          "height": 12.8
+          "height": 13.7
         }
       }
     },
@@ -114,169 +114,213 @@
       "fields": {
         "mana": {
           "x": 17,
-          "y": 15.3,
+          "y": 16.4,
           "width": 15,
-          "height": 10.7
+          "height": 11.5
         },
         "cooldown": {
           "x": 50.2,
-          "y": 102.1,
+          "y": 109.4,
           "width": 14.8,
-          "height": 11.4
+          "height": 12.2
         },
         "hp": {
           "x": 21.1,
-          "y": 102.5,
+          "y": 109.8,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "prod": {
           "x": 87.7,
-          "y": 122.5,
+          "y": 131.3,
           "width": 16.3,
-          "height": 9.6
+          "height": 10.3
         },
         "batch": {
           "x": 84.9,
-          "y": 103,
+          "y": 110.4,
           "width": 31.9,
-          "height": 13.3
+          "height": 14.3
+        }
+      }
+    },
+    "emberroot_bastion": {
+      "fields": {
+        "mana": {
+          "x": 11.2,
+          "y": 18.9,
+          "width": 14.6,
+          "height": 11.1
+        },
+        "cooldown": {
+          "x": 50.6,
+          "y": 89.8,
+          "width": 19.7,
+          "height": 16.2
+        },
+        "hp": {
+          "x": 21.1,
+          "y": 88.9,
+          "width": 17,
+          "height": 10.7
+        },
+        "prod": {
+          "x": 90.3,
+          "y": 121.6,
+          "width": 18.1,
+          "height": 11.3
+        },
+        "batch": {
+          "x": 88.3,
+          "y": 88.6,
+          "width": 30.4,
+          "height": 13.5
+        }
+      }
+    },
+    "aionroot_observatory": {
+      "fields": {
+        "mana": {
+          "x": 12.9,
+          "y": 17.2,
+          "width": 16.9,
+          "height": 12.9
+        },
+        "cooldown": {
+          "x": 88,
+          "y": 101.7,
+          "width": 19.7,
+          "height": 16.2
+        },
+        "hp": {
+          "x": 67.6,
+          "y": 101.6,
+          "width": 17,
+          "height": 10.7
+        },
+        "prod": {
+          "x": 42.1,
+          "y": 123.3,
+          "width": 18.1,
+          "height": 11.3
+        },
+        "batch": {
+          "x": 49.7,
+          "y": 102,
+          "width": 30.4,
+          "height": 13.5
         }
       }
     },
     "recycle": {
       "fields": {
         "mana": {
-          "x": 18.8,
-          "y": 15.1,
-          "width": 18.4,
-          "height": 13.1
+          "x": 16,
+          "y": 15.8,
+          "width": 25.9,
+          "height": 19.8
         },
         "cooldown": {
-          "x": 51.7,
-          "y": 134.2,
-          "width": 28,
-          "height": 21.6
-        },
-        "uses": {
-          "x": 84.6,
-          "y": 11.5,
-          "width": 32.5,
-          "height": 19.1
+          "x": 39.1,
+          "y": 140,
+          "width": 18.9,
+          "height": 15.6
         },
         "salvage": {
           "x": 50,
-          "y": 93,
+          "y": 99.6,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "effect": {
           "x": 75,
-          "y": 103.2,
+          "y": 110.6,
           "width": 24,
-          "height": 10
+          "height": 10.7
         }
       }
     },
     "firestorm": {
       "fields": {
         "mana": {
-          "x": 20.4,
-          "y": 16.6,
-          "width": 19.6,
-          "height": 14
+          "x": 18.2,
+          "y": 17.5,
+          "width": 24.1,
+          "height": 18.4
         },
         "cooldown": {
-          "x": 36.1,
-          "y": 131.5,
-          "width": 26.7,
-          "height": 20.5
-        },
-        "uses": {
-          "x": 84.7,
-          "y": 12.2,
+          "x": 35.4,
+          "y": 140,
           "width": 28,
-          "height": 16.4
+          "height": 23.1
         },
         "salvage": {
           "x": 50,
-          "y": 93,
+          "y": 99.6,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "effect": {
           "x": 75,
-          "y": 103.2,
+          "y": 110.6,
           "width": 24,
-          "height": 10
+          "height": 10.7
         }
       }
     },
     "fortify": {
       "fields": {
         "mana": {
-          "x": 20.1,
-          "y": 16.5,
-          "width": 22,
-          "height": 15.7
+          "x": 17.3,
+          "y": 17.6,
+          "width": 26,
+          "height": 19.9
         },
         "cooldown": {
-          "x": 53.4,
-          "y": 132.2,
+          "x": 38.4,
+          "y": 140,
           "width": 27,
-          "height": 20.7
-        },
-        "uses": {
-          "x": 86.2,
-          "y": 9.9,
-          "width": 29.2,
-          "height": 17.2
+          "height": 22.2
         },
         "salvage": {
           "x": 50,
-          "y": 93,
+          "y": 99.6,
           "width": 17,
-          "height": 10
+          "height": 10.7
         },
         "effect": {
           "x": 75,
-          "y": 103.2,
+          "y": 110.6,
           "width": 24,
-          "height": 10
+          "height": 10.7
         }
       }
     },
     "shatter": {
       "fields": {
         "mana": {
-          "x": 20.3,
-          "y": 17.9,
-          "width": 20.3,
-          "height": 14.5
+          "x": 18.5,
+          "y": 20.3,
+          "width": 23.5,
+          "height": 18
         },
         "cooldown": {
-          "x": 50.8,
-          "y": 134.2,
-          "width": 26.2,
-          "height": 20.1
-        },
-        "uses": {
-          "x": 85,
-          "y": 12,
-          "width": 28.5,
-          "height": 16.7
+          "x": 36,
+          "y": 140,
+          "width": 24.4,
+          "height": 20
         },
         "salvage": {
           "x": 82.2,
-          "y": 135.2,
+          "y": 140,
           "width": 18.2,
-          "height": 10.8
+          "height": 11.6
         },
         "effect": {
           "x": 80.6,
-          "y": 134.1,
+          "y": 140,
           "width": 20.5,
-          "height": 8.6
+          "height": 9.2
         }
       }
     }

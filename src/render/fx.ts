@@ -1,7 +1,18 @@
 import * as THREE from "three";
-import { FX_ABSOLUTE_MAX_LIFETIME_SEC, PRODUCED_UNIT_AMBER_GEODE_MONKS } from "../game/constants";
+import {
+  FX_ABSOLUTE_MAX_LIFETIME_SEC,
+  PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+} from "../game/constants";
 import type { CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
-import type { AttackRangeBand, SpellFxElement, SpellFxShape } from "../game/types";
+import {
+  ELEMENTAL_FX_REQUIRED_SHAPES,
+  SPELL_FX_ELEMENTS,
+  type AttackRangeBand,
+  type ElementalFxRequiredShape,
+  type SpellFxElement,
+  type SpellFxShape,
+} from "../game/types";
 
 export type CastFxSpawnOpts = {
   from?: { x: number; z: number };
@@ -259,6 +270,30 @@ interface ElementalPalette {
   shadow: number;
 }
 
+type ElementalFxContract = {
+  /** Required gameplay silhouettes every element must render: line, cone, ranged AOE, centered AOE, surprise. */
+  requiredShapes: readonly ElementalFxRequiredShape[];
+  /** The element's bespoke "surprise me" renderer route. Exhaustive by `SpellFxElement`. */
+  surpriseShape: Exclude<SpellFxShape, "surprise">;
+};
+
+export const ELEMENTAL_FX_CONTRACT: Record<SpellFxElement, ElementalFxContract> = {
+  fire: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "meteor" },
+  lightning: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "chain" },
+  earth: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "burst" },
+  water: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "line" },
+  air: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "cone" },
+  lava: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "meteor" },
+  snow: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "burst" },
+  arcane: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "field" },
+  reclaim: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "beam" },
+  shield: { requiredShapes: ELEMENTAL_FX_REQUIRED_SHAPES, surpriseShape: "field" },
+};
+
+export function elementalFxContractElements(): readonly SpellFxElement[] {
+  return SPELL_FX_ELEMENTS;
+}
+
 function spellPalette(element: SpellFxElement): ElementalPalette {
   switch (element) {
     case "fire":
@@ -271,6 +306,10 @@ function spellPalette(element: SpellFxElement): ElementalPalette {
       return { core: 0xe8ffff, hot: 0x52d8ff, rim: 0x187dff, trail: 0x9affee, shadow: 0x0a3155 };
     case "air":
       return { core: 0xd7fff2, hot: 0x8df5d3, rim: 0x59bfff, trail: 0xe8fff6, shadow: 0x244455 };
+    case "lava":
+      return { core: 0xfff0a8, hot: 0xff7a16, rim: 0xd61f00, trail: 0xffb13b, shadow: 0x35120b };
+    case "snow":
+      return { core: 0xffffff, hot: 0xbff4ff, rim: 0x78bfff, trail: 0xe8fbff, shadow: 0x42607d };
     case "reclaim":
       return { core: 0xf2ddff, hot: 0x8affc8, rim: 0xff66dd, trail: 0xc86bff, shadow: 0x2b1742 };
     case "shield":
@@ -315,20 +354,25 @@ function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?:
   const element = opts?.element ?? "arcane";
   const shape = opts?.shape ?? "impact";
   const pal = spellPalette(element);
+  if (shape === "surprise") return spawnElementalSurprise(host, pos, opts, pal, element);
   switch (shape) {
     case "bolt":
-    case "chain":
       return spawnElementalBolt(host, pos, opts, pal);
+    case "chain":
+      return spawnElementalChainLightning(host, pos, opts, pal);
     case "beam":
       return spawnElementalLine(host, pos, opts, pal, true);
     case "line":
       return spawnElementalLine(host, pos, opts, pal, false);
     case "cone":
+      if (element === "air") return spawnElementalAirCone(host, pos, opts, pal);
       return spawnElementalCone(host, pos, opts, pal);
     case "field":
       return spawnElementalField(host, pos, opts, pal);
     case "meteor":
-      return spawnElementalMeteor(host, pos, opts, pal);
+      return element === "fire" || element === "lava"
+        ? spawnElementalFireMeteor(host, pos, opts, pal)
+        : spawnElementalMeteor(host, pos, opts, pal);
     case "aoe":
       return spawnElementalAoe(host, pos, opts, pal, false);
     case "impact":
@@ -336,6 +380,52 @@ function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?:
     default:
       return spawnElementalAoe(host, pos, opts, pal, true);
   }
+}
+
+function withShape(opts: CastFxSpawnOpts | undefined, shape: SpellFxShape): CastFxSpawnOpts {
+  return { ...(opts ?? {}), shape };
+}
+
+function spawnElementalSurprise(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  element: SpellFxElement,
+): void {
+  const surprise = ELEMENTAL_FX_CONTRACT[element].surpriseShape;
+  switch (element) {
+    case "fire":
+      return spawnElementalFireMeteor(host, pos, { ...withShape(opts, surprise), impactRadius: (opts?.impactRadius ?? 9) * 1.15 }, pal);
+    case "lightning":
+      return spawnElementalChainLightning(host, pos, { ...withShape(opts, surprise), impactRadius: (opts?.impactRadius ?? 10) * 1.12 }, pal);
+    case "earth":
+      return spawnElementalGeodeImpact(host, pos, { ...withShape(opts, surprise), impactRadius: (opts?.impactRadius ?? 8) * 1.2 }, pal, false);
+    case "water":
+      return spawnElementalWaterSpiral(host, pos, opts, pal);
+    case "air":
+      return spawnElementalAirBurst(host, pos, { ...withShape(opts, surprise), impactRadius: (opts?.impactRadius ?? 8) * 1.18 }, pal, false);
+    case "lava":
+      return spawnElementalLavaGeyser(host, pos, opts, pal);
+    case "snow":
+      return spawnElementalSnowBlizzard(host, pos, opts, pal);
+    case "arcane":
+      return spawnElementalArcaneRift(host, pos, opts, pal);
+    case "reclaim":
+      return spawnElementalReclaimBloom(host, pos, opts, pal);
+    case "shield":
+      return spawnElementalShieldBastion(host, pos, opts, pal);
+  }
+}
+
+function makeSoftSmokeMat(opacity: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: 0x2a201c,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.NormalBlending,
+  });
 }
 
 function spawnElementalBolt(
@@ -437,6 +527,82 @@ function spawnElementalBolt(
   });
 }
 
+function spawnElementalChainLightning(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const life = 0.46;
+  const root = new THREE.Group();
+  const seed = elementalSeed(pos, opts);
+  const from = opts?.from;
+  const radius = Math.max(4, opts?.impactRadius ?? 10);
+  const start = from ?? { x: pos.x + (rnd(seed, 1) - 0.5) * radius, z: pos.z + (rnd(seed, 2) - 0.5) * radius };
+  const mainDist = Math.hypot(pos.x - start.x, pos.z - start.z);
+  const mainSegs = Math.max(8, Math.min(22, Math.round(mainDist * 0.85)));
+  const bolts: THREE.Line[] = [];
+  const makeBolt = (
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+    color: number,
+    opacity: number,
+    jitterMul: number,
+    idx: number,
+  ): void => {
+    const d = Math.hypot(bx - ax, bz - az);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(
+        heroStrikeBoltPoints(ax, az, bx, bz, Math.max(5, Math.min(18, Math.round(d * 0.75))), Math.max(0.35, d * 0.08 * jitterMul), seed + idx * 19),
+        3,
+      ),
+    );
+    const line = new THREE.Line(geo, lineMat(color, opacity));
+    bolts.push(line);
+    root.add(line);
+  };
+  makeBolt(start.x, start.z, pos.x, pos.z, pal.core, 0.98, 1.05, 0);
+  makeBolt(start.x, start.z, pos.x, pos.z, pal.rim, 0.45, 1.55, 1);
+
+  const branchCount = 4;
+  for (let i = 0; i < branchCount; i++) {
+    const t = 0.2 + rnd(seed, i + 20) * 0.62;
+    const bx = start.x + (pos.x - start.x) * t;
+    const bz = start.z + (pos.z - start.z) * t;
+    const a = rnd(seed, i + 30) * Math.PI * 2;
+    const len = radius * (0.25 + rnd(seed, i + 40) * 0.32);
+    makeBolt(bx, bz, bx + Math.cos(a) * len, bz + Math.sin(a) * len, i % 2 === 0 ? pal.hot : pal.trail, 0.46, 1.2, i + 3);
+  }
+
+  const impact = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.82, 46), fxMat(pal.core, 0.88));
+  impact.rotation.x = -Math.PI / 2;
+  impact.position.set(pos.x, 0.12, pos.z);
+  root.add(impact);
+  const corona = new THREE.Mesh(new THREE.CircleGeometry(1.1, 34), fxMat(pal.hot, 0.42));
+  corona.rotation.x = -Math.PI / 2;
+  corona.position.set(pos.x, 0.1, pos.z);
+  root.add(corona);
+
+  spawn(host, root, life, (t) => {
+    const p = Math.min(1, t / life);
+    const snap = t < 0.21 ? 1 : Math.max(0, 1 - (t - 0.21) / (life - 0.21));
+    const flicker = 0.54 + 0.46 * Math.abs(Math.sin(t * 137 + mainSegs));
+    for (let i = 0; i < bolts.length; i++) {
+      const m = bolts[i]!.material as THREE.LineBasicMaterial;
+      m.opacity = (i < 2 ? 0.98 : 0.46) * snap * flicker;
+      bolts[i]!.visible = m.opacity > 0.025;
+    }
+    impact.scale.setScalar(1 + p * radius * 0.28);
+    (impact.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
+    corona.scale.setScalar(1 + p * radius * 0.16);
+    (corona.material as THREE.MeshBasicMaterial).opacity = 0.42 * (1 - p);
+  });
+}
+
 function spawnElementalLine(
   host: FxHost,
   end: { x: number; z: number },
@@ -444,6 +610,7 @@ function spawnElementalLine(
   pal: ElementalPalette,
   focused: boolean,
 ): void {
+  if (opts?.element === "water" || pal.shadow === 0x0a3155) return spawnElementalWaterLine(host, end, opts, pal, focused);
   const from = opts?.from;
   if (!from) return spawnElementalAoe(host, end, opts, pal, true);
   const dx = end.x - from.x;
@@ -531,6 +698,127 @@ function spawnElementalLine(
   });
 }
 
+function spawnElementalWaterLine(
+  host: FxHost,
+  end: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  focused: boolean,
+): void {
+  const from = opts?.from;
+  if (!from) return spawnElementalAoe(host, end, opts, pal, true);
+  const dx = end.x - from.x;
+  const dz = end.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  const L = Math.max(1, opts?.reach ?? dist);
+  const width = Math.max(1.2, opts?.width ?? opts?.impactRadius ?? 5.5);
+  const life = 0.9;
+  const group = new THREE.Group();
+  const ux = dx / (dist || 1);
+  const uz = dz / (dist || 1);
+  const ex = from.x + ux * L;
+  const ez = from.z + uz * L;
+  group.position.set((from.x + ex) * 0.5, 0.12, (from.z + ez) * 0.5);
+  group.rotation.y = Math.atan2(ux, uz);
+
+  const wash = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, L), fxMat(pal.rim, focused ? 0.14 : 0.18));
+  wash.position.y = 0.02;
+  group.add(wash);
+
+  const waves: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; offset: number; side: number }[] = [];
+  const waveCount = Math.min(9, Math.max(4, Math.round(L / 7)));
+  for (let i = 0; i < waveCount; i++) {
+    const mat = fxMat(i % 2 === 0 ? pal.core : pal.trail, 0.58);
+    const wave = new THREE.Mesh(new THREE.TorusGeometry(width * (0.18 + (i % 3) * 0.025), 0.035, 5, 34, Math.PI * 1.15), mat);
+    wave.rotation.x = Math.PI / 2;
+    wave.rotation.z = i % 2 === 0 ? 0 : Math.PI;
+    wave.position.set((i % 2 === 0 ? -1 : 1) * width * 0.18, 0.2, -L * 0.48 + (i / Math.max(1, waveCount - 1)) * L);
+    waves.push({ mesh: wave, mat, offset: i / waveCount, side: i % 2 === 0 ? -1 : 1 });
+    group.add(wave);
+  }
+
+  const seed = elementalSeed(end, opts);
+  const droplets: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
+  const dropletCount = Math.min(22, Math.max(8, Math.round(L * 0.22)));
+  for (let i = 0; i < dropletCount; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : pal.hot, 0.62);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.07 + rnd(seed, i) * 0.05, 5, 4), mat);
+    mesh.position.set((rnd(seed, i + 10) - 0.5) * width, 0.18 + rnd(seed, i + 20) * 0.34, -L * 0.46 + rnd(seed, i + 30) * L * 0.92);
+    droplets.push({
+      mesh,
+      mat,
+      vx: (rnd(seed, i + 40) - 0.5) * 2.2,
+      vy: 1.4 + rnd(seed, i + 50) * 2.0,
+      vz: 2.6 + rnd(seed, i + 60) * 4.6,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    const crest = Math.sin(p * Math.PI);
+    wash.scale.set(1 + crest * 0.08, 1, 1);
+    (wash.material as THREE.MeshBasicMaterial).opacity = (focused ? 0.14 : 0.18) * (1 - p * 0.82);
+    for (const w of waves) {
+      const phase = (p + w.offset) % 1;
+      w.mesh.position.z = -L * 0.52 + phase * L * 1.04;
+      w.mesh.position.x = w.side * width * (0.16 + Math.sin(t * 10 + w.offset * 9) * 0.08);
+      w.mesh.scale.setScalar(0.75 + phase * 1.1);
+      w.mat.opacity = 0.58 * Math.sin(phase * Math.PI) * (1 - p * 0.42);
+    }
+    for (const d of droplets) {
+      d.mesh.position.x += d.vx * dt;
+      d.mesh.position.y += d.vy * dt;
+      d.mesh.position.z += d.vz * dt;
+      d.vy -= 6.2 * dt;
+      d.mat.opacity = 0.62 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalWaterSpiral(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(3.5, opts?.impactRadius ?? 8);
+  const life = 1.05;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.12, pos.z);
+  const ribbons: { line: THREE.Line; mat: THREE.LineBasicMaterial; phase: number }[] = [];
+  for (let r = 0; r < 4; r++) {
+    const pts: number[] = [];
+    for (let i = 0; i <= 28; i++) {
+      const t = i / 28;
+      const a = t * Math.PI * 2.6 + r * Math.PI * 0.5;
+      const rr = radius * (0.08 + t * 0.72);
+      pts.push(Math.cos(a) * rr, 0.12 + Math.sin(t * Math.PI) * (0.45 + r * 0.06), Math.sin(a) * rr);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    const mat = lineMat(r % 2 === 0 ? pal.core : pal.hot, 0.66);
+    const line = new THREE.Line(geo, mat);
+    ribbons.push({ line, mat, phase: r * 0.7 });
+    group.add(line);
+  }
+  const eye = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.72, 48), fxMat(pal.rim, 0.64));
+  eye.rotation.x = -Math.PI / 2;
+  group.add(eye);
+
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    group.rotation.y += 0.08;
+    eye.scale.setScalar(1 + Math.sin(p * Math.PI) * radius * 0.18);
+    (eye.material as THREE.MeshBasicMaterial).opacity = 0.64 * (1 - p);
+    for (const r of ribbons) {
+      r.line.rotation.y = -t * 2.8 + r.phase;
+      r.line.scale.setScalar(0.55 + Math.sin(p * Math.PI) * 0.82);
+      r.mat.opacity = 0.66 * (1 - p);
+    }
+  });
+}
+
 function spawnElementalCone(
   host: FxHost,
   pos: { x: number; z: number },
@@ -569,6 +857,76 @@ function spawnElementalCone(
     (outer.material as THREE.MeshBasicMaterial).opacity = 0.07 * (1 - p);
     (inner.material as THREE.MeshBasicMaterial).opacity = 0.09 * (1 - p * 0.9);
     (lip.material as THREE.MeshBasicMaterial).opacity = 0.2 * (1 - p);
+  });
+}
+
+function spawnElementalAirCone(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const from = opts?.from;
+  if (!from) return spawnElementalAirBurst(host, pos, opts, pal, true);
+  const dx = pos.x - from.x;
+  const dz = pos.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  const reach = Math.max(3, opts?.reach ?? dist);
+  const width = Math.max(2, opts?.width ?? opts?.impactRadius ?? reach * 0.62);
+  const life = 0.72;
+  const group = new THREE.Group();
+  group.position.set(from.x, 0.16, from.z);
+  group.rotation.y = Math.atan2(dx, dz);
+  const halfAngle = Math.max(0.18, Math.min(0.78, Math.atan2(width * 0.5, reach)));
+  const veil = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.08, 24), fxMat(pal.hot, 0.06));
+  group.add(veil);
+
+  const ribbons: { line: THREE.Line; mat: THREE.LineBasicMaterial; phase: number; side: number }[] = [];
+  for (let r = 0; r < 5; r++) {
+    const pts: number[] = [];
+    const side = r % 2 === 0 ? -1 : 1;
+    for (let i = 0; i <= 18; i++) {
+      const t = i / 18;
+      const sway = Math.sin(t * Math.PI * 2.2 + r * 1.1) * width * 0.1;
+      const fan = side * Math.sin(t * Math.PI) * width * (0.13 + r * 0.028);
+      pts.push(fan + sway, 0.32 + Math.sin(t * Math.PI) * (0.55 + r * 0.07), t * reach);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    const mat = lineMat(r % 2 === 0 ? pal.core : pal.trail, 0.5);
+    const line = new THREE.Line(geo, mat);
+    ribbons.push({ line, mat, phase: r * 0.47, side });
+    group.add(line);
+  }
+
+  const gusts: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; z: number; x: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const mat = fxMat(i % 2 === 0 ? pal.core : pal.hot, 0.34);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(width * (0.09 + i * 0.012), 0.025, 4, 28, Math.PI * 1.45), mat);
+    ring.rotation.x = Math.PI / 2;
+    ring.rotation.z = i % 2 ? Math.PI : 0;
+    ring.position.set((i % 2 ? 1 : -1) * width * 0.12, 0.36 + i * 0.035, reach * (0.14 + i * 0.1));
+    gusts.push({ mesh: ring, mat, z: ring.position.z, x: ring.position.x });
+    group.add(ring);
+  }
+
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const fade = 1 - p;
+    (veil.material as THREE.MeshBasicMaterial).opacity = 0.06 * fade;
+    for (const r of ribbons) {
+      r.line.position.x = Math.sin(t * 9 + r.phase) * width * 0.045;
+      r.line.position.y = Math.sin(t * 7 + r.phase) * 0.08;
+      r.mat.opacity = 0.5 * fade;
+    }
+    for (const g of gusts) {
+      const q = (p + g.z / reach) % 1;
+      g.mesh.position.z = q * reach;
+      g.mesh.position.x = g.x + Math.sin(t * 8 + q * 6) * width * 0.08;
+      g.mesh.rotation.z += 0.12;
+      g.mesh.scale.setScalar(0.7 + q * 0.8);
+      g.mat.opacity = 0.34 * Math.sin(q * Math.PI) * fade;
+    }
   });
 }
 
@@ -663,6 +1021,107 @@ function spawnElementalMeteor(
   });
 }
 
+function spawnElementalFireMeteor(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 10);
+  const life = 1.08;
+  const root = new THREE.Group();
+  const seed = elementalSeed(pos, opts);
+  const meteorCount = radius > 12 ? 4 : 3;
+  const meteors: {
+    mesh: THREE.Mesh;
+    trail: THREE.Line;
+    sx: number;
+    sy: number;
+    sz: number;
+    tx: number;
+    tz: number;
+    delay: number;
+  }[] = [];
+  for (let i = 0; i < meteorCount; i++) {
+    const a = rnd(seed, i + 8) * Math.PI * 2;
+    const landR = i === 0 ? 0 : radius * (0.18 + rnd(seed, i + 13) * 0.38);
+    const tx = pos.x + Math.cos(a) * landR;
+    const tz = pos.z + Math.sin(a) * landR;
+    const sx = tx - 7.5 - rnd(seed, i + 20) * 4.5;
+    const sz = tz - 5.5 + (rnd(seed, i + 30) - 0.5) * 5;
+    const sy = Math.max(20, radius * 1.55) + i * 1.7;
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute("position", new THREE.Float32BufferAttribute([sx, sy, sz, tx, 0.45, tz], 3));
+    const trail = new THREE.Line(trailGeo, lineMat(i % 2 === 0 ? pal.trail : pal.hot, 0.72));
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.72 : 0.46, 9, 7), fxMat(i === 0 ? pal.core : pal.hot, 0.96));
+    mesh.position.set(sx, sy, sz);
+    meteors.push({ mesh, trail, sx, sy, sz, tx, tz, delay: i * 0.075 });
+    root.add(trail, mesh);
+  }
+
+  const blast = new THREE.Mesh(new THREE.RingGeometry(0.42, 1.05, 64), fxMat(pal.hot, 0.9));
+  blast.rotation.x = -Math.PI / 2;
+  blast.position.set(pos.x, 0.13, pos.z);
+  root.add(blast);
+  const heat = new THREE.Mesh(new THREE.CircleGeometry(1, 48), fxMat(pal.rim, 0.28));
+  heat.rotation.x = -Math.PI / 2;
+  heat.position.set(pos.x, 0.08, pos.z);
+  root.add(heat);
+  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, 42), fxMat(pal.shadow, 0.34, false));
+  scorch.rotation.x = -Math.PI / 2;
+  scorch.position.set(pos.x, 0.025, pos.z);
+  root.add(scorch);
+
+  const smoke: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number; delay: number }[] = [];
+  const smokeCount = Math.min(16, Math.max(8, Math.round(radius * 0.8)));
+  for (let i = 0; i < smokeCount; i++) {
+    const mat = makeSoftSmokeMat(0.22);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.42 + rnd(seed, i + 70) * 0.35, 7, 5), mat);
+    mesh.position.set(pos.x, 0.28, pos.z);
+    const a = rnd(seed, i + 80) * Math.PI * 2;
+    const sp = 1.8 + rnd(seed, i + 90) * 3.2;
+    smoke.push({
+      mesh,
+      mat,
+      vx: Math.cos(a) * sp,
+      vz: Math.sin(a) * sp,
+      vy: 1.0 + rnd(seed, i + 100) * 1.7,
+      delay: 0.22 + rnd(seed, i + 110) * 0.18,
+    });
+    root.add(mesh);
+  }
+
+  spawn(host, root, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    for (const m of meteors) {
+      const fall = Math.max(0, Math.min(1, (t - m.delay) / 0.32));
+      const ease = fall * fall * (3 - 2 * fall);
+      m.mesh.position.set(m.sx + (m.tx - m.sx) * ease, m.sy * (1 - ease) + 0.45 * ease, m.sz + (m.tz - m.sz) * ease);
+      (m.mesh.material as THREE.MeshBasicMaterial).opacity = fall <= 0 ? 0 : 0.96 * (1 - Math.max(0, p - 0.74) / 0.26);
+      (m.trail.material as THREE.LineBasicMaterial).opacity = 0.72 * Math.max(0, 1 - p * 1.1) * Math.min(1, fall * 3);
+    }
+    const hitP = Math.max(0, (t - 0.22) / (life - 0.22));
+    blast.scale.setScalar(1 + hitP * (radius / 0.82));
+    (blast.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - hitP);
+    heat.scale.setScalar(radius * (0.2 + hitP * 0.52));
+    (heat.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.74);
+    scorch.scale.setScalar(radius * (0.3 + hitP * 0.62));
+    (scorch.material as THREE.MeshBasicMaterial).opacity = 0.34 * (1 - p * 0.38);
+    for (const s of smoke) {
+      if (t < s.delay) {
+        s.mat.opacity = 0;
+        continue;
+      }
+      s.mesh.position.x += s.vx * dt;
+      s.mesh.position.y += s.vy * dt;
+      s.mesh.position.z += s.vz * dt;
+      s.vy += 0.52 * dt;
+      s.mesh.scale.multiplyScalar(1 + dt * 1.25);
+      s.mat.opacity = 0.22 * Math.max(0, 1 - (t - s.delay) / (life - s.delay));
+    }
+  });
+}
+
 function spawnElementalAoe(
   host: FxHost,
   pos: { x: number; z: number },
@@ -670,6 +1129,10 @@ function spawnElementalAoe(
   pal: ElementalPalette,
   compact: boolean,
 ): void {
+  if (opts?.element === "earth" || pal.shadow === 0x231910) return spawnElementalGeodeImpact(host, pos, opts, pal, compact);
+  if (opts?.element === "lava" || pal.shadow === 0x35120b) return spawnElementalLavaPool(host, pos, opts, pal, compact);
+  if (opts?.element === "snow" || pal.shadow === 0x42607d) return spawnElementalSnowBurst(host, pos, opts, pal, compact);
+  if (opts?.element === "air" || pal.shadow === 0x244455) return spawnElementalAirBurst(host, pos, opts, pal, compact);
   const radius = Math.max(1.6, opts?.impactRadius ?? (compact ? 4.5 : 9));
   const life = compact ? 0.58 : 0.86;
   const group = new THREE.Group();
@@ -716,6 +1179,462 @@ function spawnElementalAoe(
       pt.mesh.position.y += pt.vy * dt;
       pt.vy -= 7.2 * dt;
       pt.mat.opacity = (compact ? 0.72 : 0.82) * (1 - p);
+    }
+  });
+}
+
+function spawnElementalGeodeImpact(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  compact: boolean,
+): void {
+  const radius = Math.max(2.4, opts?.impactRadius ?? (compact ? 4.2 : 8.5));
+  const life = compact ? 0.78 : 1.02;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.05, pos.z);
+  const seed = elementalSeed(pos, opts);
+
+  const crack = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.92, 52), fxMat(pal.shadow, 0.5, false));
+  crack.rotation.x = -Math.PI / 2;
+  crack.position.y = 0.012;
+  group.add(crack);
+  const pulse = new THREE.Mesh(new THREE.RingGeometry(0.18, 0.46, 42), fxMat(pal.hot, 0.58));
+  pulse.rotation.x = -Math.PI / 2;
+  pulse.position.y = 0.09;
+  group.add(pulse);
+
+  const shards: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; baseY: number; rise: number; spin: number }[] = [];
+  const shardCount = compact ? 7 : Math.min(18, Math.max(10, Math.round(radius * 1.4)));
+  for (let i = 0; i < shardCount; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.rim, 0.86);
+    const h = 0.55 + rnd(seed, i + 10) * (compact ? 1.0 : 1.7);
+    const r = radius * (0.12 + rnd(seed, i + 20) * 0.82);
+    const a = rnd(seed, i + 30) * Math.PI * 2;
+    const geom = new THREE.ConeGeometry(0.12 + rnd(seed, i + 40) * 0.16, h, 5);
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(Math.cos(a) * r, h * 0.28, Math.sin(a) * r);
+    mesh.rotation.set((rnd(seed, i + 50) - 0.5) * 0.55, a, (rnd(seed, i + 60) - 0.5) * 0.55);
+    shards.push({ mesh, mat, baseY: mesh.position.y, rise: h * (0.48 + rnd(seed, i + 70) * 0.55), spin: (rnd(seed, i + 80) - 0.5) * 1.8 });
+    group.add(mesh);
+  }
+
+  const dust: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
+  const dustCount = compact ? 8 : 16;
+  for (let i = 0; i < dustCount; i++) {
+    const mat = fxMat(pal.shadow, 0.18, false);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.18 + rnd(seed, i + 90) * 0.22, 6, 4), mat);
+    const a = rnd(seed, i + 100) * Math.PI * 2;
+    const sp = 1.3 + rnd(seed, i + 110) * 2.7;
+    mesh.position.set(0, 0.22, 0);
+    dust.push({ mesh, mat, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: 0.7 + rnd(seed, i + 120) * 1.1 });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    const erupt = Math.min(1, t / 0.18);
+    const settle = Math.max(0, (p - 0.58) / 0.42);
+    crack.scale.setScalar(1 + p * radius * 0.42);
+    (crack.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - p * 0.8);
+    pulse.scale.setScalar(1 + p * radius * 0.26);
+    (pulse.material as THREE.MeshBasicMaterial).opacity = 0.58 * (1 - p);
+    for (const s of shards) {
+      s.mesh.position.y = s.baseY + Math.sin(erupt * Math.PI * 0.5) * s.rise - settle * s.rise * 0.42;
+      s.mesh.rotation.y += s.spin * dt;
+      s.mesh.scale.y = 1 - settle * 0.28;
+      s.mat.opacity = 0.86 * (1 - settle * 0.85);
+    }
+    for (const d of dust) {
+      d.mesh.position.x += d.vx * dt;
+      d.mesh.position.y += d.vy * dt;
+      d.mesh.position.z += d.vz * dt;
+      d.vy -= 1.9 * dt;
+      d.mesh.scale.multiplyScalar(1 + dt * 0.62);
+      d.mat.opacity = 0.18 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalLavaPool(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  compact: boolean,
+): void {
+  const radius = Math.max(2.5, opts?.impactRadius ?? (compact ? 4.5 : 9));
+  const life = compact ? 0.9 : 1.18;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.055, pos.z);
+  const seed = elementalSeed(pos, opts);
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(1, 46), fxMat(pal.hot, 0.3));
+  pool.rotation.x = -Math.PI / 2;
+  group.add(pool);
+  const crust = new THREE.Mesh(new THREE.RingGeometry(0.36, 0.96, 58), fxMat(pal.shadow, 0.42, false));
+  crust.rotation.x = -Math.PI / 2;
+  crust.position.y = -0.018;
+  group.add(crust);
+  const rim = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.52, 54), fxMat(pal.rim, 0.68));
+  rim.rotation.x = -Math.PI / 2;
+  rim.position.y = 0.045;
+  group.add(rim);
+
+  const bubbles: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vz: number; phase: number }[] = [];
+  const bubbleCount = compact ? 8 : Math.min(20, Math.max(10, Math.round(radius * 1.3)));
+  for (let i = 0; i < bubbleCount; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : pal.trail, 0.76);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.09 + rnd(seed, i) * 0.12, 6, 5), mat);
+    const a = rnd(seed, i + 10) * Math.PI * 2;
+    const r = radius * (0.08 + rnd(seed, i + 20) * 0.55);
+    mesh.position.set(Math.cos(a) * r, 0.16, Math.sin(a) * r);
+    bubbles.push({
+      mesh,
+      mat,
+      vx: Math.cos(a) * (0.2 + rnd(seed, i + 30) * 0.55),
+      vz: Math.sin(a) * (0.2 + rnd(seed, i + 40) * 0.55),
+      phase: rnd(seed, i + 50) * Math.PI * 2,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    const grow = Math.sin(Math.min(1, p * 1.25) * Math.PI * 0.5);
+    pool.scale.setScalar(radius * (0.18 + grow * 0.54));
+    (pool.material as THREE.MeshBasicMaterial).opacity = 0.3 * (1 - p * 0.62) * (0.82 + Math.sin(t * 18) * 0.18);
+    crust.scale.setScalar(radius * (0.22 + grow * 0.64));
+    (crust.material as THREE.MeshBasicMaterial).opacity = 0.42 * (1 - p * 0.5);
+    rim.scale.setScalar(1 + p * radius * 0.52);
+    (rim.material as THREE.MeshBasicMaterial).opacity = 0.68 * (1 - p);
+    for (const b of bubbles) {
+      b.mesh.position.x += b.vx * dt;
+      b.mesh.position.z += b.vz * dt;
+      b.mesh.position.y = 0.12 + Math.abs(Math.sin(t * 8 + b.phase)) * 0.42;
+      b.mesh.scale.setScalar(0.75 + Math.sin(t * 11 + b.phase) * 0.22);
+      b.mat.opacity = 0.76 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalLavaGeyser(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 8);
+  const life = 1.15;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.08, pos.z);
+  const seed = elementalSeed(pos, opts);
+  const vent = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.9, 58), fxMat(pal.rim, 0.82));
+  vent.rotation.x = -Math.PI / 2;
+  group.add(vent);
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.68, 1, 10, 1, true), fxMat(pal.hot, 0.46));
+  column.position.y = 0.6;
+  group.add(column);
+  const bombs: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number; delay: number }[] = [];
+  for (let i = 0; i < 14; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : pal.trail, 0.86);
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.12 + rnd(seed, i) * 0.12, 7, 5), mat);
+    const a = rnd(seed, i + 10) * Math.PI * 2;
+    bombs.push({
+      mesh,
+      mat,
+      vx: Math.cos(a) * (1.2 + rnd(seed, i + 20) * 3.4),
+      vz: Math.sin(a) * (1.2 + rnd(seed, i + 30) * 3.4),
+      vy: 5.2 + rnd(seed, i + 40) * 4.3,
+      delay: rnd(seed, i + 50) * 0.18,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    vent.scale.setScalar(1 + p * radius * 0.24);
+    (vent.material as THREE.MeshBasicMaterial).opacity = 0.82 * (1 - p);
+    column.scale.set(1 + Math.sin(t * 12) * 0.08, Math.sin(Math.min(1, p * 1.7) * Math.PI) * radius * 0.22, 1);
+    (column.material as THREE.MeshBasicMaterial).opacity = 0.46 * (1 - p * 0.8);
+    for (const b of bombs) {
+      if (t < b.delay) {
+        b.mat.opacity = 0;
+        continue;
+      }
+      b.mesh.position.x += b.vx * dt;
+      b.mesh.position.z += b.vz * dt;
+      b.mesh.position.y += b.vy * dt;
+      b.vy -= 10.5 * dt;
+      b.mat.opacity = 0.86 * Math.max(0, 1 - (t - b.delay) / (life - b.delay));
+    }
+  });
+}
+
+function spawnElementalSnowBurst(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  compact: boolean,
+): void {
+  const radius = Math.max(2.2, opts?.impactRadius ?? (compact ? 4.5 : 9));
+  const life = compact ? 0.92 : 1.18;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.08, pos.z);
+  const seed = elementalSeed(pos, opts);
+  const frost = new THREE.Mesh(new THREE.CircleGeometry(1, 52), fxMat(pal.hot, 0.18, false));
+  frost.rotation.x = -Math.PI / 2;
+  frost.position.y = -0.03;
+  group.add(frost);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.48, 56), fxMat(pal.core, 0.72));
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  const flakes: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number; spin: number }[] = [];
+  const flakeCount = compact ? 14 : Math.min(34, Math.max(18, Math.round(radius * 2.0)));
+  for (let i = 0; i < flakeCount; i++) {
+    const mat = fxMat(i % 3 === 0 ? pal.core : pal.trail, 0.78);
+    const geom = i % 2 === 0 ? new THREE.OctahedronGeometry(0.07 + rnd(seed, i) * 0.07, 0) : new THREE.TetrahedronGeometry(0.08 + rnd(seed, i) * 0.06, 0);
+    const mesh = new THREE.Mesh(geom, mat);
+    const a = rnd(seed, i + 10) * Math.PI * 2;
+    const sp = 1.6 + rnd(seed, i + 20) * 3.4;
+    mesh.position.set(0, 0.32 + rnd(seed, i + 30) * 0.5, 0);
+    flakes.push({
+      mesh,
+      mat,
+      vx: Math.cos(a) * sp,
+      vz: Math.sin(a) * sp,
+      vy: 2.2 + rnd(seed, i + 40) * 2.6,
+      spin: (rnd(seed, i + 50) - 0.5) * 7,
+    });
+    group.add(mesh);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    frost.scale.setScalar(radius * (0.2 + p * 0.6));
+    (frost.material as THREE.MeshBasicMaterial).opacity = 0.18 * (1 - p * 0.44);
+    ring.scale.setScalar(1 + p * radius * 0.58);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - p);
+    for (const f of flakes) {
+      f.mesh.position.x += f.vx * dt;
+      f.mesh.position.y += f.vy * dt;
+      f.mesh.position.z += f.vz * dt;
+      f.vy -= 4.8 * dt;
+      f.mesh.rotation.x += f.spin * dt;
+      f.mesh.rotation.y -= f.spin * 0.7 * dt;
+      f.mat.opacity = 0.78 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalSnowBlizzard(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 8);
+  const life = 1.2;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.12, pos.z);
+  const seed = elementalSeed(pos, opts);
+  const veil = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.72, radius * 0.28, radius * 0.75, 36, 1, true), fxMat(pal.hot, 0.11));
+  veil.position.y = radius * 0.36;
+  group.add(veil);
+  const flakes: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; a: number; r: number; y: number; spin: number }[] = [];
+  for (let i = 0; i < 34; i++) {
+    const mat = fxMat(i % 2 === 0 ? pal.core : pal.trail, 0.7);
+    const mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.06 + rnd(seed, i) * 0.07, 0), mat);
+    flakes.push({
+      mesh,
+      mat,
+      a: rnd(seed, i + 10) * Math.PI * 2,
+      r: radius * (0.12 + rnd(seed, i + 20) * 0.68),
+      y: 0.3 + rnd(seed, i + 30) * radius * 0.7,
+      spin: (rnd(seed, i + 40) - 0.5) * 6,
+    });
+    group.add(mesh);
+  }
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    veil.rotation.y += dt * 1.8;
+    (veil.material as THREE.MeshBasicMaterial).opacity = 0.11 * (1 - p);
+    for (const f of flakes) {
+      f.a += dt * (2.4 + f.r / radius);
+      f.y = Math.max(0.08, f.y - dt * (0.8 + f.r * 0.08));
+      f.mesh.position.set(Math.cos(f.a) * f.r, f.y, Math.sin(f.a) * f.r);
+      f.mesh.rotation.x += f.spin * dt;
+      f.mesh.rotation.z -= f.spin * 0.7 * dt;
+      f.mat.opacity = 0.7 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalAirBurst(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+  compact: boolean,
+): void {
+  const radius = Math.max(2.4, opts?.impactRadius ?? (compact ? 4.4 : 8.5));
+  const life = compact ? 0.72 : 0.96;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.12, pos.z);
+  const rings: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; phase: number }[] = [];
+  for (let i = 0; i < 5; i++) {
+    const mat = fxMat(i % 2 === 0 ? pal.core : pal.hot, 0.36);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.56 + i * 0.12, 0.025, 4, 42, Math.PI * 1.55), mat);
+    ring.rotation.x = Math.PI / 2;
+    ring.rotation.z = i * 1.37;
+    ring.position.y = 0.12 + i * 0.12;
+    rings.push({ mesh: ring, mat, phase: i * 0.17 });
+    group.add(ring);
+  }
+  const seed = elementalSeed(pos, opts);
+  const wisps: { line: THREE.Line; mat: THREE.LineBasicMaterial; vx: number; vz: number; vy: number }[] = [];
+  const wispCount = compact ? 7 : 13;
+  for (let i = 0; i < wispCount; i++) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0.15, 0, 0.25, 0.55, 0.1, 0.55, 0.9, -0.08], 3));
+    const mat = lineMat(i % 2 === 0 ? pal.trail : pal.core, 0.44);
+    const line = new THREE.Line(geo, mat);
+    const a = rnd(seed, i) * Math.PI * 2;
+    line.rotation.y = a;
+    wisps.push({ line, mat, vx: Math.cos(a) * (1.8 + rnd(seed, i + 10) * 2.8), vz: Math.sin(a) * (1.8 + rnd(seed, i + 20) * 2.8), vy: 1.2 + rnd(seed, i + 30) * 1.9 });
+    group.add(line);
+  }
+
+  spawn(host, group, life, (t, dt) => {
+    const p = Math.min(1, t / life);
+    for (const r of rings) {
+      const q = Math.min(1, p + r.phase);
+      r.mesh.scale.setScalar(1 + q * radius * 0.38);
+      r.mesh.rotation.z += dt * 3.6;
+      r.mesh.position.y += dt * 0.34;
+      r.mat.opacity = 0.36 * Math.sin(Math.min(1, q) * Math.PI) * (1 - p * 0.45);
+    }
+    for (const w of wisps) {
+      w.line.position.x += w.vx * dt;
+      w.line.position.z += w.vz * dt;
+      w.line.position.y += w.vy * dt;
+      w.line.rotation.y += dt * 5.5;
+      w.mat.opacity = 0.44 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalArcaneRift(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 8);
+  const life = 1.05;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.12, pos.z);
+  const portal = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.22, 0.055, 5, 52), fxMat(pal.rim, 0.82));
+  portal.rotation.x = Math.PI / 2;
+  group.add(portal);
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.2, 42), fxMat(pal.hot, 0.22));
+  iris.rotation.x = -Math.PI / 2;
+  group.add(iris);
+  const spokes: THREE.Line[] = [];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0.2, 0, Math.cos(a) * radius * 0.72, 1.2, Math.sin(a) * radius * 0.72], 3));
+    const line = new THREE.Line(geo, lineMat(i % 2 ? pal.core : pal.trail, 0.48));
+    spokes.push(line);
+    group.add(line);
+  }
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    group.rotation.y += 0.06;
+    portal.scale.setScalar(1 + Math.sin(p * Math.PI) * 1.1);
+    (portal.material as THREE.MeshBasicMaterial).opacity = 0.82 * (1 - p);
+    iris.scale.setScalar(0.75 + Math.sin(p * Math.PI) * 1.6);
+    (iris.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
+    for (const s of spokes) (s.material as THREE.LineBasicMaterial).opacity = 0.48 * (1 - p);
+  });
+}
+
+function spawnElementalReclaimBloom(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 8);
+  const life = 1.05;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.08, pos.z);
+  const seed = elementalSeed(pos, opts);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.7, 54), fxMat(pal.hot, 0.68));
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  const vines: { line: THREE.Line; mat: THREE.LineBasicMaterial; a: number; len: number }[] = [];
+  for (let v = 0; v < 10; v++) {
+    const a = rnd(seed, v) * Math.PI * 2;
+    const len = radius * (0.35 + rnd(seed, v + 10) * 0.48);
+    const pts = [0, 0.1, 0, Math.cos(a + 0.35) * len * 0.45, 0.22, Math.sin(a + 0.35) * len * 0.45, Math.cos(a) * len, 0.16, Math.sin(a) * len];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    const mat = lineMat(v % 2 ? pal.hot : pal.trail, 0.58);
+    const line = new THREE.Line(geo, mat);
+    vines.push({ line, mat, a, len });
+    group.add(line);
+  }
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    ring.scale.setScalar(1 + p * radius * 0.34);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.68 * (1 - p);
+    for (const v of vines) {
+      v.line.scale.setScalar(Math.sin(Math.min(1, p * 1.4) * Math.PI * 0.5));
+      v.line.position.y = Math.sin(t * 5 + v.a) * 0.08;
+      v.mat.opacity = 0.58 * (1 - p);
+    }
+  });
+}
+
+function spawnElementalShieldBastion(
+  host: FxHost,
+  pos: { x: number; z: number },
+  opts: CastFxSpawnOpts | undefined,
+  pal: ElementalPalette,
+): void {
+  const radius = Math.max(4, opts?.impactRadius ?? 8);
+  const life = 1.12;
+  const group = new THREE.Group();
+  group.position.set(pos.x, 0.04, pos.z);
+  const shell = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(radius * 0.28, 2),
+    new THREE.MeshBasicMaterial({ color: pal.hot, wireframe: true, transparent: true, opacity: 0.72, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  shell.position.y = radius * 0.22;
+  group.add(shell);
+  const plates: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; a: number }[] = [];
+  for (let i = 0; i < 8; i++) {
+    const mat = fxMat(i % 2 ? pal.trail : pal.core, 0.42);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(radius * 0.16, 0.04, radius * 0.04), mat);
+    const a = (i / 8) * Math.PI * 2;
+    mesh.position.set(Math.cos(a) * radius * 0.36, 0.18, Math.sin(a) * radius * 0.36);
+    mesh.rotation.y = -a;
+    plates.push({ mesh, mat, a });
+    group.add(mesh);
+  }
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    shell.scale.setScalar(0.45 + Math.sin(p * Math.PI) * 1.7);
+    shell.rotation.y += 0.045;
+    (shell.material as THREE.MeshBasicMaterial).opacity = 0.72 * (1 - p);
+    for (const plate of plates) {
+      const r = radius * (0.28 + Math.sin(p * Math.PI) * 0.22);
+      plate.mesh.position.x = Math.cos(plate.a + t * 1.3) * r;
+      plate.mesh.position.z = Math.sin(plate.a + t * 1.3) * r;
+      plate.mat.opacity = 0.42 * (1 - p);
     }
   });
 }
@@ -812,7 +1731,7 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
  * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
  */
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
-  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS) {
+  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS || m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
     spawnGeodeMonkForwardRings(host, m);
     return;
   }

@@ -1,5 +1,5 @@
 import type { PlayerIntent } from "../intents";
-import { tickHeroTeleportCooldown, type GameState } from "../state";
+import { pruneUnitSpellStatuses, tickHeroTeleportCooldown, type GameState } from "../state";
 import { movement, wakeCamps } from "./systems/ai";
 import { auras } from "./systems/auras";
 import { combat } from "./systems/combat";
@@ -24,6 +24,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   if (s.tacticsFieldZones.length > 0) {
     s.tacticsFieldZones = s.tacticsFieldZones.filter((z) => z.untilTick > s.tick);
   }
+  pruneUnitSpellStatuses(s);
   tickDoctrineCooldowns(s);
   tickHeroTeleportCooldown(s);
   applyPlayerIntents(s, intents);

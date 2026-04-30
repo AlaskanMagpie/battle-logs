@@ -19,11 +19,15 @@ import { readLocalLeaderboard, recordLocalLeaderboardResult, scoreMatchResult } 
 import {
   KEEP_ID,
   KEEP_SWARM_PERIOD_SEC,
+  FORMATION_ASSEMBLY_TICKS,
+  FORMATION_MARCH_SPEED_MULT,
   PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
+  PRODUCED_UNIT_LAVA_WIZARD_MONKS,
   PRODUCED_UNIT_SIEGE_RAM,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
+  UNIT_MOVEMENT_SPEED_SCALE,
 } from "./constants";
 import { enemyCaptureSpeedScalar, enemyDamageScalar, enemyProductionSpeedScalar } from "./difficulty";
 import {
@@ -160,6 +164,7 @@ describe("doctrine card playability", () => {
 describe("batch production", () => {
   it.each([
     ["watchtower", "Swarm", 4, PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS],
+    ["emberroot_bastion", "Line", 3, PRODUCED_UNIT_LAVA_WIZARD_MONKS],
     ["outpost", "Line", 3, undefined],
     ["siege_works", "Heavy", 2, PRODUCED_UNIT_SIEGE_RAM],
     ["dragon_roost", "Titan", 1, undefined],
@@ -594,7 +599,7 @@ describe("command spells", () => {
     const s = createInitialState(tinyMap, ["firestorm"]);
     s.flux = 1000;
     const enemy = unit(4001, "enemy", "Line", null);
-    enemy.x = 18;
+    enemy.x = 20;
     enemy.z = 0;
     enemy.hp = 100;
     enemy.maxHp = 100;
@@ -608,6 +613,36 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "firestorm")).toBe(true);
+    expect(enemy.spellStatuses?.some((st) => st.kind === "burning")).toBe(true);
+    expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
+  });
+
+  it("spell aftermath statuses affect movement and expire", () => {
+    const s = createInitialState(tinyMap, ["recycle"]);
+    s.flux = 1000;
+    const enemy = unit(4003, "enemy", "Swarm", null);
+    enemy.x = 20;
+    enemy.z = 0;
+    enemy.hp = 100;
+    enemy.maxHp = 100;
+    enemy.order = { mode: "move", x: 60, z: 0, waypoints: [], queued: [] };
+    s.units.push(enemy);
+
+    applyPlayerIntents(s, [
+      { type: "select_doctrine_slot", index: 0 },
+      { type: "try_click_world", pos: { x: 20, z: 0 } },
+    ]);
+
+    expect(enemy.spellStatuses?.some((st) => st.kind === "rooted")).toBe(true);
+    enemy.vxImpulse = 0;
+    enemy.vzImpulse = 0;
+    const before = enemy.x;
+    movement(s);
+    expect(enemy.x - before).toBeLessThan(0.05);
+    advanceTick(s, []);
+    enemy.spellStatuses = enemy.spellStatuses?.map((st) => ({ ...st, untilTick: s.tick }));
+    advanceTick(s, []);
+    expect(enemy.spellStatuses).toBeUndefined();
   });
 
   it("player-cast damage spells do not damage friendly units inside the area", () => {
@@ -665,6 +700,24 @@ describe("command spells", () => {
     expect(s.enemyRelays[0]!.silencedUntilTick).toBeGreaterThan(s.tick);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "shatter")).toBe(true);
+  });
+
+  it("Shatter freezes enemy units caught by chain impacts", () => {
+    const s = createInitialState(tinyMap, ["shatter"]);
+    s.flux = 1000;
+    const enemy = unit(4004, "enemy", "Line", null);
+    enemy.x = 80;
+    enemy.z = 0;
+    enemy.hp = 500;
+    enemy.maxHp = 500;
+    s.units.push(enemy);
+
+    applyPlayerIntents(s, [
+      { type: "select_doctrine_slot", index: 0 },
+      { type: "try_click_world", pos: { x: 80, z: 0 } },
+    ]);
+
+    expect(enemy.spellStatuses?.some((st) => st.kind === "frozen" || st.kind === "chilled")).toBe(true);
   });
 });
 
@@ -782,8 +835,95 @@ describe("selection commands", () => {
     expect(a.order?.mode).toBe("move");
     expect(b.order?.mode).toBe("move");
     expect(c.order?.mode).toBe("move");
+    expect(s.formationMarches).toHaveLength(1);
+    expect(new Set(s.units.map((x) => x.order?.formationGroupId)).size).toBe(1);
     expect(new Set(s.units.map((x) => `${x.order?.x.toFixed(1)},${x.order?.z.toFixed(1)}`)).size).toBe(3);
     expect(s.lastMessage).toContain("Line formation");
+  });
+
+  it("moves the formation anchor immediately but keeps it capped to normal march speed", () => {
+    const s = createInitialState(tinyMap, []);
+    const a = unit(5310, "player", "Swarm", null);
+    const b = unit(5311, "player", "Line", null);
+    a.x = -70;
+    b.x = -66;
+    s.units.push(a, b);
+
+    applyPlayerIntents(s, [
+      { type: "select_units", unitIds: [a.id, b.id] },
+      {
+        type: "command_selected_units_formation",
+        from: { x: 120, z: -12 },
+        to: { x: 120, z: 12 },
+        mode: "move",
+        formationKind: "line",
+      },
+    ]);
+
+    const march = s.formationMarches[0]!;
+    const before = { x: march.anchorX, z: march.anchorZ };
+    movement(s);
+
+    const moved = Math.hypot(march.anchorX - before.x, march.anchorZ - before.z);
+    const expectedCap = march.speedPerSec * UNIT_MOVEMENT_SPEED_SCALE / TICK_HZ;
+    expect(moved).toBeGreaterThan(0);
+    expect(moved).toBeLessThanOrEqual(expectedCap + 0.0001);
+    expect(march.speedPerSec).toBeCloseTo(((a.speedPerSec + b.speedPerSec) / 2) * FORMATION_MARCH_SPEED_MULT);
+  });
+
+  it("continues marching after the assembly timer instead of waiting for every unit", () => {
+    const s = createInitialState(tinyMap, []);
+    const a = unit(5320, "player", "Swarm", null);
+    const b = unit(5321, "player", "Heavy", null);
+    b.x = -90;
+    b.z = 40;
+    s.units.push(a, b);
+
+    applyPlayerIntents(s, [
+      { type: "select_units", unitIds: [a.id, b.id] },
+      {
+        type: "command_selected_units_formation",
+        from: { x: 20, z: -10 },
+        to: { x: 20, z: 10 },
+        mode: "move",
+        formationKind: "line",
+      },
+    ]);
+
+    s.tick += FORMATION_ASSEMBLY_TICKS + 1;
+    const march = s.formationMarches[0]!;
+    const before = march.anchorX;
+    movement(s);
+
+    expect(s.formationMarches).toHaveLength(1);
+    expect(march.anchorX).toBeGreaterThan(before);
+    expect(b.order?.formationGroupId).toBe(march.id);
+  });
+
+  it("breaks a formation march when attack-move enters combat", () => {
+    const s = createInitialState(tinyMap, []);
+    const ally = unit(5330, "player", "Swarm", null);
+    const enemy = unit(5331, "enemy", "Swarm", null);
+    enemy.x = ally.x + 4;
+    enemy.z = ally.z;
+    s.units.push(ally, enemy);
+
+    applyPlayerIntents(s, [
+      { type: "select_units", unitIds: [ally.id] },
+      {
+        type: "command_selected_units_formation",
+        from: { x: -10, z: -6 },
+        to: { x: -10, z: 6 },
+        mode: "attack_move",
+        formationKind: "line",
+      },
+    ]);
+
+    expect(s.formationMarches).toHaveLength(1);
+    movement(s);
+
+    expect(s.formationMarches).toHaveLength(0);
+    expect(ally.order?.formationGroupId).toBeUndefined();
   });
 
   it("lets attack-move with includeNearbyIdle recruit nearby idle squads without selecting them first", () => {

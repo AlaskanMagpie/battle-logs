@@ -3,16 +3,17 @@ import { cardArtOverlayHtml } from "./cardArtOverlay";
 import { tcgCardSlotHtml } from "./doctrineCard";
 
 describe("doctrine spell card rendering", () => {
-  it("does not stamp generated SVG stat labels over authored spell art", () => {
-    for (const id of ["cut_line", "fortify", "firestorm", "shatter"]) {
-      expect(cardArtOverlayHtml(id)).toBe("");
-      const hand = tcgCardSlotHtml(id, "picker");
-      expect(hand).not.toContain("card-art-overlay");
-      expect(hand).not.toContain(">AOE<");
-      expect(hand).not.toContain(">FIELD<");
-      expect(hand).not.toContain(">LINE<");
-      expect(hand).not.toContain(">SALVAGE<");
-      expect(hand).not.toContain(">100%<");
+  it("includes SVG stat overlays for spells (binder raster strips SVG text; HUD hand hides FX label only)", () => {
+    for (const id of ["recycle", "fortify", "firestorm", "shatter"]) {
+      const full = cardArtOverlayHtml(id);
+      expect(full).toContain("card-art-overlay");
+      expect(full).toContain("data-overlay-field=\"mana\"");
+      const hudHand = cardArtOverlayHtml(id, { handSlot: true });
+      expect(hudHand).toContain("card-art-overlay");
+      expect(hudHand).not.toContain("data-overlay-field=\"effect\"");
+      const picker = tcgCardSlotHtml(id, "picker");
+      expect(picker).toContain("card-art-overlay");
+      expect(picker).toContain("data-overlay-field=\"mana\"");
     }
   });
 });

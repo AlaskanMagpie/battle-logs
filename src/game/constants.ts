@@ -22,6 +22,13 @@ export const DOCTRINE_HAND_ROW_SIZE = DOCTRINE_SLOT_COUNT / 2;
 /** `StructureCatalogEntry.producedUnitId` / `UnitRuntime.producedUnitId` — matches `animationProfiles` id in `public/assets/units/manifest.json`. Cragrunner swarm uses `azure_spear_swarm`. */
 export const PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS = "azure_spear_swarm";
 export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
+/**
+ * Line squad for Emberroot Bastion — `animationProfiles` id in `public/assets/units/manifest.json`
+ * (`emberbound_ascetic_merged_animations.glb` locomotion + punch combo; static skin-only sibling is `emberbound_ascetic_character`).
+ */
+export const PRODUCED_UNIT_LAVA_WIZARD_MONKS = "emberbound_ascetic_merged_animations";
+/** Aionroot Observatory — `astral_knight_merged_animations.glb` (Meshy Astral Knight merged clips). */
+export const PRODUCED_UNIT_CHRONO_SENTINELS = "astral_knight_merged_animations";
 export const PRODUCED_UNIT_SIEGE_RAM = "siege_ram";
 export const PRODUCED_UNIT_RECLAMATION_WRAITH = "reclamation_wraith";
 
@@ -94,6 +101,16 @@ export const UNIT_MOVEMENT_SPEED_SCALE = 0.52;
 
 /** Base spacing (world units) for formation slots when marching or gathering. */
 export const UNIT_FORMATION_SPACING = 3.2;
+/** Formation drag orders assemble while moving; after this window the group keeps marching with whoever made it. */
+export const FORMATION_ASSEMBLY_TICKS = 5 * TICK_HZ;
+/** Shared formation anchors move at ordinary army pace, not at the catch-up speed. */
+export const FORMATION_MARCH_SPEED_MULT = 1.04;
+/** Temporary slot catch-up while the formation is still assembling. */
+export const FORMATION_ASSEMBLY_CATCHUP_MULT = 1.95;
+/** Small post-assembly correction so late units can rejoin without turning formation into fast travel. */
+export const FORMATION_TRAVEL_CATCHUP_MULT = 1.24;
+/** Slot error that gets the full catch-up multiplier (world units). */
+export const FORMATION_CATCHUP_RADIUS = 18;
 
 /** Prefer inactive Mana nodes with x >= this value (matches procedural enemy wedge in `generateProceduralTaps`). */
 export const ENEMY_TAP_WEDGE_MARGIN_X = 52;

@@ -9,11 +9,18 @@ import {
 } from "./quickMatchDoctrine";
 
 describe("quickMatch doctrine resolution", () => {
-  it("preset is only the four full-art structures plus command spells (no legacy towers)", () => {
-    const allowedStructures = new Set(["outpost", "watchtower", "bastion_keep", "verdant_citadel"]);
+  it("preset is only the six full-art structures plus command spells (no legacy towers)", () => {
+    const allowedStructures = new Set([
+      "outpost",
+      "watchtower",
+      "bastion_keep",
+      "verdant_citadel",
+      "emberroot_bastion",
+      "aionroot_observatory",
+    ]);
     const allowedCommands = new Set(["recycle", "fortify", "firestorm", "shatter"]);
     const nonNull = QUICK_MATCH_DOCTRINE_SLOTS.filter((id): id is string => id != null);
-    expect(nonNull.length).toBe(8);
+    expect(nonNull.length).toBe(10);
     for (const id of nonNull) {
       expect(allowedStructures.has(id) || allowedCommands.has(id)).toBe(true);
     }

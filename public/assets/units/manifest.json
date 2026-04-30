@@ -7,6 +7,8 @@
     "amber_geode_monks_death.glb",
     "amber_geode_monks_run.glb",
     "amber_geode_monks_walk.glb",
+    "astral_knight_character.glb",
+    "astral_knight_merged_animations.glb",
     "azure_spear_swarm_attack_spin.glb",
     "azure_spear_swarm_dying.glb",
     "azure_spear_swarm_idle.glb",
@@ -17,6 +19,8 @@
     "chrono tower.glb",
     "dragon's roost.glb",
     "driftwood_oasis_compressed.glb",
+    "emberbound_ascetic_character.glb",
+    "emberbound_ascetic_merged_animations.glb",
     "fallen gates tower.glb",
     "geode monks tower.glb",
     "lanternbound_line_attack_triple_combo.glb",
@@ -67,6 +71,29 @@
       ]
     },
     {
+      "id": "astral_knight_character",
+      "sizeClass": "Line",
+      "roles": {
+        "model": "astral_knight_character.glb"
+      },
+      "files": [
+        "astral_knight_character.glb"
+      ]
+    },
+    {
+      "id": "astral_knight_merged_animations",
+      "sizeClass": "Line",
+      "roles": {
+        "model": "astral_knight_merged_animations.glb",
+        "run": "astral_knight_merged_animations.glb",
+        "idle": "astral_knight_merged_animations.glb",
+        "attack": "astral_knight_merged_animations.glb"
+      },
+      "files": [
+        "astral_knight_merged_animations.glb"
+      ]
+    },
+    {
       "id": "azure_spear_swarm",
       "sizeClass": "Swarm",
       "roles": {
@@ -83,6 +110,28 @@
         "azure_spear_swarm_run_fast.glb",
         "azure_spear_swarm_running.glb",
         "azure_spear_swarm_walking.glb"
+      ]
+    },
+    {
+      "id": "emberbound_ascetic_character",
+      "roles": {
+        "model": "emberbound_ascetic_character.glb"
+      },
+      "files": [
+        "emberbound_ascetic_character.glb"
+      ]
+    },
+    {
+      "id": "emberbound_ascetic_merged_animations",
+      "roles": {
+        "model": "emberbound_ascetic_merged_animations.glb",
+        "run": "emberbound_ascetic_merged_animations.glb",
+        "idle": "emberbound_ascetic_merged_animations.glb",
+        "attack": "emberbound_ascetic_merged_animations.glb",
+        "death": "emberbound_ascetic_merged_animations.glb"
+      },
+      "files": [
+        "emberbound_ascetic_merged_animations.glb"
       ]
     },
     {
@@ -226,6 +275,69 @@
       ]
     },
     {
+      "file": "astral_knight_character.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "astral_knight_merged_animations.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Charged_Slash",
+          "duration": 2.833,
+          "tracks": 72,
+          "movingTracks": 43,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Double_Combo_Attack",
+          "duration": 4,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Idle",
+          "duration": 0.633,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Running",
+          "duration": 4.367,
+          "tracks": 72,
+          "movingTracks": 39,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Sword_Judgment",
+          "duration": 1.033,
+          "tracks": 72,
+          "movingTracks": 30,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Walking",
+          "duration": 2.233,
+          "tracks": 72,
+          "movingTracks": 39,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
       "file": "azure_spear_swarm_attack_spin.glb",
       "skinnedMeshes": 1,
       "bones": 24,
@@ -318,12 +430,14 @@
     },
     {
       "file": "chrono tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "dragon's roost.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -336,13 +450,92 @@
       "animations": []
     },
     {
+      "file": "emberbound_ascetic_character.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Armature|clip0|baselayer",
+          "duration": 0.033,
+          "tracks": 72,
+          "movingTracks": 0,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "emberbound_ascetic_merged_animations.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Charged_Ground_Slam",
+          "duration": 1.033,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Idle",
+          "duration": 2.233,
+          "tracks": 72,
+          "movingTracks": 39,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Punch_Combo_1",
+          "duration": 3,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Punch_Combo_3",
+          "duration": 4,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Punch_Combo",
+          "duration": 2.233,
+          "tracks": 72,
+          "movingTracks": 38,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Running",
+          "duration": 3.267,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Walking",
+          "duration": 2.467,
+          "tracks": 72,
+          "movingTracks": 35,
+          "scaleTracks": 24
+        },
+        {
+          "name": "dying_backwards",
+          "duration": 0.633,
+          "tracks": 72,
+          "movingTracks": 35,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
       "file": "fallen gates tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "geode monks tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -453,12 +646,14 @@
     },
     {
       "file": "oasis.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "snow tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -556,12 +751,14 @@
     },
     {
       "file": "town levy tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "trade tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -645,6 +842,7 @@
     },
     {
       "file": "watchtower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []

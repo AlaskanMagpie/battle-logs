@@ -1,4 +1,4 @@
-import { hydrateCardPreviewImages } from "./cardGlbPreview";
+import { hydrateCardPreviewImages, syncCardArtOverlayContainFit } from "./cardGlbPreview";
 import { getCardArtUrl } from "./cardArtManifest";
 import { doctrineCardFullModalHtml } from "./doctrineCard";
 import { getCatalogEntry } from "../game/catalog";
@@ -170,7 +170,10 @@ function loadingCardHtml(): string {
 
 function refitDetailSoon(body: HTMLElement): void {
   const refitSoon = (): void => {
-    requestAnimationFrame(() => layoutCardDetailFit());
+    requestAnimationFrame(() => {
+      syncCardArtOverlayContainFit(body);
+      layoutCardDetailFit();
+    });
   };
   body.querySelectorAll("img").forEach((img) => {
     if (!(img instanceof HTMLImageElement)) return;

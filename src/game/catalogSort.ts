@@ -1,4 +1,5 @@
 import { CATALOG, getCatalogEntry } from "./catalog";
+import { unitClassRank } from "./balance";
 import { isCommandEntry } from "./types";
 
 export type CatalogSortKey = "catalog" | "name" | "cost" | "kind" | "class" | "cooldown";
@@ -40,18 +41,7 @@ export function sortCatalogIds(ids: readonly string[], key: CatalogSortKey): str
         const e = getCatalogEntry(id);
         if (!e) return 100;
         if (isCommandEntry(e)) return 99;
-        switch (e.producedSizeClass) {
-          case "Swarm":
-            return 0;
-          case "Line":
-            return 1;
-          case "Heavy":
-            return 2;
-          case "Titan":
-            return 3;
-          default:
-            return 50;
-        }
+        return unitClassRank(e.producedSizeClass);
       };
       return copy.sort((a, b) => rank(a) - rank(b) || byName(a, b));
     }

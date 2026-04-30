@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -7,7 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(__dirname, "..");
 const defaultIncoming = path.join(repoRoot, "incoming");
 const unitsDir = path.join(repoRoot, "public", "assets", "units");
-const sourceRoot = path.resolve(process.argv[2] ?? defaultIncoming);
+
+const args = process.argv.slice(2).filter((a) => a !== "--optimize");
+const optimizeBeforeImport = process.argv.includes("--optimize");
+const sourceRoot = path.resolve(args[0] ?? defaultIncoming);
 
 function sanitizeName(name) {
   return name
@@ -52,6 +56,43 @@ function uniqueDest(baseName) {
   return candidate;
 }
 
+function gltfTransformBin() {
+  const isWin = process.platform === "win32";
+  const p = path.join(repoRoot, "node_modules", ".bin", isWin ? "gltf-transform.cmd" : "gltf-transform");
+  return fs.existsSync(p) ? p : null;
+}
+
+/** Draco + WebP — matches runtime loaders in src/render/glbPool.ts (no Meshopt). */
+function optimizeToTemp(srcPath) {
+  const bin = gltfTransformBin();
+  if (!bin) {
+    console.error("[import-meshy] --optimize requires @gltf-transform/cli (npm install).");
+    process.exit(1);
+  }
+  const tmp = path.join(os.tmpdir(), `meshy-import-${process.pid}-${Math.random().toString(36).slice(2)}.glb`);
+  const textureSize = process.env.GLTF_TEXTURE_SIZE || "2048";
+  const r = spawnSync(
+    bin,
+    [
+      "optimize",
+      srcPath,
+      tmp,
+      "--compress",
+      "draco",
+      "--texture-compress",
+      "webp",
+      "--texture-size",
+      String(textureSize),
+    ],
+    { cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" },
+  );
+  if (r.status !== 0) {
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    process.exit(r.status ?? 1);
+  }
+  return tmp;
+}
+
 fs.mkdirSync(unitsDir, { recursive: true });
 const glbs = walk(sourceRoot);
 if (!glbs.length) {
@@ -61,10 +102,20 @@ if (!glbs.length) {
 
 const copied = [];
 for (const src of glbs) {
-  const destName = uniqueDest(destinationName(src));
-  const dest = path.join(unitsDir, destName);
-  fs.copyFileSync(src, dest);
-  copied.push({ src, destName });
+  let copyFrom = src;
+  let tmpOpt = null;
+  if (optimizeBeforeImport) {
+    tmpOpt = optimizeToTemp(src);
+    copyFrom = tmpOpt;
+  }
+  try {
+    const destName = uniqueDest(destinationName(src));
+    const dest = path.join(unitsDir, destName);
+    fs.copyFileSync(copyFrom, dest);
+    copied.push({ src, destName });
+  } finally {
+    if (tmpOpt && fs.existsSync(tmpOpt)) fs.unlinkSync(tmpOpt);
+  }
 }
 
 console.log(`Imported ${copied.length} GLB file(s):`);

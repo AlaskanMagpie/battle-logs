@@ -4,7 +4,11 @@ import {
   BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_SPREAD_COUNT,
 } from "../ui/binder/CardBinderEngine";
-import { PRODUCED_UNIT_AMBER_GEODE_MONKS } from "./constants";
+import {
+  PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+} from "./constants";
 import { productionBatchSizeForClass } from "./sim/systems/helpers";
 import { CATALOG, getCatalogEntry, STRUCTURES } from "./catalog";
 import { sortCatalogIds } from "./catalogSort";
@@ -52,5 +56,26 @@ describe("Doctrine binder catalog", () => {
   it("only Rootbound Crag uses the Amber Geode Monks spawn profile", () => {
     const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS).map((s) => s.id);
     expect(ids).toEqual(["bastion_keep"]);
+  });
+
+  it("maps Emberroot Bastion to Line Lava Wizard Monks", () => {
+    const entry = getCatalogEntry("emberroot_bastion");
+    expect(entry).toBeTruthy();
+    expect(isStructureEntry(entry!)).toBe(true);
+    if (!entry || !isStructureEntry(entry)) return;
+    expect(entry.name).toBe("Emberroot Bastion");
+    expect(entry.producedSizeClass).toBe("Line");
+    expect(productionBatchSizeForClass(entry.producedSizeClass)).toBe(3);
+    expect(entry.producedUnitId).toBe(PRODUCED_UNIT_LAVA_WIZARD_MONKS);
+  });
+
+  it("only Emberroot Bastion uses the lava wizard monks spawn profile (emberbound ascetic merged clips)", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS).map((s) => s.id);
+    expect(ids).toEqual(["emberroot_bastion"]);
+  });
+
+  it("only Aionroot Observatory uses the Chrono Sentinels spawn profile (astral knight merged clips)", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS).map((s) => s.id);
+    expect(ids).toEqual(["aionroot_observatory"]);
   });
 });
