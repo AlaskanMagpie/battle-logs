@@ -70,8 +70,10 @@ export function containCardArtRect(
 
 /** Legacy global defaults (asset lab used to write here). Used only when a card has no per-card override for that field. */
 const OVERLAY_FIELD_VISIBILITY_LEGACY_KEY = "battleLogs.cardOverlay.fieldVisibility";
-/** Per-catalog-id overlay visibility overrides. */
-const OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY = "battleLogs.cardOverlay.fieldVisibilityByCard";
+/** Previous per-card key; migrated once into {@link OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY} with command rows stripped. */
+const OVERLAY_FIELD_VISIBILITY_BY_CARD_V1_KEY = "battleLogs.cardOverlay.fieldVisibilityByCard";
+/** Per-catalog-id overlay visibility overrides (structures only carried over from v1 — spell rows were often bad asset-lab noise). */
+const OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY = "battleLogs.cardOverlay.fieldVisibilityByCard.v2";
 
 /** Per-field visibility toggles (asset lab + global card art). IDs shared by structure/command where applicable. */
 export const CARD_OVERLAY_FIELD_TOGGLES: readonly { id: string; label: string }[] = [
@@ -99,8 +101,31 @@ function getOverlayFieldVisibilityLegacyMap(): Record<string, boolean> {
   return overlayFieldVisibilityLegacyCache;
 }
 
+function migratePerCardOverlayVisibilityFromV1(): void {
+  try {
+    const storage = globalThis.localStorage;
+    if (!storage) return;
+    if (storage.getItem(OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY)) return;
+    const raw = storage.getItem(OVERLAY_FIELD_VISIBILITY_BY_CARD_V1_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const cleaned: Record<string, Record<string, boolean>> = {};
+    for (const [cid, fields] of Object.entries(parsed)) {
+      if (!fields || typeof fields !== "object") continue;
+      const ent = getCatalogEntry(cid);
+      if (ent && isCommandEntry(ent)) continue;
+      cleaned[cid] = fields as Record<string, boolean>;
+    }
+    storage.setItem(OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY, JSON.stringify(cleaned));
+    storage.removeItem(OVERLAY_FIELD_VISIBILITY_BY_CARD_V1_KEY);
+  } catch {
+    /* ignore corrupt v1 */
+  }
+}
+
 function getOverlayFieldVisibilityPerCardMap(): Record<string, Record<string, boolean>> {
   if (overlayFieldVisibilityPerCardCache) return overlayFieldVisibilityPerCardCache;
+  migratePerCardOverlayVisibilityFromV1();
   try {
     const raw = globalThis.localStorage?.getItem(OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY);
     overlayFieldVisibilityPerCardCache = raw ? (JSON.parse(raw) as Record<string, Record<string, boolean>>) : {};
@@ -111,10 +136,13 @@ function getOverlayFieldVisibilityPerCardMap(): Record<string, Record<string, bo
 }
 
 function overlayFieldIsIncluded(fieldId: string, catalogId: string): boolean {
+  const entry = getCatalogEntry(catalogId);
   const perCard = getOverlayFieldVisibilityPerCardMap()[catalogId];
   if (perCard && Object.prototype.hasOwnProperty.call(perCard, fieldId)) {
     return perCard[fieldId] !== false;
   }
+  // Global legacy map is structure-centric; do not let it dim spell/command stat lines.
+  if (entry && isCommandEntry(entry)) return true;
   const legacy = getOverlayFieldVisibilityLegacyMap()[fieldId];
   if (legacy !== undefined) return legacy !== false;
   return true;
@@ -1070,8 +1098,8 @@ export function getOverlayFieldVisibilityForCard(catalogId: string): Record<stri
 }
 
 /**
- * Persist overlay stat toggles for a single catalog card (`localStorage` key `battleLogs.cardOverlay.fieldVisibilityByCard`).
- * Older global saves under `battleLogs.cardOverlay.fieldVisibility` still apply as fallback for fields not overridden here.
+ * Persist overlay stat toggles for a single catalog card (`localStorage` key `battleLogs.cardOverlay.fieldVisibilityByCard.v2`).
+ * Older global saves under `battleLogs.cardOverlay.fieldVisibility` still apply as fallback for **structure** cards only.
  */
 export function setOverlayFieldVisibilityForCard(catalogId: string, patch: Partial<Record<string, boolean>>): void {
   const map = { ...getOverlayFieldVisibilityPerCardMap() };
