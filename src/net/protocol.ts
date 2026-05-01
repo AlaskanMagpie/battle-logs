@@ -84,6 +84,10 @@ export interface MatchLaunchOptions {
   queueState?: QueueState;
   fallbackReason?: MatchmakingFallbackPayload["reason"];
   room?: MatchFoundPayload;
+  /** Current AI ladder/model opponent id; ignored for PVP. */
+  aiOpponentId?: string;
+  /** Owner-only local/showmatch tool. AI controls the player side; never records ladder progress. */
+  aiBattle?: boolean;
 }
 
 export function normalizeMatchMode(raw: string | null | undefined): MatchMode {

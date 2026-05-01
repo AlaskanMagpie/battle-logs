@@ -604,6 +604,102 @@
   color: #3a342c;
 }
 
+.binder-picker-toolbar-map[aria-label="Opponent"] {
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid rgba(60, 48, 36, 0.16);
+  border-radius: 8px;
+}
+
+.binder-picker-toolbar-map[aria-label="Opponent"] legend {
+  padding: 0 4px;
+  color: #3a342c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.binder-picker-toolbar-map[aria-label="Opponent"] label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  opacity: 0.92;
+}
+
+.binder-picker-toolbar-map[aria-label="Opponent"] input {
+  flex: 0 0 auto;
+}
+
+.binder-ai-ladder-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(42, 92, 138, 0.22);
+  background: rgba(255, 255, 255, 0.44);
+  color: #211c18;
+}
+
+.binder-ai-ladder-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.binder-ai-ladder-card__tier {
+  flex: 0 0 auto;
+  color: #365f92;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.binder-ai-ladder-card__name {
+  min-width: 0;
+  color: #211c18;
+  font-size: 13px;
+  text-align: right;
+}
+
+.binder-ai-ladder-card__model,
+.binder-ai-ladder-card__next {
+  color: rgba(33, 28, 24, 0.78);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.binder-ai-ladder-card__bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(34, 28, 20, 0.14);
+}
+
+.binder-ai-ladder-card__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f8f7a, #4a7ab8);
+}
+
+.binder-ai-ladder-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+  color: rgba(33, 28, 24, 0.82);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .binder-picker-toolbar-map select {
   flex: 1;
   min-width: 160px;

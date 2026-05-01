@@ -64,6 +64,13 @@ import {
   normalizeMatchMode,
   type MatchLaunchOptions,
 } from "./net/protocol";
+import {
+  isAiLadderProgressEligible,
+  isOwnerAiDuelAuthorized,
+  readAiLadderProgress,
+  recordAiLadderWin,
+  resolvePlayableAiOpponent,
+} from "./ai/aiLadder";
 
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
 const hudRoot = document.querySelector<HTMLElement>("#hud-root")!;
@@ -678,6 +685,13 @@ function runMatch(
   void (async () => {
     const requestedMode = launchOptions.mode ?? "ai";
     const matchId = launchOptions.matchId ?? makeClientMatchId();
+    const ownerAiBattle = requestedMode === "ai" && isOwnerAiDuelAuthorized(params);
+    const aiProgress = readAiLadderProgress();
+    const aiOpponent = resolvePlayableAiOpponent(
+      launchOptions.aiOpponentId ?? params.get("aiOpponent"),
+      aiProgress,
+      { allowLocked: ownerAiBattle },
+    );
     let resolvedLaunch: MatchLaunchOptions = {
       mode: requestedMode,
       matchId,
@@ -685,6 +699,8 @@ function runMatch(
       queueState: launchOptions.queueState ?? "idle",
       fallbackReason: launchOptions.fallbackReason,
       room: launchOptions.room,
+      aiOpponentId: requestedMode === "pvp" ? undefined : aiOpponent.id,
+      aiBattle: ownerAiBattle,
     };
     const needsHumanQueue = requestedMode === "matchmake" || requestedMode === "matchmake_strict";
     const matchmakingAbort = new AbortController();
@@ -730,6 +746,8 @@ function runMatch(
             seat: result.room.seat,
             queueState: "matched",
             room: result.room,
+            aiOpponentId: undefined,
+            aiBattle: false,
           };
         } else {
           resolvedLaunch = {
@@ -737,6 +755,8 @@ function runMatch(
             matchId,
             queueState: "fallback_ai",
             fallbackReason: result.reason,
+            aiOpponentId: aiOpponent.id,
+            aiBattle: false,
           };
         }
       }
@@ -745,14 +765,29 @@ function runMatch(
     }
     const loadedMap = await loadMapMerged(mapUrl);
     const difficultyOverride = queryDifficultyOverride(window.location.search);
-    const map = difficultyOverride
-      ? { ...loadedMap, difficulty: { ...(loadedMap.difficulty ?? {}), ...difficultyOverride } }
-      : loadedMap;
+    const map =
+      resolvedLaunch.mode === "pvp" && !difficultyOverride
+        ? loadedMap
+        : {
+          ...loadedMap,
+          difficulty: {
+            ...(loadedMap.difficulty ?? {}),
+            ...(resolvedLaunch.mode === "pvp" ? {} : aiOpponent.difficulty),
+            ...(difficultyOverride ?? {}),
+          },
+        };
     const renderer = new GameRenderer(canvas, CONTROL_PROFILE);
     await renderer.loadTerrainFromMap(map);
     let state: GameState = createInitialState(map, initialDoctrine);
     applyControlProfileDefaults(state);
     configureGamePortals(state, portalContext, window.location.href);
+    if (resolvedLaunch.aiBattle) {
+      state.heroCaptainEnabled = true;
+      state.heroCaptainLastManualTick = -9999;
+      state.lastMessage = `Owner AI duel: Captain mode vs tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+    } else if (resolvedLaunch.mode === "ai") {
+      state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
+    }
     if (resolvedLaunch.mode === "pvp") {
       state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}). Server-authoritative sync is active for room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
     } else if (resolvedLaunch.mode === "fallback_ai") {
@@ -772,7 +807,13 @@ function runMatch(
             }
           },
           onOpponentAiTakeover: () => {
-            resolvedLaunch = { ...resolvedLaunch, mode: "fallback_ai", fallbackReason: "opponent_left" };
+            resolvedLaunch = {
+              ...resolvedLaunch,
+              mode: "fallback_ai",
+              fallbackReason: "opponent_left",
+              aiOpponentId: aiOpponent.id,
+              aiBattle: false,
+            };
             state.lastMessage = "Opponent disconnected — AI has taken over.";
           },
           onInvalidMessage: (reason) => {
@@ -818,6 +859,16 @@ function runMatch(
           return: state.portal.returnUrl ? state.portal.returnPortal : null,
           pendingRedirect: !!state.portal.pendingRedirectUrl,
         },
+        aiOpponent: resolvedLaunch.mode === "pvp"
+          ? null
+          : {
+            id: aiOpponent.id,
+            tier: aiOpponent.tier,
+            name: aiOpponent.name,
+            provider: aiOpponent.provider,
+            model: aiOpponent.model,
+            aiBattle: resolvedLaunch.aiBattle === true,
+          },
         controlProfile: CONTROL_PROFILE.mode,
         captainMode: state.heroCaptainEnabled,
         selectedUnitIds: state.selectedUnitIds,
@@ -966,6 +1017,23 @@ function runMatch(
         clientMatchId: resolvedLaunch.matchId,
       })
         .catch(() => undefined);
+      if (
+        completed.phase === "win" &&
+        isAiLadderProgressEligible({
+          matchMode: resolvedLaunch.mode,
+          aiBattle: resolvedLaunch.aiBattle === true,
+          opponentId: resolvedLaunch.aiOpponentId ?? null,
+        }) &&
+        resolvedLaunch.aiOpponentId
+      ) {
+        const nextProgress = recordAiLadderWin(resolvedLaunch.aiOpponentId);
+        const wins = nextProgress.winsByOpponentId[resolvedLaunch.aiOpponentId] ?? 0;
+        completed.lastMessage = `AI ladder win recorded: ${wins} vs ${aiOpponent.name}.`;
+        console.info("[ai_ladder] win recorded", {
+          opponentId: resolvedLaunch.aiOpponentId,
+          wins,
+        });
+      }
     };
 
     const tick = (now: number): void => {
@@ -1035,6 +1103,15 @@ function runMatch(
       state = createInitialState(map, initialDoctrine);
       applyControlProfileDefaults(state);
       configureGamePortals(state, portalContext, window.location.href);
+      if (resolvedLaunch.aiBattle) {
+        state.heroCaptainEnabled = true;
+        state.heroCaptainLastManualTick = -9999;
+        state.lastMessage = `Owner AI duel: Captain mode vs tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+      } else if (resolvedLaunch.mode === "ai") {
+        state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
+      } else if (resolvedLaunch.mode === "fallback_ai") {
+        state.lastMessage = `AI takeover: tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+      }
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
       renderer.sync(state, USE_GLB);
@@ -1736,8 +1813,9 @@ function mountPortalPicker(onReady?: () => void): void {
       /* ignore */
     }
   }
-  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl, mode = "ai") => {
+  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl, mode = "ai", launchOptions = {}) => {
     runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext, {
+      ...launchOptions,
       mode,
       matchId: makeClientMatchId(),
       queueState: mode === "matchmake" || mode === "matchmake_strict" ? "searching" : "idle",

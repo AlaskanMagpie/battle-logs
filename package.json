@@ -8,6 +8,7 @@
     "localhost": "node scripts/reset-localhost-dev.mjs",
     "dev:reset": "node scripts/reset-localhost-dev.mjs",
     "dev:lan": "vite --host",
+    "ai:duel": "node scripts/ai-duel-url.mjs",
     "assets:sync-cards": "node scripts/sync-card-manifest.mjs",
     "cards:pipeline": "node scripts/cards-pipeline.mjs",
     "build": "node scripts/verify-public-glbs.mjs && node scripts/sync-card-manifest.mjs && vite build",

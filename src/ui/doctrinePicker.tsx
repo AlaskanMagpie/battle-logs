@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { PortalContext } from "../game/portal";
-import type { MatchMode } from "../net/protocol";
+import type { MatchLaunchOptions, MatchMode } from "../net/protocol";
 import { disposeCardPreviewStudio } from "./cardGlbPreview";
 import { DoctrineBinderPicker } from "./binder/DoctrineBinderPicker";
 
@@ -18,7 +18,12 @@ let pickerRoot: Root | null = null;
 
 export function mountDoctrinePicker(
   rootEl: HTMLElement,
-  onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode) => void,
+  onStart: (
+    slots: (string | null)[],
+    mapUrl: string,
+    mode?: MatchMode,
+    launchOptions?: Partial<MatchLaunchOptions>,
+  ) => void,
   portalContext: PortalContext = { enteredViaPortal: false, params: {}, ref: null },
   onReady?: () => void,
 ): void {
@@ -29,7 +34,12 @@ export function mountDoctrinePicker(
     createElement(DoctrineBinderPicker, {
       portalContext,
       onReady,
-      onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode) => {
+      onStart: (
+        slots: (string | null)[],
+        mapUrl: string,
+        mode?: MatchMode,
+        launchOptions?: Partial<MatchLaunchOptions>,
+      ) => {
         rootEl.style.display = "none";
         const reactRoot = pickerRoot;
         if (reactRoot) {
@@ -37,7 +47,7 @@ export function mountDoctrinePicker(
           pickerRoot = null;
         }
         disposeCardPreviewStudio();
-        onStart(slots, mapUrl, mode);
+        onStart(slots, mapUrl, mode, launchOptions);
       },
     }),
   );

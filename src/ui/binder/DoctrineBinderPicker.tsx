@@ -12,7 +12,16 @@ import {
   buildVibeJamExitUrlForPrematch,
   type PortalContext,
 } from "../../game/portal";
-import type { MatchMode } from "../../net/protocol";
+import {
+  AI_LADDER_OPPONENTS,
+  AI_LADDER_WINS_TO_UNLOCK,
+  aiLadderProgressLabel,
+  currentAiLadderOpponent,
+  nextLockedAiOpponent,
+  readAiLadderProgress,
+  winsAgainst,
+} from "../../ai/aiLadder";
+import type { MatchLaunchOptions, MatchMode } from "../../net/protocol";
 import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
 import { resetCardArtManifestCache } from "../cardArtManifest";
 import {
@@ -45,13 +54,15 @@ import "./binderPicker.css";
 const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
 
 type PrematchOpponentChoice = "ai" | "matchmake" | "matchmake_strict";
+type PrematchLaunchOptions = Pick<MatchLaunchOptions, "aiOpponentId">;
 
 function initialOpponentFromUrl(): PrematchOpponentChoice {
-  if (typeof window === "undefined") return "ai";
+  if (typeof window === "undefined") return "matchmake";
   const o = new URLSearchParams(window.location.search).get("opponent")?.trim().toLowerCase() ?? "";
+  if (o === "ai") return "ai";
   if (o === "matchmake" || o === "pvp") return "matchmake";
   if (o === "human" || o === "wait" || o === "strict" || o === "matchmake_strict") return "matchmake_strict";
-  return "ai";
+  return "matchmake";
 }
 
 function matchModeFromPrematchChoice(c: PrematchOpponentChoice): MatchMode {
@@ -322,7 +333,7 @@ export function DoctrineBinderPicker({
   onReady,
   portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
-  onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode) => void;
+  onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode, launchOptions?: PrematchLaunchOptions) => void;
   onReady?: () => void;
   portalContext?: PortalContext;
 }): ReactElement {
@@ -370,6 +381,7 @@ export function DoctrineBinderPicker({
   /** Map / page nav / start — floating panel so the binder stays full-bleed. */
   const [prematchSetupOpen, setPrematchSetupOpen] = useState(false);
   const [opponentMode, setOpponentMode] = useState<PrematchOpponentChoice>(initialOpponentFromUrl);
+  const [aiProgress] = useState(() => readAiLadderProgress());
   const [prematchNotice, setPrematchNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -408,6 +420,16 @@ export function DoctrineBinderPicker({
 
   const filledCount = slots.filter(Boolean).length;
   const canStart = filledCount >= MIN_FILLED;
+  const activeAiOpponent = useMemo(() => currentAiLadderOpponent(aiProgress), [aiProgress]);
+  const nextAiOpponent = useMemo(() => nextLockedAiOpponent(aiProgress), [aiProgress]);
+  const activeAiWins = winsAgainst(aiProgress, activeAiOpponent.id);
+  const aiProgressCopy = aiLadderProgressLabel(aiProgress, activeAiOpponent);
+  const aiProgressPercent = nextAiOpponent
+    ? Math.min(100, (Math.min(activeAiWins, AI_LADDER_WINS_TO_UNLOCK) / AI_LADDER_WINS_TO_UNLOCK) * 100)
+    : 100;
+  const launchOptionsForOpponent = useCallback((): PrematchLaunchOptions | undefined => {
+    return opponentMode === "matchmake_strict" ? undefined : { aiOpponentId: activeAiOpponent.id };
+  }, [activeAiOpponent.id, opponentMode]);
 
   /** Force refetch card manifest + bust `/assets/cards/*` cache each visit (browser loves to cache JSON/SVG). */
   useEffect(() => {
@@ -431,11 +453,13 @@ export function DoctrineBinderPicker({
       const url = new URL(window.location.href);
       const mapped = opponentMode === "ai" ? "ai" : opponentMode === "matchmake" ? "matchmake" : "human";
       url.searchParams.set("opponent", mapped);
+      if (opponentMode === "matchmake_strict") url.searchParams.delete("aiOpponent");
+      else url.searchParams.set("aiOpponent", activeAiOpponent.id);
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     } catch {
       /* ignore */
     }
-  }, [opponentMode]);
+  }, [activeAiOpponent.id, opponentMode]);
 
   const clearBinderHowToHoldTimer = useCallback(() => {
     if (binderHowToHoldTimerRef.current != null) {
@@ -1165,9 +1189,9 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(norm, mapUrl, matchModeFromPrematchChoice(opponentMode));
+      onStart(norm, mapUrl, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
     })();
-  }, [slots, binderSlotPick, onStart, mapUrl, opponentMode]);
+  }, [slots, binderSlotPick, onStart, mapUrl, opponentMode, launchOptionsForOpponent]);
 
   const commitQuickMatchStart = useCallback(
     (normSlots: (string | null)[], pickSnapshot: (number | null)[], url: string) => {
@@ -1183,10 +1207,10 @@ export function DoctrineBinderPicker({
       setPortalTransitioning(true);
       void (async () => {
         await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-        onStart(normSlots, url, matchModeFromPrematchChoice(opponentMode));
+        onStart(normSlots, url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
       })();
     },
-    [onStart, opponentMode],
+    [onStart, opponentMode, launchOptionsForOpponent],
   );
 
   const quickMatchAndStart = useCallback(() => {
@@ -1226,9 +1250,19 @@ export function DoctrineBinderPicker({
     setPortalTransitioning(true);
     void (async () => {
       await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(finalSlots, mapPick.url, matchModeFromPrematchChoice(opponentMode));
+      onStart(finalSlots, mapPick.url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
     })();
-  }, [loading, portalTransitioning, onStart, commitQuickMatchStart, slots, binderSlotPick, mapUrl, opponentMode]);
+  }, [
+    loading,
+    portalTransitioning,
+    onStart,
+    commitQuickMatchStart,
+    slots,
+    binderSlotPick,
+    mapUrl,
+    opponentMode,
+    launchOptionsForOpponent,
+  ]);
   useEffect(() => {
     if (loading) return;
     let shouldPlay = false;
@@ -1528,7 +1562,7 @@ export function DoctrineBinderPicker({
                           checked={opponentMode === "ai"}
                           onChange={() => setOpponentMode("ai")}
                         />
-                        AI only
+                        AI ladder
                       </label>
                       <label>
                         <input
@@ -1550,6 +1584,26 @@ export function DoctrineBinderPicker({
                         />
                         Wait for human (no AI fallback)
                       </label>
+                      <div className="binder-ai-ladder-card" aria-live="polite">
+                        <div className="binder-ai-ladder-card__head">
+                          <span className="binder-ai-ladder-card__tier">
+                            Tier {activeAiOpponent.tier} / {AI_LADDER_OPPONENTS.length}
+                          </span>
+                          <strong className="binder-ai-ladder-card__name">{activeAiOpponent.name}</strong>
+                        </div>
+                        <div className="binder-ai-ladder-card__model">{activeAiOpponent.title}</div>
+                        <div className="binder-ai-ladder-card__bar" aria-hidden="true">
+                          <span
+                            className="binder-ai-ladder-card__fill"
+                            style={{
+                              width: `${aiProgressPercent}%`,
+                            }}
+                          />
+                        </div>
+                        <div className="binder-ai-ladder-card__meta">
+                          <span>{aiProgressCopy}</span>
+                        </div>
+                      </div>
                     </fieldset>
                     <div className="binder-picker-toolbar-main">
                       <div className="binder-picker-toolbar-actions">
