@@ -440,6 +440,7 @@ export class CardBinderEngine {
   private oSY = 0;
   private oSY2 = 0;
   private oSP = 0;
+  private touchEmptyOrbitArmed = false;
   private readonly clock = new THREE.Clock();
   private disposed = false;
   private dist = 4.35;
@@ -1703,6 +1704,24 @@ export class CardBinderEngine {
     this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
   }
 
+  orbitCameraByPixels(dxPx: number, dyPx: number, rect: DOMRect): void {
+    this.yaw = THREE.MathUtils.clamp(
+      this.yaw + (dxPx / Math.max(1, rect.width)) * Math.PI,
+      -BINDER_ORBIT_YAW_MAX,
+      BINDER_ORBIT_YAW_MAX,
+    );
+    this.pitch = THREE.MathUtils.clamp(
+      this.pitch + (dyPx / Math.max(1, rect.height)) * Math.PI * 0.6,
+      BINDER_ORBIT_PITCH_MIN,
+      BINDER_ORBIT_PITCH_MAX,
+    );
+  }
+
+  zoomCameraByScale(scale: number): void {
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    this.dist = THREE.MathUtils.clamp(this.dist / scale, 0.72, 12);
+  }
+
   playPortalTransition(direction: "in" | "out", durationMs = 760): Promise<void> {
     this.portalTransitionDirection = direction;
     this.portalTransitionDuration = durationMs;
@@ -1733,6 +1752,7 @@ export class CardBinderEngine {
       this.codexPulledPickIndices.delete(idxLift);
     }
     this.codexDragActive = false;
+    this.touchEmptyOrbitArmed = false;
     this.armCatalogPickIndex = null;
     this.orb = false;
     this.coverTapArmed = false;
@@ -2164,6 +2184,7 @@ export class CardBinderEngine {
     this.pendingCardTap = false;
     this.armCatalogPickIndex = null;
     this.codexDragActive = false;
+    this.touchEmptyOrbitArmed = false;
 
     if (this.codexHandDragMode && e.button === 1) {
       this.orb = true;
@@ -2235,6 +2256,9 @@ export class CardBinderEngine {
     ) {
       this._setCatalogSelection(null);
       this.onClearDoctrineSelection?.();
+      if (this.codexHandDragMode && e.pointerType !== "mouse") {
+        this.touchEmptyOrbitArmed = true;
+      }
     }
 
     this.armSX = e.clientX;
@@ -2245,21 +2269,37 @@ export class CardBinderEngine {
   }
 
   pM(e: PointerEvent, rect: DOMRect): void {
+    const dx = e.clientX - this.armSX;
+    const dy = e.clientY - this.armSY;
+    const dist = Math.hypot(dx, dy);
+
+    if (
+      this.touchEmptyOrbitArmed &&
+      e.pointerType !== "mouse" &&
+      !this.orb &&
+      !this.drag &&
+      !this.flipArm &&
+      !this.pendingCardTap &&
+      dist >= this.TAP_MAX_PX
+    ) {
+      this.orb = true;
+      this.oSX = this.armSX;
+      this.oSY = this.armSY;
+      this.oSY2 = this.yaw;
+      this.oSP = this.pitch;
+    }
+
     if (this.orb) {
-      const dx = (e.clientX - this.oSX) / rect.width;
-      const dy = (e.clientY - this.oSY) / rect.height;
-      this.yaw = THREE.MathUtils.clamp(this.oSY2 + dx * Math.PI, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);
+      const orbitDx = (e.clientX - this.oSX) / rect.width;
+      const orbitDy = (e.clientY - this.oSY) / rect.height;
+      this.yaw = THREE.MathUtils.clamp(this.oSY2 + orbitDx * Math.PI, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);
       this.pitch = THREE.MathUtils.clamp(
-        this.oSP + dy * Math.PI * 0.6,
+        this.oSP + orbitDy * Math.PI * 0.6,
         BINDER_ORBIT_PITCH_MIN,
         BINDER_ORBIT_PITCH_MAX,
       );
       return;
     }
-
-    const dx = e.clientX - this.armSX;
-    const dy = e.clientY - this.armSY;
-    const dist = Math.hypot(dx, dy);
 
     if (
       this.codexHandDragMode &&
@@ -2376,6 +2416,7 @@ export class CardBinderEngine {
 
   pU(e: PointerEvent, rect: DOMRect): void {
     this.orb = false;
+    this.touchEmptyOrbitArmed = false;
     this._clearCodexLongPressTimer();
 
     const moved = Math.hypot(e.clientX - this.armSX, e.clientY - this.armSY);

@@ -394,6 +394,14 @@ export function DoctrineBinderPicker({
   /** Two quick taps on the same catalog cell open full rules (pointer-first; complements dblclick). */
   const detailTapRef = useRef<{ t: number; idx: number | null }>({ t: 0, idx: null });
   const codexDragBusyRef = useRef(false);
+  const canvasTouchPointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const canvasTouchCameraRef = useRef<{
+    active: boolean;
+    lastCx: number;
+    lastCy: number;
+    lastDist: number;
+    consumedPointers: Set<number>;
+  }>({ active: false, lastCx: 0, lastCy: 0, lastDist: 0, consumedPointers: new Set<number>() });
 
   const [codexDrag, setCodexDrag] = useState<{ catalogId: string } | null>(null);
   const codexDragPosRef = useRef({ x: 0, y: 0 });
@@ -1012,7 +1020,12 @@ export function DoctrineBinderPicker({
 
   useEffect(() => {
     if (loading) return;
-    const end = () => engineRef.current?.releaseInterruptedGesture();
+    const end = () => {
+      engineRef.current?.releaseInterruptedGesture();
+      canvasTouchPointersRef.current.clear();
+      canvasTouchCameraRef.current.active = false;
+      canvasTouchCameraRef.current.consumedPointers.clear();
+    };
     const onVis = () => {
       if (document.visibilityState === "hidden") end();
     };
@@ -1053,6 +1066,54 @@ export function DoctrineBinderPicker({
     window.location.assign(prematchVibeJamHref);
   }, [prematchVibeJamHref]);
 
+  const beginTouchCameraGesture = useCallback((canvas: HTMLCanvasElement): boolean => {
+    const eng = engineRef.current;
+    if (!eng) return false;
+    const pts = [...canvasTouchPointersRef.current.values()];
+    if (pts.length < 2) return false;
+    const a = pts[0]!;
+    const b = pts[1]!;
+    const cx = (a.x + b.x) * 0.5;
+    const cy = (a.y + b.y) * 0.5;
+    const dist = Math.max(12, Math.hypot(a.x - b.x, a.y - b.y));
+    eng.releaseInterruptedGesture();
+    canvasTouchCameraRef.current = {
+      active: true,
+      lastCx: cx,
+      lastCy: cy,
+      lastDist: dist,
+      consumedPointers: new Set(canvasTouchPointersRef.current.keys()),
+    };
+    try {
+      for (const pointerId of canvasTouchCameraRef.current.consumedPointers) {
+        if (!canvas.hasPointerCapture(pointerId)) canvas.setPointerCapture(pointerId);
+      }
+    } catch {
+      /* capture can fail when a pointer has already ended */
+    }
+    return true;
+  }, []);
+
+  const updateTouchCameraGesture = useCallback((canvas: HTMLCanvasElement): boolean => {
+    const eng = engineRef.current;
+    const gesture = canvasTouchCameraRef.current;
+    const pts = [...canvasTouchPointersRef.current.values()];
+    if (!eng || !gesture.active || pts.length < 2) return false;
+    const a = pts[0]!;
+    const b = pts[1]!;
+    const cx = (a.x + b.x) * 0.5;
+    const cy = (a.y + b.y) * 0.5;
+    const dist = Math.max(12, Math.hypot(a.x - b.x, a.y - b.y));
+    const rect = canvas.getBoundingClientRect();
+    eng.orbitCameraByPixels(cx - gesture.lastCx, cy - gesture.lastCy, rect);
+    eng.zoomCameraByScale(dist / Math.max(12, gesture.lastDist));
+    gesture.lastCx = cx;
+    gesture.lastCy = cy;
+    gesture.lastDist = dist;
+    for (const pointerId of canvasTouchPointersRef.current.keys()) gesture.consumedPointers.add(pointerId);
+    return true;
+  }, []);
+
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -1062,6 +1123,14 @@ export function DoctrineBinderPicker({
     const rect = e.currentTarget.getBoundingClientRect();
     const eng = engineRef.current;
     if (!eng) return;
+    if (e.pointerType !== "mouse") {
+      canvasTouchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (canvasTouchPointersRef.current.size >= 2 && beginTouchCameraGesture(e.currentTarget)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     const portalAction = e.button === 0 ? eng.pickVibePortalAction(e.clientX, e.clientY, rect) : null;
     if (portalAction === "enter") {
       e.preventDefault();
@@ -1094,14 +1163,49 @@ export function DoctrineBinderPicker({
       }
     }
     eng.pD(e.nativeEvent, rect);
-  }, [confirmVibeJamExit, loading]);
+  }, [beginTouchCameraGesture, confirmVibeJamExit, loading]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType !== "mouse") {
+      const gesture = canvasTouchCameraRef.current;
+      if (canvasTouchPointersRef.current.has(e.pointerId)) {
+        canvasTouchPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (gesture.active && updateTouchCameraGesture(e.currentTarget)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (gesture.consumedPointers.has(e.pointerId)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     engineRef.current?.pM(e.nativeEvent, rect);
-  }, []);
+  }, [updateTouchCameraGesture]);
 
   const onPointerReleased = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType !== "mouse") {
+      const gesture = canvasTouchCameraRef.current;
+      const consumed = gesture.consumedPointers.has(e.pointerId);
+      canvasTouchPointersRef.current.delete(e.pointerId);
+      if (gesture.active && canvasTouchPointersRef.current.size < 2) gesture.active = false;
+      if (canvasTouchPointersRef.current.size === 0) gesture.consumedPointers.clear();
+      if (consumed) {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     engineRef.current?.pU(e.nativeEvent, rect);
     try {
@@ -1312,7 +1416,7 @@ export function DoctrineBinderPicker({
             className="binder-picker-canvas"
             tabIndex={0}
             role="application"
-            aria-label="Doctrine codex in the portal room. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. Right mouse looks around a limited room view. Double-click details."
+            aria-label="Doctrine codex in the portal room. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. Right mouse, empty touch drag, or two-finger pinch and drag controls the camera. Double-click details."
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerReleased}
