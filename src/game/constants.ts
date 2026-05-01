@@ -84,19 +84,25 @@ export const PLAYER_ACQUIRE_MAP_MULT = 0.22;
 export const UNIT_SEPARATION_GRID = 8;
 
 /** Portion of pairwise overlap to resolve per separation pass (0..1). */
-export const UNIT_SEPARATION_STRENGTH = 0.62;
+export const UNIT_SEPARATION_STRENGTH = 0.72;
 
 /** Extra separation passes per tick (rebuilds grid each pass) for dense armies. */
-export const UNIT_SEPARATION_PASSES = 2;
+export const UNIT_SEPARATION_PASSES = 3;
 
 /** Max XZ displacement from separation in one pass (world units). */
-export const UNIT_SEPARATION_MAX_STEP = 1.6;
+export const UNIT_SEPARATION_MAX_STEP = 2.05;
+
+/**
+ * Multiplies `unitSeparationRadiusXZ` for path queries and `resolveCircleAgainstMapObstacles`
+ * so units sit slightly outside decor + tower discs (was a hard-coded 0.92).
+ */
+export const UNIT_MAP_OBSTACLE_RADIUS_MULT = 1.06;
 
 /**
  * Multiplies unit walk speed in `movement()` only (player + enemy units — not wizards).
- * Lower leaves more time between contacts for strategy.
+ * Raised to make armies cross large maps without long dead travel windows.
  */
-export const UNIT_MOVEMENT_SPEED_SCALE = 0.52;
+export const UNIT_MOVEMENT_SPEED_SCALE = 0.65;
 
 /** Base spacing (world units) for formation slots when marching or gathering. */
 export const UNIT_FORMATION_SPACING = 3.2;
@@ -283,7 +289,7 @@ export const ENEMY_WAVE_GLOBAL_CAP = 8000;
 export const REINFORCEMENT_WAVE_BATCH = 4;
 
 /** Player-controlled hero. */
-export const HERO_SPEED = 7.2;
+export const HERO_SPEED = 9.0;
 /** Max queued RMB destinations after the current move (Shift+right-click). */
 export const HERO_MOVE_WAYPOINT_CAP = 16;
 export const HERO_FOLLOW_RADIUS = 14;

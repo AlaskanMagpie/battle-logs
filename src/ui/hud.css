@@ -8478,6 +8478,676 @@ button.hud-btn--armed::after {
   }
 }
 
+/* Apr 30 mobile battlefield rebuild: final profile-gated layer after legacy HUD packages. */
+html.is-mobile-profile {
+  --mobile-hud-pad-x: max(4px, env(safe-area-inset-left, 0px));
+  --mobile-hud-pad-r: max(4px, env(safe-area-inset-right, 0px));
+  --mobile-bottom-safe: env(safe-area-inset-bottom, 0px);
+  --hud-corner-widget-reserve: 0px;
+}
+
+html.is-mobile-profile body {
+  background: #05080d;
+}
+
+html.is-mobile-profile #hud-root {
+  pointer-events: none;
+}
+
+html.is-mobile-profile #hud-root .hud-chrome,
+html.is-mobile-profile #hud-root .hud-dock,
+html.is-mobile-profile #hud-root .hud-vibejam-link {
+  pointer-events: auto;
+}
+
+html.is-mobile-profile .hud-brand,
+html.is-mobile-profile .hud-territory-key,
+html.is-mobile-profile .hud-chrome .hud-status-card__ico,
+html.is-mobile-profile .hud-chrome .hud-vital__ico,
+html.is-mobile-profile .hud-chrome__objective-icon,
+html.is-mobile-profile .hud-chrome__objective-k,
+html.is-mobile-profile .hud-readout__camps,
+html.is-mobile-profile .hud-phase__row--damage .hud-phase__kicker,
+html.is-mobile-profile .hud-side-eyebrow,
+html.is-mobile-profile .hud-side-hint,
+html.is-mobile-profile .hud-side-hk {
+  display: none !important;
+}
+
+html.is-mobile-profile .hud-chrome {
+  --hud-top-h: 34px;
+  --hud-stat-h: 30px;
+  --hud-vital-h: 30px;
+  position: fixed;
+  top: max(3px, env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-height: 20dvh;
+  padding: 0 var(--mobile-hud-pad-r) 0 var(--mobile-hud-pad-x);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--hud-top-h) var(--hud-stat-h) var(--hud-vital-h);
+  gap: 2px;
+  overflow: visible;
+  background: linear-gradient(180deg, rgba(4, 7, 12, 0.86), rgba(4, 7, 12, 0.28) 88%, transparent);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls,
+html.is-mobile-profile .hud-chrome__cluster--main,
+html.is-mobile-profile .hud-chrome__cluster--status {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-radius: 0;
+  border: 1px solid rgba(113, 166, 212, 0.28);
+  background: rgba(3, 8, 15, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls::before,
+html.is-mobile-profile .hud-chrome__cluster--main::before,
+html.is-mobile-profile .hud-chrome__cluster--status::before,
+html.is-mobile-profile .hud-chrome__objective::before,
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls::after,
+html.is-mobile-profile .hud-chrome__cluster--main::after,
+html.is-mobile-profile .hud-chrome__cluster--status::after,
+html.is-mobile-profile .hud-chrome__objective::after {
+  content: none !important;
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls {
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  margin: 0;
+  overflow: hidden;
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn,
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls #btn-captain {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  place-items: center;
+  border-radius: 4px;
+  border-color: rgba(118, 185, 236, 0.24);
+  background: rgba(6, 12, 21, 0.78);
+}
+
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-side-sprite,
+html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-side-ico {
+  width: min(24px, 7.4vw);
+  height: min(24px, 7.4vw);
+  margin: 0;
+}
+
+html.is-mobile-profile .hud-side-copy {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+
+html.is-mobile-profile .hud-side-value {
+  width: 100%;
+  min-width: 0;
+  max-height: 10px;
+  color: #f7efe1;
+  font: 800 8px/1 Georgia, "Times New Roman", serif;
+  letter-spacing: 0;
+}
+
+html.is-mobile-profile .hud-chrome__cluster--main {
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(44px, 14vw, 58px);
+  gap: 2px;
+}
+
+html.is-mobile-profile .hud-chrome__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  min-width: 0;
+  height: 100%;
+}
+
+html.is-mobile-profile .hud-stat {
+  min-width: 0;
+  height: 100%;
+  padding: 1px 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 10px 1fr;
+  justify-items: center;
+  align-items: center;
+  border-right: 1px solid rgba(180, 150, 94, 0.16);
+  background: transparent;
+}
+
+html.is-mobile-profile .hud-stat__ico {
+  display: none !important;
+}
+
+html.is-mobile-profile .hud-stat__txt {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: 10px 16px;
+  align-items: center;
+  justify-items: center;
+  gap: 0;
+}
+
+html.is-mobile-profile .hud-stat__label {
+  max-width: 100%;
+  font: 800 clamp(7px, 1.9vw, 9px) / 1 system-ui, sans-serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+html.is-mobile-profile .hud-stat__value {
+  max-width: 100%;
+  font: 850 clamp(11px, 3.4vw, 15px) / 1 system-ui, sans-serif;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+html.is-mobile-profile .hud-chrome__phase {
+  height: 100%;
+  min-width: 0;
+  padding: 1px 2px;
+  display: grid;
+  grid-template-rows: 1fr;
+  place-items: center;
+  border-left: 1px solid rgba(180, 150, 94, 0.18);
+  background: rgba(0, 0, 0, 0.16);
+}
+
+html.is-mobile-profile .hud-phase__row--damage {
+  display: none;
+}
+
+html.is-mobile-profile .hud-phase__row--time {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+}
+
+html.is-mobile-profile .hud-phase-timer {
+  max-width: 100%;
+  font: 850 clamp(13px, 4vw, 17px) / 1 system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+html.is-mobile-profile .hud-chrome__cluster--status {
+  grid-row: 3;
+  display: grid;
+  grid-template-columns: clamp(38px, 11vw, 50px) minmax(0, 1fr);
+  gap: 2px;
+}
+
+html.is-mobile-profile .hud-chrome__readout {
+  min-width: 0;
+  height: 100%;
+  padding: 1px 2px;
+  display: grid;
+  place-items: center;
+}
+
+html.is-mobile-profile .hud-readout__body,
+html.is-mobile-profile .hud-readout__hostiles {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+}
+
+html.is-mobile-profile .hud-readout__hostiles-lbl {
+  display: block;
+  font: 800 7px/1 system-ui, sans-serif;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+html.is-mobile-profile .hud-readout__hostiles-val {
+  color: #ff7c7c;
+  font: 900 clamp(15px, 5vw, 22px) / 1 system-ui, sans-serif;
+}
+
+html.is-mobile-profile .hud-chrome__vitals {
+  min-width: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 1px;
+}
+
+html.is-mobile-profile .hud-vital {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 1px 4px;
+  display: grid;
+  grid-template-columns: clamp(34px, 12vw, 48px) minmax(0, 1fr) clamp(44px, 15vw, 58px);
+  column-gap: 4px;
+  align-items: center;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+html.is-mobile-profile .hud-vital__lbl {
+  min-width: 0;
+  color: #9edfff;
+  font: 800 clamp(8px, 2.3vw, 10px) / 1 system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+html.is-mobile-profile .hud-vital .bar {
+  width: 100%;
+  min-width: 0;
+  height: 5px;
+  border-radius: 2px;
+}
+
+html.is-mobile-profile .hud-vital__value {
+  min-width: 0;
+  max-width: 100%;
+  font: 800 clamp(8px, 2.4vw, 10px) / 1 system-ui, sans-serif;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-align: right;
+  white-space: nowrap;
+}
+
+html.is-mobile-profile .hud-chrome__objective,
+html.is-mobile-profile .hud-select-tag {
+  position: fixed;
+  left: max(6px, env(safe-area-inset-left, 0px));
+  right: max(6px, env(safe-area-inset-right, 0px));
+  top: calc(max(3px, env(safe-area-inset-top, 0px)) + var(--hud-top-h) + var(--hud-stat-h) + var(--hud-vital-h) + 8px);
+  grid-column: auto;
+  grid-row: auto;
+  height: auto;
+  min-height: 0;
+  max-height: 26px;
+  padding: 4px 8px;
+  display: block;
+  border-radius: 999px;
+  border: 1px solid rgba(110, 208, 255, 0.2);
+  background: rgba(5, 11, 18, 0.58);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+html.is-mobile-profile .hud-chrome__objective[hidden],
+html.is-mobile-profile .hud-select-tag[hidden] {
+  display: none !important;
+}
+
+html.is-mobile-profile .hud-chrome__objective-body {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+html.is-mobile-profile .hud-chrome__objective-t {
+  display: block;
+  width: 100%;
+  height: 16px;
+  color: rgba(228, 242, 255, 0.9);
+  font-size: 10px;
+}
+
+html.is-mobile-profile .hud-dock.hud-dock--overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: visible;
+}
+
+html.is-mobile-profile .hud-dock__bar--message-only {
+  order: 1;
+  padding: 0 max(8px, env(safe-area-inset-right, 0px)) 2px max(8px, env(safe-area-inset-left, 0px));
+}
+
+html.is-mobile-profile .hud-dock__msg {
+  max-height: 16px;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  font-size: 10px;
+  line-height: 1.15;
+  text-align: center;
+  -webkit-line-clamp: 1;
+  color: rgba(230, 240, 255, 0.78);
+}
+
+html.is-mobile-profile .doctrine-wrap.doctrine-wrap--rail {
+  order: 2;
+  width: 100%;
+  min-height: 0;
+  padding: 0 0 max(3px, var(--mobile-bottom-safe));
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
+  --hand-slot-gap: 2px;
+  --hand-rail-pl: max(4px, env(safe-area-inset-left, 0px));
+  --hand-rail-pr: max(4px, env(safe-area-inset-right, 0px));
+  --hand-card-w: min(72px, max(34px, calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)));
+  --hand-card-h: calc(var(--hand-card-w) * var(--tcg-aspect-h) / var(--tcg-aspect-w));
+  padding: 0 var(--hand-rail-pr) max(2px, var(--mobile-bottom-safe)) var(--hand-rail-pl);
+  overflow: visible;
+}
+
+html.is-mobile-profile .doctrine-track--rail .doctrine-hand--match {
+  min-height: calc(var(--hand-card-h) + 12px);
+  align-items: flex-end;
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot {
+  min-height: 0;
+  padding: 1px 0 2px;
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .slot .doctrine-card-compact {
+  width: 100%;
+  height: auto;
+  max-height: none;
+}
+
+html.is-mobile-profile .doctrine-track--rail .slot-hotkey {
+  top: 1px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-size: 8px;
+  line-height: 1.1;
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .slot-live {
+  margin-top: 1px;
+  padding: 1px 0 0;
+  max-height: 10px;
+  font-size: 7px;
+  line-height: 1;
+  overflow: hidden;
+  border-top: 0;
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-title,
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-name {
+  font-size: clamp(6px, 14cqi, 9px);
+}
+
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-subtitle,
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-stats,
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-spell-fx,
+html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-foot {
+  font-size: clamp(5px, 9cqi, 7px);
+}
+
+html.is-mobile-profile .hud-vibejam-link {
+  right: max(6px, env(safe-area-inset-right, 0px));
+  bottom: calc(max(3px, env(safe-area-inset-bottom, 0px)) + 2px);
+  min-width: 0;
+  min-height: 0;
+  max-width: 54px;
+  padding: 4px 5px;
+  border-radius: 9px;
+  font-size: 9px;
+  line-height: 1.05;
+  opacity: 0.86;
+  transform: translateY(calc(-1 * (var(--hand-card-h, 44px) + 13px)));
+}
+
+@media (orientation: portrait) {
+  html.is-mobile-profile .hud-chrome {
+    --hud-top-h: clamp(30px, 7.8vw, 34px);
+    --hud-stat-h: clamp(28px, 7.4vw, 32px);
+    --hud-vital-h: clamp(30px, 8vw, 34px);
+  }
+}
+
+@media (orientation: landscape) {
+  html.is-mobile-profile .hud-chrome {
+    --hud-top-h: clamp(28px, 7.4dvh, 34px);
+    --hud-stat-h: clamp(26px, 7dvh, 31px);
+    --hud-vital-h: 0px;
+    max-height: 18dvh;
+    grid-template-columns: minmax(260px, 0.88fr) minmax(260px, 1fr) minmax(190px, 0.7fr);
+    grid-template-rows: var(--hud-top-h) var(--hud-stat-h);
+    gap: 2px;
+  }
+
+  html.is-mobile-profile .hud-chrome > .hud-match-side-controls {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  html.is-mobile-profile .hud-chrome__cluster--main {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    grid-template-columns: minmax(0, 1fr) clamp(42px, 7vw, 58px);
+  }
+
+  html.is-mobile-profile .hud-chrome__cluster--status {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  html.is-mobile-profile .hud-chrome__vitals {
+    grid-template-rows: 1fr 1fr;
+  }
+
+  html.is-mobile-profile .hud-vital {
+    grid-template-columns: 34px minmax(0, 1fr) 46px;
+  }
+
+  html.is-mobile-profile .hud-chrome__objective {
+    top: calc(max(3px, env(safe-area-inset-top, 0px)) + var(--hud-top-h) + var(--hud-stat-h) + 6px);
+    left: 18vw;
+    right: 18vw;
+  }
+
+  html.is-mobile-profile .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
+    --hand-card-w: min(76px, max(42px, calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)));
+  }
+
+  html.is-mobile-profile .hud-vibejam-link {
+    transform: none;
+    bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Prematch mobile: keep quick-match actions at the thumb edge, never across the middle of the room. */
+html.is-mobile-profile #doctrine-picker .binder-picker-tome-hint {
+  top: max(5px, env(safe-area-inset-top, 0px));
+  max-width: calc(100vw - 16px);
+  padding: 4px 9px;
+  font-size: clamp(8px, 2.2vw, 10px);
+  opacity: 0.92;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-prematch-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 4px;
+  align-items: end;
+  padding: 0 max(6px, env(safe-area-inset-right, 0px)) max(4px, env(safe-area-inset-bottom, 0px))
+    max(6px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(to top, rgba(5, 7, 12, 0.82), rgba(5, 7, 12, 0.34) 54%, transparent);
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-doctrine-hand-rail {
+  grid-row: 1;
+  width: 100%;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-actions {
+  grid-row: 2;
+  width: 100%;
+  margin: 0;
+  align-items: stretch;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-actions__stack {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn {
+  width: 100%;
+  --binder-rail-btn-w: 100%;
+  --binder-rail-btn-h: clamp(38px, 10vw, 46px);
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn__inner {
+  width: 100%;
+  grid-template-columns: clamp(26px, 7vw, 32px) minmax(0, 1fr);
+  gap: 5px;
+  padding: 3px 5px 3px 3px;
+  border-radius: 6px;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn__glyph {
+  height: calc(var(--binder-rail-btn-h) - 6px);
+  border-radius: 5px;
+  font-size: clamp(13px, 4vw, 18px);
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn__label,
+html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn__label--long {
+  height: 20px;
+  font-size: clamp(8px, 2.5vw, 11px);
+  letter-spacing: 0;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-vibejam-insert--floated {
+  display: none;
+}
+
+html.is-mobile-profile #doctrine-picker .binder-picker-doctrine-hand-rail .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
+  --hand-card-w: min(58px, max(32px, calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)));
+  --hand-rail-pr: max(4px, env(safe-area-inset-right, 0px));
+  --hand-rail-pl: max(4px, env(safe-area-inset-left, 0px));
+}
+
+html.is-mobile-profile .onboarding-overlay {
+  align-items: flex-end;
+  padding: 0 max(8px, env(safe-area-inset-right, 0px))
+    calc(max(74px, 18dvw) + max(8px, env(safe-area-inset-bottom, 0px)))
+    max(8px, env(safe-area-inset-left, 0px));
+  z-index: 130;
+}
+
+html.is-mobile-profile .onboarding-card {
+  width: min(360px, 100%);
+  max-height: 28dvh;
+  padding: 9px 10px 8px;
+  gap: 6px;
+  border-radius: 12px;
+  background: rgba(9, 14, 22, 0.9);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.52);
+}
+
+html.is-mobile-profile .ob-stage {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+html.is-mobile-profile .ob-text {
+  max-height: 7.2em;
+  overflow: hidden;
+  font-size: clamp(11px, 3.1vw, 13px);
+  line-height: 1.32;
+}
+
+html.is-mobile-profile .ob-dots {
+  gap: 5px;
+}
+
+html.is-mobile-profile .ob-dot {
+  width: 6px;
+  height: 6px;
+}
+
+html.is-mobile-profile .ob-actions {
+  gap: 6px;
+}
+
+html.is-mobile-profile .ob-btn {
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+@media (orientation: landscape) {
+  html.is-mobile-profile #doctrine-picker .binder-picker-prematch-bottom {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 26vw);
+    grid-template-rows: auto;
+    gap: 8px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom, 0px));
+  }
+
+  html.is-mobile-profile #doctrine-picker .binder-picker-doctrine-hand-rail,
+  html.is-mobile-profile #doctrine-picker .binder-picker-rail-actions {
+    grid-row: 1;
+  }
+
+  html.is-mobile-profile #doctrine-picker .binder-picker-rail-actions {
+    grid-column: 2;
+  }
+
+  html.is-mobile-profile #doctrine-picker .binder-picker-rail-actions__stack {
+    grid-template-columns: 1fr;
+  }
+
+  html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn {
+    --binder-rail-btn-h: clamp(34px, 10dvh, 44px);
+  }
+
+  html.is-mobile-profile .onboarding-overlay {
+    justify-content: flex-end;
+    padding: 0 max(74px, 9vw) max(58px, calc(14dvh + env(safe-area-inset-bottom, 0px))) 0;
+  }
+
+  html.is-mobile-profile .onboarding-card {
+    width: min(380px, 44vw);
+    max-height: 34dvh;
+  }
+}
+
 /* Apr 30 HUD resource/clock final cascade: keep labels readable after all HUD packages. */
 .hud-chrome .hud-chrome__cluster--main {
   grid-template-columns: minmax(0, 1fr) minmax(146px, clamp(146px, 12vw, 174px));

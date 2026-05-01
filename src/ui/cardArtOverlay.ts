@@ -39,6 +39,12 @@ type OverlayLayoutConfig = {
 /** Normalized card face — **2:3** with `tcgCardPrint` / binder panel (`TCG_FULL_CARD_W:H`) so DOM + canvas `meet` match authored PNG/SVG art (legacy was 100×140 and letterboxed inside 2:3, drifting stats). */
 const CARD_OVERLAY_WIDTH = 100;
 const CARD_OVERLAY_HEIGHT = 150;
+const OVERLAY_FIELD_CENTER_PAD_X = 50;
+const OVERLAY_FIELD_CENTER_PAD_Y = 75;
+const OVERLAY_FIELD_MIN_X = -OVERLAY_FIELD_CENTER_PAD_X;
+const OVERLAY_FIELD_MAX_X = CARD_OVERLAY_WIDTH + OVERLAY_FIELD_CENTER_PAD_X;
+const OVERLAY_FIELD_MIN_Y = -OVERLAY_FIELD_CENTER_PAD_Y;
+const OVERLAY_FIELD_MAX_Y = CARD_OVERLAY_HEIGHT + OVERLAY_FIELD_CENTER_PAD_Y;
 
 export type CardArtContainRect = { x: number; y: number; w: number; h: number };
 
@@ -187,8 +193,8 @@ function round1(n: number): number {
 function cleanFieldLayout(layout: OverlayFieldLayout | undefined): OverlayFieldLayout {
   if (!layout) return {};
   const next: OverlayFieldLayout = {};
-  if (typeof layout.x === "number" && Number.isFinite(layout.x)) next.x = clamp(round1(layout.x), 0, CARD_OVERLAY_WIDTH);
-  if (typeof layout.y === "number" && Number.isFinite(layout.y)) next.y = clamp(round1(layout.y), 0, CARD_OVERLAY_HEIGHT);
+  if (typeof layout.x === "number" && Number.isFinite(layout.x)) next.x = clamp(round1(layout.x), OVERLAY_FIELD_MIN_X, OVERLAY_FIELD_MAX_X);
+  if (typeof layout.y === "number" && Number.isFinite(layout.y)) next.y = clamp(round1(layout.y), OVERLAY_FIELD_MIN_Y, OVERLAY_FIELD_MAX_Y);
   if (typeof layout.width === "number" && Number.isFinite(layout.width)) {
     next.width = clamp(round1(layout.width), 4, CARD_OVERLAY_WIDTH);
   }
@@ -545,21 +551,7 @@ function applyCornerResize(
   let t = ((px - ax) * vx + (py - ay) * vy) / denomV;
 
   const tMin = Math.max(4 / w0, 4 / h0);
-  let tMax = Infinity;
-  switch (handleId) {
-    case "se":
-      tMax = Math.min((CARD_OVERLAY_WIDTH - L0) / w0, (CARD_OVERLAY_HEIGHT - T0) / h0, 48 / h0);
-      break;
-    case "nw":
-      tMax = Math.min(R0 / w0, B0 / h0, 48 / h0);
-      break;
-    case "ne":
-      tMax = Math.min((CARD_OVERLAY_WIDTH - L0) / w0, B0 / h0, 48 / h0);
-      break;
-    case "sw":
-      tMax = Math.min(R0 / w0, (CARD_OVERLAY_HEIGHT - T0) / h0, 48 / h0);
-      break;
-  }
+  const tMax = Math.min(CARD_OVERLAY_WIDTH / w0, 48 / h0);
   t = clamp(t, tMin, tMax);
 
   let L: number;
@@ -734,8 +726,8 @@ function cardPointFromPointer(svg: SVGSVGElement, ev: PointerEvent): { x: number
   const rect = svg.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return null;
   return {
-    x: clamp(round1(((ev.clientX - rect.left) / rect.width) * CARD_OVERLAY_WIDTH), 0, CARD_OVERLAY_WIDTH),
-    y: clamp(round1(((ev.clientY - rect.top) / rect.height) * CARD_OVERLAY_HEIGHT), 0, CARD_OVERLAY_HEIGHT),
+    x: clamp(round1(((ev.clientX - rect.left) / rect.width) * CARD_OVERLAY_WIDTH), OVERLAY_FIELD_MIN_X, OVERLAY_FIELD_MAX_X),
+    y: clamp(round1(((ev.clientY - rect.top) / rect.height) * CARD_OVERLAY_HEIGHT), OVERLAY_FIELD_MIN_Y, OVERLAY_FIELD_MAX_Y),
   };
 }
 
@@ -1017,8 +1009,8 @@ function startOverlayResize(ev: PointerEvent, svg: SVGSVGElement, fieldEl: Eleme
     }
     nw = clamp(round1(nw), 4, CARD_OVERLAY_WIDTH);
     nh = clamp(round1(nh), 4, 48);
-    ncx = clamp(round1(ncx), 0, CARD_OVERLAY_WIDTH);
-    ncy = clamp(round1(ncy), 0, CARD_OVERLAY_HEIGHT);
+    ncx = clamp(round1(ncx), OVERLAY_FIELD_MIN_X, OVERLAY_FIELD_MAX_X);
+    ncy = clamp(round1(ncy), OVERLAY_FIELD_MIN_Y, OVERLAY_FIELD_MAX_Y);
     setRuntimeCardField(catalogId, fieldId, {
       x: ncx,
       y: ncy,
@@ -1055,8 +1047,8 @@ function startOverlayEditDrag(ev: PointerEvent, svg: SVGSVGElement, fieldEl: Ele
     const point = cardPointFromPointer(svg, moveEv);
     if (!point) return;
     setRuntimeCardField(catalogId, fieldId, {
-      x: clamp(round1(point.x + offset.x), 0, CARD_OVERLAY_WIDTH),
-      y: clamp(round1(point.y + offset.y), 0, CARD_OVERLAY_HEIGHT),
+      x: clamp(round1(point.x + offset.x), OVERLAY_FIELD_MIN_X, OVERLAY_FIELD_MAX_X),
+      y: clamp(round1(point.y + offset.y), OVERLAY_FIELD_MIN_Y, OVERLAY_FIELD_MAX_Y),
     });
     editorState = { ...editorState, dirty: true, status: "Unsaved drag. Click Save card default when it looks right." };
     syncDocumentOverlays(catalogId);

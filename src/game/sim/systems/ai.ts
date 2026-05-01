@@ -12,7 +12,9 @@ import {
   UNIT_SEPARATION_MAX_STEP,
   UNIT_SEPARATION_PASSES,
   UNIT_SEPARATION_STRENGTH,
+  UNIT_MAP_OBSTACLE_RADIUS_MULT,
   HERO_CLAIM_RADIUS,
+  TAP_ANCHOR_STRIKE_RADIUS,
   TAP_CAPTURE_CONTEST_RADIUS,
   TAP_YIELD_MAX,
 } from "../../constants";
@@ -88,6 +90,40 @@ export function nearestEnemyUnit(s: GameState, from: Vec2, maxD2: number): UnitR
       bestD = d;
       best = u;
     }
+  }
+  return best;
+}
+
+/**
+ * Closest attackable enemy position within `maxD2`: enemy units, towers, relays, and enemy-owned
+ * Mana anchors (auto-army pressure sieges buildings and breaks node caps, not only enemy squads).
+ */
+function nearestEnemyCombatObjective(s: GameState, from: Vec2, maxD2: number): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bestD = maxD2;
+  const consider = (p: Vec2): void => {
+    const d = dist2(from, p);
+    if (d < bestD) {
+      bestD = d;
+      best = p;
+    }
+  };
+  for (const eu of s.units) {
+    if (eu.team !== "enemy" || eu.hp <= 0) continue;
+    consider(eu);
+  }
+  for (const st of s.structures) {
+    if (st.team !== "enemy" || st.hp <= 0) continue;
+    consider(st);
+  }
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
+    consider(t);
+  }
+  for (const er of s.enemyRelays) {
+    if (er.hp <= 0) continue;
+    consider(er);
   }
   return best;
 }
@@ -174,7 +210,7 @@ function moveUnitOnPath(
   step: number,
   structureObstacles: MapObstacleFootprint[],
 ): boolean {
-  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * UNIT_MAP_OBSTACLE_RADIUS_MULT;
   if (!u.flying && u.order && u.order.waypoints.length > 0) {
     const wp = u.order.waypoints[0]!;
     if (segmentHitsMapObstacles(s.map, u, wp, r, structureObstacles)) u.order.waypoints.length = 0;
@@ -198,7 +234,7 @@ function moveUnitAutonomousOnPath(
   step: number,
   structureObstacles: MapObstacleFootprint[],
 ): boolean {
-  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * UNIT_MAP_OBSTACLE_RADIUS_MULT;
   const wp0 = u.autoOrder?.waypoints[0];
   const pathBlocked =
     !u.flying &&
@@ -237,7 +273,7 @@ function clampToWorld(s: GameState, u: UnitRuntime): void {
 function clampToWorldAndObstacles(s: GameState, u: UnitRuntime, structureObstacles: MapObstacleFootprint[]): void {
   clampToWorld(s, u);
   if (u.flying) return;
-  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * 0.92;
+  const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * UNIT_MAP_OBSTACLE_RADIUS_MULT;
   resolveCircleAgainstMapObstacles(s.map, u, r, structureObstacles);
 }
 
@@ -401,11 +437,11 @@ function idleOffenseTarget(s: GameState, u: UnitRuntime, st: StructureRuntime | 
   const defensePoint = nearestFriendlyPointUnderThreat(s, u, 96 * 96);
   if (defensePoint) return formationMarchSlot(u, defensePoint, hero, UNIT_FORMATION_SPACING);
 
-  const neutralTap = nearestNeutralTapTarget(s, u);
-  if (neutralTap) return formationMarchSlot(u, neutralTap, hero, UNIT_FORMATION_SPACING);
-
   const pressure = pushLaneTarget(s, u);
   if (pressure) return formationMarchSlot(u, pressure, hero, UNIT_FORMATION_SPACING);
+
+  const neutralTap = nearestNeutralTapTarget(s, u);
+  if (neutralTap) return formationMarchSlot(u, neutralTap, hero, UNIT_FORMATION_SPACING);
 
   const anchor =
     st && (st.rallyX !== st.x || st.rallyZ !== st.z)
@@ -612,19 +648,32 @@ export function movement(s: GameState): void {
     const st = s.structures.find((x) => x.id === u.structureId);
     const hold = st?.holdOrders ?? false;
     const detectR = playerAcquireRadius(half, u.range);
-    const foe = nearestEnemyUnit(s, u, detectR * detectR);
+    const detectR2 = detectR * detectR;
+    const foeUnit = nearestEnemyUnit(s, u, detectR2);
 
-    // In Defense: units only engage foes that are near the wizard; otherwise
-    // they ignore aggression and gather on the hero.
-    const canEngage = foe && (!defense || dist2(foe, hero) <= defR2);
+    const engageReach = Math.max(u.range, TAP_ANCHOR_STRIKE_RADIUS);
+    const engageReach2 = engageReach * engageReach;
 
-    if (canEngage && foe && dist2(u, foe) > u.range * u.range) {
-      moveUnitAutonomousOnPath(s, u, foe, stepU(u), structureObstacles);
-      continue;
-    }
-    if (canEngage) {
-      clampToWorldAndObstacles(s, u, structureObstacles);
-      continue;
+    if (defense) {
+      const canEngage = foeUnit && dist2(foeUnit, hero) <= defR2;
+      if (canEngage && foeUnit && dist2(u, foeUnit) > u.range * u.range) {
+        moveUnitAutonomousOnPath(s, u, foeUnit, stepU(u), structureObstacles);
+        continue;
+      }
+      if (canEngage) {
+        clampToWorldAndObstacles(s, u, structureObstacles);
+        continue;
+      }
+    } else {
+      const pursueTarget = nearestEnemyCombatObjective(s, u, detectR2);
+      if (pursueTarget && dist2(u, pursueTarget) > engageReach2) {
+        moveUnitAutonomousOnPath(s, u, pursueTarget, stepU(u), structureObstacles);
+        continue;
+      }
+      if (pursueTarget) {
+        clampToWorldAndObstacles(s, u, structureObstacles);
+        continue;
+      }
     }
     if (hold && !defense) {
       if (st) {
@@ -657,6 +706,10 @@ export function movement(s: GameState): void {
   }
 
   applyUnitSeparation(s, structureObstacles);
+  for (const u of s.units) {
+    if (u.hp <= 0 || u.flying) continue;
+    clampToWorldAndObstacles(s, u, structureObstacles);
+  }
   unitCaptureNodes(s);
 }
 
@@ -715,11 +768,20 @@ function pushLaneTarget(s: GameState, from: Vec2): Vec2 | null {
   let best: Vec2 | null = null;
   let bestD = Infinity;
   for (const st of s.structures) {
-    if (st.team !== "enemy" || !st.complete) continue;
+    if (st.team !== "enemy" || st.hp <= 0) continue;
     const d = dist2(from, st);
     if (d < bestD) {
       bestD = d;
       best = { x: st.x, z: st.z };
+    }
+  }
+  for (const t of s.taps) {
+    if (!t.active || t.ownerTeam !== "enemy") continue;
+    if ((t.anchorHp ?? 0) <= 0) continue;
+    const d = dist2(from, t);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: t.x, z: t.z };
     }
   }
   for (const er of s.enemyRelays) {

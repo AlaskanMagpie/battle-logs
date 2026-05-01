@@ -7,6 +7,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { enemyEconomyScalar } from "../../difficulty";
+import { applyTrailerHeroModeResources } from "../../../dev/heroMode";
 import type { GameState } from "../../state";
 import type { TeamId } from "../../types";
 import { tapYieldMultForOwner } from "./homeDistance";
@@ -27,6 +28,7 @@ export function economy(s: GameState): void {
     else s.flux += take;
     t.yieldRemaining -= take;
   }
+  applyTrailerHeroModeResources(s);
 }
 
 export function salvageTrickle(s: GameState): void {

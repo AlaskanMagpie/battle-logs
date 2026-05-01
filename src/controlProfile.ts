@@ -56,8 +56,15 @@ export function getStoredControlProfileOverride(): ControlProfileMode | null {
 export function getControlProfile(): ControlProfile {
   const nav = globalThis.navigator;
   const win = globalThis.window;
+  const urlOverride = (() => {
+    try {
+      return new URLSearchParams(win.location.search).get("controlProfile");
+    } catch {
+      return null;
+    }
+  })();
   return resolveControlProfile({
-    override: getStoredControlProfileOverride(),
+    override: urlOverride ?? getStoredControlProfileOverride(),
     coarsePointer: win.matchMedia?.("(pointer: coarse)")?.matches === true,
     touchPoints: nav.maxTouchPoints ?? 0,
     hardwareConcurrency: nav.hardwareConcurrency ?? 8,

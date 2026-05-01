@@ -24,6 +24,12 @@ const MOBILE_STAGES: string[] = [
 export function showRulesToast(): void {
   if (document.getElementById(ROOT_ID)) return;
   try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("noOnboarding") === "1" || params.get("onboarding") === "0") return;
+  } catch {
+    /* ignore */
+  }
+  try {
     if (window.localStorage.getItem(STORAGE_KEY) === "1") return;
   } catch {
     /* ignore */

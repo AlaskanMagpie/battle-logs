@@ -1,6 +1,6 @@
 import type { MapData, MapDecorDef, Vec2 } from "./types";
 
-const EPS = 0.04;
+const EPS = 0.055;
 const RESOLVE_PASSES = 8;
 
 /** Axis-aligned disc obstacle (cylinder / cone / sphere footprint on XZ). */

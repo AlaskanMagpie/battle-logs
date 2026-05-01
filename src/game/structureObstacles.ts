@@ -7,9 +7,11 @@ import type { GameState, StructureRuntime } from "./state";
 import { unitMeshLinearSize } from "./sim/systems/helpers";
 
 const SWARM_WADE_HEIGHT = unitMeshLinearSize("Swarm") * 0.5;
-const TALL_CORE_RADIUS_FRAC = 0.28;
-const TALL_CORE_MIN_RADIUS = 5.1;
-const TALL_CORE_MAX_RADIUS = 7.25;
+/** Inset from half-footprint so low tower skirts stay notionally wadeable; body blocks cleanly. */
+const STRUCTURE_DISC_INSET = 0.88;
+const STRUCTURE_DISC_MIN_RADIUS = 4.25;
+/** Large scaled meshes need discs past old 7.25 cap — prevents units sitting inside tower visuals. */
+const STRUCTURE_DISC_MAX_RADIUS = 15;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -17,7 +19,8 @@ function clamp(n: number, lo: number, hi: number): number {
 
 /**
  * Gameplay-side mirror of the renderer's `structureDims()`.
- * The collision only uses the tall central mass, leaving low GLB skirts/roots wadeable.
+ * Blocking uses a center disc sized to ~half the authored footprint (minus inset) so it tracks
+ * scaled tower meshes; old ~28%‑of‑width caps left most of the mesh non-collidable.
  */
 function structureVisualDims(entry: StructureCatalogEntry): { w: number; h: number; d: number } {
   const H = unitMeshLinearSize("Titan");
@@ -72,11 +75,13 @@ export function structureObstacleFootprints(s: Pick<GameState, "structures">): M
     const dims = structureVisualDims(entry);
     const buildScale = structureBuildScale(st);
     if (dims.h * buildScale <= SWARM_WADE_HEIGHT) continue;
+    const halfFootprint = Math.max(dims.w, dims.d) * 0.5 * buildScale;
+    const r = clamp(halfFootprint * STRUCTURE_DISC_INSET, STRUCTURE_DISC_MIN_RADIUS, STRUCTURE_DISC_MAX_RADIUS);
     out.push({
       kind: "disc",
       cx: st.x,
       cz: st.z,
-      r: clamp(Math.max(dims.w, dims.d) * TALL_CORE_RADIUS_FRAC * buildScale, TALL_CORE_MIN_RADIUS, TALL_CORE_MAX_RADIUS),
+      r,
     });
   }
   return out;

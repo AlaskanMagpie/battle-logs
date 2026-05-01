@@ -943,7 +943,7 @@ export class GameRenderer {
   private territoryOutline: THREE.LineSegments | null = null;
   private enemyTerritoryOutline: THREE.LineSegments | null = null;
   /** Bumps when only territory *visual* style changes (fill texture, opacities); not derived from sim sources. */
-  private static readonly TERRITORY_OVERLAY_STYLE = "v4";
+  private static readonly TERRITORY_OVERLAY_STYLE = "v5";
   private territoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private enemyTerritoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private heroGroup: THREE.Group | null = null;
@@ -1100,6 +1100,11 @@ export class GameRenderer {
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
     this.camera.lookAt(0, 4, 0);
+    if (controlProfile.mode === "mobile") {
+      this.camera.fov = 44;
+      this.camera.position.set(70, 104, 94);
+      this.camera.updateProjectionMatrix();
+    }
 
     this.scene.add(new THREE.AmbientLight(0xcfd9ff, 0.38));
     this.hemiLight = new THREE.HemisphereLight(0x9eb7ff, 0x1a1e28, 0.35);
@@ -1160,6 +1165,12 @@ export class GameRenderer {
     this.controls.zoomSpeed = 0.82;
     this.controls.rotateSpeed = 0.36;
     this.controls.panSpeed = 0.92;
+    if (controlProfile.mode === "mobile") {
+      this.controls.minDistance = 58;
+      this.controls.maxDistance = 340;
+      this.controls.rotateSpeed = 0.26;
+      this.controls.panSpeed = 0.72;
+    }
     this.controls.enableRotate = true;
     this.controls.enablePan = true;
     // LMB/RMB stay with the game; middle = pan the rig. Shift+MMB = orbit (OrbitControls default for PAN+modifier).
@@ -3640,20 +3651,6 @@ export class GameRenderer {
     ctx.clearRect(0, 0, size, size);
     const scale = size / (half * 2);
     const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
-    const centroid = sources.reduce(
-      (acc, p) => {
-        acc.x += p.x;
-        acc.z += p.z;
-        return acc;
-      },
-      { x: 0, z: 0 },
-    );
-    centroid.x /= sources.length;
-    centroid.z /= sources.length;
-    const maxCentroidD = Math.max(
-      TERRITORY_RADIUS,
-      ...sources.map((p) => Math.hypot(p.x - centroid.x, p.z - centroid.z) + TERRITORY_RADIUS),
-    );
     const smoothstep = (edge0: number, edge1: number, x: number): number => {
       const t = Math.max(0, Math.min(1, (x - edge0) / Math.max(0.0001, edge1 - edge0)));
       return t * t * (3 - 2 * t);
@@ -3674,10 +3671,10 @@ export class GameRenderer {
         if (nearestD2 > r2) continue;
 
         const nearestD = Math.sqrt(nearestD2);
-        const edgeT = smoothstep(TERRITORY_RADIUS * 0.54, TERRITORY_RADIUS, nearestD);
-        const centroidT = smoothstep(0, maxCentroidD, Math.hypot(wx - centroid.x, wz - centroid.z));
+        const coreT = 1 - smoothstep(0, TERRITORY_RADIUS * 0.42, nearestD);
+        const edgeT = smoothstep(TERRITORY_RADIUS * 0.74, TERRITORY_RADIUS, nearestD);
         const ripple = 0.5 + 0.5 * Math.sin(wx * 0.34 + wz * 0.22) * Math.sin(wx * 0.11 - wz * 0.28);
-        const alpha = Math.round(255 * Math.min(1, 0.16 + centroidT * 0.3 + edgeT * 0.58 + ripple * 0.08));
+        const alpha = Math.round(255 * Math.min(1, 0.2 + coreT * 0.34 + edgeT * 0.46 + ripple * 0.06));
         const i = (y * size + x) * 4;
         img.data[i] = 255;
         img.data[i + 1] = 255;
@@ -4086,7 +4083,7 @@ export class GameRenderer {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
             placeholder.visible = false;
-            void requestGlbForUnit(u.sizeClass, placeholder, u.team, u.producedUnitId);
+            void requestGlbForUnit(u.sizeClass, placeholder, u.team, u.producedUnitId, u.producerCatalogId);
           }
         }
       }
@@ -4729,6 +4726,10 @@ export class GameRenderer {
     action.play();
     const fadeUntil = ud["glbBaseFadeUntilMs"] as number | undefined;
     if (opts?.preserveActiveFade && ud["glbBaseState"] === resolvedState && fadeUntil !== undefined && performance.now() < fadeUntil) {
+      if (action.getEffectiveWeight() <= 0.02) {
+        action.stopFading();
+        action.setEffectiveWeight(weight);
+      }
       return;
     }
     action.stopFading();
@@ -4916,14 +4917,25 @@ export class GameRenderer {
     const run = ud["glbRunAction"] as THREE.AnimationAction | undefined;
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
     if (!run) return;
+    const forceRunBase = ud["sizeClass"] === "Swarm";
     // While an attack clip is active, `playGlbAttackAnimation` owns the run/idle underlay. Driving
     // run↔idle from smoothed sim motion here fights that (shouldRun is false whenever attackActive
     // without force catch-up), which reads as constant snapping — especially on Swarm/Line.
     if (inAttack) {
       const pinned = (ud["glbBaseState"] as "run" | "idle" | undefined) ?? "run";
-      this.setGlbBaseActionWeight(root, pinned === "idle" && idle ? "idle" : "run", baseW, {
+      this.setGlbBaseActionWeight(root, !forceRunBase && pinned === "idle" && idle ? "idle" : "run", baseW, {
         preserveActiveFade: true,
       });
+      return;
+    }
+    if (forceRunBase) {
+      if (idle) {
+        idle.stopFading();
+        idle.setEffectiveWeight(0);
+        idle.enabled = false;
+      }
+      this.setGlbBaseActionWeight(root, "run", 1);
+      delete ud["glbBaseFadeUntilMs"];
       return;
     }
     const next = (moving || !idle ? "run" : "idle") as "run" | "idle";

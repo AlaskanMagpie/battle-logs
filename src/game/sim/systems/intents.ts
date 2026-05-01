@@ -15,6 +15,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
+import { trailerHeroModeCooldownTicks, trailerHeroModeSpend } from "../../../dev/heroMode";
 import type { PlayerIntent } from "../../intents";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
@@ -408,7 +409,7 @@ function tryPlaceStructure(
     s.lastMessage = "Invalid structure.";
     return;
   }
-  s.flux -= def.fluxCost;
+  s.flux -= trailerHeroModeSpend(def.fluxCost);
   const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
   const placementForward = !infra && nearFriendlyForward(s, pos);
   const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
@@ -439,7 +440,9 @@ function tryPlaceStructure(
   s.stats.structuresBuilt += 1;
   emitSummonFx(s, catalogId, pos);
   if (def.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[doctrineSlotIndex] = Math.round(def.chargeCooldownSeconds * TICK_HZ);
+    s.doctrineCooldownTicks[doctrineSlotIndex] = trailerHeroModeCooldownTicks(
+      Math.round(def.chargeCooldownSeconds * TICK_HZ),
+    );
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
@@ -447,7 +450,7 @@ function tryPlaceStructure(
 }
 
 function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEntry): void {
-  s.flux -= cmd.fluxCost;
+  s.flux -= trailerHeroModeSpend(cmd.fluxCost);
   if (cmd.salvagePctOnCast > 0) {
     const toPool = cmd.fluxCost * (cmd.salvagePctOnCast / 100);
     s.salvage += toPool;
@@ -455,7 +458,7 @@ function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEn
   }
   s.stats.commandsCast += 1;
   if (cmd.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[slotIdx] = Math.round(cmd.chargeCooldownSeconds * TICK_HZ);
+    s.doctrineCooldownTicks[slotIdx] = trailerHeroModeCooldownTicks(Math.round(cmd.chargeCooldownSeconds * TICK_HZ));
   }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;

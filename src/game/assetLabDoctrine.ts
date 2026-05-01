@@ -1,8 +1,9 @@
 /**
- * Asset lab — manual “doctrine” workspace: per-structure card, optional tower/unit GLB overrides
- * and named animation clips. Persisted locally (+ JSON export/import).
+ * Per-card asset lab “doctrine”: optional tower/unit GLB paths and **unit animation clip names**
+ * (`battleLogs.assetLab.doctrine.v1` in localStorage). The match renderer reads `unitClips` for
+ * units spawned from a structure so preview settings apply in-game (see `glbPool` + `producerCatalogId`).
  *
- * Cross-GLB animation retargeting is not implemented — clips must exist on the assigned unit rig.
+ * Cross-GLB retargeting is not implemented — clips must exist on the effective unit GLB for that spawn.
  */
 
 export type UnitAnimRole = "run" | "idle" | "attack" | "die";
@@ -148,7 +149,7 @@ export function guessUnitClipsFromNames(clips: ReadonlyArray<{ name: string }>):
     const g = guessClipByKeywords(clips, keys);
     if (g) out[role] = g;
   };
-  tryRole("run", ["run", "sprint", "jog", "move"]);
+  tryRole("run", ["running", "run", "sprint", "jog", "move"]);
   tryRole("idle", ["idle", "stand", "breath", "stance", "combat"]);
   tryRole("attack", ["attack", "slash", "strike", "swing", "cast", "combo", "charge"]);
   tryRole("die", ["die", "death", "dead", "knock", "dying"]);

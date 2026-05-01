@@ -16,6 +16,7 @@
     "multiplayer:dev": "tsx server/src/index.ts",
     "multiplayer:check": "tsc -p server/tsconfig.json",
     "test": "vitest run",
+    "smoke:mobile": "node scripts/mobile-smoke.mjs",
     "playwright:install-browsers": "playwright install chromium",
     "assets:sync-manifest": "node scripts/sync-unit-manifest.mjs",
     "assets:optimize-glb": "node scripts/optimize-glb.mjs",

@@ -57,6 +57,7 @@ function pushSpawnedUnitFromStructureDef(
     damageVsStructuresMult: def.producedDamageVsStructuresMult ?? 1,
     signal: dominantSignal(def),
     producedUnitId: def.producedUnitId,
+    producerCatalogId: def.id,
     vxImpulse: 0,
     vzImpulse: 0,
   };

@@ -30,6 +30,7 @@ import {
   ATTACK_RANGE_MEDIUM_MAX,
 } from "./constants";
 import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
+import { TRAILER_HERO_MODE, trailerHeroModeStartingFlux } from "../dev/heroMode";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
@@ -280,6 +281,8 @@ export interface UnitRuntime {
   hp: number;
   maxHp: number;
   sizeClass: UnitSizeClass;
+  /** Structure card that produced this squad — used for asset-lab clip overrides (`battleLogs.assetLab.doctrine.v1`). */
+  producerCatalogId?: string;
   /** GLB animation profile id when spawned from a structure with `StructureCatalogEntry.producedUnitId`. */
   producedUnitId?: ProducedUnitId;
   /** Number of visual/combat models represented by this shared-movement squad. */
@@ -1076,7 +1079,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     map: mapResolved,
     tick: 0,
     phase: "playing",
-    flux: PLAYER_STARTING_FLUX,
+    flux: trailerHeroModeStartingFlux(PLAYER_STARTING_FLUX),
     salvage: 0,
     /** Same `enemyEconomyMult` as tap income / passive (default 0.6 = 60% of human opening budget). */
     enemyFlux: enemyStartingFlux,
@@ -1397,7 +1400,7 @@ export function doctrineCardPlayability(
   }
 
   const cdTicks = s.doctrineCooldownTicks[slotIndex] ?? 0;
-  if (cdTicks > 0) {
+  if (!TRAILER_HERO_MODE && cdTicks > 0) {
     const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
     return blocked("cooldown", `Card on cooldown (${secs}s).`, `CD ${secs}s`, {
       cooldownSeconds: secs,
@@ -1409,7 +1412,7 @@ export function doctrineCardPlayability(
   }
 
   const missingMana = Math.max(0, Math.ceil(entry.fluxCost - s.flux));
-  if (missingMana > 0) {
+  if (!TRAILER_HERO_MODE && missingMana > 0) {
     return blocked("mana", `Need ${missingMana} more Mana (${entry.fluxCost} total; have ${Math.floor(s.flux)}).`, `Need ${missingMana}`, {
       missingMana,
     });

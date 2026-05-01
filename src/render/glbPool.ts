@@ -9,6 +9,7 @@ import {
   STRUCTURE_MESH_VISUAL_SCALE,
 } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
+import { getDoctrineForCard } from "../game/assetLabDoctrine";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
 
@@ -83,14 +84,32 @@ function mergedMeshyPackLooksLikeCombatClip(clip: THREE.AnimationClip): boolean 
 function pickMergedMeshyLocomotionClip(
   animations: THREE.AnimationClip[],
   role: "run" | "idle",
+  file: string,
 ): THREE.AnimationClip | null {
   const leaf = (c: THREE.AnimationClip) => animClipLeafLower(c.name);
   const okLoco = (c: THREE.AnimationClip) => movingTrackCount(c) > 0 && !mergedMeshyPackLooksLikeCombatClip(c);
   if (role === "run") {
+    /**
+     * Astral Knight merged export: the main jog/locomotion loop is often authored under a clip
+     * named "Idle" (or `|Idle|`) — use it for run in matches so map/battle matches asset-lab intent.
+     */
+    if (isAstralKnightMergedMotionFile(file)) {
+      const idleNamedLoco =
+        animations.find((c) => leaf(c) === "idle" && okLoco(c)) ??
+        animations.find((c) => /\bidle\b/i.test(c.name) && okLoco(c));
+      if (idleNamedLoco) return idleNamedLoco;
+    }
     return (
       animations.find((c) => leaf(c) === "running" && okLoco(c)) ??
       animations.find((c) => /\brunning\b/i.test(c.name) && okLoco(c)) ??
       animations.find((c) => leaf(c) === "walking" && okLoco(c)) ??
+      animations.find(
+        (c) =>
+          okLoco(c) &&
+          /\b(jog|sprint|locomotion)\b/i.test(c.name) &&
+          !/\bidle\b/i.test(leaf(c)) &&
+          !/\bidle\b/i.test(c.name),
+      ) ??
       null
     );
   }
@@ -668,6 +687,7 @@ function clipForRole(
   animations: THREE.AnimationClip[],
   role: Exclude<UnitAnimationRole, "model">,
   file: string,
+  explicitClipName?: string | null,
 ): THREE.AnimationClip | null {
   if (!animations.length) return null;
   /** Starbound wizard pack: pin real run + standing idle (never kicks / swim idle / cast micro-clips). */
@@ -685,9 +705,16 @@ function clipForRole(
   }
   /** Emberbound + Astral merged packs: locomotion vs combat clips live in one file — pin by leaf; attacks only for attack role. */
   if (isMergedSquadMeshyPackFile(file)) {
+    const ex = explicitClipName?.trim();
+    if (ex) {
+      const foundEarly =
+        animations.find((c) => c.name === ex) ??
+        animations.find((c) => animClipLeafLower(c.name) === animClipLeafLower(ex));
+      if (foundEarly && movingTrackCount(foundEarly) > 0) return foundEarly;
+    }
     normalizeMergedPackClipNamesOnce(animations, file);
     if (role === "run" || role === "idle") {
-      const loco = pickMergedMeshyLocomotionClip(animations, role);
+      const loco = pickMergedMeshyLocomotionClip(animations, role, file);
       if (loco) return loco;
     } else if (role === "attack") {
       const atk = pickMergedMeshyAttackClip(animations, file);
@@ -1020,7 +1047,29 @@ type AttachGlbOpts = {
   keepPlaceholderHidden?: boolean;
   /** How to read authored bounds for normalization (default: height for animated units, max otherwise). */
   extentBasis?: GlbExtentBasis;
+  /**
+   * Exact AnimationClip.name overrides from asset lab (`battleLogs.assetLab.doctrine.v1`).
+   * Keys match Three roles; asset lab “die” maps to `death`.
+   */
+  roleClipNames?: Partial<Record<"run" | "idle" | "attack" | "death", string>>;
 };
+
+function roleClipNamesFromAssetLabDoctrine(
+  producerCatalogId: string | undefined,
+): Partial<Record<"run" | "idle" | "attack" | "death", string>> | undefined {
+  if (!producerCatalogId) return undefined;
+  try {
+    const d = getDoctrineForCard(producerCatalogId);
+    const out: Partial<Record<"run" | "idle" | "attack" | "death", string>> = {};
+    if (d.unitClips.run?.trim()) out.run = d.unitClips.run.trim();
+    if (d.unitClips.idle?.trim()) out.idle = d.unitClips.idle.trim();
+    if (d.unitClips.attack?.trim()) out.attack = d.unitClips.attack.trim();
+    if (d.unitClips.die?.trim()) out.death = d.unitClips.die.trim();
+    return Object.keys(out).length ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function attachGlbByFile(
   file: string,
@@ -1053,6 +1102,7 @@ async function attachGlbByFile(
     const idleFile = opts?.idleFile;
     const attackFile = opts?.attackFile;
     const deathFile = opts?.deathFile;
+    const rc = opts?.roleClipNames;
     const roleTemplateFor = (roleFile: string): Promise<GltfTemplate> =>
       roleFile === file ? Promise.resolve(template) : loadGltfTemplate(`/assets/units/${roleFile}`);
     const runTemplatePromise = roleTemplateFor(runFile);
@@ -1085,7 +1135,7 @@ async function attachGlbByFile(
     let mixer: THREE.AnimationMixer | null = null;
     const runTemplate = await runTemplatePromise;
     if (runTemplate.animations.length > 0) {
-      const clipRaw = clipForRole(runTemplate.animations, "run", runFile);
+      const clipRaw = clipForRole(runTemplate.animations, "run", runFile, rc?.run);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer = new THREE.AnimationMixer(inst);
@@ -1106,7 +1156,7 @@ async function attachGlbByFile(
     const loadIdle = !!idleFile;
     if (loadIdle) {
       const idleTemplate = await idleTemplatePromise!;
-      const clipRaw = clipForRole(idleTemplate.animations, "idle", idleFile);
+      const clipRaw = clipForRole(idleTemplate.animations, "idle", idleFile, rc?.idle);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
@@ -1123,7 +1173,7 @@ async function attachGlbByFile(
     const attackPlaybackFloor = Math.max(opts?.attackPlaybackSeconds ?? 1.48, 1.48);
     if (attackFile) {
       const attackTemplate = await attackTemplatePromise!;
-      const clipRaw = clipForRole(attackTemplate.animations, "attack", attackFile);
+      const clipRaw = clipForRole(attackTemplate.animations, "attack", attackFile, rc?.attack);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
@@ -1147,7 +1197,7 @@ async function attachGlbByFile(
     }
     if (deathFile) {
       const deathTemplate = await deathTemplatePromise!;
-      const clipRaw = clipForRole(deathTemplate.animations, "death", deathFile);
+      const clipRaw = clipForRole(deathTemplate.animations, "death", deathFile, rc?.death);
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
@@ -1221,6 +1271,8 @@ export async function attachGlbForClass(
   targetMaxExtent: number,
   teamTint?: TeamId,
   producedUnitId?: string,
+  /** When set, applies unit clip names from asset lab for this structure card (`battleLogs.assetLab.doctrine.v1`). */
+  producerCatalogId?: string,
 ): Promise<void> {
   const m = await loadManifest();
   const file = pickFileForUnit(kind, producedUnitId, m);
@@ -1231,6 +1283,7 @@ export async function attachGlbForClass(
   if (producedUnitId) parent.userData["producedUnitId"] = producedUnitId;
   const roleLabel =
     producedUnitId !== undefined && producedUnitId.length > 0 ? `${kind}:${producedUnitId}` : kind;
+  const roleClipNames = roleClipNamesFromAssetLabDoctrine(producerCatalogId);
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
     ...(teamTint ? { teamTint } : {}),
     runFile: runFileForUnit(kind, producedUnitId, m),
@@ -1240,6 +1293,7 @@ export async function attachGlbForClass(
     attackPlaybackSeconds: attackPlaybackSeconds(kind, producedUnitId),
     animationRoleLabel: roleLabel,
     keepPlaceholderHidden: true,
+    ...(roleClipNames ? { roleClipNames } : {}),
   });
 }
 
@@ -1249,9 +1303,10 @@ export async function requestGlbForUnit(
   placeholder: THREE.Mesh,
   team: TeamId = "player",
   producedUnitId?: string,
+  producerCatalogId?: string,
 ): Promise<void> {
   const extent = unitMeshLinearSize(kind);
-  await attachGlbForClass(kind, placeholder, extent, team, producedUnitId);
+  await attachGlbForClass(kind, placeholder, extent, team, producedUnitId, producerCatalogId);
 }
 
 export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = "player"): Promise<void> {

@@ -6,6 +6,8 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 
 /** Keep in sync with `DEFAULT_CARD_OVERLAY_WRITE_KEY` in `src/ui/cardArtOverlay.ts`. */
 const CARD_OVERLAY_WRITE_KEY_FALLBACK = "9889";
+const CARD_OVERLAY_FIELD_CENTER_PAD_X = 50;
+const CARD_OVERLAY_FIELD_CENTER_PAD_Y = 75;
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -150,8 +152,8 @@ function sanitizeOverlayFields(value: unknown): Record<string, { x: number; y: n
     const y = Number(fieldValue.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const out: { x: number; y: number; width?: number; height?: number } = {
-      x: Math.max(0, Math.min(100, Math.round(x * 10) / 10)),
-      y: Math.max(0, Math.min(140, Math.round(y * 10) / 10)),
+      x: Math.max(-CARD_OVERLAY_FIELD_CENTER_PAD_X, Math.min(100 + CARD_OVERLAY_FIELD_CENTER_PAD_X, Math.round(x * 10) / 10)),
+      y: Math.max(-CARD_OVERLAY_FIELD_CENTER_PAD_Y, Math.min(150 + CARD_OVERLAY_FIELD_CENTER_PAD_Y, Math.round(y * 10) / 10)),
     };
     const w = Number(fieldValue.width);
     const h = Number(fieldValue.height);

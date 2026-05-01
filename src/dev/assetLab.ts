@@ -14,7 +14,7 @@ import {
   mergeDoctrineForCard,
   UNIT_ANIM_ROLES,
   type UnitAnimRole,
-} from "./assetLabDoctrine";
+} from "../game/assetLabDoctrine";
 import {
   cardArtOverlayHtml,
   CARD_OVERLAY_FIELD_TOGGLES,
@@ -661,7 +661,9 @@ async function loadCatalogPair(catalogId: string): Promise<void> {
 
   applyPreviewAnimation();
   setPreviewRoleUi();
-  setDoctrineStatus(`Doctrine stored locally for “${catalogId}” (export JSON to share).`);
+  setDoctrineStatus(
+    `Doctrine for “${catalogId}” saved in this browser. Unit clip names apply to **in-match** spawns from that card; export JSON to share.`,
+  );
   applyAssetLabPortsForCatalogKind(catalogId);
 }
 

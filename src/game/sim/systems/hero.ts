@@ -10,6 +10,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
+import { trailerHeroModeCooldownTicks, trailerHeroModeSpend } from "../../../dev/heroMode";
 import { planChainedPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
   armTapClaimAnchor,
@@ -232,7 +233,7 @@ function placeCaptainStructure(s: GameState, catalogId: string, slotIndex: numbe
   const def = getCatalogEntry(catalogId);
   if (!def || !isStructureEntry(def)) return false;
 
-  s.flux -= def.fluxCost;
+  s.flux -= trailerHeroModeSpend(def.fluxCost);
   const infra = nearFriendlyInfra(s, pos) || nearSafeDeployAura(s, pos);
   const placementForward = !infra && nearFriendlyForward(s, pos);
   const buildTicks = Math.max(1, Math.round(def.buildSeconds * TICK_HZ));
@@ -270,7 +271,9 @@ function placeCaptainStructure(s: GameState, catalogId: string, slotIndex: numbe
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
   if (def.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[slotIndex] = Math.round(def.chargeCooldownSeconds * TICK_HZ);
+    s.doctrineCooldownTicks[slotIndex] = trailerHeroModeCooldownTicks(
+      Math.round(def.chargeCooldownSeconds * TICK_HZ),
+    );
   }
   emitCaptainSummonFx(s, catalogId, pos);
   logGame("combat", `Captain mode built ${def.name} at (${pos.x.toFixed(0)}, ${pos.z.toFixed(0)})`, s.tick);
