@@ -15,7 +15,7 @@ describe("control profile", () => {
     const p = resolveControlProfile({ coarsePointer: true, touchPoints: 2, devicePixelRatio: 3 });
     expect(p.mode).toBe("mobile");
     expect(p.captainDefault).toBe(true);
-    expect(p.maxPixelRatio).toBe(1);
+    expect(p.maxPixelRatio).toBe(0.85);
     expect(p.binderMaxPixelRatio).toBe(1);
   });
 

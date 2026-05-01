@@ -38,7 +38,7 @@ export function resolveControlProfile(input: ControlProfileInput = {}): ControlP
     coarsePointer,
     touchPoints,
     lowPower,
-    maxPixelRatio: mode === "mobile" ? 1 : lowPower ? 1 : 1.25,
+    maxPixelRatio: mode === "mobile" ? 0.85 : lowPower ? 1 : 1.25,
     binderMaxPixelRatio: mode === "mobile" ? 1 : lowPower ? 1.25 : 1.6,
     longPressMs: mode === "mobile" ? 560 : 360,
     captainDefault: mode === "mobile",

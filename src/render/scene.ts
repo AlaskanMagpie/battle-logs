@@ -92,8 +92,10 @@ const UNIT_VISUAL_RUN_CATCHUP_LAMBDA = 14;
 const HERO_VISUAL_RUN_CATCHUP_LAMBDA = 16;
 /** Exponential smoothing for visual velocity used by procedural lean/bob. */
 const UNIT_VISUAL_SPEED_LAMBDA = 9.5;
-/** Visual systems should advance in normalized frame-sized chunks; avoids pose jumps after stalls/throttling. */
-const RENDER_VISUAL_DT_CAP_SEC = 1 / 30;
+/** Visual catch-up should tolerate low mobile FPS without slowing movement/animation relative to sim. */
+const RENDER_VISUAL_DT_CAP_SEC = 1 / 15;
+/** Pose jumps after a tab stall still need a guard, but 30fps caps made mobile run clips play in slow motion. */
+const GLB_ANIMATION_DT_CAP_SEC = 1 / 12;
 
 /** Same equirect asset / path as the doctrine prematch room (`CardBinderEngine` nebula sky). */
 const MATCH_SKYBOX_URL = "/assets/binder/doctrine-skybox.png";
@@ -908,6 +910,7 @@ export class GameRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
+  private readonly controlProfile: ControlProfile;
   private readonly ground: THREE.Mesh;
   private readonly groundOverlay: THREE.Mesh;
   private readonly hemiLight: THREE.HemisphereLight;
@@ -1004,6 +1007,11 @@ export class GameRenderer {
   /** Visual interpolation delta for sync-time smoothing. */
   private lastSyncFrameMs = performance.now();
   private visualSyncDt = 1 / 60;
+  private mobileFrameAvgSec = 1 / 60;
+  private mobileQualityLastAdjustMs = 0;
+  private mobileLodLastBudgetMs = 0;
+  private mobileLodLastUnitCount = -1;
+  private mobileHpBarFrame = 0;
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
   private readonly camGroundFwd = new THREE.Vector3();
   private readonly camGroundRight = new THREE.Vector3();
@@ -1081,6 +1089,7 @@ export class GameRenderer {
   }
 
   constructor(canvas: HTMLCanvasElement, controlProfile: ControlProfile = getControlProfile()) {
+    this.controlProfile = controlProfile;
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
@@ -1139,7 +1148,7 @@ export class GameRenderer {
     this.root.add(this.decor, this.markers, this.entities);
     this.scene.add(this.root);
 
-    if (MATCH_SKYBOX_ENABLED) void this._loadMatchSkybox();
+    if (MATCH_SKYBOX_ENABLED && controlProfile.mode !== "mobile") void this._loadMatchSkybox();
 
     this.fx = createFxHost(this.scene);
 
@@ -1667,8 +1676,9 @@ export class GameRenderer {
       root.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.isMesh) {
-          m.castShadow = true;
-          m.receiveShadow = true;
+          m.castShadow = this.controlProfile.mode !== "mobile";
+          m.receiveShadow = this.controlProfile.mode !== "mobile";
+          if (this.controlProfile.mode === "mobile") this.simplifyTerrainMaterialForMobile(m);
           this.terrainHits.push(m);
         }
       });
@@ -1682,9 +1692,37 @@ export class GameRenderer {
     }
   }
 
+  private simplifyTerrainMaterialForMobile(mesh: THREE.Mesh): void {
+    const simplify = (mat: THREE.Material): THREE.Material => {
+      const src = mat as THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
+      const map = src.map ?? null;
+      if (map) {
+        map.anisotropy = Math.min(2, this.renderer.capabilities.getMaxAnisotropy());
+        map.generateMipmaps = false;
+        map.minFilter = THREE.LinearFilter;
+      }
+      const next = new THREE.MeshBasicMaterial({
+        map,
+        color: src.color?.clone?.() ?? new THREE.Color(0xffffff),
+        transparent: mat.transparent,
+        opacity: mat.opacity,
+        alphaTest: mat.alphaTest,
+        side: mat.side,
+        depthWrite: mat.depthWrite,
+        depthTest: mat.depthTest,
+      });
+      mat.dispose();
+      return next;
+    };
+    mesh.material = Array.isArray(mesh.material)
+      ? mesh.material.map((mat) => simplify(mat))
+      : simplify(mesh.material);
+  }
+
   sync(state: GameState, useGlb: boolean): void {
     const syncNow = performance.now();
-    this.visualSyncDt = Math.min(RENDER_VISUAL_DT_CAP_SEC, Math.max(0, (syncNow - this.lastSyncFrameMs) / 1000));
+    const visualCap = this.controlProfile.mode === "mobile" ? 1 / 10 : RENDER_VISUAL_DT_CAP_SEC;
+    this.visualSyncDt = Math.min(visualCap, Math.max(0, (syncNow - this.lastSyncFrameMs) / 1000));
     this.lastSyncFrameMs = syncNow;
     this.currentState = state;
     this.useGlb = useGlb;
@@ -1712,6 +1750,19 @@ export class GameRenderer {
   }
 
   private useGlb = false;
+
+  private tuneMobileRenderQuality(dt: number, nowMs: number): void {
+    if (this.controlProfile.mode !== "mobile") return;
+    this.mobileFrameAvgSec += (dt - this.mobileFrameAvgSec) * 0.06;
+    if (nowMs - this.mobileQualityLastAdjustMs < 900) return;
+    this.mobileQualityLastAdjustMs = nowMs;
+    const current = this.renderer.getPixelRatio();
+    const targetMax = Math.min(window.devicePixelRatio || 1, this.controlProfile.maxPixelRatio);
+    let next = current;
+    if (this.mobileFrameAvgSec > 1 / 48) next = Math.max(0.62, current - 0.06);
+    else if (this.mobileFrameAvgSec < 1 / 62) next = Math.min(targetMax, current + 0.035);
+    if (Math.abs(next - current) >= 0.015) this.renderer.setPixelRatio(next);
+  }
 
   private consumeCastEvents(state: GameState): void {
     const q = state.fxQueue;
@@ -4092,6 +4143,7 @@ export class GameRenderer {
       g.userData["team"] = u.team;
       g.userData["sizeClass"] = u.sizeClass;
       g.userData["producedUnitId"] = u.producedUnitId;
+      const mobileLodPlaceholder = g.userData["mobileLodPlaceholder"] === true;
       const visual = this.unitVisualPos.get(u.id) ?? new THREE.Vector2(u.x, u.z);
       this.unitVisualPos.set(u.id, visual);
       const attackTick = u.lastAttackTick;
@@ -4102,7 +4154,7 @@ export class GameRenderer {
         if (committedAttackTarget) this.unitFaceTargets.set(u.id, committedAttackTarget);
         else this.unitFaceTargets.delete(u.id);
       }
-      if (isNewAttack) this.playGlbAttackAnimation(g);
+      if (isNewAttack && !mobileLodPlaceholder) this.playGlbAttackAnimation(g);
       if (attackTick !== undefined) this.unitPrevAttackTick.set(u.id, attackTick);
       const prevSim = this.unitPrevPos.get(u.id);
       const simFrameDist = prevSim ? Math.hypot(u.x - prevSim.x, u.z - prevSim.y) : 0;
@@ -4121,7 +4173,7 @@ export class GameRenderer {
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
         (!attackActive || forceRunCatchup);
-      if (shouldRun && attackActive) {
+      if (shouldRun && attackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
         const fade = this.glbAttackOutFadeSec(ud);
@@ -4191,8 +4243,14 @@ export class GameRenderer {
         (g.userData as Record<string, unknown>)["unitHitFlash"] = 0.22;
       }
       this.unitPrevHp.set(u.id, u.hp);
-      this.setGlbMoveAnimation(g, shouldRun);
-      this.unitPrevPos.set(u.id, new THREE.Vector2(u.x, u.z));
+      if (!mobileLodPlaceholder) this.setGlbMoveAnimation(g, shouldRun);
+      let prevStore = this.unitPrevPos.get(u.id);
+      if (!prevStore) {
+        prevStore = new THREE.Vector2(u.x, u.z);
+        this.unitPrevPos.set(u.id, prevStore);
+      } else {
+        prevStore.set(u.x, u.z);
+      }
     }
     this.applyUnitRenderBudgets(state);
   }
@@ -4200,6 +4258,16 @@ export class GameRenderer {
   private applyUnitRenderBudgets(state: GameState): void {
     const unitCount = state.units.length;
     const now = performance.now();
+    const mobile = this.controlProfile.mode === "mobile";
+    if (
+      mobile &&
+      unitCount === this.mobileLodLastUnitCount &&
+      now - this.mobileLodLastBudgetMs < 220
+    ) {
+      return;
+    }
+    this.mobileLodLastBudgetMs = now;
+    this.mobileLodLastUnitCount = unitCount;
     const candidates: Array<{
       id: number;
       root: THREE.Group;
@@ -4234,14 +4302,55 @@ export class GameRenderer {
 
     if (candidates.length === 0) return;
     candidates.sort((a, b) => a.distSq - a.keepBoost - (b.distSq - b.keepBoost) || a.tri - b.tri);
-    const triBudget =
-      unitCount < 120 ? Infinity : unitCount < 240 ? 210_000 : unitCount < 420 ? 165_000 : 125_000;
+    const mobileUnderPressure = mobile && this.mobileFrameAvgSec > 1 / 48;
+    const triBudget = mobile
+      ? mobileUnderPressure
+        ? unitCount < 55
+          ? 74_000
+          : unitCount < 120
+            ? 48_000
+            : 32_000
+        : unitCount < 55
+          ? 115_000
+          : unitCount < 120
+            ? 86_000
+            : unitCount < 240
+              ? 62_000
+              : 44_000
+      : unitCount < 120
+        ? Infinity
+        : unitCount < 240
+          ? 210_000
+          : unitCount < 420
+            ? 165_000
+            : 125_000;
+    const mobileGlbBudget = !mobile
+      ? Infinity
+      : mobileUnderPressure
+        ? unitCount < 45
+          ? 14
+          : unitCount < 90
+            ? 9
+            : 5
+        : unitCount < 45
+          ? 34
+          : unitCount < 90
+            ? 24
+            : unitCount < 160
+              ? 16
+              : 10;
     let spent = 0;
-    for (const c of candidates) {
+    let visibleGlbs = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      const c = candidates[i]!;
       spent += c.tri;
-      const distancePop = unitCount > 260 && c.distSq > 145 * 145 && c.keepBoost < 50000;
+      const distancePop = mobile
+        ? unitCount > 42 && c.distSq > 118 * 118 && c.keepBoost < 50000
+        : unitCount > 260 && c.distSq > 145 * 145 && c.keepBoost < 50000;
       const budgetPop = spent > triBudget && c.keepBoost < 50000;
-      const shouldPlaceholder = distancePop || budgetPop;
+      const countPop = mobile && visibleGlbs >= mobileGlbBudget && c.keepBoost < 50000;
+      const shouldPlaceholder = distancePop || budgetPop || countPop;
+      if (!shouldPlaceholder) visibleGlbs++;
       this.setUnitLod(c.root, c.id, shouldPlaceholder, c.farCullUi, now);
     }
   }
@@ -4254,15 +4363,19 @@ export class GameRenderer {
 
     const glb = root.userData["glbRoot"] as THREE.Object3D | undefined;
     const body = root.userData["bodyMesh"] as THREE.Mesh | undefined;
-    // Never pop a loaded GLB back to procedural fallback: even a close match reads
-    // as unit size-changing. Placeholder is only for not-yet-loaded/missing art.
-    if (glb) {
+    const allowLoadedGlbFallback = this.controlProfile.mode === "mobile";
+    if (glb && (!placeholder || !allowLoadedGlbFallback)) {
       glb.visible = true;
       if (body) body.visible = false;
       placeholder = false;
+    } else if (glb && allowLoadedGlbFallback) {
+      glb.visible = false;
+      if (body) body.visible = true;
     } else if (body) {
       body.visible = placeholder;
     }
+    root.userData["mobileLodPlaceholder"] = glb && allowLoadedGlbFallback && placeholder;
+    root.userData["farCullUi"] = farCullUi;
 
     const stateChanged =
       !current || current.placeholder !== placeholder || current.farCullUi !== farCullUi;
@@ -4479,9 +4592,15 @@ export class GameRenderer {
   }
 
   private orientHpBars(): void {
+    const mobile = this.controlProfile.mode === "mobile";
+    if (mobile) {
+      this.mobileHpBarFrame = (this.mobileHpBarFrame + 1) % 2;
+      if (this.mobileHpBarFrame !== 0) return;
+    }
     const cam = this.camera.position;
     const orient = (root: THREE.Object3D): void => {
       const ud = root.userData as Record<string, unknown>;
+      if (mobile && ud["farCullUi"] === true) return;
       for (const key of ["u", "st", "relay", "tapA"] as const) {
         const bg = ud[`${key}_hpBg`] as THREE.Mesh | undefined;
         const fg = ud[`${key}_hpFg`] as THREE.Mesh | undefined;
@@ -4534,13 +4653,14 @@ export class GameRenderer {
 
   private tickGlbAnimations(dt: number): void {
     const unitCount = this.unitMeshes.size;
-    const mixerDt = Math.min(RENDER_VISUAL_DT_CAP_SEC, Math.max(0, dt));
+    const mixerDt = Math.min(GLB_ANIMATION_DT_CAP_SEC, Math.max(0, dt));
 
     let clampBudget = unitCount >= 240 ? 2 : unitCount >= 90 ? 4 : 10;
     const tick = (root: THREE.Object3D | null, allowClamp: boolean): void => {
       const ud = root?.userData as Record<string, unknown> | undefined;
       const mixer = ud?.["glbMixer"] as THREE.AnimationMixer | undefined;
-      if (mixer && mixerDt > 0) mixer.update(mixerDt);
+      const glb = ud?.["glbRoot"] as THREE.Object3D | undefined;
+      if (mixer && mixerDt > 0 && glb?.visible !== false) mixer.update(mixerDt);
       const clampChecks = (ud?.["glbClampChecksRemaining"] as number | undefined) ?? 0;
       if (root && allowClamp && clampChecks > 0 && clampBudget > 0 && ud?.["allowRuntimeGlbScaleClamp"] === true) {
         this.clampUnitGlbScale(root);
@@ -4958,8 +5078,10 @@ export class GameRenderer {
 
   render(): void {
     const now = performance.now();
-    const dt = Math.min(RENDER_VISUAL_DT_CAP_SEC, Math.max(0, (now - this.lastRenderFrameMs) / 1000));
+    const renderCap = this.controlProfile.mode === "mobile" ? 1 / 10 : RENDER_VISUAL_DT_CAP_SEC;
+    const dt = Math.min(renderCap, Math.max(0, (now - this.lastRenderFrameMs) / 1000));
     this.lastRenderFrameMs = now;
+    this.tuneMobileRenderQuality(dt, now);
     this.tickMatchIntroCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();

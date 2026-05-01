@@ -1003,6 +1003,9 @@ function runMatch(
 
     let acc = 0;
     let last = performance.now();
+    let lastHudUpdateMs = 0;
+    let lastHudTick = -1;
+    let lastHudPhase: GameState["phase"] | null = null;
     let rafId = 0;
     let leaderboardRecordedPhase: GameState["phase"] | null = null;
     const recordCompletedMatch = (completed: GameState): void => {
@@ -1087,8 +1090,18 @@ function runMatch(
         recordCompletedMatch(state);
         leaderboardRecordedPhase = state.phase;
       }
-      updateHud(state);
-      syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
+      const hudDue =
+        CONTROL_PROFILE.mode !== "mobile" ||
+        state.phase !== lastHudPhase ||
+        (state.tick !== lastHudTick && now - lastHudUpdateMs >= 90) ||
+        now - lastHudUpdateMs >= 260;
+      if (hudDue) {
+        updateHud(state);
+        syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
+        lastHudUpdateMs = now;
+        lastHudTick = state.tick;
+        lastHudPhase = state.phase;
+      }
 
       rafId = requestAnimationFrame(tick);
     };
