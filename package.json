@@ -23,6 +23,8 @@
     "assets:import-meshy": "node scripts/import-meshy-assets.mjs incoming",
     "assets:import-meshy:optimize": "node scripts/import-meshy-assets.mjs --optimize incoming",
     "assets:inspect-glbs": "node scripts/inspect-unit-glbs.mjs",
+    "assets:inspect-glbs:only": "node scripts/inspect-unit-glbs.mjs --only",
+    "assets:inspect-glbs:profile": "node scripts/inspect-unit-glbs.mjs --profile",
     "assets:fix-texture-webp": "node scripts/fix-ext-texture-webp.mjs"
   },
   "dependencies": {

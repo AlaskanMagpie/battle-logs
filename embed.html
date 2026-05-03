@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Doctrine - Live Embed</title>
+    <meta
+      name="description"
+      content="A live Doctrine quick match embed: draft cards into a battlefield and command the Wizard."
+    />
+    <meta name="robots" content="noindex,nofollow" />
+    <meta name="theme-color" content="#56c9ff" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script>
+      (() => {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has("quickMatch")) url.searchParams.set("quickMatch", "1");
+        if (!url.searchParams.has("embed")) url.searchParams.set("embed", "1");
+        if (url.href !== window.location.href) window.history.replaceState(null, "", url);
+      })();
+    </script>
+    <link rel="stylesheet" href="/src/ui/hud.css" />
+    <link rel="stylesheet" href="/src/ui/intro/comicIntro.css" />
+    <style>
+      html,
+      body {
+        background: #050913;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="comic-intro"></div>
+    <div id="doctrine-picker"></div>
+    <div id="hud-root"></div>
+    <canvas id="game"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

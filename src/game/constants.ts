@@ -33,7 +33,7 @@ export const PRODUCED_UNIT_LAVA_WIZARD_MONKS = "emberbound_ascetic_merged_animat
 export const PRODUCED_UNIT_CHRONO_SENTINELS = "astral_knight_merged_animations";
 
 /** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
-export const PLAYER_STARTING_FLUX = 280;
+export const PLAYER_STARTING_FLUX = 380;
 
 /** Enemy AI tries to place a tower on this tick interval (scaled by map difficulty). Wall-time ≈ 2s at default TICK_HZ. */
 export const ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS = 40;
@@ -102,7 +102,7 @@ export const UNIT_MAP_OBSTACLE_RADIUS_MULT = 1.06;
  * Multiplies unit walk speed in `movement()` only (player + enemy units — not wizards).
  * Raised to make armies cross large maps without long dead travel windows.
  */
-export const UNIT_MOVEMENT_SPEED_SCALE = 0.65;
+export const UNIT_MOVEMENT_SPEED_SCALE = 0.78;
 
 /** Base spacing (world units) for formation slots when marching or gathering. */
 export const UNIT_FORMATION_SPACING = 3.2;
@@ -127,8 +127,8 @@ export const ENEMY_HERO_STRIKE_COOLDOWN_TICKS = 32;
 export const ENEMY_DAMAGE_MULT = 0.75;
 export const ENEMY_PRODUCTION_RATE_MULT = 0.75;
 
-export const TAP_FLUX_PER_SEC = 1;
-export const TAP_YIELD_MAX = 250;
+export const TAP_FLUX_PER_SEC = 1.35;
+export const TAP_YIELD_MAX = 325;
 
 /** Physical claim pillar on a Mana node — HP pool; when destroyed the node returns to neutral. */
 export const TAP_ANCHOR_MAX_HP = 200;

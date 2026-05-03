@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "type": "rich",
+  "provider_name": "Doctrine",
+  "provider_url": "/",
+  "title": "Doctrine - Draft Armies, Break Worlds",
+  "author_name": "AlaskanMagpie",
+  "width": 960,
+  "height": 540,
+  "html": "<iframe src=\"/embed.html?quickMatch=1&embed=1\" title=\"Doctrine live quick match\" width=\"960\" height=\"540\" loading=\"lazy\" allow=\"fullscreen; gamepad; autoplay\" allowfullscreen style=\"border:0;width:100%;max-width:960px;aspect-ratio:16/9;background:#050913;\"></iframe>",
+  "thumbnail_url": "/social-card.png",
+  "thumbnail_width": 1200,
+  "thumbnail_height": 630
+}

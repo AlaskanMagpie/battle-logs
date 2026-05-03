@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /asset-lab.html
+Disallow: /map-editor.html
+Disallow: /embed.html

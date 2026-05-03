@@ -1,7 +1,7 @@
 import { HERO_SPEED } from "./constants";
 import type { GameState } from "./state";
 
-export const VIBE_JAM_PORTAL_URL = "https://vibejam.cc/portal/2026";
+export const VIBE_JAM_PORTAL_URL = "https://vibej.am/portal/2026";
 
 const PORTAL_PARAM_KEYS = [
   "username",

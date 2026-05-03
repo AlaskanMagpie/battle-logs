@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           main: "index.html",
+          embed: "embed.html",
           mapEditor: "map-editor.html",
           assetLab: "asset-lab.html",
         },

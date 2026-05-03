@@ -1,5 +1,6 @@
 import { DEFAULT_DOCTRINE_SLOTS } from "../game/catalog";
 import { DOCTRINE_COMMANDS_ENABLED, DOCTRINE_SLOT_COUNT } from "../game/constants";
+import { QUICK_MATCH_DOCTRINE_SLOTS } from "../game/quickMatchDoctrine";
 import { normalizeDoctrineSlotsForMatch } from "../game/state";
 
 export const DOCTRINE_STORAGE_KEY = "signalWars_doctrine_v2";
@@ -8,6 +9,8 @@ export type DoctrinePickerStored = {
   slots: (string | null)[];
   /** Codex panel index used when assigning slot `i` from the binder; null = legacy / unknown. */
   binderSlotPickIndex: (number | null)[];
+  /** True only for the live return from a browser's first no-save load. Not persisted. */
+  isFirstRun?: boolean;
 };
 
 function normalizeLoadedRow(x: unknown): string | null {
@@ -24,6 +27,10 @@ function padDoctrineSlots(row: (string | null)[]): (string | null)[] {
 
 function slotsForMatch(row: (string | null)[]): (string | null)[] {
   return normalizeDoctrineSlotsForMatch(padDoctrineSlots(row));
+}
+
+function firstRunStarterSlots(): (string | null)[] {
+  return slotsForMatch([...QUICK_MATCH_DOCTRINE_SLOTS]);
 }
 
 function nullPicks(): (number | null)[] {
@@ -71,7 +78,9 @@ export function loadDoctrinePickerState(): DoctrinePickerStored {
         saveDoctrinePickerState(slots, nullPicks());
         return { slots, binderSlotPickIndex: nullPicks() };
       }
-      return { slots: slotsForMatch([...DEFAULT_DOCTRINE_SLOTS]), binderSlotPickIndex: nullPicks() };
+      const slots = firstRunStarterSlots();
+      saveDoctrinePickerState(slots, nullPicks());
+      return { slots, binderSlotPickIndex: nullPicks(), isFirstRun: true };
     }
     const parsed = JSON.parse(raw) as unknown;
 
@@ -91,8 +100,11 @@ export function loadDoctrinePickerState(): DoctrinePickerStored {
     }
 
     if (Array.isArray(parsed)) {
-      if (parsed.length === 0)
-        return { slots: slotsForMatch([...DEFAULT_DOCTRINE_SLOTS]), binderSlotPickIndex: nullPicks() };
+      if (parsed.length === 0) {
+        const slots = firstRunStarterSlots();
+        saveDoctrinePickerState(slots, nullPicks());
+        return { slots, binderSlotPickIndex: nullPicks(), isFirstRun: true };
+      }
       const mapped = parsed.map(normalizeLoadedRow) as (string | null)[];
       if (mapped.length !== DOCTRINE_SLOT_COUNT) {
         const migrated = fromV1();

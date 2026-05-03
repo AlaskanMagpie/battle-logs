@@ -365,7 +365,7 @@ describe("vibe jam portals", () => {
     expect(ctx.enteredViaPortal).toBe(true);
     expect(ctx.params.username).toBe("levelsio");
     const exit = buildVibeJamExitUrl(ctx, s, "https://battle.logs/game?portal=true");
-    expect(exit).toContain("https://vibejam.cc/portal/2026");
+    expect(exit).toContain("https://vibej.am/portal/2026");
     expect(exit).toContain("username=levelsio");
     expect(exit).toContain("color=red");
     expect(exit).toContain("hp=50");
@@ -400,7 +400,7 @@ describe("vibe jam portals", () => {
   it("builds a prematch Vibe Jam exit URL without a live GameState", () => {
     const ctx = parsePortalContext("?portal=true&username=levelsio&color=red&speed=5");
     const href = buildVibeJamExitUrlForPrematch(ctx, "https://battle.logs/game?portal=true");
-    expect(href).toContain("https://vibejam.cc/portal/2026");
+    expect(href).toContain("https://vibej.am/portal/2026");
     expect(href).toContain("username=levelsio");
   });
 });

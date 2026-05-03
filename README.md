@@ -21,6 +21,17 @@ Open **`http://localhost:2222/`** — Vite is configured with `strictPort: true`
 
 `npm run localhost` is the safe local reset path: it closes old listeners on 2222/2223/2224, clears Vite's transform cache, then starts a fresh strict 2222 server. Use `npm run dev` only when you know no stale server is already running.
 
+### Multiplayer (local)
+
+Human queue modes need a **Colyseus** server in addition to the Vite app.
+
+1. In one terminal: **`npm run multiplayer:dev`** — listens on port **2567** by default (`COLYSEUS_PORT` overrides).
+2. In another: **`npm run localhost`** (or `npm run dev`) — the dev client defaults to **`http://localhost:2567`** when `VITE_COLYSEUS_URL` is not set.
+
+Optional: add **`VITE_COLYSEUS_URL`** in `.env.local` if you use a non-default host or port (see `.env.example`).
+
+**Production:** set `VITE_COLYSEUS_URL` at **build** time to a public Colyseus endpoint. If the game is served over **HTTPS**, the URL must use **TLS** (for example **`wss://`** or **`https://`** to a host that terminates WebSocket upgrades correctly). Deploy the Node process under [`server/src/index.ts`](server/src/index.ts) separately from static Vite output; the frontend build does not start Colyseus for you.
+
 ## Controls (Phase 1)
 
 You command the **blue Wizard** and a doctrine hand of cards.

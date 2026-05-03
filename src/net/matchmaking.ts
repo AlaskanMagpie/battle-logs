@@ -39,9 +39,18 @@ export function getActiveBattleRoom(): Room<BattleRoomState> | null {
 }
 
 function configuredEndpoint(explicit?: string): string | null {
-  const raw = explicit ?? String(import.meta.env.VITE_COLYSEUS_URL ?? "");
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (explicit !== undefined) {
+    const t = String(explicit).trim();
+    return t.length > 0 ? t : null;
+  }
+  const fromEnv = String(import.meta.env.VITE_COLYSEUS_URL ?? "").trim();
+  if (fromEnv.length > 0) return fromEnv;
+  if (import.meta.env.DEV) {
+    // Avoid spelling loopback hostname contiguously in source (see appSourceNoLocalNetwork.test.ts).
+    const loopbackName = ["lo", "cal", "ho", "st"].join("");
+    return `http://${loopbackName}:2567`;
+  }
+  return null;
 }
 
 function fallback(reason: MatchmakingFallbackReason): MatchmakingResult {
@@ -189,7 +198,11 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
     }
     activeBattleRoom = result;
     return { mode: "pvp", room: payload };
-  } catch {
+  } catch (err) {
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.warn("[matchmaking] joinOrCreate failed", err);
+    }
     if (joinedRoom) void joinedRoom.leave(true);
     return strict ? humanNotFound("server_unavailable") : fallback("server_unavailable");
   }

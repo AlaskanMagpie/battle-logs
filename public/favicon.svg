@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Doctrine">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="64%">
+      <stop offset="0" stop-color="#17335d"/>
+      <stop offset="0.58" stop-color="#0b1628"/>
+      <stop offset="1" stop-color="#060913"/>
+    </radialGradient>
+    <linearGradient id="sigil" x1="16" y1="11" x2="49" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f4d48a"/>
+      <stop offset="0.45" stop-color="#57d8ff"/>
+      <stop offset="1" stop-color="#b58b4f"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <circle cx="32" cy="32" r="24" fill="none" stroke="#c6a35a" stroke-width="2.4"/>
+  <circle cx="32" cy="32" r="17" fill="none" stroke="#57d8ff" stroke-width="1.4" opacity="0.75"/>
+  <path d="M32 8v12M32 44v12M8 32h12M44 32h12" stroke="#c6a35a" stroke-width="2" stroke-linecap="round"/>
+  <path d="M21 16h11.5c8.8 0 15.5 6.4 15.5 16s-6.7 16-15.5 16H21V16Zm8 7.4v17.2h3.3c4.6 0 7.6-3.4 7.6-8.6s-3-8.6-7.6-8.6H29Z" fill="url(#sigil)"/>
+  <path d="M18 48 46 16" stroke="#eef9ff" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+</svg>

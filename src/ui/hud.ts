@@ -28,6 +28,7 @@ import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
 const HAND_ACTIVE_LIFT = 5;
+const FIRST_MATCH_STRATEGY_TOAST_KEY = "signalWarsFirstMatchStrategyToastShown.v1";
 
 function escapeHudHtml(s: string): string {
   return s
@@ -35,6 +36,22 @@ function escapeHudHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function hasSeenFirstMatchStrategyToast(): boolean {
+  try {
+    return localStorage.getItem(FIRST_MATCH_STRATEGY_TOAST_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberFirstMatchStrategyToast(): void {
+  try {
+    localStorage.setItem(FIRST_MATCH_STRATEGY_TOAST_KEY, "1");
+  } catch {
+    /* ignore */
+  }
 }
 
 function playerManaIncomePerSec(state: GameState): number {
@@ -573,6 +590,15 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <button class="hud-endgame-action hud-endgame-action--rematch" type="button" id="btn-rematch">Rematch</button>
           <button class="hud-endgame-action hud-endgame-action--edit" type="button" id="btn-edit-doctrine">Edit doctrine</button>
         </div>
+        <div class="hud-endgame-strategy-toast" id="hud-endgame-strategy-toast" role="status" hidden>
+          <p>Try other cards and mix up your strategies.</p>
+          <button class="hud-endgame-strategy-toast__edit" type="button" id="btn-endgame-strategy-edit">
+            Edit doctrine
+          </button>
+          <button class="hud-endgame-strategy-toast__dismiss" type="button" id="btn-endgame-strategy-dismiss" aria-label="Dismiss strategy tip">
+            x
+          </button>
+        </div>
       </div>
     </div>
     <footer class="hud-dock hud-dock--overlay" id="hud-dock">
@@ -666,6 +692,15 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   });
   root.querySelector("#btn-edit-doctrine")?.addEventListener("click", () => {
     onEditDoctrine?.();
+  });
+  root.querySelector("#btn-endgame-strategy-edit")?.addEventListener("click", () => {
+    rememberFirstMatchStrategyToast();
+    onEditDoctrine?.();
+  });
+  root.querySelector("#btn-endgame-strategy-dismiss")?.addEventListener("click", () => {
+    rememberFirstMatchStrategyToast();
+    const toast = root.querySelector<HTMLElement>("#hud-endgame-strategy-toast");
+    if (toast) toast.hidden = true;
   });
 }
 
@@ -853,16 +888,22 @@ export function updateHud(state: GameState): void {
   const endArt = document.querySelector<HTMLImageElement>("#hud-endgame-art");
   const endStats = document.querySelector("#hud-endgame-stats");
   const endReason = document.querySelector<HTMLElement>("#hud-endgame-reason");
+  const endStrategyToast = document.querySelector<HTMLElement>("#hud-endgame-strategy-toast");
   if (end && endTitle && endStats && endArt) {
     if (state.phase === "playing") {
       end.hidden = true;
       end.classList.remove("hud-endgame--win", "hud-endgame--lose");
       endTitle.textContent = "Match over";
+      if (endStrategyToast) {
+        endStrategyToast.hidden = true;
+        delete endStrategyToast.dataset.shownForCurrentEnd;
+      }
       if (endReason) {
         endReason.textContent = "";
         endReason.hidden = true;
       }
     } else {
+      document.getElementById("signal-wars-onboarding")?.remove();
       const won = state.phase === "win";
       end.hidden = false;
       end.classList.toggle("hud-endgame--win", won);
@@ -909,6 +950,15 @@ export function updateHud(state: GameState): void {
         const how = (state.matchEndDetail ?? state.lastMessage).trim();
         endReason.textContent = how;
         endReason.hidden = !how.length;
+      }
+      if (endStrategyToast) {
+        const alreadyShowing = endStrategyToast.dataset.shownForCurrentEnd === "1";
+        const shouldShow = alreadyShowing || !hasSeenFirstMatchStrategyToast();
+        endStrategyToast.hidden = !shouldShow;
+        if (shouldShow && !alreadyShowing) {
+          endStrategyToast.dataset.shownForCurrentEnd = "1";
+          rememberFirstMatchStrategyToast();
+        }
       }
     }
   }
