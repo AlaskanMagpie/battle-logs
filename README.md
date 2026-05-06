@@ -30,7 +30,7 @@ Human queue modes need a **Colyseus** server in addition to the Vite app.
 
 Optional: add **`VITE_COLYSEUS_URL`** in `.env.local` if you use a non-default host or port (see `.env.example`).
 
-**Production:** set `VITE_COLYSEUS_URL` at **build** time to a public Colyseus endpoint. If the game is served over **HTTPS**, the URL must use **TLS** (for example **`wss://`** or **`https://`** to a host that terminates WebSocket upgrades correctly). Deploy the Node process under [`server/src/index.ts`](server/src/index.ts) separately from static Vite output; the frontend build does not start Colyseus for you.
+**Production / preview (e.g. Vercel):** set `VITE_COLYSEUS_URL` at **build** time for **Preview** and **Production** (the dev default only applies to `vite` dev, not `vite build`). Point it at a public Colyseus endpoint. If the game is served over **HTTPS**, the URL must use **TLS** (for example **`wss://`** or **`https://`** to a host that terminates WebSocket upgrades correctly). Deploy the Node process under [`server/src/index.ts`](server/src/index.ts) separately from static Vite output; the frontend build does not start Colyseus for you.
 
 ## Controls (Phase 1)
 

@@ -11,7 +11,7 @@ describe("matchmaking client fallback", () => {
     });
     expect(result).toMatchObject({
       mode: "fallback_ai",
-      reason: "server_unavailable",
+      reason: "not_configured",
     });
   });
 
@@ -25,7 +25,7 @@ describe("matchmaking client fallback", () => {
     });
     expect(result).toMatchObject({
       mode: "human_not_found",
-      reason: "server_unavailable",
+      reason: "not_configured",
     });
   });
 });

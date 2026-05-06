@@ -207,6 +207,15 @@ export type SpellFxShape =
   | "burst"
   | "surprise";
 
+/** Optional per-cast palette remap for spell/liquid shader coloring. */
+export interface SpellFxColorTint {
+  core?: number;
+  hot?: number;
+  rim?: number;
+  trail?: number;
+  shadow?: number;
+}
+
 /**
  * Spawn/visual profile for units from this structure (`glbPool` animationProfiles id).
  * When omitted, runtime uses size-class defaults only.

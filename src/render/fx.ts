@@ -10,6 +10,7 @@ import {
   SPELL_FX_ELEMENTS,
   type AttackRangeBand,
   type ElementalFxRequiredShape,
+  type SpellFxColorTint,
   type SpellFxElement,
   type SpellFxShape,
 } from "../game/types";
@@ -22,6 +23,7 @@ export type CastFxSpawnOpts = {
   element?: SpellFxElement;
   secondaryElement?: SpellFxElement;
   shape?: SpellFxShape;
+  colorTint?: SpellFxColorTint;
   reach?: number;
   width?: number;
   visualSeed?: number;
@@ -270,6 +272,17 @@ interface ElementalPalette {
   shadow: number;
 }
 
+function applySpellColorTint(base: ElementalPalette, tint?: SpellFxColorTint): ElementalPalette {
+  if (!tint) return base;
+  return {
+    core: tint.core ?? base.core,
+    hot: tint.hot ?? base.hot,
+    rim: tint.rim ?? base.rim,
+    trail: tint.trail ?? base.trail,
+    shadow: tint.shadow ?? base.shadow,
+  };
+}
+
 type ElementalFxContract = {
   /** Required gameplay silhouettes every element must render: line, cone, ranged AOE, centered AOE, surprise. */
   requiredShapes: readonly ElementalFxRequiredShape[];
@@ -353,7 +366,7 @@ function elementalSeed(pos: { x: number; z: number }, opts?: CastFxSpawnOpts): n
 function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
   const element = opts?.element ?? "arcane";
   const shape = opts?.shape ?? "impact";
-  const pal = spellPalette(element);
+  const pal = applySpellColorTint(spellPalette(element), opts?.colorTint);
   if (shape === "surprise") return spawnElementalSurprise(host, pos, opts, pal, element);
   switch (shape) {
     case "bolt":

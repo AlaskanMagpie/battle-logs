@@ -1779,6 +1779,7 @@ export class GameRenderer {
           rangeBand: fxEvt.rangeBand,
           element: fxEvt.element,
           secondaryElement: fxEvt.secondaryElement,
+          colorTint: fxEvt.colorTint,
           shape: fxEvt.shape,
           reach: fxEvt.reach,
           width: fxEvt.width,

@@ -39,6 +39,7 @@ import type {
   MapData,
   ProducedUnitId,
   SignalType,
+  SpellFxColorTint,
   SpellFxElement,
   SpellFxShape,
   TeamId,
@@ -123,6 +124,8 @@ export interface CastFxEvent {
   element?: SpellFxElement;
   secondaryElement?: SpellFxElement;
   shape?: SpellFxShape;
+  /** Optional runtime tint override for spell/liquid visuals. */
+  colorTint?: SpellFxColorTint;
   /** Optional spell reach/width in world units. Falls back to impact radius / origin distance. */
   reach?: number;
   width?: number;

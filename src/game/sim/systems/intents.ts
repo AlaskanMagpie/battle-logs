@@ -11,6 +11,7 @@ import {
   SHATTER_TARGET_RADIUS,
   SMART_RADIAL_IDLE_RADIUS,
   SPELL_KNOCKBACK_SPEED,
+  SPELL_AOE_KNOCKBACK,
   TAP_UNIT_ORDER_SNAP_RADIUS,
   TICK_HZ,
 } from "../../constants";
@@ -558,6 +559,29 @@ function corridorKnockNormal(
   return { nx, nz };
 }
 
+function applyRadialImpulseToEnemyUnits(
+  s: GameState,
+  center: Vec2,
+  radius: number,
+  maxSpeed: number,
+  minSpeed = 0,
+): number {
+  const r = Math.max(0.001, radius);
+  const r2 = r * r;
+  let affected = 0;
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    const d2 = dist2(u, center);
+    if (d2 > r2) continue;
+    const d = Math.sqrt(d2);
+    const t = 1 - Math.max(0, Math.min(1, d / r));
+    const v = minSpeed + (maxSpeed - minSpeed) * t;
+    applyAttackImpulse(u, center, v);
+    affected++;
+  }
+  return affected;
+}
+
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   if (!DOCTRINE_COMMANDS_ENABLED) return;
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
@@ -636,6 +660,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         element: "water",
         secondaryElement: "reclaim",
         shape: "line",
+        colorTint: { core: 0xe9ffef, hot: 0x86ffd5, rim: 0x3acb8f, trail: 0xb8ffe8, shadow: 0x113828 },
         reach: L,
         width: hw * 2,
         impactRadius: hw * 2,
@@ -665,6 +690,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       applyRadialSpellStatus(s, pos, fx.radius, "winded", 2.3, 0.54);
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius * 1.08, SPELL_KNOCKBACK_SPEED * 1.36, SPELL_AOE_KNOCKBACK);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
@@ -674,6 +700,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         z: pos.z,
         element: "fire",
         shape: "meteor",
+        colorTint: { core: 0xfff2c2, hot: 0xff7d2d, rim: 0xff3b16, trail: 0xffcf71, shadow: 0x4a190f },
         impactRadius: r,
         visualSeed: s.tick,
       });
@@ -683,6 +710,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         z: pos.z,
         element: "fire",
         shape: "aoe",
+        colorTint: { core: 0xffe4a8, hot: 0xff5b1f, rim: 0xff2400, trail: 0xffad4f, shadow: 0x64170d },
         impactRadius: r,
         visualSeed: s.tick + 31,
       });
@@ -710,6 +738,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
       });
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius, SPELL_AOE_KNOCKBACK * 0.95);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
@@ -720,6 +749,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         element: "shield",
         secondaryElement: "air",
         shape: "field",
+        colorTint: { core: 0xdffcff, hot: 0x88ebff, rim: 0x6a92ff, trail: 0xffefad, shadow: 0x14345f },
         impactRadius: fx.radius,
         visualSeed: s.tick,
       });
@@ -795,6 +825,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           fromZ: oz,
           element: "lightning",
           shape: "chain",
+          colorTint: { core: 0xf8ffff, hot: 0xb9efff, rim: 0x5ebeff, trail: 0xe2fbff, shadow: 0x19427b },
           impactRadius: hop === 0 ? fx.castRadius * 0.42 : fx.chainRange * 0.22,
           visualSeed: s.tick + hop * 37,
         });
@@ -841,6 +872,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           hop % 2 === 0 ? "frozen" : "chilled",
           hop === 0 ? 1.45 : 0.95,
           hop === 0 ? 0.86 : 0.62,
+        );
+        applyRadialImpulseToEnemyUnits(
+          s,
+          { x: bx, z: bz },
+          hop === 0 ? fx.castRadius * 0.36 : fx.chainRange * 0.2,
+          hop === 0 ? SPELL_KNOCKBACK_SPEED * 0.98 : SPELL_AOE_KNOCKBACK * 1.08,
+          SPELL_AOE_KNOCKBACK * 0.35,
         );
         hits++;
         ox = bx;
