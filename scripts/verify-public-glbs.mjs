@@ -1,10 +1,12 @@
 /**
- * Fails the build if any .glb under public/ is a Git LFS pointer stub (common on Vercel when
- * Git Large File Storage is off: Project → Settings → Git).
+ * Fails the build if any .glb under public/ is a Git LFS pointer stub.
+ * On CI hosts such as Vercel, try to hydrate unit GLBs first so builds can
+ * recover when the initial checkout skipped LFS objects.
  */
+import { execFileSync } from "child_process";
+import { createReadStream } from "fs";
 import { readdir } from "fs/promises";
 import { join, relative } from "path";
-import { createReadStream } from "fs";
 
 async function collectGlbs(dir, acc = []) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -26,15 +28,37 @@ function readFirstChunk(path, max = 512) {
   });
 }
 
+async function findPointerGlbs(paths) {
+  const bad = [];
+  for (const abs of paths) {
+    const buf = await readFirstChunk(abs, 400);
+    const asText = buf.toString("utf8", 0, Math.min(buf.length, 200));
+    if (asText.startsWith("version https://git-lfs.github.com/spec/") || asText.includes("git-lfs.github.com/spec")) {
+      bad.push(relative(process.cwd(), abs));
+    }
+  }
+  return bad;
+}
+
+function hydrateLfsGlbs() {
+  console.error("[verify-public-glbs] Found Git LFS pointer files; attempting git lfs pull for unit GLBs...");
+  execFileSync("git", ["lfs", "pull", "--include=public/assets/units/*.glb"], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
+}
+
 const publicDir = join(process.cwd(), "public");
 const glbs = await collectGlbs(publicDir);
-const bad = [];
+let bad = await findPointerGlbs(glbs);
 
-for (const abs of glbs) {
-  const buf = await readFirstChunk(abs, 400);
-  const asText = buf.toString("utf8", 0, Math.min(buf.length, 200));
-  if (asText.startsWith("version https://git-lfs.github.com/spec/") || asText.includes("git-lfs.github.com/spec")) {
-    bad.push(relative(process.cwd(), abs));
+if (bad.length > 0) {
+  try {
+    hydrateLfsGlbs();
+    bad = await findPointerGlbs(glbs);
+  } catch (err) {
+    console.error("\n[verify-public-glbs] Automatic git lfs pull failed.");
+    if (err && typeof err === "object" && "message" in err) console.error(String(err.message));
   }
 }
 
@@ -42,7 +66,7 @@ if (bad.length > 0) {
   console.error("\n[BAD] These paths are Git LFS pointer files, not real GLB binaries:\n");
   for (const p of bad) console.error(`  ${p}`);
   console.error(`
-Vercel: Project → Settings → Git → enable "Git Large File Storage (LFS)", then redeploy.
+Vercel: Project -> Settings -> Git -> enable "Git Large File Storage (LFS)", then redeploy.
 https://vercel.com/docs/project-configuration/git-settings
 
 Local unit GLBs use LFS (.gitattributes: public/assets/units/*.glb). The build needs LFS checkout.
@@ -50,4 +74,4 @@ Local unit GLBs use LFS (.gitattributes: public/assets/units/*.glb). The build n
   process.exit(1);
 }
 
-console.log(`[verify-public-glbs] OK — ${glbs.length} GLB(s) under public/`);
+console.log(`[verify-public-glbs] OK - ${glbs.length} GLB(s) under public/`);
