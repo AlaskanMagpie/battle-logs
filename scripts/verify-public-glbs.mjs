@@ -48,6 +48,14 @@ function hydrateLfsGlbs() {
   });
 }
 
+function shouldAllowPointerGlbsInBuild() {
+  const raw = String(process.env.ALLOW_LFS_POINTER_GLB_BUILD ?? "").trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  if (raw === "0" || raw === "false" || raw === "no") return false;
+  // Vercel previews can run without LFS checkout; runtime falls back if GLBs fail.
+  return process.env.VERCEL === "1" && process.env.VERCEL_ENV !== "production";
+}
+
 const publicDir = join(process.cwd(), "public");
 const glbs = await collectGlbs(publicDir);
 let bad = await findPointerGlbs(glbs);
@@ -63,6 +71,15 @@ if (bad.length > 0) {
 }
 
 if (bad.length > 0) {
+  if (shouldAllowPointerGlbsInBuild()) {
+    console.warn("\n[verify-public-glbs] WARNING: continuing build with Git LFS pointer GLBs.\n");
+    for (const p of bad) console.warn(`  ${p}`);
+    console.warn(`
+Set ALLOW_LFS_POINTER_GLB_BUILD=false to force strict failures.
+For full art in Vercel, enable Git LFS in Project Settings -> Git.
+`);
+    process.exit(0);
+  }
   console.error("\n[BAD] These paths are Git LFS pointer files, not real GLB binaries:\n");
   for (const p of bad) console.error(`  ${p}`);
   console.error(`
