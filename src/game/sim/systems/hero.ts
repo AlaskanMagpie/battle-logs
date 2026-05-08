@@ -28,8 +28,9 @@ import {
   type StructureRuntime,
 } from "../../state";
 import { structureObstacleFootprints } from "../../structureObstacles";
+import { clampOrderXZ, isSphereWorld, stepDirectionXZ, stepGreatCircleToward } from "../../surface";
 import { isStructureEntry, type Vec2 } from "../../types";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxRewardForTap } from "./homeDistance";
 import { applyHeroFacingTowardWorld } from "./heroFacing";
 import { tryPlayerHeroStrike } from "./heroStrike";
@@ -45,7 +46,7 @@ export function findNeutralTapIndexNearHero(s: GameState): number | null {
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
     if (t.active) continue;
-    const d = dist2(s.hero, t);
+    const d = gameDist2(s.map, s.hero, t);
     if (d <= bestD) {
       bestD = d;
       best = i;
@@ -67,11 +68,7 @@ function popNextHeroWaypoint(h: GameState["hero"]): void {
 
 export function setHeroMovePath(s: GameState, target: { x: number; z: number }): void {
   const h = s.hero;
-  const half = s.map.world.halfExtents;
-  const clamped = {
-    x: Math.max(-half, Math.min(half, target.x)),
-    z: Math.max(-half, Math.min(half, target.z)),
-  };
+  const clamped = clampOrderXZ(s.map, target);
   const path = planChainedPathAroundMapObstacles(
     s.map,
     h,
@@ -102,13 +99,17 @@ function moveHeroToward(s: GameState): void {
     h.x = h.targetX;
     h.z = h.targetZ;
     popNextHeroWaypoint(h);
+  } else if (isSphereWorld(s.map)) {
+    const p = stepGreatCircleToward(s.map, { x: h.x, z: h.z }, { x: h.targetX, z: h.targetZ }, step);
+    h.x = p.x;
+    h.z = p.z;
   } else {
     h.x += (dx / len) * step;
     h.z += (dz / len) * step;
   }
-  const half = s.map.world.halfExtents;
-  h.x = Math.max(-half, Math.min(half, h.x));
-  h.z = Math.max(-half, Math.min(half, h.z));
+  const cl = clampOrderXZ(s.map, { x: h.x, z: h.z });
+  h.x = cl.x;
+  h.z = cl.z;
   resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
 }
 
@@ -125,11 +126,14 @@ function applyWasd(s: GameState): boolean {
   dz /= len;
   h.facing = Math.atan2(dx, dz);
   const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
-  h.x += dx * step;
-  h.z += dz * step;
-  const half = s.map.world.halfExtents;
-  h.x = Math.max(-half, Math.min(half, h.x));
-  h.z = Math.max(-half, Math.min(half, h.z));
+  const moved = isSphereWorld(s.map)
+    ? stepDirectionXZ(s.map, { x: h.x, z: h.z }, wx, wz, step)
+    : { x: h.x + dx * step, z: h.z + dz * step };
+  h.x = moved.x;
+  h.z = moved.z;
+  const cl = clampOrderXZ(s.map, { x: h.x, z: h.z });
+  h.x = cl.x;
+  h.z = cl.z;
   resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
   h.targetX = null;
   h.targetZ = null;
@@ -142,7 +146,7 @@ function nearestHeroCaptainObjective(s: GameState): { x: number; z: number } | n
   let best: { x: number; z: number } | null = null;
   let bestD = Number.POSITIVE_INFINITY;
   const consider = (p: { x: number; z: number }): void => {
-    const d = dist2(h, p);
+    const d = gameDist2(s.map, h, p);
     if (d < bestD) {
       bestD = d;
       best = { x: p.x, z: p.z };
@@ -186,7 +190,7 @@ function minDist2ToPlayerStructures(s: GameState, pos: Vec2): number {
   let m = Infinity;
   for (const st of s.structures) {
     if (st.team !== "player") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d < m) m = d;
   }
   return m;
@@ -341,7 +345,7 @@ export function heroSystem(s: GameState): void {
   // should keep channeling so capture feels continuous while pathing.
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
-    if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
+    if (!tap || tap.active || gameDist2(s.map, h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
       s.lastMessage = "Claim cancelled.";

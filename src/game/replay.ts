@@ -3,7 +3,7 @@ import type { GameState } from "./state";
 import type { MapData } from "./types";
 
 const CHECKSUM_INTERVAL_TICKS = 30;
-const REPLAY_VERSION = 1;
+const REPLAY_VERSION = 2;
 
 export interface ReplayTickIntents {
   tick: number;

@@ -49,9 +49,10 @@ import {
 import { isStructureEntry } from "../../types";
 import { resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import { structureObstacleFootprints } from "../../structureObstacles";
+import { clampOrderXZ, isSphereWorld, stepGreatCircleToward } from "../../surface";
 import { applyAttackImpulse } from "./combat";
 import { applyEnemyHeroFacingTowardWorld } from "./heroFacing";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 import { claimChannelSecForTap, claimFluxFeeForTap, claimFluxRewardForTap } from "./homeDistance";
 
 function emitFx(s: GameState, kind: CastFxKind, pos: { x: number; z: number }): void {
@@ -76,13 +77,17 @@ function moveEnemyHeroToward(s: GameState): void {
     h.z = h.targetZ;
     h.targetX = null;
     h.targetZ = null;
+  } else if (isSphereWorld(s.map)) {
+    const p = stepGreatCircleToward(s.map, { x: h.x, z: h.z }, { x: h.targetX, z: h.targetZ }, step);
+    h.x = p.x;
+    h.z = p.z;
   } else {
     h.x += (dx / len) * step;
     h.z += (dz / len) * step;
   }
-  const half = s.map.world.halfExtents;
-  h.x = Math.max(-half, Math.min(half, h.x));
-  h.z = Math.max(-half, Math.min(half, h.z));
+  const cl = clampOrderXZ(s.map, { x: h.x, z: h.z });
+  h.x = cl.x;
+  h.z = cl.z;
   resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
 }
 
@@ -97,7 +102,7 @@ function findClaimableTapIndexNearEnemy(s: GameState, actor: { x: number; z: num
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
     if (t.active) continue;
-    const d = dist2(actor, t);
+    const d = gameDist2(s.map, actor, t);
     if (d > r2) continue;
     if (t.x >= margin && d <= bestDSide) {
       bestDSide = d;
@@ -124,7 +129,7 @@ function pickEnemyPreferredInactiveTap(s: GameState, actor: { x: number; z: numb
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
     if (t.active) continue;
-    const d = dist2(actor, t);
+    const d = gameDist2(s.map, actor, t);
     if (t.x >= margin && d < bestDSide) {
       bestDSide = d;
       bestSide = i;
@@ -164,7 +169,7 @@ function pickMoveTargetForEnemyHero(s: GameState): void {
   if (idx === null) return;
   const t = s.taps[idx]!;
   const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
-  if (dist2(h, t) <= r2) return;
+  if (gameDist2(s.map, h, t) <= r2) return;
   h.targetX = t.x;
   h.targetZ = t.z;
 }
@@ -236,7 +241,7 @@ function minDist2ToEnemyStructures(s: GameState, pos: { x: number; z: number }):
   let m = Infinity;
   for (const st of s.structures) {
     if (st.team !== "enemy") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d < m) m = d;
   }
   return m;
@@ -311,7 +316,7 @@ export function enemyHeroSystem(s: GameState): void {
 
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
-    if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
+    if (!tap || tap.active || gameDist2(s.map, h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
     }
@@ -381,7 +386,7 @@ function enemyHeroTryStrike(s: GameState): void {
   const cooldown = Math.max(1, Math.round(ENEMY_HERO_STRIKE_COOLDOWN_TICKS / enemyAttackSpeedScalar(s)));
 
   const from = { x: h.x, z: h.z };
-  if (s.hero.hp > 0 && dist2(h, s.hero) <= r2) {
+  if (s.hero.hp > 0 && gameDist2(s.map, h, s.hero) <= r2) {
     applyEnemyHeroFacingTowardWorld(s, s.hero.x, s.hero.z);
     s.hero.hp = Math.max(0, s.hero.hp - damage);
     recordDamageDealtBy(s, "enemy", damage);
@@ -394,7 +399,7 @@ function enemyHeroTryStrike(s: GameState): void {
   let bestD = r2;
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
-    const d2 = dist2(h, u);
+    const d2 = gameDist2(s.map, h, u);
     if (d2 <= bestD) {
       bestD = d2;
       bestU = u;
@@ -417,7 +422,7 @@ function enemyHeroTryStrike(s: GameState): void {
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player") continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
-    const d2 = dist2(h, t);
+    const d2 = gameDist2(s.map, h, t);
     if (d2 <= bestTapD) {
       bestTapD = d2;
       bestTap = t;
@@ -436,7 +441,7 @@ function enemyHeroTryStrike(s: GameState): void {
   }
 
   const keep = findKeep(s);
-  if (keep && dist2(h, keep) <= r2) {
+  if (keep && gameDist2(s.map, h, keep) <= r2) {
     applyEnemyHeroFacingTowardWorld(s, keep.x, keep.z);
     const dealt = damage * 0.45;
     keep.hp -= dealt;

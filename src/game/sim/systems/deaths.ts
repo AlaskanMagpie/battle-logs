@@ -9,7 +9,7 @@ import {
 } from "../../state";
 import type { Vec2 } from "../../types";
 import { isStructureEntry } from "../../types";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 
 function structureSalvageFrac(catalogId: string): number {
   const def = getCatalogEntry(catalogId);
@@ -24,7 +24,7 @@ function salvageYardBonusAt(s: GameState, pos: Vec2): number {
     const def = getCatalogEntry(st.catalogId);
     if (!def || !isStructureEntry(def) || !def.aura) continue;
     if (def.aura.kind !== "salvage_bonus") continue;
-    if (dist2(st, pos) <= def.aura.radius * def.aura.radius) bonus += def.aura.value;
+    if (gameDist2(s.map, st, pos) <= def.aura.radius * def.aura.radius) bonus += def.aura.value;
   }
   return bonus;
 }

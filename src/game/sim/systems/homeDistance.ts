@@ -10,18 +10,18 @@ import {
 } from "../../constants";
 import { findKeep, type GameState } from "../../state";
 import type { TeamId, Vec2 } from "../../types";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 
 /** Shortest distance from `pos` to player Keep (if alive) or any player relay slot. */
 export function minDistToPlayerHome(s: GameState, pos: Vec2): number {
   let best = Infinity;
   const keep = findKeep(s);
   if (keep && keep.hp > 0) {
-    const d = Math.sqrt(dist2(keep, pos));
+    const d = Math.sqrt(gameDist2(s.map, keep, pos));
     best = Math.min(best, d);
   }
   for (const r of s.map.playerRelaySlots) {
-    best = Math.min(best, Math.sqrt(dist2(r, pos)));
+    best = Math.min(best, Math.sqrt(gameDist2(s.map, r, pos)));
   }
   return Number.isFinite(best) ? best : 0;
 }
@@ -31,11 +31,11 @@ export function minDistToEnemyHome(s: GameState, pos: Vec2): number {
   let best = Infinity;
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    best = Math.min(best, Math.sqrt(dist2(er, pos)));
+    best = Math.min(best, Math.sqrt(gameDist2(s.map, er, pos)));
   }
   if (!Number.isFinite(best) || best === Infinity) {
     const es = s.map.enemyStart;
-    if (es) return Math.sqrt(dist2(es, pos));
+    if (es) return Math.sqrt(gameDist2(s.map, es, pos));
     return 0;
   }
   return best;
