@@ -123,9 +123,20 @@ export interface MapVisualSettings {
   sunHex?: number;
 }
 
+export type WorldGeometryMode = "plane" | "sphere";
+
+export interface MapWorldDef {
+  halfExtents: number;
+  groundY: number;
+  /** Planet radius (world units). Required when `worldGeometry` is `sphere`. */
+  sphereRadius?: number;
+}
+
 export interface MapData {
   version: number;
-  world: { halfExtents: number; groundY: number };
+  /** Defaults to `plane` when omitted (legacy maps). */
+  worldGeometry?: WorldGeometryMode;
+  world: MapWorldDef;
   tapSlots: TapSlotDef[];
   playerRelaySlots: RelaySlotDef[];
   enemyRelaySlots: RelaySlotDef[];

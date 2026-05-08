@@ -31,7 +31,7 @@ import {
 } from "./constants";
 import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
 import { TRAILER_HERO_MODE, trailerHeroModeStartingFlux } from "../dev/heroMode";
-import { unitStatsForCatalog } from "./sim/systems/helpers";
+import { gameDist2, unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
   CatalogEntry,
@@ -513,19 +513,17 @@ export interface GameState {
   portal: PortalRuntime;
 }
 
-/** Seeded xorshift32 PRNG on state. Returns [0, 1). */
-function inTacticsFieldAt(zf: TacticsFieldZone, x: number, z: number, tick: number): boolean {
+/** Fortify-style control zones at (x,z). */
+function inTacticsFieldAt(map: MapData, zf: TacticsFieldZone, x: number, z: number, tick: number): boolean {
   if (zf.untilTick <= tick) return false;
-  const dx = x - zf.x;
-  const dz = z - zf.z;
-  return dx * dx + dz * dz <= zf.radius * zf.radius;
+  return gameDist2(map, { x, z }, { x: zf.x, z: zf.z }) <= zf.radius * zf.radius;
 }
 
 /** Movement speed multiplier from active tactics fields at (x,z). */
 export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allySpeedMult;
     else m *= zf.enemySpeedMult;
   }
@@ -575,7 +573,7 @@ export function unitSpellStatusSpeedMult(u: UnitRuntime): number {
 export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyDamageMult;
     else m *= zf.enemyDamageMult;
   }
@@ -586,7 +584,7 @@ export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: nu
 export function tacticsFieldIncomingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyIncomingDamageMult;
     else m *= zf.enemyIncomingDamageMult;
   }
@@ -606,12 +604,6 @@ export function rand(s: GameState): number {
 export function randU32(s: GameState): number {
   rand(s);
   return s.rngState >>> 0;
-}
-
-function dist2(a: Vec2, b: Vec2): number {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return dx * dx + dz * dz;
 }
 
 /** Claimed Taps drive the wizard's tier progression (replaces Relay tier). */
@@ -1220,11 +1212,11 @@ export function nearestEnemyAggroBlocked(s: GameState, pos: Vec2): boolean {
     const r = camp.aggroRadius;
     for (const u of s.units) {
       if (u.team !== "enemy") continue;
-      if (dist2(pos, u) < r * r) return true;
+      if (gameDist2(s.map, pos, u) < r * r) return true;
     }
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
-      if (dist2(pos, er) < r * r) return true;
+      if (gameDist2(s.map, pos, er) < r * r) return true;
     }
   }
   return false;
@@ -1235,10 +1227,10 @@ export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   const keep = findKeep(s);
-  if (keep && dist2(pos, keep) <= r2) return true;
+  if (keep && gameDist2(s.map, pos, keep) <= r2) return true;
   return false;
 }
 
@@ -1247,15 +1239,15 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    if (dist2(pos, er) <= r2) return true;
+    if (gameDist2(s.map, pos, er) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "enemy" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }
@@ -1264,10 +1256,10 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
   const keep = findKeep(s);
-  if (keep && dist2(pos, keep) <= r2) return true;
+  if (keep && gameDist2(s.map, pos, keep) <= r2) return true;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   return false;
 }
@@ -1277,15 +1269,15 @@ export function inEnemyTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    if (dist2(pos, er) <= r2) return true;
+    if (gameDist2(s.map, pos, er) <= r2) return true;
   }
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "enemy" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }
@@ -1338,7 +1330,7 @@ export function nearSafeDeployAura(s: GameState, pos: Vec2): boolean {
     if (!def || !isStructureEntry(def) || !def.aura) continue;
     if (def.aura.kind !== "safe_deploy_radius") continue;
     const r = def.aura.radius;
-    if (dist2(pos, st) <= r * r) return true;
+    if (gameDist2(s.map, pos, st) <= r * r) return true;
   }
   return false;
 }
@@ -1349,11 +1341,11 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
   const r2 = FORWARD_PLACE_RADIUS * FORWARD_PLACE_RADIUS;
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
-    if (dist2(pos, u) <= r2) return true;
+    if (gameDist2(s.map, pos, u) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "player" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }

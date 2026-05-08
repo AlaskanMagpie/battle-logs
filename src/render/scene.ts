@@ -16,7 +16,14 @@ import {
   TICK_HZ,
 } from "../game/constants";
 import { claimChannelSecForTap } from "../game/sim/systems/homeDistance";
-import { dist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
+import { gameDist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
+import {
+  isSphereWorld,
+  sphereRadiusOf,
+  surfaceNormalFromTan,
+  tangentFromUnitAtPole,
+  worldFootXYZ,
+} from "../game/surface";
 import {
   dominantSignal,
   enemyTerritorySources,
@@ -1023,6 +1030,8 @@ export class GameRenderer {
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
+  private worldIsSphere = false;
+  private worldSphereR = 0;
   private terrainSlab: THREE.Group | null = null;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
@@ -1583,6 +1592,18 @@ export class GameRenderer {
     const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     this.ndc.set(x, y);
     this.raycaster.setFromCamera(this.ndc, this.camera);
+    const st = this.currentState;
+    if (st && isSphereWorld(st.map) && this.terrainHits.length === 0) {
+      const R = sphereRadiusOf(st.map);
+      const sph = new THREE.Sphere(new THREE.Vector3(0, 0, 0), R);
+      const hit = new THREE.Vector3();
+      if (this.raycaster.ray.intersectSphere(sph, hit)) {
+        const n = hit.clone().normalize();
+        const tan = tangentFromUnitAtPole(n.x, n.y, n.z, R);
+        return { x: tan.x, z: tan.z };
+      }
+      return null;
+    }
     if (this.terrainHits.length > 0) {
       const hits = this.raycaster.intersectObjects(this.terrainHits, false);
       const p = hits[0]?.point;
@@ -2207,8 +2228,12 @@ export class GameRenderer {
       const t = state.taps[idx]!;
       let band = this.tapMeshes.get(t.defId);
       const nodeR2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
-      const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && dist2(u, t) <= nodeR2);
-      const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && dist2(u, t) <= nodeR2);
+      const playerNear = state.units.some(
+        (u) => u.team === "player" && u.hp > 0 && gameDist2(state.map, u, t) <= nodeR2,
+      );
+      const enemyNear = state.units.some(
+        (u) => u.team === "enemy" && u.hp > 0 && gameDist2(state.map, u, t) <= nodeR2,
+      );
       const contested = playerNear && enemyNear;
       const playerTerritory = inPlayerTerritory(state, t);
       const enemyTerritory = inEnemyTerritory(state, t);
@@ -3078,12 +3103,31 @@ export class GameRenderer {
   }
 
   private syncWorldPlane(state: GameState): void {
+    const map = state.map;
+    if (isSphereWorld(map)) {
+      const R = sphereRadiusOf(map);
+      if (this.worldIsSphere && this.worldSphereR === R) return;
+      this.worldIsSphere = true;
+      this.worldSphereR = R;
+      this.worldPlaneHalf = map.world.halfExtents + 28;
+      this.ground.geometry.dispose();
+      this.ground.geometry = new THREE.SphereGeometry(R, 80, 80);
+      this.ground.rotation.set(0, 0, 0);
+      this.ground.position.set(0, 0, 0);
+      (this.ground as THREE.Mesh).quaternion.identity();
+      this.groundOverlay.visible = false;
+      this.groundVisualKey = "";
+      return;
+    }
+    this.worldIsSphere = false;
+    this.worldSphereR = 0;
     const half = state.map.world.halfExtents + 28;
     if (this.worldPlaneHalf === half) return;
     this.worldPlaneHalf = half;
     const size = half * 2;
     this.ground.geometry.dispose();
     this.ground.geometry = new THREE.PlaneGeometry(size, size);
+    this.ground.rotation.x = -Math.PI / 2;
     this.groundOverlay.geometry.dispose();
     this.groundOverlay.geometry = new THREE.PlaneGeometry(size, size);
     this.groundVisualKey = "";
@@ -3984,7 +4028,13 @@ export class GameRenderer {
     }
     const visual = this.syncHeroVisualPosition(h, this.heroVisualPos);
     this.heroVisualPos = visual;
-    this.heroGroup.position.set(visual.x, 0, visual.y);
+    const map = state.map;
+    if (isSphereWorld(map)) {
+      const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
+      this.heroGroup.position.set(foot.x, foot.y, foot.z);
+    } else {
+      this.heroGroup.position.set(visual.x, 0, visual.y);
+    }
     this.heroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.heroGroup);
     const clickMove = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -3998,7 +4048,7 @@ export class GameRenderer {
     const moving = clickMove || frameTravel || visualLag > HERO_LOCOMOTION_EPS;
     if (moving) this.interruptHeroStrikeForRun(this.heroGroup);
     this.setGlbMoveAnimation(this.heroGroup, moving);
-    if (this.heroLungeTimer > 0) {
+    if (this.heroLungeTimer > 0 && !isSphereWorld(state.map)) {
       const p = this.heroLungeTimer / 0.32;
       const amt = 0.38 * Math.sin(p * Math.PI);
       this.heroGroup.position.x += Math.sin(h.facing) * amt;
@@ -4063,7 +4113,13 @@ export class GameRenderer {
     }
     const visual = this.syncHeroVisualPosition(h, this.enemyHeroVisualPos);
     this.enemyHeroVisualPos = visual;
-    this.enemyHeroGroup.position.set(visual.x, 0, visual.y);
+    const map = state.map;
+    if (isSphereWorld(map)) {
+      const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
+      this.enemyHeroGroup.position.set(foot.x, foot.y, foot.z);
+    } else {
+      this.enemyHeroGroup.position.set(visual.x, 0, visual.y);
+    }
     this.enemyHeroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.enemyHeroGroup);
     const clickMoveE = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -4198,7 +4254,16 @@ export class GameRenderer {
       } else {
         visual.set(u.x, u.z);
       }
-      obj.position.set(visual.x, 0, visual.y);
+      const map = state.map;
+      if (isSphereWorld(map)) {
+        const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
+        obj.position.set(foot.x, foot.y, foot.z);
+        const n = surfaceNormalFromTan(map, { x: visual.x, z: visual.y });
+        obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+      } else {
+        obj.position.set(visual.x, 0, visual.y);
+        obj.quaternion.identity();
+      }
       if (!attackActive) this.unitFaceTargets.delete(u.id);
       const faceTarget = attackActive && !shouldRun ? this.unitFaceTargets.get(u.id) : undefined;
       this.faceUnitForState(g, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);

@@ -28,7 +28,7 @@ import {
   type UnitRuntime,
 } from "../../state";
 import type { UnitSizeClass, Vec2 } from "../../types";
-import { dist2, TRAMPLE } from "./helpers";
+import { dist2, gameDist2, TRAMPLE } from "./helpers";
 import { buildCombatUnitBuckets, nearestFoeInBuckets, unitsNearXZ } from "../unitSpatial";
 
 const IMPULSE_MASS: Record<UnitSizeClass, number> = {
@@ -174,7 +174,7 @@ export function combat(s: GameState): void {
     if (u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     const foeTeam = u.team === "player" ? "enemy" : "player";
-    const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell);
+    const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell, s.map);
     if (!best) continue;
     applyUnitDamage(s, u, best);
     applyAttackImpulse(best, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
@@ -183,7 +183,7 @@ export function combat(s: GameState): void {
       const near = unitsNearXZ(buckets, best.x, best.z, best, cell, u.aoeRadius);
       for (const splash of near) {
         if (splash.team !== foeTeam || splash.hp <= 0) continue;
-        if (dist2(best, splash) > r2) continue;
+        if (gameDist2(s.map, best, splash) > r2) continue;
         const spBase = physicalDamage(u, splash) * UNIT_AOE_SPLASH_DAMAGE_MULT;
         const sp =
           spBase *
@@ -207,7 +207,7 @@ export function combat(s: GameState): void {
     let bestD = ur2;
     for (const st of s.structures) {
       if (st.team !== "player") continue;
-      const d = dist2(u, st);
+      const d = gameDist2(s.map, u, st);
       if (d <= bestD) {
         bestD = d;
         best = st;
@@ -231,7 +231,7 @@ export function combat(s: GameState): void {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     if (s.hero.hp <= 0) break;
-    if (dist2(u, s.hero) <= u.range * u.range) {
+    if (gameDist2(s.map, u, s.hero) <= u.range * u.range) {
       const raw =
         attackDamageFromPerTick(u, u.dmgPerTick) *
         0.4 *
@@ -249,7 +249,7 @@ export function combat(s: GameState): void {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     if (s.enemyHero.hp <= 0) break;
-    if (dist2(u, s.enemyHero) <= u.range * u.range) {
+    if (gameDist2(s.map, u, s.enemyHero) <= u.range * u.range) {
       const raw =
         attackDamageFromPerTick(u, u.dmgPerTick) *
         tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
@@ -270,7 +270,7 @@ export function combat(s: GameState): void {
     let attacked = false;
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
-      if (dist2(u, er) <= u.range * u.range) {
+      if (gameDist2(s.map, u, er) <= u.range * u.range) {
         const raw =
           attackDamageFromPerTick(u, u.dmgPerTick) *
           PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
@@ -289,7 +289,7 @@ export function combat(s: GameState): void {
     if (attacked) continue;
     for (const st of s.structures) {
       if (st.team !== "enemy") continue;
-      if (dist2(u, st) <= u.range * u.range) {
+      if (gameDist2(s.map, u, st) <= u.range * u.range) {
         const raw =
           attackDamageFromPerTick(u, u.dmgPerTick) *
           PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
@@ -315,7 +315,7 @@ export function combat(s: GameState): void {
     for (const t of s.taps) {
       if (!t.active || t.ownerTeam !== foeTeam) continue;
       if ((t.anchorHp ?? 0) <= 0) continue;
-      if (dist2(u, t) > ar2) continue;
+      if (gameDist2(s.map, u, t) > ar2) continue;
       const mult = u.damageVsStructuresMult ?? 1;
       const anchorDmg = attackDamageFromPerTick(u, u.dmgPerTick) * UNIT_TAP_ANCHOR_DAMAGE_MULT * mult;
       t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - anchorDmg);
@@ -337,7 +337,7 @@ export function combat(s: GameState): void {
     for (const u of s.units) {
       if (u.team !== "player" || u.hp <= 0) continue;
       if (!attackReady(u)) continue;
-      if (dist2(u, camp.origin) <= r2) {
+      if (gameDist2(s.map, u, camp.origin) <= r2) {
         dmg += attackDamageFromPerTick(u, CAMP_CORE_DAMAGE_PER_UNIT_PER_TICK);
         commitAttack(s, u);
         pushAttackMark(s, u, camp.origin, markMax, markAttackers);

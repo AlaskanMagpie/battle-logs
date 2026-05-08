@@ -1293,6 +1293,7 @@ function runMatch(
     const selectedFormationSlots = (from: { x: number; z: number }, to: { x: number; z: number }, wide: boolean) => {
       const selected = state.units.filter((u) => state.selectedUnitIds.includes(u.id) && u.team === "player" && u.hp > 0);
       return computeFormationSlots(
+        state.map,
         selected.map((u) => ({
           id: u.id,
           x: u.x,
@@ -1302,7 +1303,6 @@ function runMatch(
           flying: u.flying,
         })),
         { from, to, kind: state.formationPreset, depthScale: wide ? 1.75 : 1 },
-        state.map.world.halfExtents,
       );
     };
 

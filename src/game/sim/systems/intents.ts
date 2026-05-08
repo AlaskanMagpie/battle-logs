@@ -43,10 +43,11 @@ import {
 import { structureObstacleFootprints } from "../../structureObstacles";
 import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
+import { clampOrderXZ } from "../../surface";
 import { applyAttackImpulse } from "./combat";
 import { computeFormationSlots, formationKindLabel, nextFormationKind } from "./formationLayout";
 import { findNeutralTapIndexNearHero, setHeroMovePath } from "./hero";
-import { dist2, unitSeparationRadiusXZ } from "./helpers";
+import { gameDist2, unitSeparationRadiusXZ } from "./helpers";
 import { claimChannelSecForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
@@ -66,7 +67,7 @@ function applyRadialSpellStatus(
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     if (teams === "enemy" && u.team !== "enemy") continue;
-    if (dist2(u, center) > r2) continue;
+    if (gameDist2(s.map, u, center) > r2) continue;
     applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
   }
 }
@@ -94,7 +95,7 @@ function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includ
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (out.has(u.id)) continue;
-    if (dist2(u, pos) > r2) continue;
+    if (gameDist2(s.map, u, pos) > r2) continue;
     if (u.order && u.order.mode !== "stay") continue;
     out.add(u.id);
   }
@@ -104,9 +105,9 @@ function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includ
 function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
   s.heroCaptainLastManualTick = s.tick;
   s.teleportClickPending = false;
-  const half = s.map.world.halfExtents;
-  const x = Math.max(-half, Math.min(half, pos.x));
-  const z = Math.max(-half, Math.min(half, pos.z));
+  const clamped = clampOrderXZ(s.map, pos);
+  const x = clamped.x;
+  const z = clamped.z;
   const h = s.hero;
   if (h.claimChannelTarget !== null) {
     h.claimChannelTarget = null;
@@ -137,7 +138,7 @@ function tapIndexNearForCaptureOrder(s: GameState, pos: Vec2): number | null {
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
     if (t.active && t.ownerTeam === "player") continue;
-    const d = dist2(pos, t);
+    const d = gameDist2(s.map, pos, t);
     if (d <= bestD) {
       bestD = d;
       best = i;
@@ -233,6 +234,7 @@ function orderPlayerUnitsFormation(
   }
 
   const slots = computeFormationSlots(
+    s.map,
     units.map((u) => ({
       id: u.id,
       x: u.x,
@@ -242,7 +244,6 @@ function orderPlayerUnitsFormation(
       flying: u.flying,
     })),
     { from, to, kind: formationKind, depthScale },
-    s.map.world.halfExtents,
   );
   const byId = new Map(slots.map((slot) => [slot.id, slot]));
   const resolvedSlots: { u: UnitRuntime; target: Vec2 }[] = [];
@@ -349,7 +350,7 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   const dx = dest.x - s.hero.x;
   const dz = dest.z - s.hero.z;
   const r2 = HERO_TELEPORT_UNIT_RADIUS * HERO_TELEPORT_UNIT_RADIUS;
-  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && dist2(u, s.hero) <= r2);
+  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && gameDist2(s.map, u, s.hero) <= r2);
   s.hero.x = dest.x;
   s.hero.z = dest.z;
   s.hero.targetX = null;
@@ -385,7 +386,7 @@ function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
   const maxD2 = PICK_STRUCTURE * PICK_STRUCTURE;
   for (const st of s.structures) {
     if (st.team !== "player") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d <= maxD2 && d < bestD) {
       bestD = d;
       best = st.id;
@@ -571,7 +572,7 @@ function applyRadialImpulseToEnemyUnits(
   let affected = 0;
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
-    const d2 = dist2(u, center);
+    const d2 = gameDist2(s.map, u, center);
     if (d2 > r2) continue;
     const d = Math.sqrt(d2);
     const t = 1 - Math.max(0, Math.min(1, d / r));
@@ -674,7 +675,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       const r2 = r * r;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
-        if (dist2(u, pos) > r2) continue;
+        if (gameDist2(s.map, u, pos) > r2) continue;
         damageEnemyUnitFromCommand(s, u, fx.damage);
         applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED * 1.28);
         applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
@@ -682,7 +683,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
-        if (dist2(er, pos) <= r2) {
+        if (gameDist2(s.map, er, pos) <= r2) {
           const dd = fx.damage * 0.5;
           er.hp -= dd;
           recordDamageDealtBy(s, "player", dd);
@@ -780,7 +781,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (er.hp <= 0) continue;
           const k = `r:${i}`;
           if (used.has(k)) continue;
-          const d = dist2(er, { x: ox, z: oz });
+          const d = gameDist2(s.map, er, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -792,7 +793,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (st.team !== "enemy") continue;
           const k = `s:${st.id}`;
           if (used.has(k)) continue;
-          const d = dist2(st, { x: ox, z: oz });
+          const d = gameDist2(s.map, st, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -804,7 +805,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (u.team !== "enemy" || u.hp <= 0) continue;
           const k = `u:${u.id}`;
           if (used.has(k)) continue;
-          const d = dist2(u, { x: ox, z: oz });
+          const d = gameDist2(s.map, u, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -847,7 +848,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           er.silencedUntilTick = Math.max(er.silencedUntilTick, silenceTick);
           for (const st of s.structures) {
             if (st.team !== "enemy") continue;
-            if (dist2(st, { x: er.x, z: er.z }) <= silenceR2) {
+            if (gameDist2(s.map, st, { x: er.x, z: er.z }) <= silenceR2) {
               st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick, silenceTick);
             }
           }
@@ -912,7 +913,7 @@ function nearestPlayerStructureWithin(
   let bestD = radius * radius;
   for (const st of s.structures) {
     if (st.team !== "player") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d <= bestD) {
       bestD = d;
       best = st;

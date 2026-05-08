@@ -1,4 +1,5 @@
 import type { MapData, MapDecorDef, Vec2 } from "./types";
+import { clampWorldArena, isSphereWorld } from "./surface";
 
 const EPS = 0.055;
 const RESOLVE_PASSES = 8;
@@ -234,6 +235,7 @@ function firstBlockingFootprint(
 }
 
 function clampWorld(map: MapData, p: Vec2): Vec2 {
+  if (isSphereWorld(map)) return clampWorldArena(map, p);
   const h = map.world.halfExtents;
   return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
 }
