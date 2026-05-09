@@ -18,7 +18,7 @@ export interface LocalLeaderboardEntry {
 }
 
 export function scoreMatchResult(s: GameState): number {
-  const victory = s.phase === "win" ? 2500 : 0;
+  const victory = s.phase === "win" ? 2500 : s.phase === "draw" ? 1100 : 0;
   const nodesClaimed = s.taps.filter((t) => t.active && t.ownerTeam === "player").length;
   /** One penalty per full sim minute of match time (`tick` is sim steps at `TICK_HZ`, not wall seconds). */
   const timePenalty = Math.floor(s.tick / TICK_HZ / 60);

@@ -143,6 +143,7 @@ function pushAttackMark(
 ): void {
   if (s.combatHitMarks.length >= markMax || markAttackers.has(attacker.id)) return;
   markAttackers.add(attacker.id);
+  const ar = attacker.aoeRadius && attacker.aoeRadius > 0 ? attacker.aoeRadius : undefined;
   s.combatHitMarks.push({
     attackerId: attacker.id,
     producedUnitId: attacker.producedUnitId,
@@ -158,6 +159,9 @@ function pushAttackMark(
     visualSeed: attacker.visualSeed ^ (s.tick * 2654435761),
     trait: attacker.trait,
     rangeBand: classifyAttackRangeBand(attacker.range),
+    aoeRadius: ar,
+    splashPx: target.x,
+    splashPz: target.z,
   });
 }
 

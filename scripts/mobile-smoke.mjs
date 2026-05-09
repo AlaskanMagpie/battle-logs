@@ -13,7 +13,7 @@ function argValue(name, fallback) {
 }
 
 const port = Number(argValue("--port", "2230"));
-const baseUrl = argValue("--url", `http://localhost:${port}`);
+const baseUrl = argValue("--url", `http://127.0.0.1:${port}`);
 const external = process.argv.includes("--external");
 
 async function waitForServer(url, timeoutMs = 30_000) {
@@ -94,7 +94,7 @@ try {
     server = spawn(process.execPath, [
       path.join(root, "node_modules", "vite", "bin", "vite.js"),
       "--host",
-      "localhost",
+      "127.0.0.1",
       "--port",
       String(port),
       "--strictPort",

@@ -20,7 +20,6 @@ import {
   KEEP_SWARM_PERIOD_SEC,
   PLAYER_STARTING_FLUX,
   TAP_ANCHOR_MAX_HP,
-  TAP_GENERATION_MIN_SEP,
   TAP_NODES_PER_SIDE,
   TERRITORY_RADIUS,
   TICK_HZ,
@@ -51,6 +50,7 @@ import type {
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
+import { prepareMatchMapForRuntime, scatterArenaTapSlots } from "./mapArenaLayout";
 import { structureObstacleFootprints } from "./structureObstacles";
 
 export type CastFxKind =
@@ -92,6 +92,11 @@ export interface CombatHitMark {
   trait?: UnitTrait;
   /** Reach bucket for layered zap / cone / boom reads in the renderer. */
   rangeBand?: AttackRangeBand;
+  /** Breath weapon splash radius (world units); renderer draws target ripple when set. */
+  aoeRadius?: number;
+  /** Splash centroid override; defaults to primary hit `(tx,tz)`. */
+  splashPx?: number;
+  splashPz?: number;
 }
 
 /** Wizard melee burst palette (both heroes). */
@@ -801,68 +806,9 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
 
 /** Spawn the Wizard Keep at the player HQ anchor — complete immediately, no build time,
  *  no flux cost. This is the permanent base that anchors the wizard. */
-/** Random Mana node layout: TAP_NODES_PER_SIDE on x<0, same on x>0; ignores map.json tapSlots. */
+/** Random Mana nodes across the full arena (spacing + obstacle/camp/HQ avoidance). */
 export function generateProceduralTaps(map: MapData, rngScratch: { v: number }): TapRuntime[] {
-  function rnd(): number {
-    let x = rngScratch.v | 0;
-    x ^= x << 13;
-    x ^= x >>> 17;
-    x ^= x << 5;
-    rngScratch.v = x >>> 0;
-    return (rngScratch.v & 0xffffffff) / 0x100000000;
-  }
-  const half = map.world.halfExtents;
-  const margin = Math.min(140, Math.max(44, half * 0.2));
-  const minSep2 = TAP_GENERATION_MIN_SEP * TAP_GENERATION_MIN_SEP;
-  const sx = map.playerStart?.x ?? 0;
-  const sz = map.playerStart?.z ?? 0;
-  const placed: { x: number; z: number }[] = [];
-  const edgePad = Math.max(18, half * 0.04);
-  const keepClear = Math.max(36, half * 0.11);
-  const keepClear2 = keepClear * keepClear;
-
-  function okPos(x: number, z: number, playerSide: boolean): boolean {
-    if (Math.abs(x) > half - edgePad || Math.abs(z) > half - edgePad) return false;
-    if (playerSide) {
-      if (x > -margin) return false;
-    } else if (x < margin) {
-      return false;
-    }
-    const kd2 = keepClear2;
-    if ((x - sx) * (x - sx) + (z - sz) * (z - sz) < kd2) return false;
-    for (const p of placed) {
-      const dx = p.x - x;
-      const dz = p.z - z;
-      if (dx * dx + dz * dz < minSep2) return false;
-    }
-    return true;
-  }
-
-  const taps: TapRuntime[] = [];
-  let id = 0;
-  for (const playerSide of [true, false]) {
-    let n = 0;
-    let attempts = 0;
-    while (n < TAP_NODES_PER_SIDE && attempts < 1200) {
-      attempts++;
-      const x = playerSide
-        ? -margin - rnd() * Math.max(16, half - margin * 2)
-        : margin + rnd() * Math.max(16, half - margin * 2);
-      const z = (rnd() * 2 - 1) * (half - margin - edgePad);
-      if (!okPos(x, z, playerSide)) continue;
-      placed.push({ x, z });
-      taps.push({
-        defId: `tap_gen_${id++}`,
-        x,
-        z,
-        active: false,
-        yieldRemaining: 0,
-        ownerTeam: undefined,
-      });
-      n++;
-    }
-  }
-  return taps;
+  return scatterArenaTapSlots(map, rngScratch);
 }
 
 /** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
@@ -971,7 +917,8 @@ export function effectiveGlobalPopCap(s: GameState): number {
   return Math.min(GLOBAL_POP_CAP_MAX, GLOBAL_POP_CAP + s.globalPopCapBonus);
 }
 
-export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
+export function createInitialState(mapInput: MapData, doctrineSlots?: (string | null)[]): GameState {
+  const map = prepareMatchMapForRuntime(mapInput);
   const rawIn = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
   const rawSlots =
     rawIn.length >= DOCTRINE_SLOT_COUNT

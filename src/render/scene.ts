@@ -7,21 +7,27 @@ import { getControlProfile, type ControlProfile } from "../controlProfile";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
+  PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_CHRONO_SENTINELS,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
   STRUCTURE_MESH_VISUAL_SCALE,
   TAP_YIELD_MAX,
+  MAP_DECOR_BLOCK_BOX_XZ,
   TERRITORY_RADIUS,
   TICK_HZ,
 } from "../game/constants";
 import { claimChannelSecForTap } from "../game/sim/systems/homeDistance";
 import { gameDist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
 import {
+  clampWorldArena,
+  greatCircleTangentToward,
   isSphereWorld,
   sphereRadiusOf,
   surfaceNormalFromTan,
   tangentFromUnitAtPole,
+  unitFromTangentAtPole,
+  unitToVec2,
   worldFootXYZ,
 } from "../game/surface";
 import {
@@ -39,6 +45,7 @@ import {
 } from "../game/state";
 import type {
   CommandEffect,
+  MapData,
   MapGroundPreset,
   SignalType,
   StructureCatalogEntry,
@@ -55,6 +62,7 @@ import {
   stepFx,
   type FxHost,
 } from "./fx";
+import { buildConeBasis, resolveFxFoot, tangentForwardWorld } from "./fxGrounding";
 import {
   glbBoxExtentRef,
   requestGlbForHero,
@@ -80,12 +88,65 @@ import {
   type TapBandMeshes,
 } from "./tapRingVisual";
 import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
+import { sampleRenderableSurfaceFoot, SURFACE_GROUND_FOOT_BIAS } from "./surfaceGrounding";
 /** Exponential follow (1/s); orbit pivot eases toward the wizard without changing zoom. */
 const CAMERA_HERO_FOLLOW_LAMBDA = 7.2;
 /** Orbit pivot height at the wizard (Y only — XZ track hero feet). */
 const CAMERA_HERO_PIVOT_Y = 1.38;
 /** Match start: high orbit flyover before sim time begins. */
 const MATCH_INTRO_CAMERA_SEC = 5.4;
+/** Push structure anchors down along −surface normal so bases contact hull/terrain (GLB pivots often float; may clip). */
+const STRUCTURE_FOOT_BURY_DEFAULT = 5.65;
+
+/** Raycast bury along −surface normal; lower for tower GLBs that already sink in `glbPool` (Cragrunner / Emberroot). */
+function structureFootBuryWorldForCatalog(catalogId: string | null | undefined): number {
+  if (catalogId === "watchtower" || catalogId === "emberroot_bastion") return 3.05;
+  return STRUCTURE_FOOT_BURY_DEFAULT;
+}
+
+function structureFootAnalyticYLiftForCatalog(catalogId: string | null | undefined): number {
+  return -(SURFACE_GROUND_FOOT_BIAS + structureFootBuryWorldForCatalog(catalogId));
+}
+/** Sphere: analytic ray seed inset inside smooth R so downward casts still hit the rendered shell first. */
+const STRUCTURE_SPHERE_GROUNDING_SEED_INSET = 0.55;
+
+const QUAT_RING_FLAT_XZ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+const scratchSphereA = new THREE.Vector3();
+const scratchSphereB = new THREE.Vector3();
+
+function alignRingMeshToSphereTangent(mesh: THREE.Object3D, map: MapData, tan: Vec2, liftAlongNormal: number): void {
+  const foot = worldFootXYZ(map, tan, 0);
+  const n = surfaceNormalFromTan(map, tan);
+  mesh.position.set(foot.x + n[0] * liftAlongNormal, foot.y + n[1] * liftAlongNormal, foot.z + n[2] * liftAlongNormal);
+  const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+  mesh.quaternion.copy(qAlign).multiply(QUAT_RING_FLAT_XZ);
+}
+
+function worldPointAlongSphereNormal(map: MapData, tan: Vec2, liftAlongNormal: number, out: THREE.Vector3): THREE.Vector3 {
+  const foot = worldFootXYZ(map, tan, 0);
+  const n = surfaceNormalFromTan(map, tan);
+  return out.set(foot.x + n[0] * liftAlongNormal, foot.y + n[1] * liftAlongNormal, foot.z + n[2] * liftAlongNormal);
+}
+
+/** Reparent decor/props built in plane space so local Y is "up" from `(floorX, floorY, floorZ)` onto the sphere shell. */
+function sphereAnchoredPropFromPlaneFloor(
+  root: THREE.Object3D,
+  map: MapData,
+  planeFloorX: number,
+  planeFloorY: number,
+  planeFloorZ: number,
+): THREE.Group {
+  const foot = worldFootXYZ(map, { x: planeFloorX, z: planeFloorZ }, 0);
+  const n = surfaceNormalFromTan(map, { x: planeFloorX, z: planeFloorZ });
+  const anchor = new THREE.Group();
+  anchor.position.set(foot.x, foot.y, foot.z);
+  anchor.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+  root.position.x -= planeFloorX;
+  root.position.y -= planeFloorY;
+  root.position.z -= planeFloorZ;
+  anchor.add(root);
+  return anchor;
+}
 /** If a unit's visual moves more than this, it must be in run/move animation. */
 const UNIT_VISUAL_RUN_EPS = 0.035;
 /** Start/stop hysteresis so formation slot settling and separation nudges do not flicker run/idle. */
@@ -93,14 +154,18 @@ const UNIT_VISUAL_RUN_START_EPS = 0.055;
 const UNIT_VISUAL_RUN_STOP_EPS = 0.018;
 /** Hero GLB run vs idle: same idea as squads — use sim travel per frame, not only click-target flags (Captain / gaps). */
 const HERO_LOCOMOTION_EPS = 0.055;
-/** Time-normalized visual catch-up while running; keeps fixed sim ticks from reading as frame teleports. */
-const UNIT_VISUAL_RUN_CATCHUP_LAMBDA = 14;
-/** Hero uses a slightly tighter catch-up than squads so close camera follow feels smooth but responsive. */
-const HERO_VISUAL_RUN_CATCHUP_LAMBDA = 16;
+/** Snap mesh XZ to sim only for teleports/respawns — same order as hero (`syncHeroVisualPosition`). A low threshold made fast swarms and multi-tick catch-up frames hard-snap every step. */
+const UNIT_VISUAL_TELEPORT_SNAP_DIST = 10;
+/** During attack clips, allow run crossfade only if sim has drifted this far from the eased visual (keeps swing in place for small separation nudges). */
+const UNIT_VISUAL_ATTACK_RUN_LAG_EPS = 9.5;
+/** Time-normalized visual catch-up while running; aligned with hero so 20 Hz sim steps ease across high-FPS frames instead of stair-stepping. */
+const UNIT_VISUAL_RUN_CATCHUP_LAMBDA = 16;
+/** Hero XZ follow uses the same lambda as squads; kept separate for readability at call sites. */
+const HERO_VISUAL_RUN_CATCHUP_LAMBDA = UNIT_VISUAL_RUN_CATCHUP_LAMBDA;
 /** Exponential smoothing for visual velocity used by procedural lean/bob. */
 const UNIT_VISUAL_SPEED_LAMBDA = 9.5;
 /** Visual catch-up should tolerate low mobile FPS without slowing movement/animation relative to sim. */
-const RENDER_VISUAL_DT_CAP_SEC = 1 / 15;
+const RENDER_VISUAL_DT_CAP_SEC = 1 / 24;
 /** Pose jumps after a tab stall still need a guard, but 30fps caps made mobile run clips play in slow motion. */
 const GLB_ANIMATION_DT_CAP_SEC = 1 / 12;
 
@@ -123,6 +188,8 @@ type UnitMotionVisual = {
   attackKick: number;
   attackActive: boolean;
   moving: boolean;
+  /** Last `shouldRun` from sync — procedural bob/lean must follow this, not smoothed `m.moving` (avoids stiff upright mid-run). */
+  simRunGate: boolean;
   sizeClass: UnitSizeClass;
 };
 
@@ -492,6 +559,43 @@ function structureDims(entry: StructureCatalogEntry | null): { w: number; h: num
   }
   return { w: w * S, h: H * S, d: d * S };
 }
+
+/** Yaw for a hypothetical **player** tower at `(x,z)` — mirrors `structureFacingYawRad` player branch (face the fight). */
+function playerStructurePlacementYawRad(s: GameState, x: number, z: number): number {
+  const m = s.map;
+  let tx: number;
+  let tz: number;
+  const er = m.enemyRelaySlots[0];
+  if (er) {
+    tx = er.x;
+    tz = er.z;
+  } else if (m.enemyStart) {
+    tx = m.enemyStart.x;
+    tz = m.enemyStart.z;
+  } else {
+    tx = s.enemyHero.x;
+    tz = s.enemyHero.z;
+  }
+  let dx = tx - x;
+  let dz = tz - z;
+  let len = Math.hypot(dx, dz);
+  if (len < 0.01) {
+    dx = s.enemyHero.x - x;
+    dz = s.enemyHero.z - z;
+    len = Math.hypot(dx, dz);
+  }
+  if (len < 1e-6) return 0;
+  return Math.atan2(dx / len, dz / len);
+}
+
+const scratchPlacementQuatA = new THREE.Quaternion();
+const scratchPlacementQuatB = new THREE.Quaternion();
+const scratchCmdGhostMat = new THREE.Matrix4();
+const scratchCmdGhostFoot = new THREE.Vector3();
+const scratchCmdGhostNorm = new THREE.Vector3();
+const scratchCmdGhostFwd = new THREE.Vector3();
+const scratchCmdGhostSf = new THREE.Vector3();
+const scratchCmdGhostSr = new THREE.Vector3();
 
 function hsl(hex: number, dl: number): THREE.Color {
   const c = new THREE.Color(hex);
@@ -894,6 +998,47 @@ function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
   if (plinth) plinth.visible = visible;
 }
 
+/** Replace mesh materials with a shared hologram look; returns materials to tint valid/invalid without re-traversal. */
+function applyHologramPreviewMaterials(obj: THREE.Object3D, valid: boolean): THREE.MeshBasicMaterial[] {
+  const tracked: THREE.MeshBasicMaterial[] = [];
+  const base = valid ? 0x56d2ff : 0xff6868;
+  obj.traverse((node) => {
+    const m = node as THREE.Mesh;
+    if (!m.isMesh) return;
+    const oldMat = m.material;
+    const mk = (): THREE.MeshBasicMaterial => {
+      const mat = new THREE.MeshBasicMaterial({
+        color: base,
+        transparent: true,
+        opacity: valid ? 0.24 : 0.3,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      tracked.push(mat);
+      return mat;
+    };
+    if (Array.isArray(oldMat)) {
+      m.material = oldMat.map(() => mk());
+      oldMat.forEach((x) => x.dispose());
+    } else {
+      m.material = mk();
+      oldMat.dispose();
+    }
+    m.castShadow = false;
+    m.receiveShadow = false;
+  });
+  return tracked;
+}
+
+function setHologramPreviewMaterialsValid(tracked: THREE.MeshBasicMaterial[] | undefined, valid: boolean): void {
+  if (!tracked?.length) return;
+  const base = valid ? 0x56d2ff : 0xff6868;
+  for (const mat of tracked) {
+    mat.color.set(base);
+    mat.opacity = valid ? 0.22 : 0.3;
+  }
+}
+
 function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy", size: UnitSizeClass): THREE.Group {
   const g = new THREE.Group();
   const L = unitMeshLinearSize(size);
@@ -913,6 +1058,143 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
   return g;
 }
 
+type CrowdBatchKey = `${"player" | "enemy"}:${UnitSizeClass}`;
+
+interface CrowdBatch {
+  mesh: THREE.InstancedMesh;
+  meta: THREE.InstancedBufferAttribute;
+  capacity: number;
+}
+
+function crowdBatchKey(team: "player" | "enemy", size: UnitSizeClass): CrowdBatchKey {
+  return `${team}:${size}`;
+}
+
+function unitClassRank(size: UnitSizeClass): number {
+  switch (size) {
+    case "Swarm":
+      return 0;
+    case "Line":
+      return 1;
+    case "Heavy":
+      return 2;
+    case "Titan":
+      return 3;
+  }
+}
+
+function buildCrowdUnitGeometry(size: UnitSizeClass): THREE.BufferGeometry {
+  const L = unitMeshLinearSize(size);
+  const b = bipedBulkScale(size);
+  const parts: THREE.BufferGeometry[] = [];
+  const bodyH = L * (size === "Swarm" ? 0.55 : size === "Line" ? 0.72 : size === "Heavy" ? 0.82 : 1.05);
+  const bodyR = L * b * (size === "Swarm" ? 0.13 : size === "Line" ? 0.16 : size === "Heavy" ? 0.2 : 0.25);
+  const foot = new THREE.CylinderGeometry(bodyR * 1.25, bodyR * 1.55, L * 0.075, 8);
+  foot.translate(0, L * 0.037, 0);
+  parts.push(foot);
+
+  const body = new THREE.CapsuleGeometry(bodyR, bodyH, 3, 8);
+  body.translate(0, L * 0.1 + bodyH * 0.5, 0);
+  parts.push(body);
+
+  const head = new THREE.SphereGeometry(bodyR * 0.78, 8, 6);
+  head.translate(0, L * 0.18 + bodyH + bodyR * 1.35, 0.02 * L);
+  parts.push(head);
+
+  const shoulder = new THREE.BoxGeometry(bodyR * 2.35, bodyR * 0.38, bodyR * 0.72);
+  shoulder.translate(0, L * 0.18 + bodyH * 0.73, 0);
+  parts.push(shoulder);
+
+  const weaponH = L * (size === "Titan" ? 1.16 : size === "Heavy" ? 0.98 : 0.78);
+  const weapon = new THREE.CylinderGeometry(bodyR * 0.12, bodyR * 0.14, weaponH, 5);
+  weapon.translate(bodyR * 1.35, L * 0.18 + weaponH * 0.53, bodyR * 0.18);
+  weapon.rotateZ(size === "Swarm" ? -0.18 : -0.32);
+  parts.push(weapon);
+
+  if (size === "Line" || size === "Heavy" || size === "Titan") {
+    const blade = new THREE.ConeGeometry(bodyR * (size === "Titan" ? 0.42 : 0.34), bodyR * 1.15, 5);
+    blade.translate(bodyR * 1.58, L * 0.18 + weaponH * 1.06, bodyR * 0.18);
+    blade.rotateZ(-0.32);
+    parts.push(blade);
+  }
+
+  if (size === "Heavy" || size === "Titan") {
+    const backPlate = new THREE.BoxGeometry(bodyR * 1.55, bodyH * 0.68, bodyR * 0.18);
+    backPlate.translate(0, L * 0.16 + bodyH * 0.54, -bodyR * 0.62);
+    parts.push(backPlate);
+  }
+
+  const merged = mergeGeometries(parts, false);
+  merged.computeVertexNormals();
+  return merged;
+}
+
+function createCrowdUnitMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: true,
+    uniforms: {
+      uTime: { value: 0 },
+    },
+    vertexShader: `
+      attribute mat4 instanceMatrix;
+      attribute vec3 instanceColor;
+      attribute vec4 instanceMeta;
+      varying vec3 vColor;
+      varying vec4 vMeta;
+      varying vec3 vNormalW;
+      uniform float uTime;
+
+      void main() {
+        vec3 p = position;
+        float statusStrength = instanceMeta.y;
+        float attack = instanceMeta.z;
+        float seed = instanceMeta.w;
+        float stride = sin(uTime * 7.0 + seed * 6.28318);
+        p.y += stride * 0.045 * (0.35 + statusStrength) + attack * 0.16;
+        p.x += attack * 0.12 * sin(seed * 11.0);
+        p.z += attack * 0.18;
+
+        mat4 im = instanceMatrix;
+        vec4 worldPosition = modelMatrix * im * vec4(p, 1.0);
+        vColor = instanceColor;
+        vMeta = instanceMeta;
+        vNormalW = normalize(mat3(modelMatrix * im) * normal);
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec3 vColor;
+      varying vec4 vMeta;
+      varying vec3 vNormalW;
+      uniform float uTime;
+
+      vec3 statusColor(float kind) {
+        if (kind < 0.5) return vec3(0.0);
+        if (kind < 1.5) return vec3(1.00, 0.22, 0.06); // burning / fire
+        if (kind < 2.5) return vec3(0.64, 0.94, 1.00); // frozen / water
+        if (kind < 3.5) return vec3(0.38, 1.00, 0.58); // rooted / rock-growth
+        if (kind < 4.5) return vec3(0.72, 0.92, 1.00); // chilled / water
+        return vec3(0.92, 1.00, 0.70); // winded
+      }
+
+      void main() {
+        vec3 lightDir = normalize(vec3(-0.42, 0.82, 0.36));
+        float ndl = max(dot(normalize(vNormalW), lightDir), 0.0);
+        float light = 0.44 + ndl * 0.72;
+        float pulse = 0.55 + 0.45 * sin(uTime * 8.0 + vMeta.w * 19.0);
+        vec3 elemental = statusColor(vMeta.x) * vMeta.y;
+        vec3 col = vColor * light;
+        col = mix(col, elemental + col * 0.55, clamp(vMeta.y * (0.42 + pulse * 0.22), 0.0, 0.78));
+        col += elemental * (0.1 + 0.25 * pulse);
+        col += vec3(1.0, 0.86, 0.62) * vMeta.z * 0.35;
+        gl_FragColor = vec4(col, 0.94);
+      }
+    `,
+  });
+}
+
 export class GameRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -926,6 +1208,16 @@ export class GameRenderer {
   private readonly root = new THREE.Group();
   private readonly markers = new THREE.Group();
   private readonly entities = new THREE.Group();
+  private readonly crowdRoot = new THREE.Group();
+  private readonly crowdBatches = new Map<CrowdBatchKey, CrowdBatch>();
+  private readonly crowdDummy = new THREE.Object3D();
+  private readonly crowdColor = new THREE.Color();
+  private readonly crowdPreviewEnabled =
+    typeof window !== "undefined" &&
+    (() => {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("crowdPreview") === "1" || params.get("crowd") === "1";
+    })();
   private readonly decor = new THREE.Group();
   private raycaster = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -991,7 +1283,13 @@ export class GameRenderer {
   private decorBuilt = false;
   private readonly decorTextureCache = new Map<string, THREE.CanvasTexture>();
 
-  private ghost: THREE.Mesh | null = null;
+  /** Placement preview: tower GLB hologram, procedural silhouette hologram, or cylinder fallback. */
+  private placementGhostRoot: THREE.Group | null = null;
+  private placementGhostCatalogId: string | null = null;
+  private placementGhostKind: "tower-glb" | "tower-silhouette" | "cylinder" | null = null;
+  /** Bumps when preview clears so in-flight `requestGlbForTower` completions are ignored. */
+  private placementGhostLoadGen = 0;
+  private placementGhostLastValid: boolean | null = null;
   private cmdGhost: THREE.Mesh | null = null;
   private cmdGhostCore: THREE.Mesh | null = null;
   /** Line-strip preview for aimed cleave spells (Cut Back). */
@@ -1029,6 +1327,15 @@ export class GameRenderer {
   private matchSkyboxTexture: THREE.Texture | null = null;
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
+  /** Debug: sample first frames for NDJSON ingest (session 8d1dc2). */
+  private agentDbgRenderSamples = 0;
+  /** Debug: sphere grounding verification (session 8d1dc2). */
+  private dbgSphereDecorSamples = 0;
+  private dbgCampSphereRingLogged = false;
+  private dbgCoreOrbSphereLogged = false;
+  private dbgStructureSphereRadialLogged = false;
+  /** Debug: unit sphere orientation — foot radial vs shell (session 8d1dc2). */
+  private dbgUnitSphereOrientLogged = false;
   private worldPlaneHalf = 0;
   private worldIsSphere = false;
   private worldSphereR = 0;
@@ -1037,6 +1344,19 @@ export class GameRenderer {
   private terrainRoot: THREE.Group | null = null;
   private terrainHits: THREE.Object3D[] = [];
   private terrainSource: string | null = null;
+  /** Terrain GLB meshes when loaded, else `[ground]` — raycast targets for mesh-accurate footing. */
+  private groundingRaycastTargets: THREE.Object3D[] = [];
+  private readonly surfAnalytical = new THREE.Vector3();
+  private readonly surfHintUp = new THREE.Vector3();
+  private readonly surfRayO = new THREE.Vector3();
+  private readonly surfRayD = new THREE.Vector3();
+  private readonly surfNormW = new THREE.Vector3();
+  private readonly surfPosOut = new THREE.Vector3();
+  private readonly surfNormOut = new THREE.Vector3();
+  /** `?groundingDebug=1` — exposes aggregate raycast stats on `window.__battleLogsGrounding`. */
+  private groundingDebugEnabled = false;
+  private groundingDbgHits = 0;
+  private groundingDbgMiss = 0;
   private readonly unitPrevHp = new Map<number, number>();
   private readonly unitPrevAttackTick = new Map<number, number>();
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
@@ -1056,7 +1376,7 @@ export class GameRenderer {
   private cameraFramedState: GameState | null = null;
   private cameraFollowReleaseArmed = false;
   private readonly cameraFollowReleaseTarget = new THREE.Vector3();
-  private lastCameraLimitsHalf = 0;
+  private lastCameraLimitsKey = "";
 
   /** `performance.now()` when intro began; null = idle. */
   private introCinematicStartMs: number | null = null;
@@ -1067,6 +1387,27 @@ export class GameRenderer {
   private introOrbitStartAngle = 0;
   /** Orbit / pan allowed (e.g. false while dragging a doctrine card). */
   private controlsUserDesiredEnabled = true;
+
+  /** Orbit pivot + eye position for spherical maps (tangent chart coords → world shell). */
+  private getSphereHeroCameraRig(
+    map: MapData,
+    heroTan: Vec2,
+    enemyTan: Vec2,
+    back: number,
+    height: number,
+    pivotLift: number,
+  ): { pos: THREE.Vector3; tgt: THREE.Vector3 } {
+    const w = greatCircleTangentToward(map, heroTan, enemyTan);
+    const n = surfaceNormalFromTan(map, heroTan);
+    const foot = worldFootXYZ(map, heroTan, 0);
+    const tgt = new THREE.Vector3(foot.x + n[0] * pivotLift, foot.y + n[1] * pivotLift, foot.z + n[2] * pivotLift);
+    const pos = new THREE.Vector3(
+      tgt.x - w[0] * back + n[0] * height,
+      tgt.y - w[1] * back + n[1] * height,
+      tgt.z - w[2] * back + n[2] * height,
+    );
+    return { tgt, pos };
+  }
 
   /** Rigid translate: preserves camera↔target offset (OrbitControls distance = zoom). */
   private nudgeCameraRigTowardFollowPivot(dt: number): void {
@@ -1081,13 +1422,23 @@ export class GameRenderer {
     const t = this.controls.target;
     const visualUnit = unit ? this.unitVisualPos.get(unit.id) : null;
     const visualHero = !unit && this.cameraFollowHero ? this.heroVisualPos : null;
-    const desiredX = visualUnit?.x ?? visualHero?.x ?? followed.x;
-    const desiredY = unit ? Math.max(1.0, unitMeshLinearSize(unit.sizeClass) * 0.8) : CAMERA_HERO_PIVOT_Y;
-    const desiredZ = visualUnit?.y ?? visualHero?.y ?? followed.z;
+    const tanX = visualUnit?.x ?? visualHero?.x ?? followed.x;
+    const tanZ = visualUnit?.y ?? visualHero?.y ?? followed.z;
+    const pivotLift = unit ? Math.max(1.0, unitMeshLinearSize(unit.sizeClass) * 0.8) : CAMERA_HERO_PIVOT_Y;
     const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
-    const dx = (desiredX - t.x) * alpha;
-    const dy = (desiredY - t.y) * alpha;
-    const dz = (desiredZ - t.z) * alpha;
+    let dx: number;
+    let dy: number;
+    let dz: number;
+    if (isSphereWorld(state.map)) {
+      const f = worldFootXYZ(state.map, { x: tanX, z: tanZ }, pivotLift);
+      dx = (f.x - t.x) * alpha;
+      dy = (f.y - t.y) * alpha;
+      dz = (f.z - t.z) * alpha;
+    } else {
+      dx = (tanX - t.x) * alpha;
+      dy = (pivotLift - t.y) * alpha;
+      dz = (tanZ - t.z) * alpha;
+    }
     if (dx * dx + dy * dy + dz * dz < 1e-14) return;
     t.x += dx;
     t.y += dy;
@@ -1114,6 +1465,28 @@ export class GameRenderer {
     this.renderer.toneMappingExposure = 1;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x10131a);
+
+    // #region agent log
+    {
+      const gl = this.renderer.getContext() as WebGLRenderingContext & { isContextLost?: () => boolean };
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "scene.ts:GameRenderer.constructor",
+          message: "WebGL renderer created",
+          data: {
+            maxTextureSize: this.renderer.capabilities.maxTextureSize,
+            contextLost: typeof gl.isContextLost === "function" ? gl.isContextLost() : null,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    }
+    // #endregion
 
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
@@ -1154,6 +1527,8 @@ export class GameRenderer {
     this.territoryGroup.name = "territory";
     /** Floor decal only: lives on `scene` (not `root`) so opaque decor/units fill the depth buffer first; tint uses polygon offset so vertical meshes win Z-tests. */
     this.scene.add(this.territoryGroup);
+    this.crowdRoot.name = "instanced-crowd-units";
+    this.entities.add(this.crowdRoot);
     this.root.add(this.decor, this.markers, this.entities);
     this.scene.add(this.root);
 
@@ -1180,7 +1555,7 @@ export class GameRenderer {
     /** Keep the lens low — more horizon, less RTS “map cam”. */
     this.controls.maxPolarAngle = Math.PI / 2 - 0.06;
     this.controls.minPolarAngle = 0.82;
-    this.controls.zoomSpeed = 0.82;
+    this.controls.zoomSpeed = 2.55;
     this.controls.rotateSpeed = 0.36;
     this.controls.panSpeed = 0.92;
     if (controlProfile.mode === "mobile") {
@@ -1198,6 +1573,11 @@ export class GameRenderer {
       RIGHT: -1,
     };
     this.controls.addEventListener("change", () => this.releaseCameraFollowIfUserPanned());
+    try {
+      this.groundingDebugEnabled = new URLSearchParams(window.location.search).get("groundingDebug") === "1";
+    } catch {
+      this.groundingDebugEnabled = false;
+    }
   }
 
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
@@ -1369,8 +1749,32 @@ export class GameRenderer {
     const speed = Math.max(24, Math.min(180, distance * 1.18));
     const rawX = dx * speed * Math.max(0, dt);
     const rawZ = dz * speed * Math.max(0, dt);
-    const half = this.currentState?.map.world.halfExtents ?? this.worldPlaneHalf;
+    const st = this.currentState;
     const target = this.controls.target;
+    if (st && isSphereWorld(st.map)) {
+      const map = st.map;
+      const lift = CAMERA_HERO_PIVOT_Y;
+      const oldTx = target.x;
+      const oldTy = target.y;
+      const oldTz = target.z;
+      const tlen = Math.hypot(oldTx, oldTy, oldTz) || 1;
+      const n = surfaceNormalFromTan(map, unitToVec2(map, oldTx / tlen, oldTy / tlen, oldTz / tlen));
+      const dot = rawX * n[0] + rawZ * n[2];
+      const px = oldTx + rawX - n[0] * dot;
+      const py = oldTy - n[1] * dot;
+      const pz = oldTz + rawZ - n[2] * dot;
+      const plen = Math.hypot(px, py, pz) || 1;
+      let tan2 = unitToVec2(map, px / plen, py / plen, pz / plen);
+      tan2 = clampWorldArena(map, tan2);
+      const f = worldFootXYZ(map, tan2, lift);
+      target.set(f.x, f.y, f.z);
+      this.camera.position.x += f.x - oldTx;
+      this.camera.position.y += f.y - oldTy;
+      this.camera.position.z += f.z - oldTz;
+      this.controls.update();
+      return;
+    }
+    const half = st?.map.world.halfExtents ?? this.worldPlaneHalf;
     const nextX = Math.max(-half, Math.min(half, target.x + rawX));
     const nextZ = Math.max(-half, Math.min(half, target.z + rawZ));
     const moveX = nextX - target.x;
@@ -1444,8 +1848,22 @@ export class GameRenderer {
       this.cameraFollowHero = true;
       this.cameraFollowUnitId = null;
       this.controls.minDistance = Math.min(this.controls.minDistance, 8);
-      this.controls.target.set(st.hero.x, CAMERA_HERO_PIVOT_Y, st.hero.z);
-      this.camera.position.set(st.hero.x - 10, CAMERA_HERO_PIVOT_Y + 7, st.hero.z - 10);
+      if (isSphereWorld(st.map)) {
+        const enemy = st.map.enemyStart ?? st.enemyHero;
+        const rig = this.getSphereHeroCameraRig(
+          st.map,
+          { x: st.hero.x, z: st.hero.z },
+          { x: enemy.x, z: enemy.z },
+          10,
+          7,
+          CAMERA_HERO_PIVOT_Y,
+        );
+        this.controls.target.copy(rig.tgt);
+        this.camera.position.copy(rig.pos);
+      } else {
+        this.controls.target.set(st.hero.x, CAMERA_HERO_PIVOT_Y, st.hero.z);
+        this.camera.position.set(st.hero.x - 10, CAMERA_HERO_PIVOT_Y + 7, st.hero.z - 10);
+      }
       this.controls.update();
       return true;
     }
@@ -1462,8 +1880,15 @@ export class GameRenderer {
     this.cameraFollowHero = false;
     this.cameraFollowUnitId = u.id;
     this.controls.minDistance = Math.min(this.controls.minDistance, 8);
-    this.controls.target.set(u.x + dx * size * 0.8, targetY, u.z + dz * size * 0.8);
-    this.camera.position.set(u.x - dx * back, targetY + height, u.z - dz * back);
+    if (isSphereWorld(st.map)) {
+      const enemy = st.map.enemyStart ?? st.enemyHero;
+      const rig = this.getSphereHeroCameraRig(st.map, { x: u.x, z: u.z }, { x: enemy.x, z: enemy.z }, back, height, targetY);
+      this.controls.target.copy(rig.tgt);
+      this.camera.position.copy(rig.pos);
+    } else {
+      this.controls.target.set(u.x + dx * size * 0.8, targetY, u.z + dz * size * 0.8);
+      this.camera.position.set(u.x - dx * back, targetY + height, u.z - dz * back);
+    }
     this.controls.update();
     return true;
   }
@@ -1474,25 +1899,51 @@ export class GameRenderer {
     if (!st || st.phase !== "playing") return;
     const h = st.hero;
     const t = this.controls.target;
-    const nx = h.x;
-    const ny = CAMERA_HERO_PIVOT_Y;
-    const nz = h.z;
-    const dx = nx - t.x;
-    const dy = ny - t.y;
-    const dz = nz - t.z;
-    t.set(nx, ny, nz);
-    this.camera.position.x += dx;
-    this.camera.position.y += dy;
-    this.camera.position.z += dz;
+    if (isSphereWorld(st.map)) {
+      const f = worldFootXYZ(st.map, { x: h.x, z: h.z }, CAMERA_HERO_PIVOT_Y);
+      const dx = f.x - t.x;
+      const dy = f.y - t.y;
+      const dz = f.z - t.z;
+      t.set(f.x, f.y, f.z);
+      this.camera.position.x += dx;
+      this.camera.position.y += dy;
+      this.camera.position.z += dz;
+    } else {
+      const nx = h.x;
+      const ny = CAMERA_HERO_PIVOT_Y;
+      const nz = h.z;
+      const dx = nx - t.x;
+      const dy = ny - t.y;
+      const dz = nz - t.z;
+      t.set(nx, ny, nz);
+      this.camera.position.x += dx;
+      this.camera.position.y += dy;
+      this.camera.position.z += dz;
+    }
     this.controls.update();
   }
 
-  private syncCameraLimits(half: number): void {
-    if (half === this.lastCameraLimitsHalf) return;
-    this.lastCameraLimitsHalf = half;
-    this.controls.minDistance = Math.max(28, half * 0.055);
-    this.controls.maxDistance = Math.min(1500, Math.max(260, half * 2.35));
-    this.camera.far = Math.max(2200, half * 6.2);
+  private syncCameraLimits(state: GameState): void {
+    const map = state.map;
+    const key = isSphereWorld(map) ? `s:${sphereRadiusOf(map)}` : `p:${map.world.halfExtents}`;
+    if (key === this.lastCameraLimitsKey) return;
+    this.lastCameraLimitsKey = key;
+    if (isSphereWorld(map)) {
+      const R = sphereRadiusOf(map);
+      this.controls.minDistance = Math.max(48, R * 0.042);
+      this.controls.maxDistance = Math.min(4200, Math.max(520, R * 0.55));
+      this.camera.far = Math.max(4800, R * 5.5);
+      /** Plane maps keep the lens above the XZ “floor”; sphere shells need full polar freedom (+Y is not surface up). */
+      this.controls.minPolarAngle = 0;
+      this.controls.maxPolarAngle = Math.PI;
+    } else {
+      const half = map.world.halfExtents;
+      this.controls.minDistance = Math.max(28, half * 0.055);
+      this.controls.maxDistance = Math.min(1500, Math.max(260, half * 2.35));
+      this.camera.far = Math.max(2200, half * 6.2);
+      this.controls.minPolarAngle = 0.82;
+      this.controls.maxPolarAngle = Math.PI / 2 - 0.06;
+    }
     this.camera.updateProjectionMatrix();
   }
 
@@ -1505,6 +1956,12 @@ export class GameRenderer {
     dx /= len;
     dz /= len;
     const half = state.map.world.halfExtents;
+    const map = state.map;
+    if (isSphereWorld(map)) {
+      const back = Math.max(18, Math.min(140, half * 0.09));
+      const height = Math.max(26, Math.min(160, half * 0.13));
+      return this.getSphereHeroCameraRig(map, { x: h.x, z: h.z }, { x: enemy.x, z: enemy.z }, back, height, CAMERA_HERO_PIVOT_Y);
+    }
     const targetY = CAMERA_HERO_PIVOT_Y;
     const back = Math.max(18, Math.min(34, half * 0.09));
     const height = Math.max(26, Math.min(46, half * 0.13));
@@ -1519,9 +1976,30 @@ export class GameRenderer {
     this.introEndPos.copy(endPos);
     this.introEndTgt.copy(endTgt);
     const half = state.map.world.halfExtents;
-    const H = Math.max(half * 2.1, 210);
-    this.introStartTgt.set(0, 0, 0);
-    this.introStartPos.set(0, H, 0);
+    if (isSphereWorld(state.map)) {
+      const R = sphereRadiusOf(state.map);
+      const map = state.map;
+      const h = state.hero;
+      const enemy = map.enemyStart ?? state.enemyHero;
+      /** Orbit focus stays on the shell — never world origin (inside the planet). */
+      let startTan = { x: enemy.x, z: enemy.z };
+      if (gameDist2(map, { x: enemy.x, z: enemy.z }, { x: h.x, z: h.z }) < 10) {
+        const uHero = unitFromTangentAtPole(h.x, h.z, R);
+        startTan = tangentFromUnitAtPole(-uHero[0], -uHero[1], -uHero[2], R);
+      }
+      const startFoot = worldFootXYZ(map, startTan, CAMERA_HERO_PIVOT_Y);
+      this.introStartTgt.set(startFoot.x, startFoot.y, startFoot.z);
+      const rm = Math.hypot(startFoot.x, startFoot.y, startFoot.z);
+      const ux = startFoot.x / rm;
+      const uy = startFoot.y / rm;
+      const uz = startFoot.z / rm;
+      const camDist = Math.max(R * 2.25, rm + R * 0.72);
+      this.introStartPos.set(ux * camDist, uy * camDist, uz * camDist);
+    } else {
+      const H = Math.max(half * 2.1, 210);
+      this.introStartTgt.set(0, 0, 0);
+      this.introStartPos.set(0, H, 0);
+    }
     this.introOrbitStartAngle = Math.atan2(endPos.z - endTgt.z, endPos.x - endTgt.x) - Math.PI * 2.15;
     this.controls.target.copy(this.introStartTgt);
     this.camera.position.copy(this.introStartPos);
@@ -1554,18 +2032,30 @@ export class GameRenderer {
     const elapsed = (performance.now() - this.introCinematicStartMs) / 1000;
     const u = Math.max(0, Math.min(1, elapsed / MATCH_INTRO_CAMERA_SEC));
     const half = state.map.world.halfExtents;
+    const R = isSphereWorld(state.map) ? sphereRadiusOf(state.map) : 0;
     const endRadius = Math.hypot(this.introEndPos.x - this.introEndTgt.x, this.introEndPos.z - this.introEndTgt.z);
-    const mapRadius = Math.max(half * 0.95, 110);
+    const mapRadius =
+      R > 0 ? Math.max(R * 0.42, endRadius, 110) : Math.max(half * 0.95, 110);
     const settle = Math.max(0, Math.min(1, (u - 0.64) / 0.36));
     const settleEase = 1 - Math.pow(1 - settle, 3);
     const heroPull = Math.max(0, Math.min(1, (u - 0.42) / 0.58));
     const heroEase = heroPull * heroPull;
-    this.controls.target.copy(this.introStartTgt).lerp(this.introEndTgt, heroEase);
+    if (isSphereWorld(state.map)) {
+      const R = sphereRadiusOf(state.map);
+      const shellR = R + CAMERA_HERO_PIVOT_Y;
+      const uS = this.introStartTgt.clone().normalize();
+      const uE = this.introEndTgt.clone().normalize();
+      const blended = new THREE.Vector3().slerpVectors(uS, uE, heroEase);
+      this.controls.target.copy(blended.multiplyScalar(shellR));
+    } else {
+      this.controls.target.copy(this.introStartTgt).lerp(this.introEndTgt, heroEase);
+    }
 
     const angle = this.introOrbitStartAngle + u * Math.PI * 2.15;
     const radius = mapRadius + (endRadius - mapRadius) * settleEase;
-    const highY = Math.max(half * 1.15, 125);
-    const midY = Math.max(half * 0.62, 72);
+    const highY =
+      R > 0 ? Math.max(R * 1.35, half * 1.15, 125) : Math.max(half * 1.15, 125);
+    const midY = R > 0 ? Math.max(R * 0.85, half * 0.62, 72) : Math.max(half * 0.62, 72);
     const flyY = highY + (midY - highY) * Math.min(1, u * 1.35);
     const y = flyY + (this.introEndPos.y - flyY) * settleEase;
     this.camera.position.set(
@@ -1574,11 +2064,23 @@ export class GameRenderer {
       this.controls.target.z + Math.sin(angle) * radius,
     );
     if (settleEase > 0) this.camera.position.lerp(this.introEndPos, settleEase * settleEase);
+    if (isSphereWorld(state.map)) {
+      const Rsp = sphereRadiusOf(state.map);
+      const minCam = Rsp + CAMERA_HERO_PIVOT_Y + Math.max(40, Rsp * 0.055);
+      const len = this.camera.position.length();
+      if (len < minCam) this.camera.position.multiplyScalar(minCam / len);
+    }
     this.camera.lookAt(this.controls.target);
     this.controls.update();
     if (u >= 1) {
       this.controls.target.copy(this.introEndTgt);
       this.camera.position.copy(this.introEndPos);
+      if (isSphereWorld(state.map)) {
+        const Rsp = sphereRadiusOf(state.map);
+        const minCam = Rsp + CAMERA_HERO_PIVOT_Y + Math.max(40, Rsp * 0.055);
+        const len = this.camera.position.length();
+        if (len < minCam) this.camera.position.multiplyScalar(minCam / len);
+      }
       this.controls.update();
       this.introCinematicStartMs = null;
       this.cameraFollowHero = true;
@@ -1612,6 +2114,45 @@ export class GameRenderer {
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.plane, hit)) return null;
     return { x: hit.x, z: hit.z };
+  }
+
+  private refreshGroundingRaycastTargets(): void {
+    if (this.terrainHits.length > 0) this.groundingRaycastTargets = this.terrainHits;
+    else this.groundingRaycastTargets = [this.ground];
+  }
+
+  /** Ray onto `terrainHits` or procedural `ground`; fills `surfPosOut` / `surfNormOut` on success. */
+  private placeFootOnRenderableGround(
+    map: MapData,
+    tan: Vec2,
+    analyticalYLift: number,
+    extraSinkAlongNormal: number,
+  ): boolean {
+    this.refreshGroundingRaycastTargets();
+    if (this.groundingRaycastTargets.length === 0) return false;
+    const ok = sampleRenderableSurfaceFoot(
+      map,
+      tan,
+      analyticalYLift,
+      this.raycaster,
+      this.groundingRaycastTargets,
+      this.surfAnalytical,
+      this.surfHintUp,
+      this.surfRayO,
+      this.surfRayD,
+      this.surfNormW,
+      this.surfPosOut,
+      this.surfNormOut,
+    );
+    if (this.groundingDebugEnabled) {
+      if (ok) this.groundingDbgHits++;
+      else this.groundingDbgMiss++;
+    }
+    if (!ok) return false;
+    if (extraSinkAlongNormal > 0) {
+      this.surfPosOut.addScaledVector(this.surfNormOut, -extraSinkAlongNormal);
+    }
+    return true;
   }
 
   /** First unit mesh hit by screen ray (for selection); null if none. */
@@ -1681,6 +2222,21 @@ export class GameRenderer {
     const url = map.terrainGlbUrl?.trim();
     if (!url) {
       this.clearTerrain();
+      // #region agent log
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "pre-fix",
+          hypothesisId: "F",
+          location: "scene.ts:loadTerrainFromMap",
+          message: "no terrain GLB url",
+          data: { groundVisible: this.ground.visible },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return;
     }
     if (url === this.terrainSource && this.terrainRoot) return;
@@ -1706,10 +2262,40 @@ export class GameRenderer {
       this.terrainRoot = root;
       this.scene.add(root);
       this.ground.visible = false;
+      // #region agent log
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "pre-fix",
+          hypothesisId: "F",
+          location: "scene.ts:loadTerrainFromMap",
+          message: "terrain GLB loaded",
+          data: { url, terrainHitMeshes: this.terrainHits.length, groundVisible: this.ground.visible },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error("Failed to load terrain GLB:", url, e);
       this.clearTerrain();
+      // #region agent log
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "pre-fix",
+          hypothesisId: "F",
+          location: "scene.ts:loadTerrainFromMap",
+          message: "terrain GLB load failed",
+          data: { url, groundVisible: this.ground.visible },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
     }
   }
 
@@ -1747,11 +2333,18 @@ export class GameRenderer {
     this.lastSyncFrameMs = syncNow;
     this.currentState = state;
     this.useGlb = useGlb;
+    this.configureFxHostGrounding(state);
+    if (this.groundingDebugEnabled) {
+      this.groundingDbgHits = 0;
+      this.groundingDbgMiss = 0;
+    }
     this.syncWorldPlane(state);
     this.syncTerrainSlab(state);
-    this.syncCameraLimits(state.map.world.halfExtents);
+    this.syncCameraLimits(state);
     if (this.cameraFramedState !== state) {
       if (state.portal.enteredViaPortal) this.frameCameraImmediatelyOnHero(state);
+      /** Sphere intro used plane-style (XZ + world Y) orbit around a shell pivot — eye often ends inside the hull or tangled with OrbitControls; snap with `getSphereHeroCameraRig` instead. */
+      else if (isSphereWorld(state.map)) this.frameCameraImmediatelyOnHero(state);
       else this.startMatchIntroCinematic(state);
     }
     this.applyMapVisual(state);
@@ -1768,6 +2361,30 @@ export class GameRenderer {
     this.syncCoreOrbs(state);
     this.syncPortals(state);
     this.consumeCastEvents(state);
+    if (this.groundingDebugEnabled && typeof window !== "undefined") {
+      this.refreshGroundingRaycastTargets();
+      (window as unknown as { __battleLogsGrounding?: unknown }).__battleLogsGrounding = {
+        t: performance.now(),
+        terrainMeshCount: this.terrainHits.length,
+        usesProceduralGroundMesh:
+          this.groundingRaycastTargets.length === 1 && this.groundingRaycastTargets[0] === this.ground,
+        rayTargetCount: this.groundingRaycastTargets.length,
+        rayHits: this.groundingDbgHits,
+        rayMisses: this.groundingDbgMiss,
+        help: "Mesh-accurate footing via ray along −analyticUp; tune src/render/surfaceGrounding.ts",
+      };
+    }
+  }
+
+  private configureFxHostGrounding(state: GameState): void {
+    this.fx.map = state.map;
+    this.fx.mobileLod = this.controlProfile.mode === "mobile";
+    this.fx.sampleSurface = (tan, yLift, outPos, outNorm) => {
+      if (!this.placeFootOnRenderableGround(state.map, tan, yLift, 0)) return false;
+      outPos.copy(this.surfPosOut);
+      outNorm.copy(this.surfNormOut);
+      return true;
+    };
   }
 
   private useGlb = false;
@@ -1830,12 +2447,188 @@ export class GameRenderer {
     }
   }
 
-  setPlacementGhost(pos: { x: number; z: number } | null, valid: boolean): void {
+  setPlacementGhost(pos: { x: number; z: number } | null, valid: boolean, catalogId?: string | null): void {
     if (!pos) {
-      if (this.ghost) this.ghost.visible = false;
+      this.placementGhostLoadGen++;
+      if (this.placementGhostRoot) {
+        this.entities.remove(this.placementGhostRoot);
+        this.disposeObject(this.placementGhostRoot);
+        this.placementGhostRoot = null;
+      }
+      this.placementGhostCatalogId = null;
+      this.placementGhostKind = null;
+      this.placementGhostLastValid = null;
       return;
     }
-    if (!this.ghost) {
+    const state = this.currentState;
+    const map = state?.map;
+    const entry = catalogId ? getCatalogEntry(catalogId) : null;
+    const structEntry = entry && isStructureEntry(entry) ? entry : null;
+    const useHolo = !!structEntry && !!map && !!state;
+
+    if (useHolo) {
+      const dims = structureDims(structEntry);
+      const wantGlb = this.useGlb;
+      const expectedKind = wantGlb ? ("tower-glb" as const) : ("tower-silhouette" as const);
+      const needRebuild =
+        !this.placementGhostRoot ||
+        this.placementGhostCatalogId !== catalogId ||
+        this.placementGhostKind !== expectedKind;
+      if (needRebuild) {
+        this.placementGhostLoadGen++;
+        if (this.placementGhostRoot) {
+          this.entities.remove(this.placementGhostRoot);
+          this.disposeObject(this.placementGhostRoot);
+          this.placementGhostRoot = null;
+        }
+        const root = new THREE.Group();
+        root.name = "placement-structure-hologram";
+        const dummySilo = new THREE.Group();
+        dummySilo.name = "placement-silhouette-dummy";
+        dummySilo.visible = false;
+        root.userData["structureSilhouette"] = dummySilo;
+
+        if (wantGlb) {
+          const ph = new THREE.Mesh(
+            new THREE.BoxGeometry(0.04, 0.04, 0.04),
+            new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false }),
+          );
+          ph.visible = false;
+          ph.userData["isPlaceholder"] = true;
+          root.userData["placementPh"] = ph;
+          root.add(ph);
+
+          const fillGeo = new THREE.BoxGeometry(dims.w, dims.h, dims.d);
+          const fill = new THREE.Mesh(
+            fillGeo,
+            new THREE.MeshBasicMaterial({
+              color: 0x57a8ff,
+              transparent: true,
+              opacity: 0.1,
+              depthWrite: false,
+              side: THREE.DoubleSide,
+            }),
+          );
+          fill.position.set(0, dims.h * 0.5, 0);
+          fill.renderOrder = 478;
+          const edgeBox = new THREE.BoxGeometry(dims.w, dims.h, dims.d);
+          const edgeGeom = new THREE.EdgesGeometry(edgeBox);
+          edgeBox.dispose();
+          const edges = new THREE.LineSegments(
+            edgeGeom,
+            new THREE.LineBasicMaterial({
+              color: 0x8af0ff,
+              transparent: true,
+              opacity: 0.85,
+              depthWrite: false,
+            }),
+          );
+          edges.position.set(0, dims.h * 0.5, 0);
+          edges.renderOrder = 479;
+          const wire = new THREE.Group();
+          wire.name = "placement-tower-wire";
+          wire.add(fill, edges);
+          root.userData["placementWire"] = wire;
+          root.userData["wireFillMat"] = fill.material;
+          root.userData["wireEdgeMat"] = edges.material;
+          root.add(wire);
+
+          this.entities.add(root);
+          this.placementGhostRoot = root;
+          this.placementGhostKind = "tower-glb";
+          this.placementGhostCatalogId = catalogId ?? null;
+          this.placementGhostLastValid = null;
+          const gen = this.placementGhostLoadGen;
+          void this.loadPlacementTowerGlbPreview(root, catalogId!, gen);
+        } else {
+          const silo = buildStructureSilhouette(structEntry, "player");
+          silo.name = "placement-structure-silhouette";
+          root.add(silo);
+          const mats = applyHologramPreviewMaterials(silo, valid);
+          root.userData["holoMaterials"] = mats;
+          this.entities.add(root);
+          this.placementGhostRoot = root;
+          this.placementGhostKind = "tower-silhouette";
+          this.placementGhostCatalogId = catalogId ?? null;
+          this.placementGhostLastValid = valid;
+        }
+      }
+
+      const root = this.placementGhostRoot!;
+      if (this.placementGhostKind === "tower-silhouette") {
+        if (this.placementGhostLastValid !== valid) {
+          setHologramPreviewMaterialsValid(root.userData["holoMaterials"] as THREE.MeshBasicMaterial[] | undefined, valid);
+          this.placementGhostLastValid = valid;
+        }
+      } else if (this.placementGhostKind === "tower-glb") {
+        const wire = root.userData["placementWire"] as THREE.Group | undefined;
+        const glbDone = wire === undefined;
+        if (!glbDone) {
+          const wf = root.userData["wireFillMat"] as THREE.MeshBasicMaterial | undefined;
+          const we = root.userData["wireEdgeMat"] as THREE.LineBasicMaterial | undefined;
+          if (wf && we) {
+            const ok = valid ? 0x57a8ff : 0xf26464;
+            const edgeOk = valid ? 0x8af0ff : 0xff8a8a;
+            wf.color.set(ok);
+            we.color.set(edgeOk);
+          }
+        }
+        if (glbDone && this.placementGhostLastValid !== valid) {
+          setHologramPreviewMaterialsValid(root.userData["holoMaterials"] as THREE.MeshBasicMaterial[] | undefined, valid);
+          this.placementGhostLastValid = valid;
+        }
+      }
+
+      root.userData["placementValidWanted"] = valid;
+      root.visible = true;
+      const stTan = { x: pos.x, z: pos.z };
+      const yaw = playerStructurePlacementYawRad(state, pos.x, pos.z);
+      const analyticalLift = isSphereWorld(map) ? -STRUCTURE_SPHERE_GROUNDING_SEED_INSET : 0;
+      const bury = structureFootBuryWorldForCatalog(this.useGlb ? this.placementGhostCatalogId : undefined);
+      const meshGrounded = this.placeFootOnRenderableGround(map, stTan, analyticalLift, bury);
+      if (meshGrounded) {
+        root.position.copy(this.surfPosOut);
+        if (isSphereWorld(map)) {
+          const qAlign = scratchPlacementQuatA.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+          const qYaw = scratchPlacementQuatB.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          root.quaternion.copy(qAlign).multiply(qYaw);
+        } else {
+          root.quaternion.identity();
+          root.rotation.y = yaw;
+        }
+      } else if (isSphereWorld(map)) {
+        const foot = worldFootXYZ(
+          map,
+          stTan,
+          structureFootAnalyticYLiftForCatalog(this.useGlb ? this.placementGhostCatalogId : undefined),
+        );
+        root.position.set(foot.x, foot.y, foot.z);
+        const n = surfaceNormalFromTan(map, stTan);
+        const up = new THREE.Vector3(n[0], n[1], n[2]);
+        const qAlign = scratchPlacementQuatA.setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+        const qYaw = scratchPlacementQuatB.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        root.quaternion.copy(qAlign).multiply(qYaw);
+      } else {
+        root.position.set(pos.x, map.world.groundY, pos.z);
+        root.rotation.set(0, yaw, 0);
+      }
+      return;
+    }
+
+    if (this.placementGhostRoot && this.placementGhostKind !== "cylinder") {
+      this.placementGhostLoadGen++;
+      this.entities.remove(this.placementGhostRoot);
+      this.disposeObject(this.placementGhostRoot);
+      this.placementGhostRoot = null;
+      this.placementGhostKind = null;
+      this.placementGhostCatalogId = null;
+      this.placementGhostLastValid = null;
+    }
+    if (!this.placementGhostRoot || this.placementGhostKind !== "cylinder") {
+      if (this.placementGhostRoot) {
+        this.entities.remove(this.placementGhostRoot);
+        this.disposeObject(this.placementGhostRoot);
+      }
       const r = 2.6 * STRUCTURE_MESH_VISUAL_SCALE;
       const geo = new THREE.CylinderGeometry(r, r, 0.3, 24);
       const mat = new THREE.MeshStandardMaterial({
@@ -1847,14 +2640,70 @@ export class GameRenderer {
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
-      this.ghost = new THREE.Mesh(geo, mat);
-      this.ghost.position.y = 0.2;
-      this.scene.add(this.ghost);
+      const cyl = new THREE.Mesh(geo, mat);
+      const root = new THREE.Group();
+      root.name = "placement-structure-fallback";
+      cyl.position.y = 0.15;
+      root.add(cyl);
+      this.entities.add(root);
+      this.placementGhostRoot = root;
+      this.placementGhostKind = "cylinder";
     }
-    this.ghost.visible = true;
-    this.ghost.position.set(pos.x, 0.2, pos.z);
-    const mat = this.ghost.material as THREE.MeshStandardMaterial;
+    this.placementGhostRoot!.visible = true;
+    const root = this.placementGhostRoot!;
+    const cyl = root.children[0] as THREE.Mesh;
+    const mat = cyl.material as THREE.MeshStandardMaterial;
     mat.color.set(valid ? 0x57a8ff : 0xf26464);
+    if (map && state) {
+      const stTan = { x: pos.x, z: pos.z };
+      const meshGrounded = this.placeFootOnRenderableGround(map, stTan, 0, 0);
+      if (meshGrounded) {
+        root.position.copy(this.surfPosOut);
+        if (isSphereWorld(map)) {
+          root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+        } else {
+          root.quaternion.identity();
+        }
+        const lift = isSphereWorld(map) ? 0.15 : 0.15;
+        root.position.addScaledVector(this.surfNormOut, lift);
+      } else if (isSphereWorld(map)) {
+        const foot = worldFootXYZ(map, stTan, 0);
+        root.position.set(foot.x, foot.y, foot.z);
+        const n = surfaceNormalFromTan(map, stTan);
+        root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+      } else {
+        root.position.set(pos.x, map.world.groundY + 0.15, pos.z);
+        root.quaternion.identity();
+      }
+    } else {
+      root.position.set(pos.x, 0, pos.z);
+      root.quaternion.identity();
+    }
+  }
+
+  private async loadPlacementTowerGlbPreview(root: THREE.Group, catalogId: string, gen: number): Promise<void> {
+    const ph = root.userData["placementPh"] as THREE.Mesh | undefined;
+    if (!ph) return;
+    try {
+      await requestGlbForTower(catalogId, ph);
+    } catch {
+      return;
+    }
+    if (gen !== this.placementGhostLoadGen || this.placementGhostRoot !== root) return;
+    const glb = root.userData["glbRoot"] as THREE.Object3D | undefined;
+    if (!glb) return;
+    const wire = root.userData["placementWire"] as THREE.Group | undefined;
+    if (wire) {
+      root.remove(wire);
+      this.disposeObject(wire);
+      delete root.userData["placementWire"];
+      delete root.userData["wireFillMat"];
+      delete root.userData["wireEdgeMat"];
+    }
+    const wantValid = (root.userData["placementValidWanted"] as boolean | undefined) ?? true;
+    const mats = applyHologramPreviewMaterials(glb, wantValid);
+    root.userData["holoMaterials"] = mats;
+    this.placementGhostLastValid = null;
   }
 
   private ensureCmdGhostRingMaterial(): THREE.MeshBasicMaterial {
@@ -1943,6 +2792,8 @@ export class GameRenderer {
       if (this.cmdGhostLine) this.cmdGhostLine.visible = false;
       return;
     }
+    const state = this.currentState;
+    const map = state?.map;
 
     if (line) {
       if (this.cmdGhost) this.cmdGhost.visible = false;
@@ -1988,10 +2839,20 @@ export class GameRenderer {
         }
         const mesh = this.cmdGhostLine;
         mesh.visible = true;
-        mesh.position.set(cx, 0.11, cz);
-        mesh.rotation.x = -Math.PI / 2;
-        mesh.rotation.y = Math.atan2(ex - line.fromX, ez - line.fromZ);
-        mesh.rotation.z = 0;
+        mesh.matrixAutoUpdate = true;
+        const yaw = Math.atan2(ex - line.fromX, ez - line.fromZ);
+        const midTan = { x: cx, z: cz };
+        if (map && isSphereWorld(map)) {
+          alignRingMeshToSphereTangent(mesh, map, midTan, 0.11);
+          scratchPlacementQuatB.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          mesh.quaternion.multiply(scratchPlacementQuatB);
+        } else if (map) {
+          mesh.position.set(cx, map.world.groundY + 0.11, cz);
+          mesh.rotation.set(-Math.PI / 2, yaw, 0);
+        } else {
+          mesh.position.set(cx, 0.11, cz);
+          mesh.rotation.set(-Math.PI / 2, yaw, 0);
+        }
         mesh.scale.set(hw * 2, L, 1);
         const m = mesh.material as THREE.MeshBasicMaterial;
         m.color.set(valid ? 0xffffff : 0xffc0c8);
@@ -2004,7 +2865,8 @@ export class GameRenderer {
         this.cmdGhostLine.geometry = new THREE.BoxGeometry(1, 0.14, 1);
         this.cmdGhostLine.material = this.ensureCmdGhostLineBoxMaterial();
         this.cmdGhostLine.rotation.set(0, 0, 0);
-        this.cmdGhostLine.position.y = 0.1;
+        this.cmdGhostLine.position.set(0, 0, 0);
+        this.cmdGhostLine.matrixAutoUpdate = true;
         this.cmdGhostLineKind = "box";
       }
 
@@ -2019,13 +2881,41 @@ export class GameRenderer {
       }
       const mesh = this.cmdGhostLine;
       mesh.visible = true;
-      mesh.position.set(cx, 0.1, cz);
-      mesh.rotation.y = Math.atan2(ex - line.fromX, ez - line.fromZ);
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.BoxGeometry(hw * 2, 0.14, L);
       const mat = mesh.material as THREE.MeshBasicMaterial;
       mat.color.set(valid ? 0xc8ffe8 : 0xffb0b8);
       mat.opacity = valid ? 0.42 : 0.36;
-      mesh.geometry.dispose();
-      mesh.geometry = new THREE.BoxGeometry(hw * 2, 0.14, L);
+      if (map && state) {
+        const fromTan = { x: line.fromX, z: line.fromZ };
+        const toTan = { x: ex, z: ez };
+        tangentForwardWorld(scratchCmdGhostFwd, map, fromTan, toTan);
+        const footHost = {
+          map,
+          mobileLod: this.controlProfile.mode === "mobile",
+          sampleSurface: (tan: Vec2, yLift: number, outPos: THREE.Vector3, outNorm: THREE.Vector3) => {
+            if (!this.placeFootOnRenderableGround(state.map, tan, yLift, 0)) return false;
+            outPos.copy(this.surfPosOut);
+            outNorm.copy(this.surfNormOut);
+            return true;
+          },
+        };
+        resolveFxFoot(footHost, { x: cx, z: cz }, 0.1, true, scratchCmdGhostFoot, scratchCmdGhostNorm);
+        buildConeBasis(
+          scratchCmdGhostFoot,
+          scratchCmdGhostFwd,
+          scratchCmdGhostNorm,
+          scratchCmdGhostMat,
+          scratchCmdGhostSf,
+          scratchCmdGhostSr,
+        );
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.copy(scratchCmdGhostMat);
+      } else {
+        mesh.matrixAutoUpdate = true;
+        mesh.position.set(cx, 0.1, cz);
+        mesh.rotation.set(0, Math.atan2(ex - line.fromX, ez - line.fromZ), 0);
+      }
       return;
     }
 
@@ -2058,11 +2948,18 @@ export class GameRenderer {
       if (this.cmdGhostCore) this.cmdGhostCore.visible = false;
 
       const r = Math.max(1, radius ?? 1.5);
-      this.cmdGhost.rotation.x = -Math.PI / 2;
-      this.cmdGhost.rotation.y = 0;
-      this.cmdGhost.rotation.z = 0;
+      const tan = { x: pos.x, z: pos.z };
+      this.cmdGhost.matrixAutoUpdate = true;
       this.cmdGhost.scale.set(r * 2, r * 2, 1);
-      this.cmdGhost.position.set(pos.x, 0.1, pos.z);
+      if (map && isSphereWorld(map)) {
+        alignRingMeshToSphereTangent(this.cmdGhost, map, tan, 0.1);
+      } else if (map) {
+        this.cmdGhost.position.set(pos.x, map.world.groundY + 0.1, pos.z);
+        this.cmdGhost.rotation.set(-Math.PI / 2, 0, 0);
+      } else {
+        this.cmdGhost.position.set(pos.x, 0.1, pos.z);
+        this.cmdGhost.rotation.set(-Math.PI / 2, 0, 0);
+      }
       this.cmdGhost.visible = true;
       const mat = this.cmdGhost.material as THREE.MeshBasicMaterial;
       mat.color.set(valid ? 0xffffff : 0xffc0c8);
@@ -2104,20 +3001,35 @@ export class GameRenderer {
     }
 
     const r = Math.max(1, radius ?? 1.5);
+    const tan = { x: pos.x, z: pos.z };
     this.cmdGhost.geometry.dispose();
     this.cmdGhost.geometry = new THREE.RingGeometry(Math.max(0.1, r - 0.35), r, 64);
-    this.cmdGhost.position.set(pos.x, 0.08, pos.z);
+    this.cmdGhost.matrixAutoUpdate = true;
     this.cmdGhost.visible = true;
     (this.cmdGhost.material as THREE.MeshBasicMaterial).color.set(valid ? 0xd87bff : 0xff6a6a);
 
     const inner = Math.max(0.2, Math.min(1.2, (radius ?? 1.5) * 0.14));
     this.cmdGhostCore.geometry.dispose();
     this.cmdGhostCore.geometry = new THREE.RingGeometry(inner * 0.55, inner, 40);
-    this.cmdGhostCore.position.set(pos.x, 0.09, pos.z);
     this.cmdGhostCore.visible = true;
     (this.cmdGhostCore.material as THREE.MeshBasicMaterial).color.set(
       valid ? 0xf0c8ff : 0xffb3b3,
     );
+    if (map && isSphereWorld(map)) {
+      alignRingMeshToSphereTangent(this.cmdGhost, map, tan, 0.08);
+      alignRingMeshToSphereTangent(this.cmdGhostCore, map, tan, 0.09);
+    } else if (map) {
+      const gy = map.world.groundY;
+      this.cmdGhost.position.set(pos.x, gy + 0.08, pos.z);
+      this.cmdGhost.rotation.set(-Math.PI / 2, 0, 0);
+      this.cmdGhostCore.position.set(pos.x, gy + 0.09, pos.z);
+      this.cmdGhostCore.rotation.set(-Math.PI / 2, 0, 0);
+    } else {
+      this.cmdGhost.position.set(pos.x, 0.08, pos.z);
+      this.cmdGhost.rotation.set(-Math.PI / 2, 0, 0);
+      this.cmdGhostCore.position.set(pos.x, 0.09, pos.z);
+      this.cmdGhostCore.rotation.set(-Math.PI / 2, 0, 0);
+    }
   }
 
   setFormationGhost(
@@ -2547,20 +3459,40 @@ export class GameRenderer {
     }
     for (const er of state.enemyRelays) {
       const id = `e:${er.defId}`;
+      const map = state.map;
       let m = this.relayMeshes.get(id);
       if (!m) {
         const S = STRUCTURE_MESH_VISUAL_SCALE;
         const geo = new THREE.CylinderGeometry(1.2 * S, 1.4 * S, 2.4 * S, 16);
         const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.8 });
         m = new THREE.Mesh(geo, mat);
-        m.position.y = 1.2 * S;
         m.castShadow = true;
         m.receiveShadow = true;
         m.userData["bodyMesh"] = m;
         this.markers.add(m);
         this.relayMeshes.set(id, m);
       }
-      m.position.set(er.x, 1.2 * STRUCTURE_MESH_VISUAL_SCALE, er.z);
+      const S = STRUCTURE_MESH_VISUAL_SCALE;
+      const cylHalf = 1.2 * S;
+      const tan = { x: er.x, z: er.z };
+      if (this.placeFootOnRenderableGround(map, tan, 0, 0)) {
+        if (isSphereWorld(map)) {
+          m.position.copy(this.surfPosOut).addScaledVector(this.surfNormOut, cylHalf);
+          m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+        } else {
+          m.position.copy(this.surfPosOut);
+          m.position.y += cylHalf;
+          m.quaternion.identity();
+        }
+      } else if (isSphereWorld(map)) {
+        worldPointAlongSphereNormal(map, tan, cylHalf, scratchSphereA);
+        m.position.copy(scratchSphereA);
+        const n = surfaceNormalFromTan(map, tan);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+      } else {
+        m.position.set(er.x, map.world.groundY + cylHalf, er.z);
+        m.quaternion.identity();
+      }
       const mat = m.material as THREE.MeshStandardMaterial;
       const built = er.hp > 0;
       if (built) {
@@ -2657,7 +3589,47 @@ export class GameRenderer {
         this.markers.add(aggro);
         this.campAggroRings.set(camp.id, aggro);
       }
-      aggro.position.set(camp.origin.x, 0.045, camp.origin.z);
+      const map = state.map;
+      const campTan = { x: camp.origin.x, z: camp.origin.z };
+      const campMeshFoot = this.placeFootOnRenderableGround(map, campTan, 0, 0);
+      if (campMeshFoot) {
+        if (isSphereWorld(map)) {
+          aggro.position.copy(this.surfPosOut).addScaledVector(this.surfNormOut, 0.045);
+          aggro.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut).multiply(QUAT_RING_FLAT_XZ);
+        } else {
+          aggro.position.copy(this.surfPosOut);
+          aggro.position.y += 0.045;
+          aggro.rotation.set(-Math.PI / 2, 0, 0);
+        }
+      } else if (isSphereWorld(map)) {
+        alignRingMeshToSphereTangent(aggro, map, campTan, 0.045);
+        // #region agent log
+        if (!this.dbgCampSphereRingLogged) {
+          this.dbgCampSphereRingLogged = true;
+          const foot = worldFootXYZ(map, campTan, 0);
+          const R = sphereRadiusOf(map);
+          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+            body: JSON.stringify({
+              sessionId: "8d1dc2",
+              runId: "sphere-grounding",
+              hypothesisId: "H2",
+              location: "scene.ts:syncCampZones",
+              message: "camp aggro ring on sphere",
+              data: {
+                aggroRadial: Math.hypot(aggro.position.x, aggro.position.y, aggro.position.z),
+                footRadial: Math.hypot(foot.x, foot.y, foot.z),
+                R,
+              },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+      } else {
+        aggro.position.set(camp.origin.x, map.world.groundY + 0.045, camp.origin.z);
+      }
       aggro.visible = true;
 
       let wake = this.campWakeRings.get(camp.id);
@@ -2678,7 +3650,20 @@ export class GameRenderer {
         this.markers.add(wake);
         this.campWakeRings.set(camp.id, wake);
       }
-      wake.position.set(camp.origin.x, 0.04, camp.origin.z);
+      if (campMeshFoot) {
+        if (isSphereWorld(map)) {
+          wake.position.copy(this.surfPosOut).addScaledVector(this.surfNormOut, 0.04);
+          wake.quaternion.copy(aggro.quaternion);
+        } else {
+          wake.position.copy(this.surfPosOut);
+          wake.position.y += 0.04;
+          wake.rotation.set(-Math.PI / 2, 0, 0);
+        }
+      } else if (isSphereWorld(map)) {
+        alignRingMeshToSphereTangent(wake, map, campTan, 0.04);
+      } else {
+        wake.position.set(camp.origin.x, map.world.groundY + 0.04, camp.origin.z);
+      }
       wake.visible = true;
     }
   }
@@ -2689,6 +3674,11 @@ export class GameRenderer {
         c.geometry.dispose();
         if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
         else c.material.dispose();
+      } else if (c instanceof THREE.LineSegments) {
+        c.geometry.dispose();
+        const m = c.material;
+        if (Array.isArray(m)) m.forEach((x) => x.dispose());
+        else m.dispose();
       } else if (c instanceof THREE.Sprite) {
         const mat = c.material;
         if (Array.isArray(mat)) {
@@ -2764,11 +3754,19 @@ export class GameRenderer {
       this.keepHpArc = arc;
     }
     const pulse = 0.5 + 0.5 * Math.sin(this.clock.getElapsedTime() * 1.6);
-    this.keepRing.position.set(keep.x, 0.06, keep.z);
+    const map = state.map;
+    const kTan = { x: keep.x, z: keep.z };
+    if (isSphereWorld(map)) {
+      alignRingMeshToSphereTangent(this.keepRing, map, kTan, 0.06);
+      alignRingMeshToSphereTangent(this.keepHpArc, map, kTan, 0.065);
+    } else {
+      this.keepRing.position.set(keep.x, 0.06, keep.z);
+      this.keepRing.rotation.set(-Math.PI / 2, 0, 0);
+      this.keepHpArc.position.set(keep.x, 0.065, keep.z);
+      this.keepHpArc.rotation.set(-Math.PI / 2, 0, 0);
+    }
     (this.keepRing.material as THREE.MeshBasicMaterial).opacity = 0.38 + 0.35 * pulse;
     this.keepRing.visible = true;
-
-    this.keepHpArc.position.set(keep.x, 0.065, keep.z);
     const fracKey = Math.round(frac * 200);
     const arcUd = this.keepHpArc.userData as Record<string, unknown>;
     if (arcUd["keepArcFracKey"] !== fracKey) {
@@ -2818,8 +3816,61 @@ export class GameRenderer {
       }
       const g = obj as THREE.Group;
       if (this.useGlb) setStructureFallbackVisible(g, false);
-      g.position.set(st.x, 0, st.z);
-      g.rotation.y = structureFacingYawRad(state, st);
+      const map = state.map;
+      const stTan = { x: st.x, z: st.z };
+      const analyticalLift = isSphereWorld(map) ? -STRUCTURE_SPHERE_GROUNDING_SEED_INSET : 0;
+      const bury = structureFootBuryWorldForCatalog(this.useGlb ? st.catalogId : undefined);
+      const meshGrounded = this.placeFootOnRenderableGround(map, stTan, analyticalLift, bury);
+      if (meshGrounded) {
+        g.position.copy(this.surfPosOut);
+        if (isSphereWorld(map)) {
+          const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+          const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), structureFacingYawRad(state, st));
+          g.quaternion.copy(qAlign).multiply(qYaw);
+        } else {
+          g.rotation.set(0, structureFacingYawRad(state, st), 0);
+        }
+      } else {
+        const foot = worldFootXYZ(map, stTan, structureFootAnalyticYLiftForCatalog(this.useGlb ? st.catalogId : undefined));
+        g.position.set(foot.x, foot.y, foot.z);
+        if (isSphereWorld(map)) {
+          const n = surfaceNormalFromTan(map, stTan);
+          const up = new THREE.Vector3(n[0], n[1], n[2]);
+          const yaw = structureFacingYawRad(state, st);
+          const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+          const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+          g.quaternion.copy(qAlign).multiply(qYaw);
+          // #region agent log
+          if (!this.dbgStructureSphereRadialLogged) {
+            this.dbgStructureSphereRadialLogged = true;
+            const R = sphereRadiusOf(map);
+            const radial = g.position.length();
+            const analyticLift = structureFootAnalyticYLiftForCatalog(this.useGlb ? st.catalogId : undefined);
+            const analyticSink = -analyticLift;
+            void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+              body: JSON.stringify({
+                sessionId: "8d1dc2",
+                runId: "sphere-grounding",
+                hypothesisId: "H4",
+                location: "scene.ts:syncStructures",
+                message: "structure foot radial vs shell",
+                data: {
+                  radial,
+                  R,
+                  bury,
+                  expectedRadialApprox: R - analyticSink,
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+          }
+          // #endregion
+        } else {
+          g.rotation.set(0, structureFacingYawRad(state, st), 0);
+        }
+      }
       const buildT = st.complete ? 1 : 0.35 + 0.65 * (1 - st.buildTicksRemaining / Math.max(1, st.buildTotalTicks));
       g.scale.set(1, buildT, 1);
 
@@ -2847,9 +3898,9 @@ export class GameRenderer {
       const plinthMesh = g.userData["plinthMesh"] as THREE.Mesh | undefined;
       if (plinthMesh) {
         const cam = this.camera.position;
-        const dx = st.x - cam.x;
-        const dz = st.z - cam.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
+        const dist = isSphereWorld(state.map)
+          ? cam.distanceTo(g.position)
+          : Math.sqrt((st.x - cam.x) * (st.x - cam.x) + (st.z - cam.z) * (st.z - cam.z));
         const t = Math.min(1, Math.max(0, (dist - 38) / 220));
         const mat = plinthMesh.material as THREE.MeshStandardMaterial;
         const base = st.team === "player" ? new THREE.Color(0x0a2844) : new THREE.Color(0x440808);
@@ -2889,8 +3940,21 @@ export class GameRenderer {
         const entry = getCatalogEntry(st.catalogId);
         const dims = structureDims(entry && isStructureEntry(entry) ? entry : null);
         const hover = 0.2 * Math.sin(elapsed * 3);
-        cube.position.set(st.x, dims.h + 1.4 * STRUCTURE_MESH_VISUAL_SCALE + hover, st.z);
-        cube.rotation.y = elapsed * 0.9;
+        const buildT = st.complete ? 1 : 0.35 + 0.65 * (1 - st.buildTicksRemaining / Math.max(1, st.buildTotalTicks));
+        const map = state.map;
+        const tan = { x: st.x, z: st.z };
+        const hLift = dims.h * buildT + 1.4 * STRUCTURE_MESH_VISUAL_SCALE + hover;
+        if (isSphereWorld(map)) {
+          worldPointAlongSphereNormal(map, tan, hLift, scratchSphereA);
+          cube.position.copy(scratchSphereA);
+          const n = surfaceNormalFromTan(map, tan);
+          const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+          const qSpin = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), elapsed * 0.9);
+          cube.quaternion.copy(qAlign).multiply(qSpin);
+        } else {
+          cube.position.set(st.x, hLift, st.z);
+          cube.rotation.set(0, elapsed * 0.9, 0);
+        }
         cube.visible = true;
       } else if (cube) {
         cube.visible = false;
@@ -2989,7 +4053,14 @@ export class GameRenderer {
         this.selectHalo.rotation.x = -Math.PI / 2;
         this.markers.add(this.selectHalo);
       }
-      this.selectHalo.position.set(st.x, 0.04, st.z);
+      const map = state.map;
+      const stTan = { x: st.x, z: st.z };
+      if (isSphereWorld(map)) {
+        alignRingMeshToSphereTangent(this.selectHalo, map, stTan, 0.04);
+      } else {
+        this.selectHalo.position.set(st.x, 0.04, st.z);
+        this.selectHalo.rotation.set(-Math.PI / 2, 0, 0);
+      }
       this.selectHalo.visible = true;
       const entry = getCatalogEntry(st.catalogId);
       const structEntry = entry && isStructureEntry(entry) ? entry : null;
@@ -3017,7 +4088,12 @@ export class GameRenderer {
           attackRange,
           56,
         );
-        this.attackRangeRing.position.set(st.x, 0.05, st.z);
+        if (isSphereWorld(map)) {
+          alignRingMeshToSphereTangent(this.attackRangeRing, map, stTan, 0.05);
+        } else {
+          this.attackRangeRing.position.set(st.x, 0.05, st.z);
+          this.attackRangeRing.rotation.set(-Math.PI / 2, 0, 0);
+        }
         this.attackRangeRing.visible = true;
 
         if (structEntry.aura && structEntry.aura.radius > 0) {
@@ -3043,7 +4119,12 @@ export class GameRenderer {
             structEntry.aura.radius,
             64,
           );
-          this.auraRangeRing.position.set(st.x, 0.055, st.z);
+          if (isSphereWorld(map)) {
+            alignRingMeshToSphereTangent(this.auraRangeRing, map, stTan, 0.055);
+          } else {
+            this.auraRangeRing.position.set(st.x, 0.055, st.z);
+            this.auraRangeRing.rotation.set(-Math.PI / 2, 0, 0);
+          }
           this.auraRangeRing.visible = true;
         } else if (this.auraRangeRing) {
           this.auraRangeRing.visible = false;
@@ -3074,8 +4155,15 @@ export class GameRenderer {
           this.markers.add(this.rallyLine);
         }
         const pos = this.rallyLine.geometry.getAttribute("position") as THREE.BufferAttribute;
-        pos.setXYZ(0, st.x, 0.12, st.z);
-        pos.setXYZ(1, st.rallyX, 0.12, st.rallyZ);
+        if (isSphereWorld(map)) {
+          worldPointAlongSphereNormal(map, { x: st.x, z: st.z }, 0.14, scratchSphereA);
+          worldPointAlongSphereNormal(map, { x: st.rallyX, z: st.rallyZ }, 0.14, scratchSphereB);
+          pos.setXYZ(0, scratchSphereA.x, scratchSphereA.y, scratchSphereA.z);
+          pos.setXYZ(1, scratchSphereB.x, scratchSphereB.y, scratchSphereB.z);
+        } else {
+          pos.setXYZ(0, st.x, 0.12, st.z);
+          pos.setXYZ(1, st.rallyX, 0.12, st.rallyZ);
+        }
         pos.needsUpdate = true;
         this.rallyLine.visible = true;
 
@@ -3090,8 +4178,16 @@ export class GameRenderer {
           );
           this.markers.add(this.rallyFlag);
         }
-        this.rallyFlag.position.set(st.rallyX, 0.55, st.rallyZ);
-        this.rallyFlag.rotation.y = Math.atan2(st.rallyX - st.x, st.rallyZ - st.z);
+        const rfTan = { x: st.rallyX, z: st.rallyZ };
+        if (isSphereWorld(map)) {
+          worldPointAlongSphereNormal(map, rfTan, 0.55, scratchSphereA);
+          this.rallyFlag.position.copy(scratchSphereA);
+          const n = surfaceNormalFromTan(map, rfTan);
+          this.rallyFlag.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
+        } else {
+          this.rallyFlag.position.set(st.rallyX, 0.55, st.rallyZ);
+          this.rallyFlag.rotation.y = Math.atan2(st.rallyX - st.x, st.rallyZ - st.z);
+        }
         this.rallyFlag.visible = true;
       } else {
         if (this.rallyLine) this.rallyLine.visible = false;
@@ -3117,6 +4213,21 @@ export class GameRenderer {
       (this.ground as THREE.Mesh).quaternion.identity();
       this.groundOverlay.visible = false;
       this.groundVisualKey = "";
+      // #region agent log
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "pre-fix",
+          hypothesisId: "D",
+          location: "scene.ts:syncWorldPlane",
+          message: "sphere world ground mesh",
+          data: { R, groundVisible: this.ground.visible, terrainRoot: !!this.terrainRoot },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return;
     }
     this.worldIsSphere = false;
@@ -3181,7 +4292,10 @@ export class GameRenderer {
     const preset = v?.groundPreset ?? "solid";
     const skyH = v?.skyHex;
     const sunH = v?.sunHex;
-    const key = `${preset}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`;
+    const onSphere = isSphereWorld(state.map);
+    const key = onSphere
+      ? `sphere|r${sphereRadiusOf(state.map)}|${preset}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`
+      : `${preset}|${skyH ?? ""}|${sunH ?? ""}|${this.matchSkyboxTexture ? "sky" : "nosky"}`;
     if (key !== this.groundVisualKey) {
       this.groundVisualKey = key;
       // Map JSON still carries `fogHex` for tooling / legacy — we do not apply linear fog: it homogenizes
@@ -3196,7 +4310,14 @@ export class GameRenderer {
         else (m as THREE.Material).dispose?.();
       };
 
-      if (preset === "solid" || !isShaderGroundPreset(preset)) {
+      if (onSphere) {
+        /** Plain shell; DoubleSide avoids a “black world” when the camera dips inside the hull (front faces culled). */
+        disposeGroundMat();
+        this.ground.material = new THREE.MeshBasicMaterial({
+          color: 0x232d3d,
+          side: THREE.DoubleSide,
+        });
+      } else if (preset === "solid" || !isShaderGroundPreset(preset)) {
         disposeGroundMat();
         const deck = !!this.matchSkyboxTexture;
         this.ground.material = new THREE.MeshStandardMaterial({
@@ -3209,27 +4330,29 @@ export class GameRenderer {
         this.ground.material = createGroundShaderMaterial(preset);
       }
 
-      const overlayMat = this.groundOverlay.material as THREE.MeshBasicMaterial;
-      const oldOverlay = overlayMat.map;
-      overlayMat.map = makeGroundOverlayTexture(preset);
-      oldOverlay?.dispose();
-      if (preset === "ember_wastes") {
-        overlayMat.color.setHex(0xffb07a);
-        overlayMat.opacity = 0.16;
-      } else if (preset === "glacier_grid") {
-        overlayMat.color.setHex(0xb6eaff);
-        overlayMat.opacity = 0.135;
-      } else if (preset === "mesa_band") {
-        overlayMat.color.setHex(0xffd4a4);
-        overlayMat.opacity = 0.15;
-      } else {
-        overlayMat.color.setHex(0xb9d8ff);
-        overlayMat.opacity = 0.1;
+      if (!onSphere) {
+        const overlayMat = this.groundOverlay.material as THREE.MeshBasicMaterial;
+        const oldOverlay = overlayMat.map;
+        overlayMat.map = makeGroundOverlayTexture(preset);
+        oldOverlay?.dispose();
+        if (preset === "ember_wastes") {
+          overlayMat.color.setHex(0xffb07a);
+          overlayMat.opacity = 0.16;
+        } else if (preset === "glacier_grid") {
+          overlayMat.color.setHex(0xb6eaff);
+          overlayMat.opacity = 0.135;
+        } else if (preset === "mesa_band") {
+          overlayMat.color.setHex(0xffd4a4);
+          overlayMat.opacity = 0.15;
+        } else {
+          overlayMat.color.setHex(0xb9d8ff);
+          overlayMat.opacity = 0.1;
+        }
+        overlayMat.blending = THREE.NormalBlending;
+        overlayMat.needsUpdate = true;
       }
-      overlayMat.blending = THREE.NormalBlending;
-      overlayMat.needsUpdate = true;
     }
-    this.groundOverlay.visible = true;
+    this.groundOverlay.visible = !onSphere;
   }
 
   private ensureHpBarPair(
@@ -3351,8 +4474,9 @@ export class GameRenderer {
         opacity: 0.68,
       });
       if (d.kind === "box") {
+        const xz = MAP_DECOR_BLOCK_BOX_XZ;
         mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(d.w * 0.96, d.h, d.d * 0.96),
+          new THREE.BoxGeometry(d.w * xz, d.h, d.d * xz),
           d.blocksMovement
             ? blockMat("box_block")
             : decorate(
@@ -3366,52 +4490,98 @@ export class GameRenderer {
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.82, Math.min(0.34, d.h * 0.08), d.d * 0.82), accentMat);
+        const cap = new THREE.Mesh(new THREE.BoxGeometry(d.w * xz * 0.82, Math.min(0.34, d.h * 0.08), d.d * xz * 0.82), accentMat);
         cap.position.y = d.h * 0.5 + Math.min(0.18, d.h * 0.04);
-        const base = new THREE.Mesh(new THREE.BoxGeometry(d.w * 1.06, Math.min(0.28, d.h * 0.08), d.d * 1.06), shadowMat);
+        const baseFootX = d.blocksMovement ? d.w * xz * 0.99 : d.w * 1.06;
+        const baseFootZ = d.blocksMovement ? d.d * xz * 0.99 : d.d * 1.06;
+        const base = new THREE.Mesh(new THREE.BoxGeometry(baseFootX, Math.min(0.28, d.h * 0.08), baseFootZ), shadowMat);
         base.position.y = -d.h * 0.5 + Math.min(0.14, d.h * 0.04);
         mesh.add(cap, base);
         if (d.blocksMovement) {
           const railW = Math.min(0.26, Math.max(0.08, Math.min(d.w, d.d) * 0.08));
-          const railA = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.9, railW, railW), accentMat);
+          const railA = new THREE.Mesh(new THREE.BoxGeometry(d.w * xz * 0.9, railW, railW), accentMat);
           const railB = railA.clone();
-          railA.position.set(0, d.h * 0.18, d.d * 0.5);
-          railB.position.set(0, d.h * 0.18, -d.d * 0.5);
+          const rz = d.d * xz * 0.5;
+          railA.position.set(0, d.h * 0.18, rz);
+          railB.position.set(0, d.h * 0.18, -rz);
           mesh.add(railA, railB);
         }
       } else if (d.kind === "cylinder") {
         const r = d.radius;
         const h = d.h;
-        const group = new THREE.Group();
-        group.position.set(d.x, 0, d.z);
-        group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const tk = d.terrainKind;
+        if (tk === "lake") {
+          const group = new THREE.Group();
+          group.position.set(d.x, 0, d.z);
+          const pond = new THREE.Mesh(
+            new THREE.CylinderGeometry(r * MAP_DECOR_BLOCK_BOX_XZ, r * MAP_DECOR_BLOCK_BOX_XZ, Math.max(0.2, h * 0.75), 44, 1),
+            new THREE.MeshPhysicalMaterial({
+              color: 0x1c5f78,
+              transparent: true,
+              opacity: 0.9,
+              roughness: 0.14,
+              metalness: 0.05,
+              transmission: 0.38,
+              thickness: 0.5,
+              envMapIntensity: 0.75,
+            }),
+          );
+          pond.position.y = Math.max(0.11, h * 0.32);
+          const rim = new THREE.Mesh(
+            new THREE.TorusGeometry(r * 1.05, Math.max(0.12, r * 0.052), 8, 48),
+            blockMat("lake_rim", 0.94),
+          );
+          rim.rotation.x = Math.PI / 2;
+          rim.position.y = Math.max(0.06, h * 0.26);
+          group.add(pond, rim);
+          mesh = group;
+        } else if (tk === "rock_spire") {
+          const group = new THREE.Group();
+          group.position.set(d.x, 0, d.z);
+          const trunk = new THREE.Mesh(
+            new THREE.CylinderGeometry(r * 0.44, r * 0.66, h * 0.68, 11),
+            blockMat("rock_trunk", 1),
+          );
+          trunk.position.y = h * 0.34;
+          const crown = new THREE.Mesh(
+            new THREE.DodecahedronGeometry(Math.max(0.55, r * 0.78), 0),
+            blockMat("rock_crown", 1.06),
+          );
+          crown.position.y = h * 0.68 + r * 0.38;
+          group.add(trunk, crown);
+          mesh = group;
+        } else {
+          const group = new THREE.Group();
+          group.position.set(d.x, 0, d.z);
+          group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
 
-        const hoverY = Math.max(0.72, h * 0.55);
-        const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.36, r * 0.92), 0), crystalMat);
-        main.position.y = hoverY;
-        main.scale.set(0.92, Math.max(1.25, h / Math.max(0.6, r) * 0.34), 0.92);
-        main.rotation.set(0.18, Math.PI / 4, -0.1);
+          const hoverY = Math.max(0.72, h * 0.55);
+          const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.36, r * 0.92), 0), crystalMat);
+          main.position.y = hoverY;
+          main.scale.set(0.92, Math.max(1.25, h / Math.max(0.6, r) * 0.34), 0.92);
+          main.rotation.set(0.18, Math.PI / 4, -0.1);
 
-        const core = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.18, r * 0.38), 0), crystalCoreMat);
-        core.position.y = hoverY + Math.max(0.04, h * 0.03);
-        core.rotation.set(-0.08, Math.PI / 5, 0.16);
+          const core = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.18, r * 0.38), 0), crystalCoreMat);
+          core.position.y = hoverY + Math.max(0.04, h * 0.03);
+          core.rotation.set(-0.08, Math.PI / 5, 0.16);
 
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.18, Math.max(0.025, r * 0.045), 6, 34), crystalBaseMat);
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = Math.max(0.16, h * 0.16);
+          const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.18, Math.max(0.025, r * 0.045), 6, 34), crystalBaseMat);
+          ring.rotation.x = Math.PI / 2;
+          ring.position.y = Math.max(0.16, h * 0.16);
 
-        const shardCount = 4;
-        for (let i = 0; i < shardCount; i++) {
-          const a = (i / shardCount) * Math.PI * 2 + Math.PI / 4;
-          const shard = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.13, r * 0.24), 0), i % 2 === 0 ? crystalMat : crystalCoreMat);
-          shard.position.set(Math.cos(a) * r * 0.82, hoverY * 0.82 + (i % 2) * 0.12, Math.sin(a) * r * 0.82);
-          shard.scale.set(0.55, 1.05, 0.55);
-          shard.rotation.set(0.2, -a, 0.35);
-          group.add(shard);
+          const shardCount = 4;
+          for (let i = 0; i < shardCount; i++) {
+            const a = (i / shardCount) * Math.PI * 2 + Math.PI / 4;
+            const shard = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.13, r * 0.24), 0), i % 2 === 0 ? crystalMat : crystalCoreMat);
+            shard.position.set(Math.cos(a) * r * 0.82, hoverY * 0.82 + (i % 2) * 0.12, Math.sin(a) * r * 0.82);
+            shard.scale.set(0.55, 1.05, 0.55);
+            shard.rotation.set(0.2, -a, 0.35);
+            group.add(shard);
+          }
+
+          group.add(ring, main, core);
+          mesh = group;
         }
-
-        group.add(ring, main, core);
-        mesh = group;
       } else if (d.kind === "sphere") {
         const r = d.radius;
         const cy = d.y ?? r;
@@ -3435,36 +4605,42 @@ export class GameRenderer {
       } else if (d.kind === "cone") {
         const r = d.radius;
         const h = d.h;
-        const group = new THREE.Group();
-        group.position.set(d.x, 0, d.z);
-        group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        if (d.terrainKind === "hill") {
+          mesh = new THREE.Mesh(new THREE.ConeGeometry(r, h, 13), blockMat("hill_cone", 1.02));
+          mesh.position.set(d.x, h * 0.5, d.z);
+          mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        } else {
+          const group = new THREE.Group();
+          group.position.set(d.x, 0, d.z);
+          group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
 
-        const hoverY = Math.max(0.65, h * 0.5);
-        const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.34, r * 0.88), 0), crystalMat);
-        main.position.y = hoverY;
-        main.scale.set(0.78, Math.max(1.2, h / Math.max(0.6, r) * 0.3), 0.78);
-        main.rotation.set(-0.12, Math.PI / 4, 0.22);
+          const hoverY = Math.max(0.65, h * 0.5);
+          const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.34, r * 0.88), 0), crystalMat);
+          main.position.y = hoverY;
+          main.scale.set(0.78, Math.max(1.2, h / Math.max(0.6, r) * 0.3), 0.78);
+          main.rotation.set(-0.12, Math.PI / 4, 0.22);
 
-        const lower = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.2, r * 0.45), 0), crystalCoreMat);
-        lower.position.y = Math.max(0.28, h * 0.26);
-        lower.scale.set(0.65, 0.95, 0.65);
-        lower.rotation.set(0.2, -Math.PI / 6, -0.2);
+          const lower = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.2, r * 0.45), 0), crystalCoreMat);
+          lower.position.y = Math.max(0.28, h * 0.26);
+          lower.scale.set(0.65, 0.95, 0.65);
+          lower.rotation.set(0.2, -Math.PI / 6, -0.2);
 
-        const halo = new THREE.Mesh(new THREE.TorusGeometry(r * 0.95, Math.max(0.024, r * 0.04), 6, 32), crystalBaseMat);
-        halo.rotation.x = Math.PI / 2;
-        halo.position.y = Math.max(0.18, h * 0.18);
+          const halo = new THREE.Mesh(new THREE.TorusGeometry(r * 0.95, Math.max(0.024, r * 0.04), 6, 32), crystalBaseMat);
+          halo.rotation.x = Math.PI / 2;
+          halo.position.y = Math.max(0.18, h * 0.18);
 
-        for (let i = 0; i < 3; i++) {
-          const a = (i / 3) * Math.PI * 2;
-          const chip = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.12, r * 0.22), 0), crystalMat);
-          chip.position.set(Math.cos(a) * r * 0.7, hoverY * 0.76, Math.sin(a) * r * 0.7);
-          chip.scale.set(0.48, 0.9, 0.48);
-          chip.rotation.set(0.3, -a, -0.18);
-          group.add(chip);
+          for (let i = 0; i < 3; i++) {
+            const a = (i / 3) * Math.PI * 2;
+            const chip = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.12, r * 0.22), 0), crystalMat);
+            chip.position.set(Math.cos(a) * r * 0.7, hoverY * 0.76, Math.sin(a) * r * 0.7);
+            chip.scale.set(0.48, 0.9, 0.48);
+            chip.rotation.set(0.3, -a, -0.18);
+            group.add(chip);
+          }
+
+          group.add(halo, lower, main);
+          mesh = group;
         }
-
-        group.add(halo, lower, main);
-        mesh = group;
       } else if (d.kind === "torus") {
         mesh = new THREE.Mesh(
           new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
@@ -3492,7 +4668,42 @@ export class GameRenderer {
         obj.castShadow = true;
         obj.receiveShadow = true;
       });
-      this.decor.add(mesh);
+      let decorRoot: THREE.Object3D = mesh;
+      if (isSphereWorld(state.map)) {
+        const gy = state.map.world.groundY;
+        let fx = d.x;
+        let fy = gy;
+        let fz = d.z;
+        if (d.kind === "sphere") {
+          const r = d.radius;
+          const cy = d.y ?? r;
+          fy = cy - r;
+        }
+        decorRoot = sphereAnchoredPropFromPlaneFloor(mesh, state.map, fx, fy, fz);
+        // #region agent log
+        if (this.dbgSphereDecorSamples < 4) {
+          this.dbgSphereDecorSamples++;
+          decorRoot.updateMatrixWorld(true);
+          const v = new THREE.Vector3();
+          decorRoot.getWorldPosition(v);
+          const R = sphereRadiusOf(state.map);
+          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+            body: JSON.stringify({
+              sessionId: "8d1dc2",
+              runId: "sphere-grounding",
+              hypothesisId: "H1",
+              location: "scene.ts:syncMapDecor",
+              message: "decor sphere anchor foot radial",
+              data: { decorKind: d.kind, radial: v.length(), R, deltaRadial: v.length() - R },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+      }
+      this.decor.add(decorRoot);
     }
   }
 
@@ -3540,7 +4751,32 @@ export class GameRenderer {
       const breathe = 0.08 * Math.sin(elapsed * 2.4);
       const r = 0.58 + frac * 1.02 + breathe;
       orb.scale.setScalar(r);
-      orb.position.set(camp.origin.x, 1.55 + breathe * 0.45, camp.origin.z);
+      const lift = 1.55 + breathe * 0.45;
+      if (isSphereWorld(state.map)) {
+        worldPointAlongSphereNormal(state.map, { x: camp.origin.x, z: camp.origin.z }, lift, orb.position);
+        // #region agent log
+        if (!this.dbgCoreOrbSphereLogged) {
+          this.dbgCoreOrbSphereLogged = true;
+          const R = sphereRadiusOf(state.map);
+          const len = orb.position.length();
+          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+            body: JSON.stringify({
+              sessionId: "8d1dc2",
+              runId: "sphere-grounding",
+              hypothesisId: "H3",
+              location: "scene.ts:syncCoreOrbs",
+              message: "core orb radial above shell",
+              data: { radial: len, R, lift, deltaRadial: len - R },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+      } else {
+        orb.position.set(camp.origin.x, lift, camp.origin.z);
+      }
       orb.rotation.y = elapsed * 0.35;
       orb.rotation.x = Math.sin(elapsed * 0.5) * 0.08;
       const mat = orb.material as THREE.MeshStandardMaterial;
@@ -4029,13 +5265,28 @@ export class GameRenderer {
     const visual = this.syncHeroVisualPosition(h, this.heroVisualPos);
     this.heroVisualPos = visual;
     const map = state.map;
-    if (isSphereWorld(map)) {
-      const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
+    const heroTan = { x: visual.x, z: visual.y };
+    const heroMeshFoot = this.placeFootOnRenderableGround(map, heroTan, 0, 0);
+    if (heroMeshFoot) {
+      this.heroGroup.position.copy(this.surfPosOut);
+    } else if (isSphereWorld(map)) {
+      const foot = worldFootXYZ(map, heroTan, 0);
       this.heroGroup.position.set(foot.x, foot.y, foot.z);
     } else {
-      this.heroGroup.position.set(visual.x, 0, visual.y);
+      this.heroGroup.position.set(visual.x, map.world.groundY, visual.y);
     }
-    this.heroGroup.rotation.y = h.facing;
+
+    if (isSphereWorld(map)) {
+      if (!heroMeshFoot) {
+        const n = surfaceNormalFromTan(map, heroTan);
+        this.surfNormOut.set(n[0], n[1], n[2]);
+      }
+      const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+      const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), h.facing);
+      this.heroGroup.quaternion.copy(qAlign).multiply(qYaw);
+    } else {
+      this.heroGroup.rotation.set(0, h.facing, 0);
+    }
     this.hideHeroPlinthUnderGlb(this.heroGroup);
     const clickMove = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
     let frameTravel = false;
@@ -4114,13 +5365,28 @@ export class GameRenderer {
     const visual = this.syncHeroVisualPosition(h, this.enemyHeroVisualPos);
     this.enemyHeroVisualPos = visual;
     const map = state.map;
-    if (isSphereWorld(map)) {
-      const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
+    const rivalTan = { x: visual.x, z: visual.y };
+    const rivalMeshFoot = this.placeFootOnRenderableGround(map, rivalTan, 0, 0);
+    if (rivalMeshFoot) {
+      this.enemyHeroGroup.position.copy(this.surfPosOut);
+    } else if (isSphereWorld(map)) {
+      const foot = worldFootXYZ(map, rivalTan, 0);
       this.enemyHeroGroup.position.set(foot.x, foot.y, foot.z);
     } else {
-      this.enemyHeroGroup.position.set(visual.x, 0, visual.y);
+      this.enemyHeroGroup.position.set(visual.x, map.world.groundY, visual.y);
     }
-    this.enemyHeroGroup.rotation.y = h.facing;
+
+    if (isSphereWorld(map)) {
+      if (!rivalMeshFoot) {
+        const n = surfaceNormalFromTan(map, rivalTan);
+        this.surfNormOut.set(n[0], n[1], n[2]);
+      }
+      const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+      const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), h.facing);
+      this.enemyHeroGroup.quaternion.copy(qAlign).multiply(qYaw);
+    } else {
+      this.enemyHeroGroup.rotation.set(0, h.facing, 0);
+    }
     this.hideHeroPlinthUnderGlb(this.enemyHeroGroup);
     const clickMoveE = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
     let frameTravelE = false;
@@ -4187,7 +5453,7 @@ export class GameRenderer {
         this.entities.add(g);
         this.unitMeshes.set(u.id, g);
         obj = g;
-        if (this.useGlb) {
+        if (this.useGlb && !this.prefersCrowdAtSpawn(state, u)) {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
             placeholder.visible = false;
@@ -4221,7 +5487,7 @@ export class GameRenderer {
       const simDz = u.z - visual.y;
       const simMoveDist = Math.hypot(simDx, simDz);
       const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
-      const forceRunCatchup = simMoveDist > (attackActive ? 9.5 : 0.65);
+      const teleportSnapVisual = simMoveDist > UNIT_VISUAL_TELEPORT_SNAP_DIST;
       const orderTargetDist =
         u.order && u.order.mode !== "stay" ? Math.hypot(u.order.x - u.x, u.order.z - u.z) : 0;
       const orderedToMove = orderTargetDist > (wasMoving ? 0.35 : 0.75);
@@ -4229,7 +5495,7 @@ export class GameRenderer {
       const runThreshold = wasMoving ? UNIT_VISUAL_RUN_STOP_EPS : UNIT_VISUAL_RUN_START_EPS;
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
-        (!attackActive || forceRunCatchup);
+        (!attackActive || simMoveDist > UNIT_VISUAL_ATTACK_RUN_LAG_EPS);
       if (shouldRun && attackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
@@ -4246,7 +5512,7 @@ export class GameRenderer {
       // as in-place swings then huge teleports when the timer cleared or catch-up fired.
       const visualBeforeX = visual.x;
       const visualBeforeZ = visual.y;
-      if (forceRunCatchup) visual.set(u.x, u.z);
+      if (teleportSnapVisual) visual.set(u.x, u.z);
       else if (simMoveDist > UNIT_VISUAL_RUN_EPS) {
         const catchup = 1 - Math.exp(-UNIT_VISUAL_RUN_CATCHUP_LAMBDA * this.visualSyncDt);
         visual.x += simDx * catchup;
@@ -4255,18 +5521,74 @@ export class GameRenderer {
         visual.set(u.x, u.z);
       }
       const map = state.map;
-      if (isSphereWorld(map)) {
-        const foot = worldFootXYZ(map, { x: visual.x, z: visual.y }, 0);
-        obj.position.set(foot.x, foot.y, foot.z);
-        const n = surfaceNormalFromTan(map, { x: visual.x, z: visual.y });
-        obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
-      } else {
-        obj.position.set(visual.x, 0, visual.y);
-        obj.quaternion.identity();
+      const unitTan = { x: visual.x, z: visual.y };
+      if (teleportSnapVisual) {
+        delete g.userData["sphereYaw"];
       }
       if (!attackActive) this.unitFaceTargets.delete(u.id);
       const faceTarget = attackActive && !shouldRun ? this.unitFaceTargets.get(u.id) : undefined;
-      this.faceUnitForState(g, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);
+      /**
+       * Prefer EMA velocity (LAMBDA=9.5 ≈ 100 ms) for facing — single-frame `simDx/simDz` flickers
+       * direction near HQ where Swarms get tiny separation pushes from packed neighbors. The smoothed
+       * vector is stable across frames, kills micro-yaw twitch.
+       */
+      let moveDelta: Vec2 | null = null;
+      if (shouldRun) {
+        const vMag = prevMotion ? Math.hypot(prevMotion.velX, prevMotion.velZ) : 0;
+        if (vMag > 0.45) moveDelta = { x: prevMotion!.velX, z: prevMotion!.velZ };
+        else if (Math.hypot(simDx, simDz) > UNIT_VISUAL_RUN_START_EPS * 0.6) moveDelta = { x: simDx, z: simDz };
+      }
+
+      const meshGrounded = this.placeFootOnRenderableGround(map, unitTan, 0, 0);
+      /** Sphere-only: tilt upright axis to shell normal / mesh hit. Plane maps stay world-Y-up (see hero/structures). */
+      const chartYawMode = isSphereWorld(map);
+
+      if (meshGrounded) {
+        obj.position.copy(this.surfPosOut);
+      } else if (isSphereWorld(map)) {
+        const foot = worldFootXYZ(map, unitTan, 0);
+        obj.position.set(foot.x, foot.y, foot.z);
+      } else {
+        obj.position.set(visual.x, map.world.groundY, visual.y);
+      }
+
+      if (chartYawMode) {
+        this.faceUnitForState(g, faceTarget, moveDelta, unitTan, true);
+        if (!meshGrounded) {
+          const n = surfaceNormalFromTan(map, unitTan);
+          this.surfNormOut.set(n[0], n[1], n[2]);
+        }
+        const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.surfNormOut);
+        const yaw = (g.userData["sphereYaw"] as number | undefined) ?? 0;
+        const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        obj.quaternion.copy(qAlign).multiply(qYaw);
+        // #region agent log
+        if (!this.dbgUnitSphereOrientLogged && isSphereWorld(map)) {
+          this.dbgUnitSphereOrientLogged = true;
+          const R = sphereRadiusOf(map);
+          const radial = obj.position.length();
+          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+            body: JSON.stringify({
+              sessionId: "8d1dc2",
+              runId: "sphere-grounding",
+              hypothesisId: "H5",
+              location: "scene.ts:syncUnits",
+              message: "unit sphere foot radial + yaw compose",
+              data: { radial, R, deltaRadial: radial - R, sphereYaw: yaw, meshGrounded },
+              timestamp: Date.now(),
+            }),
+          }).catch(() => {});
+        }
+        // #endregion
+      } else {
+        // Plane maps: never `quaternion.identity()` here — it resets euler each frame and destroys
+        // accumulated yaw so units never finish turning (wrong facing, bogus lean in tickUnitProceduralMotion).
+        this.faceUnitForState(g, faceTarget, moveDelta, unitTan, false);
+        obj.rotation.x = 0;
+        obj.rotation.z = 0;
+      }
       this.updateUnitMotionVisual(
         u.id,
         u.sizeClass,
@@ -4319,6 +5641,7 @@ export class GameRenderer {
       }
     }
     this.applyUnitRenderBudgets(state);
+    this.syncCrowdInstances(state);
   }
 
   private applyUnitRenderBudgets(state: GameState): void {
@@ -4457,9 +5780,157 @@ export class GameRenderer {
     if (label && farCullUi) label.sprite.visible = false;
   }
 
-  private faceUnitForState(root: THREE.Object3D, attackTarget: Vec2 | undefined, moveDelta: Vec2 | null): void {
-    const px = root.position.x;
-    const pz = root.position.z;
+  private prefersCrowdAtSpawn(state: GameState, u: GameState["units"][number]): boolean {
+    if (state.selectedUnitIds.includes(u.id)) return false;
+    if (this.crowdPreviewEnabled) return true;
+    return state.units.length >= 520 && u.sizeClass !== "Titan";
+  }
+
+  private shouldRenderAsCrowd(state: GameState, u: GameState["units"][number], root: THREE.Group): boolean {
+    if (state.selectedUnitIds.includes(u.id)) return false;
+    const count = state.units.length;
+    if (this.crowdPreviewEnabled) return true;
+    if (u.sizeClass === "Titan") return count >= 1400;
+    if (count < 420) return false;
+    const dx = root.position.x - this.camera.position.x;
+    const dy = root.position.y - this.camera.position.y;
+    const dz = root.position.z - this.camera.position.z;
+    const distSq = dx * dx + dy * dy + dz * dz;
+    if (count >= 900) return true;
+    if (u.sizeClass === "Swarm" || u.sizeClass === "Line") return distSq > 72 * 72;
+    return distSq > 108 * 108;
+  }
+
+  private ensureCrowdBatch(team: "player" | "enemy", size: UnitSizeClass, capacity: number): CrowdBatch {
+    const key = crowdBatchKey(team, size);
+    const current = this.crowdBatches.get(key);
+    if (current && current.capacity >= capacity) return current;
+
+    if (current) {
+      this.crowdRoot.remove(current.mesh);
+      current.mesh.geometry.dispose();
+      (current.mesh.material as THREE.Material).dispose();
+    }
+
+    const nextCapacity = Math.max(32, 2 ** Math.ceil(Math.log2(Math.max(1, capacity))));
+    const geom = buildCrowdUnitGeometry(size);
+    const meta = new THREE.InstancedBufferAttribute(new Float32Array(nextCapacity * 4), 4);
+    geom.setAttribute("instanceMeta", meta);
+    const mat = createCrowdUnitMaterial();
+    const mesh = new THREE.InstancedMesh(geom, mat, nextCapacity);
+    mesh.name = `crowd-${team}-${size}`;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(nextCapacity * 3), 3);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    this.crowdRoot.add(mesh);
+
+    const batch: CrowdBatch = { mesh, meta, capacity: nextCapacity };
+    this.crowdBatches.set(key, batch);
+    return batch;
+  }
+
+  private crowdStatusMeta(u: GameState["units"][number]): { kind: number; strength: number } {
+    let kind = 0;
+    let strength = 0;
+    for (const st of u.spellStatuses ?? []) {
+      const s = Math.max(0, Math.min(1, st.strength));
+      if (s <= strength) continue;
+      strength = s;
+      kind =
+        st.kind === "burning"
+          ? 1
+          : st.kind === "frozen"
+            ? 2
+            : st.kind === "rooted"
+              ? 3
+              : st.kind === "chilled"
+                ? 4
+                : 5;
+    }
+    return { kind, strength };
+  }
+
+  private syncCrowdInstances(state: GameState): void {
+    const buckets = new Map<CrowdBatchKey, GameState["units"]>();
+    let active = false;
+    for (const u of state.units) {
+      const root = this.unitMeshes.get(u.id) as THREE.Group | undefined;
+      if (!root) continue;
+      const asCrowd = this.shouldRenderAsCrowd(state, u, root);
+      root.visible = !asCrowd;
+      if (!asCrowd) continue;
+      active = true;
+      const key = crowdBatchKey(u.team, u.sizeClass);
+      const arr = buckets.get(key);
+      if (arr) arr.push(u);
+      else buckets.set(key, [u]);
+    }
+
+    this.crowdRoot.visible = active;
+    const now = this.clock.getElapsedTime();
+    for (const [key, batch] of this.crowdBatches) {
+      const units = buckets.get(key) ?? [];
+      batch.mesh.count = units.length;
+      const mat = batch.mesh.material as THREE.ShaderMaterial;
+      mat.uniforms["uTime"].value = now;
+      if (units.length === 0) continue;
+
+      if (units.length > batch.capacity) {
+        const [team, size] = key.split(":") as ["player" | "enemy", UnitSizeClass];
+        this.ensureCrowdBatch(team, size, units.length);
+        this.syncCrowdInstances(state);
+        return;
+      }
+
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i]!;
+        const root = this.unitMeshes.get(u.id) as THREE.Group | undefined;
+        if (!root) continue;
+        const hpFrac = Math.max(0.18, Math.min(1, u.maxHp > 0 ? u.hp / u.maxHp : 1));
+        const status = this.crowdStatusMeta(u);
+        const attackAge = u.lastAttackTick === undefined ? Infinity : state.tick - u.lastAttackTick;
+        const attackPulse = attackAge >= 0 && attackAge < Math.round(0.45 * TICK_HZ)
+          ? 1 - attackAge / Math.max(1, Math.round(0.45 * TICK_HZ))
+          : 0;
+        this.crowdDummy.position.copy(root.position);
+        this.crowdDummy.quaternion.copy(root.quaternion);
+        const rank = unitClassRank(u.sizeClass);
+        const scale = (0.84 + hpFrac * 0.16) * (1 + rank * 0.018);
+        this.crowdDummy.scale.setScalar(scale);
+        this.crowdDummy.updateMatrix();
+        batch.mesh.setMatrixAt(i, this.crowdDummy.matrix);
+
+        this.crowdColor.setHex(bipedUnitColor(u.sizeClass, u.signal, u.team));
+        if (hpFrac < 0.42) this.crowdColor.lerp(new THREE.Color(0xff5d35), 0.36);
+        batch.mesh.setColorAt(i, this.crowdColor);
+        batch.meta.setXYZW(
+          i,
+          status.kind,
+          status.strength,
+          attackPulse,
+          ((u.visualSeed % 997) / 997) + unitClassRank(u.sizeClass) * 0.07,
+        );
+      }
+      batch.mesh.instanceMatrix.needsUpdate = true;
+      batch.mesh.instanceColor!.needsUpdate = true;
+      batch.meta.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Plane (flat): euler yaw around world +Y. Chart/quaternion mode: accumulate `sphereYaw` for `qAlign * qYaw`
+   * so mesh-hit or sphere tilt is not overwritten by `rotation.y`.
+   */
+  private faceUnitForState(
+    root: THREE.Object3D,
+    attackTarget: Vec2 | undefined,
+    moveDelta: Vec2 | null,
+    unitTan: Vec2,
+    chartYawMode: boolean,
+  ): void {
+    const px = unitTan.x;
+    const pz = unitTan.z;
     let dx = 0;
     let dz = 0;
     if (attackTarget) {
@@ -4470,10 +5941,20 @@ export class GameRenderer {
       dx = moveDelta.x;
       dz = moveDelta.z;
     }
-    if (Math.hypot(dx, dz) <= 0.001) return;
+    /** Reject near-zero direction so single-frame separation noise near spawn rings can't pivot units. */
+    if (Math.hypot(dx, dz) <= 0.05) return;
     const target = Math.atan2(dx, dz);
-    const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
-    root.rotation.y += delta * 0.22;
+    if (!chartYawMode) {
+      const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
+      root.rotation.y += delta * 0.22;
+      return;
+    }
+    const ud = root.userData as Record<string, unknown>;
+    let yaw = ud["sphereYaw"] as number | undefined;
+    if (yaw === undefined) yaw = target;
+    const delta = Math.atan2(Math.sin(target - yaw), Math.cos(target - yaw));
+    yaw += delta * 0.22;
+    ud["sphereYaw"] = yaw;
   }
 
   private updateUnitMotionVisual(
@@ -4500,17 +5981,27 @@ export class GameRenderer {
         attackKick: 0,
         attackActive: false,
         moving: false,
+        simRunGate: false,
         sizeClass,
       };
       this.unitMotionVisuals.set(id, m);
     }
+    m.simRunGate = moving;
     const rawVx = visualDx / dt;
     const rawVz = visualDz / dt;
     const k = 1 - Math.exp(-UNIT_VISUAL_SPEED_LAMBDA * dt);
     m.velX += (rawVx - m.velX) * k;
     m.velZ += (rawVz - m.velZ) * k;
-    m.targetSpeed = moving ? Math.hypot(m.velX, m.velZ) : 0;
-    m.moving = moving;
+    /**
+     * Gate `targetSpeed` on smoothed velocity rather than the boolean `moving` so single-frame
+     * separation pushes near HQ don't slam targetSpeed to 0 → bob/lean re-ramp every frame (jitter).
+     * Hysteresis: keep speed alive while EMA velocity is meaningful even if `moving` flickers off.
+     */
+    const vMag = Math.hypot(m.velX, m.velZ);
+    const livePrev = m.targetSpeed > 0.01;
+    const wantSpeed = moving || (livePrev && vMag > 0.6);
+    m.targetSpeed = wantSpeed ? vMag : 0;
+    m.moving = wantSpeed;
     m.attackActive = attackActive;
     m.sizeClass = sizeClass;
     if (newAttack) m.attackKick = Math.max(m.attackKick, 1);
@@ -4609,28 +6100,39 @@ export class GameRenderer {
       const m = this.unitMotionVisuals.get(id);
       if (!m) continue;
       m.speed += (m.targetSpeed - m.speed) * ease;
-      m.movingBlend += ((m.moving ? 1 : 0) - m.movingBlend) * (1 - Math.exp(-(m.moving ? 8.5 : 5.2) * dt));
+      const runGate = m.simRunGate;
+      m.movingBlend += ((runGate ? 1 : 0) - m.movingBlend) * (1 - Math.exp(-(runGate ? 8.5 : 5.2) * dt));
       m.attackKick = Math.max(0, m.attackKick - dt * 3.2);
 
+      const udRoot = root.userData as Record<string, unknown>;
+      const producedId = udRoot["producedUnitId"] as string | undefined;
+      /** Azure spear scouts already carry bounce/spin in clips; extra procedural motion reads as double-motion. */
+      const acrobatSwarmGlb = producedId === PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS;
       const L = unitMeshLinearSize(m.sizeClass);
       const cadence = m.sizeClass === "Swarm" ? 7.8 : m.sizeClass === "Line" ? 6.2 : m.sizeClass === "Heavy" ? 4.6 : 3.4;
       const stride = Math.min(1.8, Math.max(0.35, m.speed / Math.max(1.2, L)));
-      m.bobPhase += dt * cadence * stride * (0.35 + m.movingBlend * 0.65);
+      const cadenceMul = acrobatSwarmGlb ? 0.55 : 1;
+      m.bobPhase += dt * cadence * stride * (0.35 + m.movingBlend * 0.65) * cadenceMul;
 
-      const yaw = root.rotation.y;
+      const yaw =
+        typeof udRoot["sphereYaw"] === "number" ? (udRoot["sphereYaw"] as number) : root.rotation.y;
       const localForward = Math.sin(yaw) * m.velX + Math.cos(yaw) * m.velZ;
       const localSide = Math.cos(yaw) * m.velX - Math.sin(yaw) * m.velZ;
       const leanScale = (m.sizeClass === "Titan" ? 0.015 : m.sizeClass === "Heavy" ? 0.021 : 0.027) / Math.max(1, L);
+      const leanMul = acrobatSwarmGlb ? 0.45 : 1;
+      const bobMul = acrobatSwarmGlb ? 0.38 : 1;
       const targetPitch =
-        THREE.MathUtils.clamp(-localForward * leanScale, -0.13, 0.13) * m.movingBlend -
-        Math.sin(m.attackKick * Math.PI) * (m.sizeClass === "Titan" ? 0.055 : 0.075);
+        (THREE.MathUtils.clamp(-localForward * leanScale, -0.13, 0.13) * m.movingBlend -
+          Math.sin(m.attackKick * Math.PI) * (m.sizeClass === "Titan" ? 0.055 : 0.075)) *
+        leanMul;
       const targetRoll =
-        THREE.MathUtils.clamp(-localSide * leanScale, -0.11, 0.11) * m.movingBlend +
-        Math.sin(m.bobPhase) * 0.018 * m.movingBlend;
+        (THREE.MathUtils.clamp(-localSide * leanScale, -0.11, 0.11) * m.movingBlend +
+          Math.sin(m.bobPhase) * 0.018 * m.movingBlend) *
+        leanMul;
       m.leanPitch += (targetPitch - m.leanPitch) * ease;
       m.leanRoll += (targetRoll - m.leanRoll) * ease;
 
-      const bob = Math.abs(Math.sin(m.bobPhase)) * L * 0.022 * m.movingBlend;
+      const bob = Math.abs(Math.sin(m.bobPhase)) * L * 0.022 * m.movingBlend * bobMul;
       const settle = Math.sin(m.attackKick * Math.PI) * L * 0.025;
       this.applyUnitMotionPose(root, bob - settle, m.leanPitch, m.leanRoll);
     }
@@ -4745,6 +6247,7 @@ export class GameRenderer {
     };
     for (const g of this.unitMeshes.values()) tick(g, true);
     for (const g of this.structureMeshes.values()) tick(g, false);
+    tick(this.placementGhostRoot, false);
     tick(this.heroGroup, false);
     tick(this.enemyHeroGroup, false);
     for (let i = this.dyingUnits.length - 1; i >= 0; i--) {
@@ -5057,13 +6560,21 @@ export class GameRenderer {
     if (label) label.sprite.visible = false;
     const particles = this.makeDeathMotes(root);
     const titan = ud["sizeClass"] === "Titan";
+    const producedId = ud["producedUnitId"] as string | undefined;
+    const deathClipSec = (ud["glbDeathDuration"] as number | undefined) ?? 0.45;
     if (titan) {
       spawnCastFx(this.fx, "death_flash", { x: root.position.x, z: root.position.z }, {
         impactRadius: Math.max(2.4, ((ud["unitHeight"] as number | undefined) ?? 3) * 0.36),
         rangeBand: "long",
       });
+    } else if (producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
+      spawnCastFx(this.fx, "death_flash", { x: root.position.x, z: root.position.z }, {
+        impactRadius: Math.max(1.45, ((ud["unitHeight"] as number | undefined) ?? 1.65) * 0.4),
+        rangeBand: "close",
+      });
     }
-    const life = titan ? 0.68 : 0.42;
+    /** Let authored death clips (e.g. emberbound `dying_backwards` ~0.63s) play before dissolve dominates. */
+    const life = titan ? 0.68 : Math.min(1.05, deathClipSec * 1.12 + 0.14);
     this.startGlbDeathAnimation(root);
     this.dyingUnits.push({ obj: root, timer: life, life, particles });
   }
@@ -5093,7 +6604,7 @@ export class GameRenderer {
       producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
     const titan = ud["sizeClass"] === "Titan";
     // Lower run cross-weight so baked root motion in the slam / punch clip is not double-driven (twitchy).
-    return punchyLineMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    return punchyLineMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.72 : 0.62;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {
@@ -5104,6 +6615,18 @@ export class GameRenderer {
     const idle = ud["glbIdleAction"] as THREE.AnimationAction | undefined;
     if (!run) return;
     const forceRunBase = ud["sizeClass"] === "Swarm";
+    /** Swarm: never crossfade to idle — short `shouldRun` gaps read as upright/bind snaps next to a looping run clip. */
+    if (!inAttack && forceRunBase) {
+      if (idle) {
+        idle.stopFading();
+        idle.setEffectiveWeight(0);
+        idle.enabled = false;
+      }
+      ud["glbBaseState"] = "run";
+      delete ud["glbBaseFadeUntilMs"];
+      this.setGlbBaseActionWeight(root, "run", 1);
+      return;
+    }
     // While an attack clip is active, `playGlbAttackAnimation` owns the run/idle underlay. Driving
     // run↔idle from smoothed sim motion here fights that (shouldRun is false whenever attackActive
     // without force catch-up), which reads as constant snapping — especially on Swarm/Line.
@@ -5112,16 +6635,6 @@ export class GameRenderer {
       this.setGlbBaseActionWeight(root, !forceRunBase && pinned === "idle" && idle ? "idle" : "run", baseW, {
         preserveActiveFade: true,
       });
-      return;
-    }
-    if (forceRunBase) {
-      if (idle) {
-        idle.stopFading();
-        idle.setEffectiveWeight(0);
-        idle.enabled = false;
-      }
-      this.setGlbBaseActionWeight(root, "run", 1);
-      delete ud["glbBaseFadeUntilMs"];
       return;
     }
     const next = (moving || !idle ? "run" : "idle") as "run" | "idle";
@@ -5157,6 +6670,49 @@ export class GameRenderer {
     this.orientHpBars();
     stepFx(this.fx, dt);
     this.renderer.render(this.scene, this.camera);
+    this.agentDbgRenderSamples += 1;
+    const n = this.agentDbgRenderSamples;
+    if (n <= 5 || n === 180) {
+      const tgt = this.controls.target;
+      const bg = this.scene.background;
+      const bgKind =
+        bg instanceof THREE.Color ? "color" : bg && "isTexture" in bg && (bg as THREE.Texture).isTexture ? "texture" : "other";
+      // #region agent log
+      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
+        body: JSON.stringify({
+          sessionId: "8d1dc2",
+          runId: "post-fix",
+          hypothesisId: n <= 5 ? "C" : "E",
+          location: "scene.ts:GameRenderer.render",
+          message: "post-render sample",
+          data: {
+            sample: n,
+            polarMin: this.controls.minPolarAngle,
+            polarMax: this.controls.maxPolarAngle,
+            drawingBufferWidth: this.renderer.domElement.width,
+            drawingBufferHeight: this.renderer.domElement.height,
+            clientW: this.renderer.domElement.clientWidth,
+            clientH: this.renderer.domElement.clientHeight,
+            cam: {
+              x: Number(this.camera.position.x.toFixed(2)),
+              y: Number(this.camera.position.y.toFixed(2)),
+              z: Number(this.camera.position.z.toFixed(2)),
+            },
+            tgt: { x: Number(tgt.x.toFixed(2)), y: Number(tgt.y.toFixed(2)), z: Number(tgt.z.toFixed(2)) },
+            introActive: this.introCinematicStartMs !== null,
+            worldSphere: this.worldIsSphere,
+            sphereR: this.worldSphereR,
+            groundVisible: this.ground.visible,
+            bgKind,
+            sceneChildren: this.scene.children.length,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    }
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

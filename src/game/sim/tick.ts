@@ -18,7 +18,7 @@ export { applyPlayerIntents } from "./systems/intents";
 
 /** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
 export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
-  if (s.phase === "win" || s.phase === "lose") return;
+  if (s.phase === "win" || s.phase === "lose" || s.phase === "draw") return;
   timeLimitCheck(s);
   if (s.phase !== "playing") return;
   if (s.tacticsFieldZones.length > 0) {

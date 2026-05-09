@@ -17,9 +17,9 @@ npm install
 npm run localhost
 ```
 
-Open **`http://localhost:2222/`** — Vite is configured with `strictPort: true`, so the dev server always uses 2222 or exits with “port in use” (no silent 2223/2224).
+Open **`http://127.0.0.1:2222/`** (preferred on Windows). **`http://localhost:2222/`** also works when your OS resolves it to IPv4. Vite uses `strictPort: true`, so the dev server uses 2222 or exits with “port in use”.
 
-`npm run localhost` is the safe local reset path: it closes old listeners on 2222/2223/2224, clears Vite's transform cache, then starts a fresh strict 2222 server. Use `npm run dev` only when you know no stale server is already running.
+`npm run localhost` kills stale listeners on 2222/2223/2224, clears Vite’s cache, starts strict **127.0.0.1:2222**, and **`--open`** launches your browser. Use `npm run dev` when you already have a clean port.
 
 ### Multiplayer (local)
 

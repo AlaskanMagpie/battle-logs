@@ -220,3 +220,23 @@ export function surfaceNormalFromTan(map: MapData, tan: Vec2): [number, number, 
   const R = sphereRadiusOf(map);
   return unitFromTangentAtPole(tan.x, tan.z, R);
 }
+
+/**
+ * Unit tangent on the sphere at `fromTan`, lying in the plane spanned by the surface normal and the
+ * great-circle arc toward `towardTan`. Used for camera placement behind the hero on spherical maps.
+ */
+export function greatCircleTangentToward(map: MapData, fromTan: Vec2, towardTan: Vec2): [number, number, number] {
+  const R = sphereRadiusOf(map);
+  const u0 = unitFromTangentAtPole(fromTan.x, fromTan.z, R);
+  const u1 = unitFromTangentAtPole(towardTan.x, towardTan.z, R);
+  let d = u0[0] * u1[0] + u0[1] * u1[1] + u0[2] * u1[2];
+  d = Math.max(-1, Math.min(1, d));
+  let wx = u1[0] - u0[0] * d;
+  let wy = u1[1] - u0[1] * d;
+  let wz = u1[2] - u0[2] * d;
+  const wl = Math.hypot(wx, wy, wz);
+  if (wl < 1e-8) {
+    return tangentEastNorth(u0).east;
+  }
+  return [wx / wl, wy / wl, wz / wl];
+}

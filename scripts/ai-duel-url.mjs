@@ -26,7 +26,7 @@ if (hasArg("--list")) {
 }
 
 const tierOrId = readArg("--tier") ?? readArg("--ai") ?? readArg("--model") ?? "1";
-const base = readArg("--base") ?? "http://localhost:5173/";
+const base = readArg("--base") ?? "http://127.0.0.1:2222/";
 const map = readArg("--map");
 const opponent =
   ROSTER.find(([id, tier]) => tierOrId === id || tierOrId === String(tier)) ??

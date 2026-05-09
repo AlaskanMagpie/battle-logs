@@ -3,7 +3,7 @@ import { getCatalogEntry } from "./catalog";
 import type { MapObstacleFootprint } from "./mapObstacles";
 import type { StructureCatalogEntry } from "./types";
 import { isStructureEntry } from "./types";
-import type { GameState, StructureRuntime } from "./state";
+import type { GameState, StructureRuntime, UnitRuntime } from "./state";
 import { unitMeshLinearSize } from "./sim/systems/helpers";
 
 const SWARM_WADE_HEIGHT = unitMeshLinearSize("Swarm") * 0.5;
@@ -12,6 +12,13 @@ const STRUCTURE_DISC_INSET = 0.88;
 const STRUCTURE_DISC_MIN_RADIUS = 4.25;
 /** Large scaled meshes need discs past old 7.25 cap — prevents units sitting inside tower visuals. */
 const STRUCTURE_DISC_MAX_RADIUS = 15;
+
+/**
+ * Friendly structures use a shrunk disc for pathing/resolution so armies can flow through skirts;
+ * `stay` orders keep full discs so hold lines do not clip through towers.
+ */
+const FRIENDLY_OBSTACLE_PASS_RADIUS_MULT = 0.34;
+const FRIENDLY_OBSTACLE_PASS_RADIUS_MIN = 2.05;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -66,23 +73,55 @@ function structureBuildScale(st: StructureRuntime): number {
   return 0.35 + 0.65 * (1 - st.buildTicksRemaining / Math.max(1, st.buildTotalTicks));
 }
 
+function structureDiscRadius(st: StructureRuntime, entry: StructureCatalogEntry): number | null {
+  const dims = structureVisualDims(entry);
+  const buildScale = structureBuildScale(st);
+  if (dims.h * buildScale <= SWARM_WADE_HEIGHT) return null;
+  const halfFootprint = Math.max(dims.w, dims.d) * 0.5 * buildScale;
+  return clamp(halfFootprint * STRUCTURE_DISC_INSET, STRUCTURE_DISC_MIN_RADIUS, STRUCTURE_DISC_MAX_RADIUS);
+}
+
+/** Full gameplay discs — placement, hero pathing, teleport checks. */
 export function structureObstacleFootprints(s: Pick<GameState, "structures">): MapObstacleFootprint[] {
   const out: MapObstacleFootprint[] = [];
   for (const st of s.structures) {
     if (st.hp <= 0) continue;
     const entry = getCatalogEntry(st.catalogId);
     if (!entry || !isStructureEntry(entry)) continue;
-    const dims = structureVisualDims(entry);
-    const buildScale = structureBuildScale(st);
-    if (dims.h * buildScale <= SWARM_WADE_HEIGHT) continue;
-    const halfFootprint = Math.max(dims.w, dims.d) * 0.5 * buildScale;
-    const r = clamp(halfFootprint * STRUCTURE_DISC_INSET, STRUCTURE_DISC_MIN_RADIUS, STRUCTURE_DISC_MAX_RADIUS);
+    const r = structureDiscRadius(st, entry);
+    if (r === null) continue;
     out.push({
       kind: "disc",
       cx: st.x,
       cz: st.z,
       r,
     });
+  }
+  return out;
+}
+
+/**
+ * Structure obstacles for a moving unit: enemy structures stay fully blocking; friendly structures
+ * shrink to a soft core unless the unit has a `stay` order (hold ground without clipping towers).
+ */
+export function structureObstacleFootprintsForUnit(
+  s: Pick<GameState, "structures">,
+  u: Pick<UnitRuntime, "team" | "order">,
+): MapObstacleFootprint[] {
+  const hardFriendly = u.order?.mode === "stay";
+  const out: MapObstacleFootprint[] = [];
+  for (const st of s.structures) {
+    if (st.hp <= 0) continue;
+    const entry = getCatalogEntry(st.catalogId);
+    if (!entry || !isStructureEntry(entry)) continue;
+    const baseR = structureDiscRadius(st, entry);
+    if (baseR === null) continue;
+    const friendly = st.team === u.team;
+    let r = baseR;
+    if (friendly && !hardFriendly) {
+      r = Math.max(FRIENDLY_OBSTACLE_PASS_RADIUS_MIN, baseR * FRIENDLY_OBSTACLE_PASS_RADIUS_MULT);
+    }
+    out.push({ kind: "disc", cx: st.x, cz: st.z, r });
   }
   return out;
 }

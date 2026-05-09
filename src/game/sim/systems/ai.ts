@@ -35,7 +35,7 @@ import {
   type StructureRuntime,
   type UnitRuntime,
 } from "../../state";
-import { structureObstacleFootprints } from "../../structureObstacles";
+import { structureObstacleFootprintsForUnit } from "../../structureObstacles";
 import type { Vec2 } from "../../types";
 import { clampOrderXZ, isSphereWorld, ringPointOnSphere, stepDirectionXZ, stepGreatCircleToward } from "../../surface";
 import { playerAcquireRadius } from "../engagement";
@@ -92,36 +92,72 @@ export function nearestEnemyUnit(s: GameState, from: Vec2, maxD2: number): UnitR
   return best;
 }
 
+function countEnemyFieldUnits(s: GameState): number {
+  let n = 0;
+  for (const u of s.units) {
+    if (u.team === "enemy" && u.hp > 0) n++;
+  }
+  return n;
+}
+
 /**
- * Closest attackable enemy position within `maxD2`: enemy units, towers, relays, and enemy-owned
- * Mana anchors (auto-army pressure sieges buildings and breaks node caps, not only enemy squads).
+ * When few enemy squads remain, treat enemy *units* as farther away so armies prioritize
+ * towers, relays, nodes, and camp cores instead of chasing one straggler while objectives stand.
+ */
+function enemyUnitAutoTargetBiasSq(s: GameState): number {
+  const n = countEnemyFieldUnits(s);
+  if (n >= 18) return 1;
+  const t = (18 - n) / 18;
+  const mult = 1 + t * t * 4.8;
+  return mult * mult;
+}
+
+/**
+ * Best attackable enemy position within `maxD2` (squared distance cap): units, towers, relays,
+ * enemy-owned Mana anchors, and awake enemy camp cores. Uses **effective** distance for enemy
+ * units so buildings win more often in cleanup / endgame.
  */
 function nearestEnemyCombatObjective(s: GameState, from: Vec2, maxD2: number): Vec2 | null {
   let best: Vec2 | null = null;
-  let bestD = maxD2;
-  const consider = (p: Vec2): void => {
-    const d = gameDist2(s.map, from, p);
-    if (d < bestD) {
-      bestD = d;
+  let bestScore = maxD2;
+  const unitBiasSq = enemyUnitAutoTargetBiasSq(s);
+  const considerObjective = (p: Vec2, d2: number): void => {
+    if (d2 > maxD2) return;
+    if (d2 < bestScore) {
+      bestScore = d2;
+      best = p;
+    }
+  };
+  const considerEnemyUnit = (p: Vec2, d2: number): void => {
+    if (d2 > maxD2) return;
+    const score = d2 * unitBiasSq;
+    if (score < bestScore) {
+      bestScore = score;
       best = p;
     }
   };
   for (const eu of s.units) {
     if (eu.team !== "enemy" || eu.hp <= 0) continue;
-    consider(eu);
+    considerEnemyUnit(eu, gameDist2(s.map, from, eu));
   }
   for (const st of s.structures) {
     if (st.team !== "enemy" || st.hp <= 0) continue;
-    consider(st);
+    considerObjective(st, gameDist2(s.map, from, st));
   }
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy") continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
-    consider(t);
+    considerObjective(t, gameDist2(s.map, from, t));
   }
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    consider(er);
+    considerObjective(er, gameDist2(s.map, from, er));
+  }
+  for (const camp of s.map.enemyCamps) {
+    const cur = s.enemyCampCoreHp[camp.id];
+    if (cur === undefined || cur <= 0) continue;
+    if (!s.enemyCampAwake[camp.id]) continue;
+    considerObjective(camp.origin, gameDist2(s.map, from, camp.origin));
   }
   return best;
 }
@@ -161,29 +197,42 @@ function nearestPlayerStructure(s: GameState, from: Vec2): StructureRuntime | nu
   return best;
 }
 
+function countPlayerFieldUnits(s: GameState): number {
+  let n = 0;
+  for (const u of s.units) {
+    if (u.team === "player" && u.hp > 0) n++;
+  }
+  return n;
+}
+
+function playerUnitDefenseBiasSq(s: GameState): number {
+  const n = countPlayerFieldUnits(s);
+  if (n >= 14) return 1;
+  const t = (14 - n) / 14;
+  const mult = 1 + t * t * 4.2;
+  return mult * mult;
+}
+
 export function nearestEnemyAttackTarget(s: GameState, from: Vec2): Vec2 | null {
   const st = nearestPlayerStructure(s, from);
   let best: Vec2 | null = null;
-  let bestD = Infinity;
-  if (st) {
-    best = st;
-    bestD = gameDist2(s.map, from, st);
-  }
+  let bestScore = Infinity;
+  const unitBiasSq = playerUnitDefenseBiasSq(s);
+  const consider = (p: Vec2, d2: number, isUnit: boolean): void => {
+    const score = isUnit ? d2 * unitBiasSq : d2;
+    if (score < bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  };
+  if (st) consider(st, gameDist2(s.map, from, st), false);
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
-    const d = gameDist2(s.map, from, u);
-    if (d < bestD) {
-      bestD = d;
-      best = u;
-    }
+    consider(u, gameDist2(s.map, from, u), true);
   }
   const wiz = s.hero;
   if (wiz.hp > 0) {
-    const d = gameDist2(s.map, from, wiz);
-    if (d < bestD) {
-      bestD = d;
-      best = { x: wiz.x, z: wiz.z };
-    }
+    consider({ x: wiz.x, z: wiz.z }, gameDist2(s.map, from, wiz), true);
   }
   return best;
 }
@@ -314,7 +363,10 @@ function integrateKnockback(
 }
 
 /** Push overlapping units apart (all teams) so large armies keep readable spacing. */
-function applyUnitSeparation(s: GameState, structureObstacles: MapObstacleFootprint[]): void {
+function applyUnitSeparation(
+  s: GameState,
+  structureObstaclesForUnit: (u: UnitRuntime) => MapObstacleFootprint[],
+): void {
   const alive = s.units.filter((u) => u.hp > 0);
   if (alive.length < 2) return;
 
@@ -384,7 +436,7 @@ function applyUnitSeparation(s: GameState, structureObstacles: MapObstacleFootpr
       }
       u.x += dx;
       u.z += dz;
-      clampToWorldAndObstacles(s, u, structureObstacles);
+      clampToWorldAndObstacles(s, u, structureObstaclesForUnit(u));
     }
   }
 }
@@ -452,6 +504,11 @@ function idleOffenseTarget(s: GameState, u: UnitRuntime, st: StructureRuntime | 
 
   const neutralTap = nearestNeutralTapTarget(s, u);
   if (neutralTap) return formationMarchSlot(u, neutralTap, hero, UNIT_FORMATION_SPACING);
+
+  const half = s.map.world.halfExtents;
+  const idleScanR2 = Math.min((half * 5.5) ** 2, 520 * 520);
+  const wincon = nearestEnemyCombatObjective(s, u, idleScanR2);
+  if (wincon) return formationMarchSlot(u, wincon, hero, UNIT_FORMATION_SPACING);
 
   const anchor =
     st && (st.rallyX !== st.x || st.rallyZ !== st.z)
@@ -538,7 +595,16 @@ function advanceFormationMarches(s: GameState, stepScale: number): void {
 export function movement(s: GameState): void {
   const stepScale = 1 / TICK_HZ;
   const half = s.map.world.halfExtents;
-  const structureObstacles = structureObstacleFootprints(s);
+  const structureObsCache = new Map<string, MapObstacleFootprint[]>();
+  const structureObstaclesFor = (u: UnitRuntime): MapObstacleFootprint[] => {
+    const key = `${u.team}:${u.order?.mode === "stay" ? 1 : 0}`;
+    let cached = structureObsCache.get(key);
+    if (!cached) {
+      cached = structureObstacleFootprintsForUnit(s, u);
+      structureObsCache.set(key, cached);
+    }
+    return cached;
+  };
   const stepU = (u: UnitRuntime) =>
     u.speedPerSec *
     stepScale *
@@ -548,7 +614,7 @@ export function movement(s: GameState): void {
 
   for (const u of s.units) {
     if (u.hp <= 0) continue;
-    integrateKnockback(s, u, stepScale, structureObstacles);
+    integrateKnockback(s, u, stepScale, structureObstaclesFor(u));
   }
   advanceFormationMarches(s, stepScale);
 
@@ -562,12 +628,12 @@ export function movement(s: GameState): void {
       const engage = Math.max(5, u.range * 0.82);
       const engageR2 = engage * engage;
       if (gameDist2(s.map, u, tgt) > engageR2) {
-        moveUnitAutonomousOnPath(s, u, tgt, stepU(u), structureObstacles);
+        moveUnitAutonomousOnPath(s, u, tgt, stepU(u), structureObstaclesFor(u));
       } else {
         const slot = formationRingAround(s, tgt, u, UNIT_FORMATION_SPACING * 0.42);
-        moveUnitAutonomousOnPath(s, u, slot, stepU(u), structureObstacles);
+        moveUnitAutonomousOnPath(s, u, slot, stepU(u), structureObstaclesFor(u));
       }
-      clampToWorldAndObstacles(s, u, structureObstacles);
+      clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
     }
   }
 
@@ -581,7 +647,7 @@ export function movement(s: GameState): void {
     if (u.order) {
       u.autoOrder = undefined;
       if (u.order.mode === "stay") {
-        clampToWorldAndObstacles(s, u, structureObstacles);
+        clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
         continue;
       }
       const capIdx = u.order.captureTapIndex;
@@ -598,29 +664,28 @@ export function movement(s: GameState): void {
         const contestR2 = TAP_CAPTURE_CONTEST_RADIUS * TAP_CAPTURE_CONTEST_RADIUS;
         const foeCap = nearestEnemyContestingPoint(s, u, tap, contestR2);
         if (foeCap && gameDist2(s.map, u, foeCap) > u.range * u.range) {
-          moveUnitOnPath(s, u, foeCap, stepU(u), structureObstacles);
+          moveUnitOnPath(s, u, foeCap, stepU(u), structureObstaclesFor(u));
           continue;
         }
         if (foeCap) {
-          clampToWorldAndObstacles(s, u, structureObstacles);
+          clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
           continue;
         }
-        moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstacles);
+        moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstaclesFor(u));
         continue;
       }
-      const foe = u.order.mode === "attack_move"
-        ? nearestEnemyUnit(s, u, playerAcquireRadius(half, u.range) ** 2)
-        : null;
+      const acquire2 = playerAcquireRadius(half, u.range) ** 2;
+      const foe = u.order.mode === "attack_move" ? nearestEnemyCombatObjective(s, u, acquire2) : null;
       const formation = activeFormationMarch(s, u);
       if (formation && foe) {
         clearFormationMarch(s, formation.id);
       }
       if (foe && gameDist2(s.map, u, foe) > u.range * u.range) {
-        moveUnitOnPath(s, u, foe, stepU(u), structureObstacles);
+        moveUnitOnPath(s, u, foe, stepU(u), structureObstaclesFor(u));
         continue;
       }
       if (foe) {
-        clampToWorldAndObstacles(s, u, structureObstacles);
+        clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
         continue;
       }
       if (formation) {
@@ -638,10 +703,10 @@ export function movement(s: GameState): void {
             ? FORMATION_ASSEMBLY_CATCHUP_MULT
             : FORMATION_TRAVEL_CATCHUP_MULT;
         const step = stepU(u) * (1 + (catchupCap - 1) * catchingUp);
-        moveUnitOnPath(s, u, target, step, structureObstacles);
+        moveUnitOnPath(s, u, target, step, structureObstaclesFor(u));
         continue;
       }
-      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstacles);
+      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstaclesFor(u));
       if (arrived) {
         const next = u.order.queued.shift();
         if (next) {
@@ -667,21 +732,21 @@ export function movement(s: GameState): void {
     if (defense) {
       const canEngage = foeUnit && gameDist2(s.map, foeUnit, hero) <= defR2;
       if (canEngage && foeUnit && gameDist2(s.map, u, foeUnit) > u.range * u.range) {
-        moveUnitAutonomousOnPath(s, u, foeUnit, stepU(u), structureObstacles);
+        moveUnitAutonomousOnPath(s, u, foeUnit, stepU(u), structureObstaclesFor(u));
         continue;
       }
       if (canEngage) {
-        clampToWorldAndObstacles(s, u, structureObstacles);
+        clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
         continue;
       }
     } else {
       const pursueTarget = nearestEnemyCombatObjective(s, u, detectR2);
       if (pursueTarget && gameDist2(s.map, u, pursueTarget) > engageReach2) {
-        moveUnitAutonomousOnPath(s, u, pursueTarget, stepU(u), structureObstacles);
+        moveUnitAutonomousOnPath(s, u, pursueTarget, stepU(u), structureObstaclesFor(u));
         continue;
       }
       if (pursueTarget) {
-        clampToWorldAndObstacles(s, u, structureObstacles);
+        clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
         continue;
       }
     }
@@ -693,9 +758,9 @@ export function movement(s: GameState): void {
           { x: hero.x, z: hero.z },
           UNIT_FORMATION_SPACING,
         );
-        moveUnitAutonomousOnPath(s, u, holdGoal, stepU(u), structureObstacles);
+        moveUnitAutonomousOnPath(s, u, holdGoal, stepU(u), structureObstaclesFor(u));
       } else {
-        clampToWorldAndObstacles(s, u, structureObstacles);
+        clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
       }
       continue;
     }
@@ -712,13 +777,13 @@ export function movement(s: GameState): void {
     } else {
       target = idleOffenseTarget(s, u, st, { x: hero.x, z: hero.z });
     }
-    moveUnitAutonomousOnPath(s, u, target, stepU(u), structureObstacles);
+    moveUnitAutonomousOnPath(s, u, target, stepU(u), structureObstaclesFor(u));
   }
 
-  applyUnitSeparation(s, structureObstacles);
+  applyUnitSeparation(s, structureObstaclesFor);
   for (const u of s.units) {
     if (u.hp <= 0 || u.flying) continue;
-    clampToWorldAndObstacles(s, u, structureObstacles);
+    clampToWorldAndObstacles(s, u, structureObstaclesFor(u));
   }
   unitCaptureNodes(s);
 }
