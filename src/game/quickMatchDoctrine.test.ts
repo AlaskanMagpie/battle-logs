@@ -9,7 +9,7 @@ import {
 } from "./quickMatchDoctrine";
 
 describe("quickMatch doctrine resolution", () => {
-  it("preset is only the six full-art structures plus command spells (no legacy towers)", () => {
+  it("preset is only the ten full-art structures plus command spells (no legacy towers)", () => {
     const allowedStructures = new Set([
       "outpost",
       "watchtower",
@@ -17,6 +17,10 @@ describe("quickMatch doctrine resolution", () => {
       "verdant_citadel",
       "emberroot_bastion",
       "aionroot_observatory",
+      "frostroot_keep",
+      "wooden_aerie",
+      "hollowmarket_stump",
+      "townwatch_keep",
     ]);
     const allowedCommands = new Set(["recycle", "fortify", "firestorm", "shatter"]);
     const nonNull = QUICK_MATCH_DOCTRINE_SLOTS.filter((id): id is string => id != null);

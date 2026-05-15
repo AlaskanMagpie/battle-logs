@@ -239,9 +239,23 @@
         flex-direction: column;
         align-items: stretch;
       }
-      .al-hide-card-overlay .card-art-overlay {
-        visibility: hidden !important;
+      /* True-to-game preview: stat text stays; strip resize handles, circles, and edit-mode hit outlines. */
+      .al-hide-card-overlay .al-card-frame .card-art-overlay {
         pointer-events: none !important;
+      }
+      .al-hide-card-overlay .card-art-overlay__handles,
+      .al-hide-card-overlay .card-art-overlay__handle {
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .al-hide-card-overlay .card-art-overlay__hit {
+        fill: transparent !important;
+        stroke: none !important;
+        pointer-events: none !important;
+      }
+      .al-hide-card-overlay .card-art-overlay__field {
+        cursor: default !important;
       }
       .al-card-zoom-outer {
         flex: 1;
@@ -255,6 +269,14 @@
         overflow: auto;
         padding: 2px;
         box-sizing: border-box;
+      }
+      .al-card-drop-zone {
+        border-radius: 10px;
+        transition: background 0.12s ease, box-shadow 0.12s ease;
+      }
+      .al-card-drop-zone.al-card-drop--hover {
+        background: rgba(80, 140, 255, 0.14);
+        box-shadow: inset 0 0 0 2px rgba(122, 178, 255, 0.55);
       }
       /* Fill port width; cap width by available height so 100:150 (2:3) card fits without excess letterboxing. */
       .al-card-zoom-inner {
@@ -353,9 +375,9 @@
       }
       .al-doctrine-anim-row {
         display: grid;
-        grid-template-columns: 52px 1fr;
+        grid-template-columns: 52px minmax(0, 1fr);
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         font-size: 12px;
       }
       .al-doctrine-anim-row select {
@@ -371,6 +393,41 @@
       .al-preview-role.al-is-active {
         outline: 2px solid rgba(120, 200, 255, 0.85);
         outline-offset: 1px;
+      }
+      .al-unit-class-panel .al-class-balance {
+        margin-top: 8px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(90, 130, 180, 0.35);
+        background: rgba(8, 12, 18, 0.75);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .al-class-balance-caption {
+        margin: 6px 0 0;
+        font-size: 11px;
+        opacity: 0.9;
+      }
+      .al-class-balance table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+      .al-class-balance th,
+      .al-class-balance td {
+        text-align: left;
+        padding: 3px 6px 3px 0;
+        vertical-align: top;
+      }
+      .al-class-balance th {
+        opacity: 0.72;
+        font-weight: 600;
+        width: 38%;
+      }
+      .al-class-balance .al-muted {
+        opacity: 0.65;
+        font-size: 10px;
       }
       @media (max-width: 900px) {
         .al-workbench {
@@ -414,6 +471,17 @@
               Structures load <strong>tower</strong> + <strong>spawned unit</strong> meshes (same routing as the match). Names like
               <code>acrobat_compressed.glb</code> are the <em>building</em>, not the character rig.
             </p>
+            <div class="al-field al-unit-class-panel" id="al-unit-class-wrap" hidden>
+              <label for="al-size-class-preview">Spawned unit class (GLB + card overlay)</label>
+              <select id="al-size-class-preview"></select>
+              <p class="al-class-balance-caption" id="al-catalog-class-badge"></p>
+              <div id="al-class-balance" class="al-class-balance"></div>
+              <p class="al-hint" style="font-size: 10px; opacity: 0.78; margin: 8px 0 0">
+                <strong>Match catalog</strong> uses the real <code>producedSizeClass</code> from data. Choosing another class previews
+                <strong>batch size on the card</strong> and which <strong>unit GLB files</strong> the class router picks (saved in this tab’s session storage per card).
+                The smooth balance row is a design guide — mana / HP / timers on the art stay this card’s catalog values unless you change the catalog.
+              </p>
+            </div>
             <div class="al-field">
               <label for="al-card-zoom">Card preview zoom</label>
               <div class="al-row" style="align-items: center; gap: 8px">
@@ -422,7 +490,10 @@
               </div>
             </div>
             <div class="al-field">
-              <label><input type="checkbox" id="al-hide-overlay" /> Hide stat overlays</label>
+              <label
+                ><input type="checkbox" id="al-hide-overlay" title="Keeps stat text; hides resize handles and edit outlines so the preview matches in-game cards."
+                /> True in-game overlay</label
+              >
             </div>
             <div class="al-field al-overlay-field-toggles-wrap">
               <span class="al-overlay-field-toggles-title">Show stats on card art (this card only)</span>
@@ -433,8 +504,9 @@
             <h2>Doctrine (this card)</h2>
             <p class="al-hint" style="font-size: 11px; opacity: 0.82; margin: 0 0 10px">
               Assign building + unit GLBs and name clips for standard roles. Saved in this browser (
-              <code>localStorage</code>) and exportable as JSON. Clips must exist on the <strong>assigned unit</strong> rig;
-              other GLB files are not mixed in (no retargeting yet).
+              <code>localStorage</code>) and exportable as JSON. Clips play on the <strong>spawned unit</strong> rig;
+              optional <code>fileStem — clipName</code> labels borrow from another GLB in the manifest (same bone names;
+              no retargeting — preview can lie if the donor rig does not match).
             </p>
             <div class="al-field">
               <label for="al-tower-glb">Building GLB</label>
@@ -448,17 +520,31 @@
               <span class="al-overlay-field-toggles-title">Unit animation clips</span>
               <div class="al-doctrine-anim-grid">
                 <label class="al-doctrine-anim-row"
-                  >Run <select id="al-anim-run"></select
-                ></label>
+                  >Run
+                  <select id="al-anim-run"></select></label
+                >
                 <label class="al-doctrine-anim-row"
-                  >Idle <select id="al-anim-idle"></select
-                ></label>
+                  >Idle
+                  <select id="al-anim-idle"></select></label
+                >
                 <label class="al-doctrine-anim-row"
-                  >Attack <select id="al-anim-attack"></select
-                ></label>
+                  >Attack
+                  <select id="al-anim-attack"></select></label
+                >
                 <label class="al-doctrine-anim-row"
-                  >Die <select id="al-anim-die"></select
-                ></label>
+                  >Die
+                  <select id="al-anim-die"></select></label
+                >
+              </div>
+              <div class="al-field" style="margin-top: 8px; font-size: 11px; opacity: 0.9">
+                <label style="display: block; margin-bottom: 4px"
+                  ><input type="checkbox" id="al-anim-library" /> Include animation library (slow — merges rigged
+                  profile GLBs for clip pick)</label
+                >
+                <label style="display: block"
+                  ><input type="checkbox" id="al-anim-show-all" /> Show all clips in each role list (off = keyword
+                  filter)</label
+                >
               </div>
             </div>
             <div class="al-field">
@@ -567,13 +653,14 @@
               </div>
               <div class="al-port__body al-port__body--card">
                 <div>
-                  <div class="al-card-zoom-outer">
+                  <div class="al-card-zoom-outer al-card-drop-zone" id="al-card-drop-zone">
                     <div class="al-card-zoom-inner" id="al-card-zoom-inner">
                       <div class="al-card-frame" id="al-card-frame"></div>
                     </div>
                   </div>
-                  <p class="al-status" id="al-card-hint" style="margin-top: 8px; max-width: none">
-                    Overlays: normalized 100×150 (2:3 with print / binder). Use the sidebar zoom slider to scale the card; “Hide stat overlays” toggles the SVG. Calibrate mode logs coords on click.
+                  <p class="al-status" id="al-card-hint" data-default-hint="1" style="margin-top: 8px; max-width: none">
+                    <strong>Replace card art:</strong> pick the card in the sidebar, then <strong>drag a PNG / WebP / JPG / SVG onto this preview</strong> (same dev key as &ldquo;Unlock edit&rdquo;). Writes
+                    <code>public/assets/cards/&lt;id&gt;.&lt;ext&gt;</code> and runs <code>npm run cards:pipeline</code>. Overlays: normalized 100×150 (2:3 with print / binder). Use the sidebar zoom slider to scale the card; &ldquo;Hide stat overlays&rdquo; toggles the SVG. Calibrate mode logs coords on click.
                   </p>
                 </div>
               </div>

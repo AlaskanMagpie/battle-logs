@@ -25,6 +25,18 @@ Use this skill whenever you add or change **doctrine content**: structures, comm
 3. **Ship check**  
    **`npm run build`** (runs card manifest sync + `vite build`).
 
+## Replace card art only (you, not the agent)
+
+1. **Find the catalog id** in `src/game/catalog.ts` (e.g. `wooden_aerie`, `firestorm`). The card filename **must** use that exact id.
+2. **Overwrite the file** on disk:  
+   `public/assets/cards/{catalogId}.png`  
+   (or `.webp` / `.jpg` — any extension listed in the cards manifest sync is fine; PNG is the usual default.)
+3. From repo root run: **`npm run cards:pipeline`**  
+   That refreshes `public/assets/cards/manifest.json`, bumps the card cache buster, and keeps binder tests honest.
+4. Hard-refresh the app (Ctrl+Shift+R) or restart `npm run dev` if the browser still shows the old art.
+
+**If the image only exists in chat:** save it into the repo first — e.g. drag into `incoming/` or `public/assets/cards/` — then rename to `{catalogId}.png` and run step 3. Agents sometimes cannot read Cursor’s hashed chat export paths from your machine; putting the file **inside the repo** avoids that.
+
 ## Naming (failure mode #1)
 
 - **Catalog id** = `StructureCatalogEntry.id` / `CommandCatalogEntry.id` in `src/game/catalog.ts` (snake_case, stable).

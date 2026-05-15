@@ -1,7 +1,8 @@
+import { effectiveProducedSizeClassForAssetLab } from "../game/assetLabCatalogPreview";
 import { getCatalogEntry } from "../game/catalog";
 import { productionBatchSizeForClass } from "../game/sim/systems/helpers";
 import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "../game/types";
-import { isCommandEntry } from "../game/types";
+import { isCommandEntry, isStructureEntry } from "../game/types";
 import overlayLayoutsJson from "./cardArtOverlayLayouts.json";
 
 type OverlayField = {
@@ -209,6 +210,13 @@ function defaultProfileIdForEntry(entry: CatalogEntry): string {
   return isCommandEntry(entry) ? "command" : "structure";
 }
 
+/** Asset lab may override spawned size class for overlay values (batch) without mutating catalog. */
+function effectiveOverlayCatalogEntry(catalogId: string, entry: CatalogEntry): CatalogEntry {
+  if (!isStructureEntry(entry)) return entry;
+  const pc = effectiveProducedSizeClassForAssetLab(catalogId, entry.producedSizeClass);
+  return pc === entry.producedSizeClass ? entry : { ...entry, producedSizeClass: pc };
+}
+
 function layoutForField(entry: CatalogEntry, catalogId: string, fieldId: string): OverlayFieldLayout {
   const cardLayout = overlayLayouts.cards?.[catalogId];
   const profileId = cardLayout?.profile ?? defaultProfileIdForEntry(entry);
@@ -312,9 +320,10 @@ function mergedOverlayFields(entry: CatalogEntry, catalogId: string): OverlayFie
 }
 
 function fieldsForEntry(e: CatalogEntry, catalogId: string): OverlayField[] {
+  const entry = effectiveOverlayCatalogEntry(catalogId, e);
   // Same stat fields as canvas binder (`drawCardArtOverlayOnCanvasRect`). Authored card
   // SVGs may have text stripped when rasterized — overlays keep mana / CD / salvage readable.
-  return mergedOverlayFields(e, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
+  return mergedOverlayFields(entry, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
 }
 
 function baseValueFontUserUnits(field: OverlayField): number {
@@ -354,6 +363,7 @@ export function drawCardArtOverlayOnCanvasRect(
 ): void {
   const entry = getCatalogEntry(catalogId);
   if (!entry) return;
+  const overlayEntry = effectiveOverlayCatalogEntry(catalogId, entry);
   const fields = fieldsForEntry(entry, catalogId);
   if (!fields.length) return;
 
@@ -364,7 +374,7 @@ export function drawCardArtOverlayOnCanvasRect(
 
   ctx.save();
   for (const field of fields) {
-    const { sx: fsu } = fieldTextScale(field, entry);
+    const { sx: fsu } = fieldTextScale(field, overlayEntry);
     const fontPx = Math.max(6.5, baseValueFontUserUnits(field) * fsu * scale);
     const cx = ox + field.x * scale;
     const cy = oy + field.y * scale;
@@ -632,6 +642,7 @@ export type CardArtOverlayHtmlOpts = {
 export function cardArtOverlayHtml(catalogId: string, opts?: CardArtOverlayHtmlOpts): string {
   const entry = getCatalogEntry(catalogId);
   if (!entry) return "";
+  const overlayEntry = effectiveOverlayCatalogEntry(catalogId, entry);
   const calibrate = opts?.calibrate === true || cardArtOverlayCalibrationEnabled();
   const edit = cardArtOverlayEditEnabled();
   let fields = fieldsForEntry(entry, catalogId);
@@ -642,7 +653,7 @@ export function cardArtOverlayHtml(catalogId: string, opts?: CardArtOverlayHtmlO
     .join(" ");
   /** `meet` keeps uniform scale vs card art; `none` stretched X/Y independently and misaligned labels (binder-style glitch). */
   return `<svg class="${classes}" data-card-art-overlay="${escapeHtml(catalogId)}" viewBox="0 0 ${CARD_OVERLAY_WIDTH} ${CARD_OVERLAY_HEIGHT}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-    ${fields.map((f) => fieldSvg(f, entry)).join("")}
+    ${fields.map((f) => fieldSvg(f, overlayEntry)).join("")}
   </svg>`;
 }
 
@@ -690,7 +701,8 @@ export function setCardOverlayWriteKey(key: string | null): void {
   overlayWriteSecretOverride = key?.trim() ? key.trim() : null;
 }
 
-function resolvedOverlayWriteKeyForFetch(): string {
+/** Same key used for overlay JSON saves and Asset Lab card-art uploads (dev server). */
+export function resolvedOverlayWriteKeyForFetch(): string {
   return overlayWriteSecretOverride ?? DEFAULT_CARD_OVERLAY_WRITE_KEY;
 }
 
@@ -830,12 +842,18 @@ function syncOverlaySvg(svg: SVGSVGElement): void {
   if (!catalogId) return;
   const entry = getCatalogEntry(catalogId);
   if (!entry) return;
+  const overlayEntry = effectiveOverlayCatalogEntry(catalogId, entry);
   const fields = fieldsForEntry(entry, catalogId);
   for (const fieldEl of svg.querySelectorAll(".card-art-overlay__field")) {
     const fieldId = fieldEl.getAttribute("data-overlay-field");
     const field = fields.find((f) => f.id === fieldId);
-    if (field) updateFieldElement(fieldEl, field, entry);
+    if (field) updateFieldElement(fieldEl, field, overlayEntry);
   }
+}
+
+/** Re-apply overlay field values + transforms after asset-lab class preview (or similar) changes. */
+export function resyncCardArtOverlayDomForCatalog(catalogId: string): void {
+  syncDocumentOverlays(catalogId);
 }
 
 function syncDocumentOverlays(catalogId: string): void {

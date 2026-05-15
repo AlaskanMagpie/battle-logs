@@ -3,7 +3,8 @@
  * (`battleLogs.assetLab.doctrine.v1` in localStorage). The match renderer reads `unitClips` for
  * units spawned from a structure so preview settings apply in-game (see `glbPool` + `producerCatalogId`).
  *
- * Cross-GLB retargeting is not implemented — clips must exist on the effective unit GLB for that spawn.
+ * Cross-GLB **retargeting** is not implemented — borrowed clips must target the same bone names as
+ * the base rig. Donor GLBs are optional via merged labels `stem — clipName` (see `doctrineClipRef.ts`).
  */
 
 export type UnitAnimRole = "run" | "idle" | "attack" | "die";
@@ -16,7 +17,7 @@ export type AssetLabCardDoctrine = {
   unitGlb: string;
   /** Clip name on the tower model (first clip if empty). */
   towerClip: string;
-  /** Clip names on the assigned unit GLB (must exist on that file). */
+  /** Clip names: raw names on manifest-routed GLBs, or `stem — clipName` to borrow from `stem.glb`. */
   unitClips: Partial<Record<UnitAnimRole, string>>;
 };
 

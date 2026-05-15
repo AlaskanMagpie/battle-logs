@@ -3,7 +3,8 @@ name: animations
 description: >-
   Enumerates unit GLB animation clips, maps them to run/idle/attack/die using the same
   keyword rules as Asset Lab doctrine guessing, and uses inspect-script heuristics when
-  names are generic or post-compression. Use when the user says /animations or @animations,
+  names are generic or post-compression. Covers doctrine donor labels (`stem — clip`) and
+  the Asset Lab “animation library” merge. Use when the user says /animations or @animations,
   names a catalog id or unit GLB, reports Asset Lab clip dropdowns wrong after optimize,
   or wants batch unit animation verification without paid APIs.
 disable-model-invocation: true
@@ -25,7 +26,14 @@ Produce a **clip roster + role mapping** for a unit (or profile) so Asset Lab do
 
 Patterns: substring match on basename (case-insensitive). If the pattern contains `*` or `?`, it is treated as a glob against the **filename** (e.g. `lanternbound_line_*.glb`).
 
-Implementation: [`scripts/inspect-unit-glbs.mjs`](../../../scripts/inspect-unit-glbs.mjs). Uses Three.js GLTFLoader — same clip names Asset Lab shows (merged labels use `stem — clip.name` in [`src/dev/assetLab.ts`](../../../src/dev/assetLab.ts)).
+Implementation: [`scripts/inspect-unit-glbs.mjs`](../../../scripts/inspect-unit-glbs.mjs). Uses Three.js GLTFLoader — same clip names Asset Lab shows (merged labels use `stem — clip.name` in [`src/dev/assetLab.ts`](../../../src/dev/assetLab.ts); separator is space + U+2014 em dash + space, same as [`parseDoctrineClipRef`](../../../src/game/doctrineClipRef.ts)).
+
+## Doctrine donor clips (runtime)
+
+- Saved `unitClips` values may be **legacy** (raw `gltf.animations[].name` on the manifest-routed GLB for that role) or **merged** `fileStem — rawClipName`. Merged form pins **`fileStem.glb`** from [`public/assets/units/manifest.json`](../../../public/assets/units/manifest.json) `files` as the donor for that role and uses `rawClipName` inside [`clipForRole`](../../../src/render/glbPool.ts). Invalid donor basenames are ignored (console warning once).
+- **No retargeting**: donor clips must target the same bone / node names as the spawned unit rig. Preview can look OK while in-match looks wrong if rigs differ — verify on target unit.
+- Asset Lab: enable **Include animation library (slow)** to merge rigged profile GLBs into the clip dropdown pool; role rows default to a **keyword filter** unless **Show all clips** is checked.
+- **Optional manifest-only lite retarget** (`clipRetargetOverrides` + `stripNonRootPosition` in [`src/game/clipRetargetLimited.ts`](../../../src/game/clipRetargetLimited.ts)) still exists for hand-edited manifests and runtime in [`attachGlbByFile`](../../../src/render/glbPool.ts), but **Asset Lab and the dev POST route are disabled** (`REGISTER_CLIP_RETARGET_DEV_PLUGIN` in [`vite.config.ts`](../../../vite.config.ts)); sync still preserves the array in [`scripts/sync-unit-manifest.mjs`](../../../scripts/sync-unit-manifest.mjs).
 
 ## Workflow
 
@@ -68,7 +76,7 @@ Implementation: [`scripts/inspect-unit-glbs.mjs`](../../../scripts/inspect-unit-
 
 **Asset Lab dropdown values** (if merged): use exact strings `stem — clip.name` (filename stem plus separator plus raw clip name from inspect).
 
-**Doctrine**: set in Asset Lab or merge JSON per [doctrine skill](../doctrine/SKILL.md). Clip names in saved `unitClips` must match those dropdown strings.
+**Doctrine**: set in Asset Lab or merge JSON per [doctrine skill](../doctrine/SKILL.md). Saved `unitClips` strings must match Asset Lab dropdown values: raw names, or merged `stem — clip.name` when borrowing from another manifest GLB.
 ```
 
 6. **After optimize / import**  
@@ -81,3 +89,7 @@ Implementation: [`scripts/inspect-unit-glbs.mjs`](../../../scripts/inspect-unit-
 ## Verification
 
 Compare inspect clip **names + counts** to Asset Lab’s unit clip dropdown for the same assigned GLB(s).
+
+## See also
+
+- **Gap / missing-role sweeps** (manifest orphans, zero-motion GLBs, `producedUnitId` chain): [unit-animation-audit skill](../unit-animation-audit/SKILL.md).

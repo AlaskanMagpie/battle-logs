@@ -6,11 +6,15 @@
     "emberroot_bastion": "/assets/cards/emberroot_bastion.png",
     "firestorm": "/assets/cards/firestorm.svg",
     "fortify": "/assets/cards/fortify.svg",
+    "frostroot_keep": "/assets/cards/frostroot_keep.png",
+    "hollowmarket_stump": "/assets/cards/hollowmarket_stump.png",
     "outpost": "/assets/cards/outpost.png",
     "recycle": "/assets/cards/recycle.svg",
     "shatter": "/assets/cards/shatter.svg",
+    "townwatch_keep": "/assets/cards/townwatch_keep.png",
     "verdant_citadel": "/assets/cards/verdant_citadel.png",
     "watchtower": "/assets/cards/watchtower.png",
-    "wizard_keep": "/assets/cards/wizard_keep.svg"
+    "wizard_keep": "/assets/cards/wizard_keep.svg",
+    "wooden_aerie": "/assets/cards/wooden_aerie.png"
   }
 }

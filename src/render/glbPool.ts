@@ -5,11 +5,18 @@ import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.j
 import {
   KEEP_ID,
   PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS,
+  PRODUCED_UNIT_GALEBARK_ADEPTS,
+  PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_TOWN_LEVY,
   STRUCTURE_MESH_VISUAL_SCALE,
 } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
+import { effectiveProducedSizeClassForAssetLab } from "../game/assetLabCatalogPreview";
 import { getDoctrineForCard } from "../game/assetLabDoctrine";
+import { donorFileIsInManifest, parseDoctrineClipRef } from "../game/doctrineClipRef";
+import { applyClipRetargetOverride, type ClipRetargetOverride } from "../game/clipRetargetLimited";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
 
@@ -30,10 +37,18 @@ type UnitGlbManifest = {
   files: string[];
   animationProfiles?: UnitAnimationProfile[];
   inspections?: UnitGlbInspection[];
+  /** Optional per–spawn-id + donor-file “lite retarget” (see `clipRetargetLimited.ts`). Preserved by `sync-unit-manifest`. */
+  clipRetargetOverrides?: readonly ClipRetargetOverride[];
 };
 
 let manifest: UnitGlbManifest | undefined;
 let manifestPromise: Promise<UnitGlbManifest> | null = null;
+
+/** After dev tools patch `manifest.json`, clear cache so the next `loadManifest()` refetches. */
+export function invalidateUnitGlbManifestCache(): void {
+  manifest = undefined;
+  manifestPromise = null;
+}
 const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath("/draco/gltf/");
@@ -66,9 +81,24 @@ function isAstralKnightMergedMotionFile(file: string): boolean {
   return file.toLowerCase().includes("astral_knight_merged_animations");
 }
 
+/** Meshy Sovereign-style bipeds: merged locomotion + `mage_soell_*` / `Charged_Spell_*` + `Dead`. */
+function isSpellSovereignMergedBipedFile(file: string): boolean {
+  const f = file.toLowerCase();
+  return (
+    f.includes("frostroot_keep_guards") ||
+    f.includes("galebark_adepts") ||
+    f.includes("hollowmarket_cutpurses") ||
+    f.includes("town_levy")
+  );
+}
+
 /** Emberbound (lava monks) + Astral (chrono sentinels) — one GLB holds locomotion + combat clips. */
 function isMergedSquadMeshyPackFile(file: string): boolean {
-  return isEmberboundAsceticMergedMotionFile(file) || isAstralKnightMergedMotionFile(file);
+  return (
+    isEmberboundAsceticMergedMotionFile(file) ||
+    isAstralKnightMergedMotionFile(file) ||
+    isSpellSovereignMergedBipedFile(file)
+  );
 }
 
 /** True when the clip name reads as knockdown / death — must never feed run/idle/attack mixers. */
@@ -158,6 +188,14 @@ function pickMergedMeshyAttackClip(animations: THREE.AnimationClip[], file: stri
       if (c && ok(c)) return c;
     }
   }
+  if (isSpellSovereignMergedBipedFile(file)) {
+    const names = ["Charged_Spell_Cast_1", "mage_soell_cast_2"] as const;
+    for (const name of names) {
+      const key = name.toLowerCase();
+      const c = animations.find((x) => x.name === name) ?? animations.find((x) => leaf(x) === key);
+      if (c && ok(c)) return c;
+    }
+  }
   return null;
 }
 
@@ -171,6 +209,13 @@ function pickMergedMeshyDeathClip(animations: THREE.AnimationClip[], file: strin
       animations.find((x) => x.name === "dying_backwards") ??
       animations.find((x) => leaf(x) === "dying_backwards") ??
       animations.find((x) => /\b(dying|death|die)\b/i.test(x.name) && ok(x));
+    return c && ok(c) ? c : null;
+  }
+  if (isSpellSovereignMergedBipedFile(file)) {
+    const c =
+      animations.find((x) => x.name === "Dead") ??
+      animations.find((x) => leaf(x) === "dead") ??
+      animations.find((x) => /\b(dying|death|die|dead)\b/i.test(x.name) && ok(x));
     return c && ok(c) ? c : null;
   }
   return animations.find((x) => /\b(dying|death|die|fall)\b/i.test(x.name) && ok(x)) ?? null;
@@ -315,6 +360,10 @@ function attackPlaybackSeconds(kind: UnitSizeClass | "hero", producedUnitId?: st
   if (producedUnitId === "amber_geode_monks") return 2.12;
   if (producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) return 2.28;
   if (producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS) return 2.42;
+  if (producedUnitId === PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS) return 3.85;
+  if (producedUnitId === PRODUCED_UNIT_GALEBARK_ADEPTS) return 3.78;
+  if (producedUnitId === PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES) return 3.35;
+  if (producedUnitId === PRODUCED_UNIT_TOWN_LEVY) return 3.22;
   // Never compress attack clips to sim cooldowns. Short Meshy attacks need extra
   // visual recovery so anticipation/release/follow-through can read on screen.
   switch (kind) {
@@ -348,6 +397,7 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
     if (file.includes("amber_geode_monks_run")) playback *= 1.14;
     if (isEmberboundAsceticMergedMotionFile(file) && /\brunning\b/i.test(hay)) playback *= 1.06;
     if (isAstralKnightMergedMotionFile(file) && /\brunning\b/i.test(hay)) playback *= 0.88;
+    if (isSpellSovereignMergedBipedFile(file) && /\brunning\b/i.test(hay)) playback *= 1.04;
     return playback;
   }
   const target = /\b(walk|walking)\b/.test(hay) ? 1.22 : 1.15;
@@ -355,9 +405,10 @@ function loopPlaybackSeconds(role: "run" | "idle", clip: THREE.AnimationClip, fi
   if (file.includes("verdant_gatekeeper_reference")) playback = Math.max(playback, 1.55);
   // Idle slot uses walk clip — stretch so stance transitions don't feel twitchy.
   if (file.includes("amber_geode_monks_walk")) playback = Math.max(playback, 1.38);
-    if (isEmberboundAsceticMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.22);
-    if (isAstralKnightMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.18);
-    return playback;
+  if (isEmberboundAsceticMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.22);
+  if (isAstralKnightMergedMotionFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.18);
+  if (isSpellSovereignMergedBipedFile(file) && /\bidle\b/i.test(hay)) playback = Math.max(playback, 1.2);
+  return playback;
 }
 
 function setLoopPlayback(action: THREE.AnimationAction, clip: THREE.AnimationClip, role: "run" | "idle", file: string): void {
@@ -702,7 +753,7 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
   return score;
 }
 
-function clipForRole(
+export function clipForRole(
   animations: THREE.AnimationClip[],
   role: Exclude<UnitAnimationRole, "model">,
   file: string,
@@ -720,6 +771,16 @@ function clipForRole(
       const beam = animations.find((c) => /mage_soell_cast_3|spell[_\s-]?beam|beam/i.test(c.name) && movingTrackCount(c) > 0);
       if (beam) return beam;
       return null;
+    }
+  }
+  /** Doctrine / Asset Lab explicit clip on ordinary (non–merged-pack) GLBs — pin by exact or leaf name. */
+  if (!isMergedSquadMeshyPackFile(file)) {
+    const ex = explicitClipName?.trim();
+    if (ex) {
+      const foundEarly =
+        animations.find((c) => c.name === ex) ??
+        animations.find((c) => animClipLeafLower(c.name) === animClipLeafLower(ex));
+      if (foundEarly && movingTrackCount(foundEarly) > 0) return foundEarly;
     }
   }
   /** Emberbound + Astral merged packs: locomotion vs combat clips live in one file — pin by leaf; attacks only for attack role. */
@@ -955,6 +1016,7 @@ async function loadManifest(): Promise<UnitGlbManifest> {
           files: j.files ?? [],
           animationProfiles: j.animationProfiles ?? [],
           inspections: j.inspections ?? [],
+          clipRetargetOverrides: Array.isArray(j.clipRetargetOverrides) ? j.clipRetargetOverrides : undefined,
         };
       } catch {
         return { files: [] };
@@ -1087,21 +1149,76 @@ type AttachGlbOpts = {
   extraFootSinkWorld?: number;
 };
 
-function roleClipNamesFromAssetLabDoctrine(
+function mergeManifestAndDoctrineRoleFiles(
   producerCatalogId: string | undefined,
-): Partial<Record<"run" | "idle" | "attack" | "death", string>> | undefined {
-  if (!producerCatalogId) return undefined;
-  try {
-    const d = getDoctrineForCard(producerCatalogId);
-    const out: Partial<Record<"run" | "idle" | "attack" | "death", string>> = {};
-    if (d.unitClips.run?.trim()) out.run = d.unitClips.run.trim();
-    if (d.unitClips.idle?.trim()) out.idle = d.unitClips.idle.trim();
-    if (d.unitClips.attack?.trim()) out.attack = d.unitClips.attack.trim();
-    if (d.unitClips.die?.trim()) out.death = d.unitClips.die.trim();
-    return Object.keys(out).length ? out : undefined;
-  } catch {
-    return undefined;
+  manifestFiles: readonly string[],
+  fromManifest: {
+    runFile: string;
+    idleFile: string | null;
+    attackFile: string | null;
+    deathFile: string | null;
+  },
+): {
+  runFile: string;
+  idleFile: string | null;
+  attackFile: string | null;
+  deathFile: string | null;
+  roleClipNames?: Partial<Record<"run" | "idle" | "attack" | "death", string>>;
+} {
+  let runFile = fromManifest.runFile;
+  let idleFile = fromManifest.idleFile;
+  let attackFile = fromManifest.attackFile;
+  let deathFile = fromManifest.deathFile;
+  const rc: Partial<Record<"run" | "idle" | "attack" | "death", string>> = {};
+  if (!producerCatalogId) {
+    return { runFile, idleFile, attackFile, deathFile, roleClipNames: undefined };
   }
+  const d = getDoctrineForCard(producerCatalogId);
+  const apply = (
+    raw: string | undefined,
+    key: "run" | "idle" | "attack" | "death",
+    onDonor: (donor: string) => void,
+  ): void => {
+    const t = raw?.trim();
+    if (!t) return;
+    const p = parseDoctrineClipRef(t);
+    if (!p) return;
+    if (p.donorFile) {
+      if (!donorFileIsInManifest(p.donorFile, manifestFiles)) {
+        const wk = `doctrineDonor:${producerCatalogId}:${key}:${p.donorFile}`;
+        if (!warnedAnimationRoles.has(wk)) {
+          warnedAnimationRoles.add(wk);
+          console.warn(
+            `[glb] Doctrine donor "${p.donorFile}" not in manifest files; ignoring override for role "${key}" on ${producerCatalogId}.`,
+          );
+        }
+        return;
+      }
+      onDonor(p.donorFile);
+      rc[key] = p.clipName;
+    } else {
+      rc[key] = p.clipName;
+    }
+  };
+  apply(d.unitClips.run, "run", (donor) => {
+    runFile = donor;
+  });
+  apply(d.unitClips.idle, "idle", (donor) => {
+    idleFile = donor;
+  });
+  apply(d.unitClips.attack, "attack", (donor) => {
+    attackFile = donor;
+  });
+  apply(d.unitClips.die, "death", (donor) => {
+    deathFile = donor;
+  });
+  return {
+    runFile,
+    idleFile,
+    attackFile,
+    deathFile,
+    roleClipNames: Object.keys(rc).length ? rc : undefined,
+  };
 }
 
 async function attachGlbByFile(
@@ -1136,6 +1253,20 @@ async function attachGlbByFile(
     const attackFile = opts?.attackFile;
     const deathFile = opts?.deathFile;
     const rc = opts?.roleClipNames;
+    const retargetManifest = await loadManifest();
+    const producedUnitIdForRetarget = parent.userData["producedUnitId"] as string | undefined;
+    const applyRt = (
+      c: THREE.AnimationClip | null,
+      donor: string,
+      role: "run" | "idle" | "attack" | "death",
+    ): THREE.AnimationClip | null =>
+      c
+        ? applyClipRetargetOverride(c, retargetManifest, {
+            producedUnitId: producedUnitIdForRetarget,
+            donorFile: donor,
+            role,
+          })
+        : null;
     const roleTemplateFor = (roleFile: string): Promise<GltfTemplate> =>
       roleFile === file ? Promise.resolve(template) : loadGltfTemplate(`/assets/units/${roleFile}`);
     const runTemplatePromise = roleTemplateFor(runFile);
@@ -1168,7 +1299,7 @@ async function attachGlbByFile(
     let mixer: THREE.AnimationMixer | null = null;
     const runTemplate = await runTemplatePromise;
     if (runTemplate.animations.length > 0) {
-      const clipRaw = clipForRole(runTemplate.animations, "run", runFile, rc?.run);
+      const clipRaw = applyRt(clipForRole(runTemplate.animations, "run", runFile, rc?.run), runFile, "run");
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         parent.userData["glbRunPickClip"] = clipRaw;
@@ -1190,7 +1321,7 @@ async function attachGlbByFile(
     const loadIdle = !!idleFile;
     if (loadIdle) {
       const idleTemplate = await idleTemplatePromise!;
-      const clipRawIdle = clipForRole(idleTemplate.animations, "idle", idleFile, rc?.idle);
+      const clipRawIdle = applyRt(clipForRole(idleTemplate.animations, "idle", idleFile, rc?.idle), idleFile, "idle");
       if (clipRawIdle) {
         const runPick = parent.userData["glbRunPickClip"] as THREE.AnimationClip | undefined;
         if (runPick && clipRawIdle === runPick) {
@@ -1214,7 +1345,7 @@ async function attachGlbByFile(
     const attackPlaybackFloor = Math.max(opts?.attackPlaybackSeconds ?? 1.48, 1.48);
     if (attackFile) {
       const attackTemplate = await attackTemplatePromise!;
-      const clipRaw = clipForRole(attackTemplate.animations, "attack", attackFile, rc?.attack);
+      const clipRaw = applyRt(clipForRole(attackTemplate.animations, "attack", attackFile, rc?.attack), attackFile, "attack");
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
@@ -1223,7 +1354,8 @@ async function attachGlbByFile(
           attackFile.includes("amber_geode_monks_attack") ||
             isAzureSpearSwarmFile(attackFile) ||
             isEmberboundAsceticMergedMotionFile(attackFile) ||
-            isAstralKnightMergedMotionFile(attackFile),
+            isAstralKnightMergedMotionFile(attackFile) ||
+            isSpellSovereignMergedBipedFile(attackFile),
         );
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
@@ -1239,7 +1371,7 @@ async function attachGlbByFile(
     }
     if (deathFile) {
       const deathTemplate = await deathTemplatePromise!;
-      const clipRaw = clipForRole(deathTemplate.animations, "death", deathFile, rc?.death);
+      const clipRaw = applyRt(clipForRole(deathTemplate.animations, "death", deathFile, rc?.death), deathFile, "death");
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
@@ -1326,17 +1458,23 @@ export async function attachGlbForClass(
   if (producedUnitId) parent.userData["producedUnitId"] = producedUnitId;
   const roleLabel =
     producedUnitId !== undefined && producedUnitId.length > 0 ? `${kind}:${producedUnitId}` : kind;
-  const roleClipNames = roleClipNamesFromAssetLabDoctrine(producerCatalogId);
+  const manifestRun = runFileForUnit(kind, producedUnitId, m);
+  const merged = mergeManifestAndDoctrineRoleFiles(producerCatalogId, m.files, {
+    runFile: manifestRun ?? file,
+    idleFile: idleFileForUnit(kind, producedUnitId, m),
+    attackFile: attackFileForUnit(kind, producedUnitId, m),
+    deathFile: deathFileForUnit(kind, producedUnitId, m),
+  });
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
     ...(teamTint ? { teamTint } : {}),
-    runFile: runFileForUnit(kind, producedUnitId, m),
-    attackFile: attackFileForUnit(kind, producedUnitId, m),
-    idleFile: idleFileForUnit(kind, producedUnitId, m),
-    deathFile: deathFileForUnit(kind, producedUnitId, m),
+    runFile: merged.runFile,
+    attackFile: merged.attackFile,
+    idleFile: merged.idleFile,
+    deathFile: merged.deathFile,
     attackPlaybackSeconds: attackPlaybackSeconds(kind, producedUnitId),
     animationRoleLabel: roleLabel,
     keepPlaceholderHidden: true,
-    ...(roleClipNames ? { roleClipNames } : {}),
+    ...(merged.roleClipNames ? { roleClipNames: merged.roleClipNames } : {}),
   });
 }
 
@@ -1371,6 +1509,10 @@ const TOWER_GLB_MANIFEST_ORDER = [
   "verdant_citadel",
   "emberroot_bastion",
   "aionroot_observatory",
+  "frostroot_keep",
+  "wooden_aerie",
+  "hollowmarket_stump",
+  "townwatch_keep",
 ] as const;
 
 const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
@@ -1384,6 +1526,14 @@ const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
   emberroot_bastion: "lava tower.glb",
   /** Aionroot Observatory — chrono / observatory tower shell. */
   aionroot_observatory: "chrono tower.glb",
+  /** Frostroot Keep — snow-covered tower shell. */
+  frostroot_keep: "snow tower.glb",
+  /** Wooden Aerie — forest aerie tower shell (decoded from Meshy Draco export). */
+  wooden_aerie: "wooden_aerie_tower.glb",
+  /** Hollowmarket Stump — compressed hollow-tree market shell (replaces legacy `trade tower.glb`). */
+  hollowmarket_stump: "hollowmarket_stump_compressed.glb",
+  /** Townwatch Keep — circular stone keep + town shell (Draco-compressed Meshy export). */
+  townwatch_keep: "townwatch_keep_tower.glb",
   verdant_citadel: "verdant_citadel_titan_base.glb",
 };
 
@@ -1431,7 +1581,8 @@ export async function getAssetLabTowerAndUnitGlbFiles(catalogId: string): Promis
   const entry = getCatalogEntry(catalogId);
   if (!entry || isCommandEntry(entry)) return { towerFile: null, unitFile: null };
   const towerFile = pickTowerFile(catalogId, m);
-  const unitFile = pickFileForUnit(entry.producedSizeClass, entry.producedUnitId, m);
+  const kind = effectiveProducedSizeClassForAssetLab(catalogId, entry.producedSizeClass);
+  const unitFile = pickFileForUnit(kind, entry.producedUnitId, m);
   return { towerFile, unitFile };
 }
 
@@ -1443,7 +1594,7 @@ export async function getAssetLabUnitExtraAnimationFiles(catalogId: string): Pro
   const m = await loadManifest();
   const entry = getCatalogEntry(catalogId);
   if (!entry || isCommandEntry(entry)) return [];
-  const kind = entry.producedSizeClass;
+  const kind = effectiveProducedSizeClassForAssetLab(catalogId, entry.producedSizeClass);
   const pid = entry.producedUnitId;
   const base = pickFileForUnit(kind, pid, m);
   if (!base) return [];
@@ -1453,6 +1604,31 @@ export async function getAssetLabUnitExtraAnimationFiles(catalogId: string): Pro
     deathFileForUnit(kind, pid, m),
   ].filter((f): f is string => typeof f === "string" && f.length > 0 && f !== base);
   return [...new Set(parts)];
+}
+
+/**
+ * Rigged unit / profile GLBs suitable for borrowing clips in Asset Lab (curated, not every tower shell).
+ * Union of `animationProfiles` file lists and manifest-inspected rigged animated meshes.
+ */
+export async function getAssetLabBipedLibraryGlbFiles(): Promise<readonly string[]> {
+  const m = await loadManifest();
+  const set = new Set<string>();
+  for (const p of m.animationProfiles ?? []) {
+    for (const f of p.files ?? []) set.add(f);
+    for (const v of Object.values(p.roles ?? {})) {
+      if (v) set.add(v);
+    }
+  }
+  for (const f of m.files) {
+    if (f.endsWith("_building.glb")) continue;
+    if (isRiggedUnitFallbackFile(m, f)) set.add(f);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/** Full `manifest.json` (files, profiles, inspections, optional `clipRetargetOverrides`). */
+export async function getUnitGlbManifest(): Promise<UnitGlbManifest> {
+  return loadManifest();
 }
 
 /** Root-relative GLB URL for HUD doctrine thumbnails when no `/assets/cards/*.png` exists (tower mesh only). */

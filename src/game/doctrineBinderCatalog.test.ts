@@ -8,8 +8,12 @@ import {
   KEEP_ID,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS,
+  PRODUCED_UNIT_GALEBARK_ADEPTS,
+  PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_TOWN_LEVY,
 } from "./constants";
 import { productionBatchSizeForClass } from "./sim/systems/helpers";
 import { CATALOG, getCatalogEntry, STRUCTURES } from "./catalog";
@@ -35,6 +39,10 @@ describe("Doctrine binder catalog", () => {
       "verdant_citadel",
       "emberroot_bastion",
       "aionroot_observatory",
+      "frostroot_keep",
+      "wooden_aerie",
+      "hollowmarket_stump",
+      "townwatch_keep",
     ]);
   });
 
@@ -102,5 +110,25 @@ describe("Doctrine binder catalog", () => {
   it("only Aionroot Observatory uses the Chrono Sentinels spawn profile (astral knight merged clips)", () => {
     const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS).map((s) => s.id);
     expect(ids).toEqual(["aionroot_observatory"]);
+  });
+
+  it("only Frostroot Keep uses the frostroot_keep_guards animation profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS).map((s) => s.id);
+    expect(ids).toEqual(["frostroot_keep"]);
+  });
+
+  it("only Wooden Aerie uses the galebark_adepts animation profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_GALEBARK_ADEPTS).map((s) => s.id);
+    expect(ids).toEqual(["wooden_aerie"]);
+  });
+
+  it("only Hollowmarket Stump uses the hollowmarket_cutpurses animation profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES).map((s) => s.id);
+    expect(ids).toEqual(["hollowmarket_stump"]);
+  });
+
+  it("only Townwatch Keep uses the town_levy animation profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_TOWN_LEVY).map((s) => s.id);
+    expect(ids).toEqual(["townwatch_keep"]);
   });
 });

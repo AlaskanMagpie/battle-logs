@@ -12,6 +12,10 @@ const FULL_ART_STRUCTURE_CARD_IDS = [
   "verdant_citadel",
   "emberroot_bastion",
   "aionroot_observatory",
+  "frostroot_keep",
+  "wooden_aerie",
+  "hollowmarket_stump",
+  "townwatch_keep",
 ] as const;
 const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
 /** Quick match / binder codex: full-art structure cards in the codex + command spells only (no legacy catalog towers). */
@@ -32,7 +36,7 @@ export const QUICK_MATCH_DOCTRINE_SLOTS: readonly (string | null)[] = [
   "bastion_keep",
   "verdant_citadel",
   "emberroot_bastion",
-  "aionroot_observatory",
+  "wooden_aerie",
   "firestorm",
   "fortify",
   "recycle",

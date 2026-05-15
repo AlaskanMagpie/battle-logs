@@ -22,7 +22,11 @@
     "emberbound_ascetic_character.glb",
     "emberbound_ascetic_merged_animations.glb",
     "fallen gates tower.glb",
+    "frostroot_keep_guards.glb",
+    "galebark_adepts.glb",
     "geode monks tower.glb",
+    "hollowmarket_cutpurses.glb",
+    "hollowmarket_stump_compressed.glb",
     "lanternbound_line_attack_triple_combo.glb",
     "lanternbound_line_bow_charge.glb",
     "lanternbound_line_combat_stance.glb",
@@ -35,14 +39,16 @@
     "snow tower.glb",
     "starbound_arcanist_hero.glb",
     "town levy tower.glb",
-    "trade tower.glb",
+    "town_levy.glb",
+    "townwatch_keep_tower.glb",
     "verdant_citadel_titan_base.glb",
     "verdant_gatekeeper_reference_running.glb",
     "verdant_gatekeeper_reference_walking.glb",
     "verdant_gatekeeper_titan_attack.glb",
     "verdant_gatekeeper_titan_model.glb",
     "verdant_gatekeeper_titan_run.glb",
-    "watchtower.glb"
+    "watchtower.glb",
+    "wooden_aerie_tower.glb"
   ],
   "animationProfiles": [
     {
@@ -135,6 +141,48 @@
       ]
     },
     {
+      "id": "frostroot_keep_guards",
+      "sizeClass": "Line",
+      "roles": {
+        "model": "frostroot_keep_guards.glb",
+        "run": "frostroot_keep_guards.glb",
+        "idle": "frostroot_keep_guards.glb",
+        "attack": "frostroot_keep_guards.glb",
+        "death": "frostroot_keep_guards.glb"
+      },
+      "files": [
+        "frostroot_keep_guards.glb"
+      ]
+    },
+    {
+      "id": "galebark_adepts",
+      "sizeClass": "Heavy",
+      "roles": {
+        "model": "galebark_adepts.glb",
+        "run": "galebark_adepts.glb",
+        "idle": "galebark_adepts.glb",
+        "attack": "galebark_adepts.glb",
+        "death": "galebark_adepts.glb"
+      },
+      "files": [
+        "galebark_adepts.glb"
+      ]
+    },
+    {
+      "id": "hollowmarket_cutpurses",
+      "sizeClass": "Swarm",
+      "roles": {
+        "model": "hollowmarket_cutpurses.glb",
+        "run": "hollowmarket_cutpurses.glb",
+        "idle": "hollowmarket_cutpurses.glb",
+        "attack": "hollowmarket_cutpurses.glb",
+        "death": "hollowmarket_cutpurses.glb"
+      },
+      "files": [
+        "hollowmarket_cutpurses.glb"
+      ]
+    },
+    {
       "id": "lanternbound_line",
       "sizeClass": "Line",
       "roles": {
@@ -169,6 +217,20 @@
       ]
     },
     {
+      "id": "town_levy",
+      "sizeClass": "Swarm",
+      "roles": {
+        "model": "town_levy.glb",
+        "run": "town_levy.glb",
+        "idle": "town_levy.glb",
+        "attack": "town_levy.glb",
+        "death": "town_levy.glb"
+      },
+      "files": [
+        "town_levy.glb"
+      ]
+    },
+    {
       "id": "verdant_gatekeeper_reference",
       "roles": {
         "model": "verdant_gatekeeper_reference_running.glb",
@@ -199,7 +261,7 @@
   "inspections": [
     {
       "file": "acrobat_compressed.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -423,28 +485,28 @@
     },
     {
       "file": "bastion_keep_compressed.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "chrono tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "dragon's roost.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "driftwood_oasis_compressed.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "Image is not defined",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -528,14 +590,147 @@
     },
     {
       "file": "fallen gates tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
+      "file": "frostroot_keep_guards.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Charged_Spell_Cast_1",
+          "duration": 4.3,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Dead",
+          "duration": 2.967,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Idle_8",
+          "duration": 8,
+          "tracks": 72,
+          "movingTracks": 35,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Running",
+          "duration": 0.633,
+          "tracks": 72,
+          "movingTracks": 40,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Walking",
+          "duration": 1.033,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast_2",
+          "duration": 3,
+          "tracks": 72,
+          "movingTracks": 43,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
+      "file": "galebark_adepts.glb",
+      "skinnedMeshes": 1,
+      "bones": 24,
+      "animations": [
+        {
+          "name": "Charged_Spell_Cast_1",
+          "duration": 0.633,
+          "tracks": 72,
+          "movingTracks": 32,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Dead",
+          "duration": 3.333,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Idle_5",
+          "duration": 1.867,
+          "tracks": 72,
+          "movingTracks": 33,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Running",
+          "duration": 1.033,
+          "tracks": 72,
+          "movingTracks": 36,
+          "scaleTracks": 24
+        },
+        {
+          "name": "Walking",
+          "duration": 3,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast_2",
+          "duration": 2.7,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast_3",
+          "duration": 2.267,
+          "tracks": 72,
+          "movingTracks": 38,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast_7",
+          "duration": 4.3,
+          "tracks": 72,
+          "movingTracks": 37,
+          "scaleTracks": 24
+        },
+        {
+          "name": "mage_soell_cast",
+          "duration": 2.967,
+          "tracks": 72,
+          "movingTracks": 34,
+          "scaleTracks": 24
+        }
+      ]
+    },
+    {
       "file": "geode monks tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "hollowmarket_cutpurses.glb",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "hollowmarket_stump_compressed.glb",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -646,14 +841,14 @@
     },
     {
       "file": "oasis.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "snow tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -751,21 +946,28 @@
     },
     {
       "file": "town levy tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
-      "file": "trade tower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "file": "town_levy.glb",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "townwatch_keep_tower.glb",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
     },
     {
       "file": "verdant_citadel_titan_base.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []
@@ -842,7 +1044,13 @@
     },
     {
       "file": "watchtower.glb",
-      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "wooden_aerie_tower.glb",
       "skinnedMeshes": 0,
       "bones": 0,
       "animations": []

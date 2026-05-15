@@ -112,6 +112,10 @@ const FULL_ART_STRUCTURE_CARD_IDS = [
   "verdant_citadel",
   "emberroot_bastion",
   "aionroot_observatory",
+  "frostroot_keep",
+  "wooden_aerie",
+  "hollowmarket_stump",
+  "townwatch_keep",
 ] as const;
 const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
 /** Codex panel order: updated visual structure cards + legacy spell/command placeholders only. */
@@ -132,7 +136,9 @@ const QUICK_PICK_IDS: readonly string[] = [
   "bastion_keep",
   "verdant_citadel",
   "emberroot_bastion",
-  "aionroot_observatory",
+  "wooden_aerie",
+  "hollowmarket_stump",
+  "townwatch_keep",
   "firestorm",
   "fortify",
   "recycle",

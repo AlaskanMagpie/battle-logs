@@ -23,8 +23,12 @@ import {
   FORMATION_MARCH_SPEED_MULT,
   PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS,
+  PRODUCED_UNIT_GALEBARK_ADEPTS,
+  PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_TOWN_LEVY,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
@@ -165,9 +169,13 @@ describe("doctrine card playability", () => {
 describe("batch production", () => {
   it.each([
     ["watchtower", "Swarm", 4, PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS],
+    ["hollowmarket_stump", "Swarm", 4, PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES],
+    ["townwatch_keep", "Swarm", 4, PRODUCED_UNIT_TOWN_LEVY],
     ["emberroot_bastion", "Line", 3, PRODUCED_UNIT_LAVA_WIZARD_MONKS],
     ["outpost", "Line", 3, PRODUCED_UNIT_LANTERNBOUND_LINE],
     ["bastion_keep", "Heavy", 2, PRODUCED_UNIT_AMBER_GEODE_MONKS],
+    ["wooden_aerie", "Heavy", 2, PRODUCED_UNIT_GALEBARK_ADEPTS],
+    ["frostroot_keep", "Line", 3, PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS],
     ["verdant_citadel", "Titan", 1, undefined],
   ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);

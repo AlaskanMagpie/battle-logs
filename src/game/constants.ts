@@ -31,6 +31,14 @@ export const PRODUCED_UNIT_AMBER_GEODE_MONKS = "amber_geode_monks";
 export const PRODUCED_UNIT_LAVA_WIZARD_MONKS = "emberbound_ascetic_merged_animations";
 /** Aionroot Observatory — `astral_knight_merged_animations.glb` (Meshy Astral Knight merged clips). */
 export const PRODUCED_UNIT_CHRONO_SENTINELS = "astral_knight_merged_animations";
+/** Frostroot Keep — merged Frostwarden biped (`frostroot_keep_guards.glb`). */
+export const PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS = "frostroot_keep_guards";
+/** Wooden Aerie — merged Barkbound Sovereign biped (`galebark_adepts.glb`). */
+export const PRODUCED_UNIT_GALEBARK_ADEPTS = "galebark_adepts";
+/** Hollowmarket Stump — merged Gilded Shadow assassin biped (`hollowmarket_cutpurses.glb`). */
+export const PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES = "hollowmarket_cutpurses";
+/** Townwatch Keep — merged Town Levy militia swarm (`town_levy.glb`; manual profile for Node Draco inspect). */
+export const PRODUCED_UNIT_TOWN_LEVY = "town_levy";
 
 /** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
 export const PLAYER_STARTING_FLUX = 380;
@@ -137,6 +145,9 @@ export const TAP_ANCHOR_STRIKE_RADIUS = 7;
 
 /** Build / place proximity to Tap or Keep (world units). */
 export const INFRA_PLACE_RADIUS = 18;
+
+/** Doctrine structure placement: union disc vs static map obstacles (`circleOverlapsMapObstacles`). */
+export const STRUCTURE_MAP_OBSTACLE_RADIUS = 6;
 
 /** Forward placement: near friendly unit/structure but not near infra (world units). */
 export const FORWARD_PLACE_RADIUS = 10;

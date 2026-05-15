@@ -4,7 +4,14 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CATALOG, getCatalogEntry } from "../game/catalog";
 import { isCommandEntry } from "../game/types";
-import { getAssetLabTowerAndUnitGlbFiles, getAssetLabUnitExtraAnimationFiles } from "../render/glbPool";
+import type { UnitSizeClass } from "../game/types";
+import { unitClassBalancePointForClass } from "../game/balance";
+import {
+  effectiveProducedSizeClassForAssetLab,
+  setAssetLabProducedSizeClassPreview,
+} from "../game/assetLabCatalogPreview";
+import { productionBatchSizeForClass } from "../game/sim/systems/helpers";
+import { getAssetLabTowerAndUnitGlbFiles, getAssetLabUnitExtraAnimationFiles, getAssetLabBipedLibraryGlbFiles } from "../render/glbPool";
 import {
   clearDoctrineForCard,
   exportDoctrineStoreJson,
@@ -21,16 +28,24 @@ import {
   getOverlayFieldVisibilityForCard,
   installCardArtOverlayCalibrator,
   refreshCardArtOverlayUi,
+  resyncCardArtOverlayDomForCatalog,
+  resolvedOverlayWriteKeyForFetch,
   setCardArtOverlayDevOverrides,
   setCardOverlayEditorMount,
   setCardOverlayWriteKey,
   setOverlayFieldVisibilityForCard,
 } from "../ui/cardArtOverlay";
-import { getCardArtUrl } from "../ui/cardArtManifest";
+import { getCardArtUrl, resetCardArtManifestCache } from "../ui/cardArtManifest";
 
 const SESSION_KEY = "battleLogs.assetLab.overlayKey";
 const FLEX_STORAGE_KEY = "battleLogs.assetLab.portFlex";
 const CARD_ZOOM_STORAGE_KEY = "battleLogs.assetLab.cardZoom";
+const SIZE_PREVIEW_STORAGE_KEY = "battleLogs.assetLab.producedSizePreview.v1";
+const ASSET_LAB_ANIM_LIB_KEY = "battleLogs.assetLab.includeAnimLibrary.v1";
+const ASSET_LAB_ANIM_SHOW_ALL_KEY = "battleLogs.assetLab.animShowAllClips.v1";
+
+const animLibraryCb = document.querySelector<HTMLInputElement>("#al-anim-library");
+const animShowAllCb = document.querySelector<HTMLInputElement>("#al-anim-show-all");
 
 const NORM_SCALE = 2.15;
 
@@ -77,6 +92,12 @@ const doctrineResetBtn = document.querySelector<HTMLButtonElement>("#al-doctrine
 const doctrineExportBtn = document.querySelector<HTMLButtonElement>("#al-doctrine-export");
 const doctrineImportBtn = document.querySelector<HTMLButtonElement>("#al-doctrine-import-btn");
 const doctrineImportInput = document.querySelector<HTMLInputElement>("#al-doctrine-import");
+const cardDropZone = document.querySelector<HTMLElement>("#al-card-drop-zone")!;
+const cardHintEl = document.querySelector<HTMLElement>("#al-card-hint")!;
+const unitClassWrap = document.querySelector<HTMLElement>("#al-unit-class-wrap")!;
+const sizeClassPreviewSelect = document.querySelector<HTMLSelectElement>("#al-size-class-preview")!;
+const catalogClassBadge = document.querySelector<HTMLElement>("#al-catalog-class-badge")!;
+const classBalanceEl = document.querySelector<HTMLElement>("#al-class-balance")!;
 
 const animRoleSelects = UNIT_ANIM_ROLES.reduce(
   (acc, role) => {
@@ -219,9 +240,13 @@ function setupOverlayFieldToggles(): void {
   }
 }
 
-function mountCardPreview(catalogId: string): void {
+function mountCardPreview(catalogId: string, imageLabBust?: number): void {
   void (async () => {
-    const url = await getCardArtUrl(catalogId);
+    let url = await getCardArtUrl(catalogId);
+    if (url != null && imageLabBust != null) {
+      const sep = url.includes("?") ? "&" : "?";
+      url = `${url}${sep}lab=${imageLabBust}`;
+    }
     const esc = (s: string) =>
       s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     cardFrame.innerHTML = url
@@ -283,6 +308,50 @@ function normalizeRootInPivot(root: THREE.Object3D): void {
   root.position.set(-center.x * s, -box.min.y * s, -center.z * s);
 }
 
+function loadAnimDoctrineUiFromStorage(): void {
+  try {
+    if (animLibraryCb) animLibraryCb.checked = localStorage.getItem(ASSET_LAB_ANIM_LIB_KEY) === "1";
+    if (animShowAllCb) animShowAllCb.checked = localStorage.getItem(ASSET_LAB_ANIM_SHOW_ALL_KEY) === "1";
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+function saveAnimLibraryToStorage(): void {
+  try {
+    localStorage.setItem(ASSET_LAB_ANIM_LIB_KEY, animLibraryCb?.checked ? "1" : "0");
+  } catch {
+    /* */
+  }
+}
+
+function saveAnimShowAllToStorage(): void {
+  try {
+    localStorage.setItem(ASSET_LAB_ANIM_SHOW_ALL_KEY, animShowAllCb?.checked ? "1" : "0");
+  } catch {
+    /* */
+  }
+}
+
+/** Keywords aligned with `guessUnitClipsFromNames` — used to shorten role dropdowns unless “show all”. */
+const ROLE_CLIP_FILTER_KEYS: Record<UnitAnimRole, readonly string[]> = {
+  run: ["running", "run", "sprint", "jog", "move"],
+  idle: ["idle", "stand", "breath", "stance", "combat"],
+  attack: ["attack", "slash", "strike", "swing", "cast", "combo", "charge"],
+  die: ["die", "death", "dead", "knock", "dying"],
+};
+
+function clipLabelMatchesRoleRow(name: string, role: UnitAnimRole): boolean {
+  const n = name.toLowerCase();
+  return ROLE_CLIP_FILTER_KEYS[role].some((k) => n.includes(k));
+}
+
+function refreshRoleClipDropdowns(): void {
+  if (!unitSlot.clips.length) return;
+  fillRoleClipSelects(unitSlot.clips);
+  syncAnimRoleSelectsFromDoctrine(currentCatalogId());
+}
+
 function fillClipSelect(sel: HTMLSelectElement, clips: THREE.AnimationClip[]): void {
   sel.innerHTML = "";
   for (const c of clips) {
@@ -310,6 +379,175 @@ function playSlotNamed(slot: AnimSlot, clipName: string): void {
 
 function currentCatalogId(): string {
   return cardIdSelect.value;
+}
+
+function loadSizePreviewMap(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(SIZE_PREVIEW_STORAGE_KEY);
+    if (!raw) return {};
+    const j = JSON.parse(raw) as unknown;
+    return typeof j === "object" && j !== null && !Array.isArray(j) ? (j as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSizePreviewMap(m: Record<string, string>): void {
+  try {
+    sessionStorage.setItem(SIZE_PREVIEW_STORAGE_KEY, JSON.stringify(m));
+  } catch {
+    /* ignore */
+  }
+}
+
+function storedPreviewClassForCard(id: string): UnitSizeClass | null {
+  const v = loadSizePreviewMap()[id];
+  if (v === "Swarm" || v === "Line" || v === "Heavy" || v === "Titan") return v;
+  return null;
+}
+
+function persistPreviewClassForCard(id: string, c: UnitSizeClass | null): void {
+  const m = loadSizePreviewMap();
+  if (c == null) delete m[id];
+  else m[id] = c;
+  saveSizePreviewMap(m);
+}
+
+function updateClassBalanceReadout(catalogId: string): void {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) {
+    catalogClassBadge.textContent = "";
+    classBalanceEl.innerHTML = "";
+    return;
+  }
+  const catC = entry.producedSizeClass;
+  const eff = effectiveProducedSizeClassForAssetLab(catalogId, catC);
+  const batch = productionBatchSizeForClass(eff);
+  const bp = unitClassBalancePointForClass(eff);
+
+  catalogClassBadge.textContent =
+    eff === catC
+      ? `Data class: ${catC} — batch on card art: ${batch}x`
+      : `Data class: ${catC} — preview class: ${eff} — batch on card art: ${batch}x`;
+
+  const rows: [string, string][] = [
+    ["Batch (overlay)", `${batch}x per production tick`],
+    ["Guide flux cost", `${bp.cost} <span class="al-muted">(this card ${entry.fluxCost})</span>`],
+    ["Guide tower HP", `${bp.structureHp} <span class="al-muted">(this card ${entry.maxHp})</span>`],
+    ["Guide prod interval", `${bp.productionSeconds}s <span class="al-muted">(this card ${entry.productionSeconds}s)</span>`],
+    ["Guide charge CD", `${bp.cooldownSeconds}s <span class="al-muted">(this card ${entry.chargeCooldownSeconds}s)</span>`],
+  ];
+  classBalanceEl.innerHTML = `<div class="al-muted" style="margin-bottom:4px">Smooth balance curve for <strong>${eff}</strong> — catalog numbers on the card stay in the right column.</div><table>${rows
+    .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${v}</td></tr>`)
+    .join("")}</table>`;
+}
+
+function syncUnitClassPanelForCatalog(catalogId: string): void {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) {
+    unitClassWrap.hidden = true;
+    setAssetLabProducedSizeClassPreview(catalogId, null);
+    return;
+  }
+  unitClassWrap.hidden = false;
+  const catC = entry.producedSizeClass;
+  const stored = storedPreviewClassForCard(catalogId);
+  const opt0 = sizeClassPreviewSelect.querySelector("option");
+  if (opt0) opt0.textContent = `Match catalog (${catC})`;
+  sizeClassPreviewSelect.value = stored ?? "";
+  setAssetLabProducedSizeClassPreview(catalogId, stored);
+  updateClassBalanceReadout(catalogId);
+}
+
+function inferCardArtExt(file: File): string | null {
+  const n = file.name.toLowerCase();
+  if (n.endsWith(".png")) return "png";
+  if (n.endsWith(".webp")) return "webp";
+  if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "jpg";
+  if (n.endsWith(".svg")) return "svg";
+  const t = file.type.toLowerCase();
+  if (t === "image/png") return "png";
+  if (t === "image/webp") return "webp";
+  if (t === "image/jpeg") return "jpg";
+  if (t === "image/svg+xml") return "svg";
+  return null;
+}
+
+function setupCardArtDragAndDrop(zone: HTMLElement, hint: HTMLElement, defaultHintHtml: string): void {
+  let dragDepth = 0;
+  const setHover = (on: boolean) => {
+    zone.classList.toggle("al-card-drop--hover", on);
+  };
+
+  zone.addEventListener("dragenter", (e) => {
+    e.preventDefault();
+    dragDepth++;
+    if ([...(e.dataTransfer?.types ?? [])].includes("Files")) setHover(true);
+  });
+  zone.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) setHover(false);
+  });
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    setHover(false);
+    void handleCardArtFileDrop(e, hint, defaultHintHtml);
+  });
+}
+
+async function handleCardArtFileDrop(
+  e: DragEvent,
+  hint: HTMLElement,
+  defaultHintHtml: string,
+): Promise<void> {
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  const ext = inferCardArtExt(file);
+  if (!ext) {
+    hint.innerHTML = `<span class="al-warn">Not a supported image (use PNG, WebP, JPG, or SVG).</span>`;
+    window.setTimeout(() => {
+      hint.innerHTML = defaultHintHtml;
+    }, 4500);
+    return;
+  }
+  const catalogId = currentCatalogId();
+  hint.innerHTML = `<span class="al-ok">Uploading <code>${catalogId}.${ext}</code>…</span> (running cards pipeline — may take a few seconds)`;
+  try {
+    const buf = await file.arrayBuffer();
+    const res = await fetch("/__card-art-upload", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Catalog-Id": catalogId,
+        "X-Card-Art-Ext": ext,
+        "X-Card-Overlay-Write-Key": resolvedOverlayWriteKeyForFetch(),
+      },
+      body: buf,
+    });
+    const msg = await res.text();
+    if (!res.ok) throw new Error(msg || `HTTP ${res.status}`);
+    resetCardArtManifestCache();
+    mountCardPreview(catalogId, Date.now());
+    hint.innerHTML = `<span class="al-ok">Saved</span> <code>public/assets/cards/${catalogId}.${ext}</code> — preview refreshed.`;
+    window.setTimeout(() => {
+      hint.innerHTML = defaultHintHtml;
+    }, 7000);
+  } catch (err) {
+    hint.innerHTML = `<span class="al-warn">Card upload failed:</span> ${escapeHtml(err instanceof Error ? err.message : String(err))}`;
+    window.setTimeout(() => {
+      hint.innerHTML = defaultHintHtml;
+    }, 10000);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function effectiveTowerFile(catalogId: string, routed: string | null): string | null {
@@ -355,6 +593,9 @@ function syncTowerUnitSelectsFromDoctrine(catalogId: string): void {
 }
 
 function fillRoleClipSelects(clips: THREE.AnimationClip[]): void {
+  const showAll = animShowAllCb?.checked ?? false;
+  const catalogId = currentCatalogId();
+  const d = getDoctrineForCard(catalogId);
   for (const role of UNIT_ANIM_ROLES) {
     const sel = animRoleSelects[role];
     sel.innerHTML = "";
@@ -362,7 +603,14 @@ function fillRoleClipSelects(clips: THREE.AnimationClip[]): void {
     optAuto.value = "";
     optAuto.textContent = "— Auto (name guess) —";
     sel.append(optAuto);
-    for (const c of clips) {
+    let list = showAll ? clips : clips.filter((c) => clipLabelMatchesRoleRow(c.name, role));
+    const want = d.unitClips[role]?.trim() ?? "";
+    if (!showAll && want && !list.some((c) => c.name === want)) {
+      const hit = clips.find((c) => c.name === want);
+      if (hit) list = [hit, ...list];
+    }
+    if (list.length === 0) list = [...clips];
+    for (const c of list) {
       const opt = document.createElement("option");
       opt.value = c.name;
       opt.textContent = `${c.name} (${c.duration.toFixed(2)}s)`;
@@ -635,17 +883,35 @@ async function loadCatalogPair(catalogId: string): Promise<void> {
     /** Merge idle/attack/death GLBs (same rig) whenever the effective unit file is still the catalog route — not only when the dropdown says "Default". Picking the default file explicitly used to skip merge and left role dropdowns with a single run clip. */
     const routedUnitFile = routed.unitFile;
     const useMergedCatalogClips = Boolean(routedUnitFile && unitFile === routedUnitFile);
-    const extraFiles = useMergedCatalogClips ? await getAssetLabUnitExtraAnimationFiles(catalogId) : [];
+    const manifestExtras = useMergedCatalogClips ? await getAssetLabUnitExtraAnimationFiles(catalogId) : [];
+    let extraFiles = [...manifestExtras];
+    if (useMergedCatalogClips && animLibraryCb?.checked) {
+      const lib = await getAssetLabBipedLibraryGlbFiles();
+      const seen = new Set<string>([unitFile, ...manifestExtras]);
+      for (const f of lib) {
+        if (!seen.has(f)) {
+          seen.add(f);
+          extraFiles.push(f);
+        }
+      }
+    }
     const ok =
       useMergedCatalogClips && extraFiles.length > 0
         ? await loadUnitPivotWithMergedClips(unitFile, extraFiles, unitPivot, unitSlot, metaUnitEl)
         : await loadUrlIntoPivot(`/assets/units/${encodeURIComponent(unitFile)}`, unitPivot, unitSlot, metaUnitEl);
     if (ok && unitSlot.root) {
+      const libExtraN = Math.max(0, extraFiles.length - manifestExtras.length);
       const clipLine =
         useMergedCatalogClips && extraFiles.length > 0
-          ? `${unitSlot.clips.length} clips (base + ${extraFiles.length} role GLB${extraFiles.length === 1 ? "" : "s"})`
+          ? `${unitSlot.clips.length} clips (base + ${manifestExtras.length} routed${libExtraN ? ` + ${libExtraN} library` : ""})`
           : `${unitSlot.clips.length} clips`;
       linesU.push(unitFile, `${countTriangles(unitSlot.root)} tris`, clipLine);
+      const ent = getCatalogEntry(catalogId);
+      if (ent && !isCommandEntry(ent)) {
+        const catC = ent.producedSizeClass;
+        const eff = effectiveProducedSizeClassForAssetLab(catalogId, catC);
+        linesU.push(`Spawn routing class: ${eff}${eff !== catC ? ` (catalog ${catC})` : ""}`);
+      }
       if (useMergedCatalogClips && extraFiles.length > 0) {
         linesU.push(`Merged: ${extraFiles.join(", ")}`);
       }
@@ -786,8 +1052,21 @@ async function bootstrap(): Promise<void> {
   for (const entry of CATALOG) {
     const opt = document.createElement("option");
     opt.value = entry.id;
-    opt.textContent = `${entry.id} — ${entry.name}`;
+    const tag = isCommandEntry(entry) ? "Spell" : entry.producedSizeClass;
+    opt.textContent = `${entry.id} — ${entry.name} · ${tag}`;
     cardIdSelect.append(opt);
+  }
+
+  sizeClassPreviewSelect.innerHTML = "";
+  const optMatch = document.createElement("option");
+  optMatch.value = "";
+  optMatch.textContent = "Match catalog";
+  sizeClassPreviewSelect.append(optMatch);
+  for (const c of ["Swarm", "Line", "Heavy", "Titan"] as const) {
+    const o = document.createElement("option");
+    o.value = c;
+    o.textContent = c;
+    sizeClassPreviewSelect.append(o);
   }
 
   const mkRenderer = (canvas: HTMLCanvasElement): THREE.WebGLRenderer => {
@@ -874,11 +1153,23 @@ async function bootstrap(): Promise<void> {
     void loadCatalogPair(currentCatalogId());
   });
 
+  animLibraryCb?.addEventListener("change", () => {
+    saveAnimLibraryToStorage();
+    void loadCatalogPair(currentCatalogId());
+  });
+  animShowAllCb?.addEventListener("change", () => {
+    saveAnimShowAllToStorage();
+    refreshRoleClipDropdowns();
+    applyPreviewAnimation();
+  });
+
   for (const role of UNIT_ANIM_ROLES) {
     animRoleSelects[role].addEventListener("change", () => {
       mergeDoctrineForCard(currentCatalogId(), {
         unitClips: { [role]: animRoleSelects[role].value },
       });
+      previewRole = role;
+      setPreviewRoleUi();
       applyPreviewAnimation();
     });
   }
@@ -928,8 +1219,20 @@ async function bootstrap(): Promise<void> {
   cardIdSelect.addEventListener("change", () => {
     const id = cardIdSelect.value;
     previewRole = "run";
+    syncUnitClassPanelForCatalog(id);
     setupOverlayFieldToggles();
     mountCardPreview(id);
+    void loadCatalogPair(id);
+  });
+
+  sizeClassPreviewSelect.addEventListener("change", () => {
+    const id = currentCatalogId();
+    const v = sizeClassPreviewSelect.value;
+    const next: UnitSizeClass | null = v === "" ? null : (v as UnitSizeClass);
+    persistPreviewClassForCard(id, next);
+    setAssetLabProducedSizeClassPreview(id, next);
+    resyncCardArtOverlayDomForCatalog(id);
+    updateClassBalanceReadout(id);
     void loadCatalogPair(id);
   });
 
@@ -978,7 +1281,12 @@ async function bootstrap(): Promise<void> {
     applySessionToOverlayState();
   });
 
+  const cardHintDefaultHtml = cardHintEl.innerHTML;
+  setupCardArtDragAndDrop(cardDropZone, cardHintEl, cardHintDefaultHtml);
+
+  syncUnitClassPanelForCatalog(cardIdSelect.value);
   mountCardPreview(cardIdSelect.value);
+  loadAnimDoctrineUiFromStorage();
   await loadCatalogPair(cardIdSelect.value);
 
   cancelAnimationFrame(raf);

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bufferForThreeGlbLoader } from "./glbNodeTextureDecode.mjs";
 
@@ -19,6 +20,9 @@ console.error = (...args) => {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const unitsDir = path.join(__dirname, "..", "public", "assets", "units");
 const loader = new GLTFLoader();
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath(path.join(__dirname, "..", "public", "draco", "gltf") + path.sep);
+loader.setDRACOLoader(dracoLoader);
 
 const files = fs
   .readdirSync(unitsDir)
@@ -190,7 +194,10 @@ for (const [id, metas] of byFamily) {
   const model = roleFiles.run ?? roleFiles.idle ?? roleFiles.attack ?? metas[0]?.file;
   if (!model) continue;
   const clipNames = metas.flatMap((m) => m.animations.map((a) => a.name));
-  const sizeClass = inferSizeClass(metas.map((m) => m.file).join(" "), clipNames);
+  let sizeClass = inferSizeClass(metas.map((m) => m.file).join(" "), clipNames);
+  /** Clip names like `mage_soell_cast_2` can mis-infer `hero`; override by stable family id. */
+  const SIZE_CLASS_OVERRIDES = { frostroot_keep_guards: "Line", galebark_adepts: "Heavy" };
+  if (SIZE_CLASS_OVERRIDES[id]) sizeClass = SIZE_CLASS_OVERRIDES[id];
   const roles = Object.fromEntries(Object.entries({ model, ...roleFiles }).filter(([, v]) => Boolean(v)));
   animationProfiles.push({
     id,
@@ -200,7 +207,59 @@ for (const [id, metas] of byFamily) {
   });
 }
 
+/**
+ * Rigs whose `KHR_draco_mesh_compression` path makes THREE's Node `DRACOLoader` fail (`fetch failed`
+ * for decoder WASM) even though the browser build loads them. Keep roles on the single merged GLB
+ * (Meshy Sovereign-style clips — same runtime rules as `frostroot_keep_guards` / `galebark_adepts`).
+ */
+const MANUAL_ANIMATION_PROFILES = [
+  {
+    id: "hollowmarket_cutpurses",
+    sizeClass: "Swarm",
+    roles: {
+      model: "hollowmarket_cutpurses.glb",
+      run: "hollowmarket_cutpurses.glb",
+      idle: "hollowmarket_cutpurses.glb",
+      attack: "hollowmarket_cutpurses.glb",
+      death: "hollowmarket_cutpurses.glb",
+    },
+    files: ["hollowmarket_cutpurses.glb"],
+  },
+  {
+    id: "town_levy",
+    sizeClass: "Swarm",
+    roles: {
+      model: "town_levy.glb",
+      run: "town_levy.glb",
+      idle: "town_levy.glb",
+      attack: "town_levy.glb",
+      death: "town_levy.glb",
+    },
+    files: ["town_levy.glb"],
+  },
+];
+
+const profileIds = new Set(animationProfiles.map((p) => p.id));
+for (const p of MANUAL_ANIMATION_PROFILES) {
+  if (!profileIds.has(p.id)) {
+    animationProfiles.push(p);
+    profileIds.add(p.id);
+  }
+}
+
 const out = path.join(unitsDir, "manifest.json");
+let clipRetargetOverrides;
+try {
+  if (fs.existsSync(out)) {
+    const prev = JSON.parse(fs.readFileSync(out, "utf8"));
+    if (Array.isArray(prev.clipRetargetOverrides) && prev.clipRetargetOverrides.length > 0) {
+      clipRetargetOverrides = prev.clipRetargetOverrides;
+    }
+  }
+} catch {
+  /* keep manifest writable if previous JSON corrupt */
+}
+
 fs.writeFileSync(
   out,
   `${JSON.stringify(
@@ -209,6 +268,7 @@ fs.writeFileSync(
       files,
       animationProfiles: animationProfiles.sort((a, b) => a.id.localeCompare(b.id)),
       inspections,
+      ...(clipRetargetOverrides ? { clipRetargetOverrides } : {}),
     },
     null,
     2,
