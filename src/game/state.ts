@@ -512,6 +512,11 @@ export interface GameState {
   enemyFlux: number;
   /** Enemy auto-build: last placed catalog id (soft diversity so AI does not spam one tower). */
   enemyAiLastBuildCatalogId: string | null;
+  /**
+   * When true, the rival Wizard is human-driven (PvP): autonomous enemy-hero claim/build pathing is off;
+   * WASD / intents move and channel the enemy hero like the blue Wizard.
+   */
+  enemyHumanControlled: boolean;
   /** Active Fortify-style fields (tick-based expiry). */
   tacticsFieldZones: TacticsFieldZone[];
   /** Portal continuity flag + legacy ring positions; exit/return URLs stay empty during matches (binder UI only). */
@@ -1074,6 +1079,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
     hero,
     enemyHero,
     enemyAiLastBuildCatalogId: null,
+    enemyHumanControlled: false,
     tacticsFieldZones: [],
     portal: {
       enteredViaPortal: false,
@@ -1330,6 +1336,7 @@ export function doctrineCardPlayability(
   catalogId: string | null,
   pos: Vec2 | null,
   slotIndex: number,
+  actingTeam: TeamId = "player",
 ): DoctrinePlayability {
   if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) {
     return blocked("invalid", "Invalid doctrine slot.", "Invalid");
@@ -1353,17 +1360,30 @@ export function doctrineCardPlayability(
     return blocked("invalid", "Command cards are disabled.", "Disabled");
   }
 
-  const missingMana = Math.max(0, Math.ceil(entry.fluxCost - s.flux));
+  const manaPool = actingTeam === "player" ? s.flux : s.enemyFlux;
+  const missingMana = Math.max(0, Math.ceil(entry.fluxCost - manaPool));
   if (!TRAILER_HERO_MODE && missingMana > 0) {
-    return blocked("mana", `Need ${missingMana} more Mana (${entry.fluxCost} total; have ${Math.floor(s.flux)}).`, `Need ${missingMana}`, {
-      missingMana,
-    });
+    const label = actingTeam === "player" ? "Mana" : "rival Mana";
+    return blocked(
+      "mana",
+      `Need ${missingMana} more ${label} (${entry.fluxCost} total; have ${Math.floor(manaPool)}).`,
+      `Need ${missingMana}`,
+      {
+        missingMana,
+      },
+    );
   }
 
   if (isStructureEntry(entry) && pos) {
-    if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
-    if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-      return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+    if (actingTeam === "player") {
+      if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
+      if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
+        return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+      }
+    } else {
+      if (!inEnemyTerritory(s, pos) && !nearEnemyInfra(s, pos)) {
+        return blocked("territory", "Outside rival territory — claim nodes on your side to expand.", "Need territory");
+      }
     }
     if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
       return blocked("terrain", "Blocked by terrain — try another spot.", "Blocked");

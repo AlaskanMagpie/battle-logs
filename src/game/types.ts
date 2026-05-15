@@ -129,11 +129,27 @@ export interface MapVisualSettings {
 
 export type WorldGeometryMode = "plane" | "sphere";
 
+/** Procedural radial hills/valleys on `worldGeometry: "sphere"` when no `terrainGlbUrl` is used. */
+export interface SphereTerrainDef {
+  /** When false, the shell is a smooth sphere. Defaults to enabled on sphere maps. */
+  enabled?: boolean;
+  /** Peak radial displacement in world units. */
+  amplitude?: number;
+  /** Integer seed for reproducible noise. */
+  seed?: number;
+  /** fBM octaves in the range 1–6. */
+  octaves?: number;
+  /** Spatial scale of macro landforms (higher = larger features). */
+  macroScale?: number;
+}
+
 export interface MapWorldDef {
   halfExtents: number;
   groundY: number;
   /** Planet radius (world units). Required when `worldGeometry` is `sphere`. */
   sphereRadius?: number;
+  /** Optional procedural terrain on the sphere shell. */
+  sphereTerrain?: SphereTerrainDef;
 }
 
 export interface MapData {

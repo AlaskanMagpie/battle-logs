@@ -28,6 +28,7 @@ import {
   enemyProductionSpeedScalar,
 } from "../../difficulty";
 import { logGame } from "../../gameLog";
+import { applyEnemyHeroWasd } from "./hero";
 import {
   armTapClaimAnchor,
   canPlaceEnemyStructureAt,
@@ -309,6 +310,56 @@ function attemptEnemyAiBuild(s: GameState): void {
 export function enemyHeroSystem(s: GameState): void {
   const h = s.enemyHero;
   if (h.attackCooldownTicksRemaining > 0) h.attackCooldownTicksRemaining -= 1;
+
+  if (s.enemyHumanControlled) {
+    invalidateStaleEnemyHeroMoveTarget(s);
+    const wasdMoved = applyEnemyHeroWasd(s);
+    if (!wasdMoved) moveEnemyHeroToward(s);
+    h.wasdStrafe = 0;
+    h.wasdForward = 0;
+
+    if (h.claimChannelTarget !== null) {
+      const tap = s.taps[h.claimChannelTarget];
+      if (!tap || tap.active || gameDist2(s.map, h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
+        h.claimChannelTarget = null;
+        h.claimChannelTicksRemaining = 0;
+        s.lastMessage = "Rival claim cancelled.";
+      }
+    }
+
+    if (h.claimChannelTarget !== null) {
+      h.claimChannelTicksRemaining -= 1;
+      if (h.claimChannelTicksRemaining <= 0) {
+        const idx = h.claimChannelTarget;
+        const tap = idx !== null ? s.taps[idx] : undefined;
+        if (tap && !tap.active) {
+          const fee = claimFluxFeeForTap(s, "enemy", tap);
+          if (s.enemyFlux < fee) {
+            /* skip */
+          } else {
+            s.enemyFlux -= fee;
+            s.enemyFlux += claimFluxRewardForTap(s, "enemy", tap) * enemyEconomyScalar(s);
+            tap.active = true;
+            tap.ownerTeam = "enemy";
+            armTapClaimAnchor(tap);
+            tap.yieldRemaining = Math.max(tap.yieldRemaining, TAP_YIELD_MAX);
+            emitFx(s, "claim", { x: tap.x, z: tap.z });
+            logGame("claim", `Rival wizard claimed ${tap.defId}`, s.tick);
+          }
+        }
+        h.claimChannelTarget = null;
+        h.claimChannelTicksRemaining = 0;
+      }
+    }
+
+    if (h.claimChannelTarget !== null) {
+      const tap = s.taps[h.claimChannelTarget];
+      if (tap) applyEnemyHeroFacingTowardWorld(s, tap.x, tap.z);
+    }
+
+    enemyHeroTryStrike(s);
+    return;
+  }
 
   invalidateStaleEnemyHeroMoveTarget(s);
   moveEnemyHeroToward(s);

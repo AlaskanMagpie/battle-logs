@@ -623,6 +623,7 @@ export function movement(s: GameState): void {
   if (anyEnemyCampAwake) {
     for (const u of s.units) {
       if (u.team !== "enemy" || u.hp <= 0) continue;
+      if (s.enemyHumanControlled && u.order) continue;
       const tgt = nearestEnemyAttackTarget(s, u);
       if (!tgt) continue;
       const engage = Math.max(5, u.range * 0.82);

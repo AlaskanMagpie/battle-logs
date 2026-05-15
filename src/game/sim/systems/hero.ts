@@ -55,6 +55,23 @@ export function findNeutralTapIndexNearHero(s: GameState): number | null {
   return best;
 }
 
+/** Neutral tap within claim radius of the rival Wizard (PvP human enemy). */
+export function findNeutralTapIndexNearEnemyHero(s: GameState): number | null {
+  const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
+  let best: number | null = null;
+  let bestD = r2;
+  for (let i = 0; i < s.taps.length; i++) {
+    const t = s.taps[i]!;
+    if (t.active) continue;
+    const d = gameDist2(s.map, s.enemyHero, t);
+    if (d <= bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 function popNextHeroWaypoint(h: GameState["hero"]): void {
   const next = h.moveWaypoints.shift();
   if (next) {
@@ -68,6 +85,23 @@ function popNextHeroWaypoint(h: GameState["hero"]): void {
 
 export function setHeroMovePath(s: GameState, target: { x: number; z: number }): void {
   const h = s.hero;
+  const clamped = clampOrderXZ(s.map, target);
+  const path = planChainedPathAroundMapObstacles(
+    s.map,
+    h,
+    clamped,
+    HERO_MAP_OBSTACLE_RADIUS,
+    structureObstacleFootprints(s),
+  );
+  const first = path.shift() ?? clamped;
+  h.targetX = first.x;
+  h.targetZ = first.z;
+  h.moveWaypoints.length = 0;
+  h.moveWaypoints.push(...path);
+}
+
+export function setEnemyHeroMovePath(s: GameState, target: { x: number; z: number }): void {
+  const h = s.enemyHero;
   const clamped = clampOrderXZ(s.map, target);
   const path = planChainedPathAroundMapObstacles(
     s.map,
@@ -126,6 +160,35 @@ function applyWasd(s: GameState): boolean {
   dz /= len;
   h.facing = Math.atan2(dx, dz);
   const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
+  const moved = isSphereWorld(s.map)
+    ? stepDirectionXZ(s.map, { x: h.x, z: h.z }, wx, wz, step)
+    : { x: h.x + dx * step, z: h.z + dz * step };
+  h.x = moved.x;
+  h.z = moved.z;
+  const cl = clampOrderXZ(s.map, { x: h.x, z: h.z });
+  h.x = cl.x;
+  h.z = cl.z;
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
+  h.targetX = null;
+  h.targetZ = null;
+  h.moveWaypoints.length = 0;
+  return true;
+}
+
+/** Ground WASD for the rival Wizard (PvP); consumes `enemyHero.wasdStrafe` / `wasdForward` each tick. */
+export function applyEnemyHeroWasd(s: GameState): boolean {
+  const h = s.enemyHero;
+  const wx = h.wasdStrafe;
+  const wz = h.wasdForward;
+  if (wx === 0 && wz === 0) return false;
+  let dx = wx;
+  let dz = wz;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-6) return false;
+  dx /= len;
+  dz /= len;
+  h.facing = Math.atan2(dx, dz);
+  const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "enemy", h.x, h.z);
   const moved = isSphereWorld(s.map)
     ? stepDirectionXZ(s.map, { x: h.x, z: h.z }, wx, wz, step)
     : { x: h.x + dx * step, z: h.z + dz * step };

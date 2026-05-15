@@ -28,7 +28,7 @@ import {
 import { clearGameLog, logGame } from "./game/gameLog";
 import { computeFormationSlots, formationKindLabel } from "./game/sim/systems/formationLayout";
 import { unitStatsForCatalog } from "./game/sim/systems/helpers";
-import { advanceTick } from "./game/sim/tick";
+import { advanceTick, advanceTickPvp, type PvpSeatIntentBundle } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
 import { GameRenderer } from "./render/scene";
 import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
@@ -67,6 +67,7 @@ import {
   makeClientMatchId,
   normalizeMatchMode,
   type MatchLaunchOptions,
+  type MatchSeat,
 } from "./net/protocol";
 import {
   isAiLadderProgressEligible,
@@ -793,8 +794,13 @@ function runMatch(
       state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
     }
     if (resolvedLaunch.mode === "pvp") {
-      state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}). Server-authoritative sync is active for room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
-    } else if (resolvedLaunch.mode === "fallback_ai") {
+      state.enemyHumanControlled = true;
+      renderer.setLocalSeat((resolvedLaunch.seat ?? "player") as MatchSeat);
+      state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}) — lockstep PvP. Room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
+    } else {
+      renderer.setLocalSeat("player");
+    }
+    if (resolvedLaunch.mode === "fallback_ai") {
       state.lastMessage = "No human opponent found quickly — AI rival engaged.";
     }
     let onlineSession: OnlineMatchSession | null = null;
@@ -905,36 +911,9 @@ function runMatch(
     };
     renderer.sync(state, USE_GLB);
     renderer.setCameraFollowHero(true);
-    let dbgResizeN = 0;
     const resize = (): void => {
       const { w, h } = viewportCssSize();
       renderer.setSize(w, h);
-      if (dbgResizeN < 3) {
-        dbgResizeN += 1;
-        // #region agent log
-        const vv = window.visualViewport;
-        void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-          body: JSON.stringify({
-            sessionId: "8d1dc2",
-            runId: "post-fix",
-            hypothesisId: "A",
-            location: "main.ts:resize",
-            message: "viewport vs canvas after setSize",
-            data: {
-              sample: dbgResizeN,
-              viewportCss: { w, h },
-              inner: { w: window.innerWidth, h: window.innerHeight },
-              vv: vv ? { w: vv.width, h: vv.height, scale: vv.scale } : null,
-              canvasCss: { w: canvas.clientWidth, h: canvas.clientHeight },
-              drawingBuffer: { w: canvas.width, h: canvas.height },
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-      }
     };
     resize();
     window.addEventListener("resize", resize, { signal });
@@ -1164,9 +1143,28 @@ function runMatch(
           const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
           first = false;
           const tickBefore = state.tick;
-          if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
-          advanceTick(state, chunk);
-          captureReplayTick(replay, tickBefore, chunk, state);
+          if (resolvedLaunch.mode === "pvp" && onlineSession) {
+            onlineSession.sendIntents(tickBefore, chunk);
+            const localSeat = (resolvedLaunch.seat ?? "player") as MatchSeat;
+            if (!onlineSession.intentLedger.hasPartnerIntents(tickBefore, localSeat)) break;
+            const partnerChunk = onlineSession.intentLedger.takePartnerIntents(tickBefore, localSeat) ?? [];
+            const bundles: PvpSeatIntentBundle[] =
+              localSeat === "player"
+                ? [
+                    { seat: "player", intents: chunk },
+                    { seat: "enemy", intents: partnerChunk },
+                  ]
+                : [
+                    { seat: "player", intents: partnerChunk },
+                    { seat: "enemy", intents: chunk },
+                  ];
+            advanceTickPvp(state, bundles);
+            captureReplayTick(replay, tickBefore, chunk, state);
+          } else {
+            if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
+            advanceTick(state, chunk);
+            captureReplayTick(replay, tickBefore, chunk, state);
+          }
           if (state.portal.pendingRedirectUrl) {
             window.location.assign(state.portal.pendingRedirectUrl);
             return;
@@ -1231,6 +1229,13 @@ function runMatch(
         state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
       } else if (resolvedLaunch.mode === "fallback_ai") {
         state.lastMessage = `AI takeover: tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+      }
+      if (resolvedLaunch.mode === "pvp") {
+        state.enemyHumanControlled = true;
+        renderer.setLocalSeat((resolvedLaunch.seat ?? "player") as MatchSeat);
+      } else {
+        state.enemyHumanControlled = false;
+        renderer.setLocalSeat("player");
       }
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);

@@ -30,6 +30,7 @@ import {
   unitToVec2,
   worldFootXYZ,
 } from "../game/surface";
+import { sphereTerrainGeometryKey } from "../game/sphereTerrain";
 import {
   dominantSignal,
   enemyTerritorySources,
@@ -43,6 +44,8 @@ import {
   liveSquadCount,
   type GameState,
 } from "../game/state";
+import { buildDisplacedSphereGeometry } from "./spherePlanetGeometry";
+import type { MatchSeat } from "../net/protocol";
 import type {
   CommandEffect,
   MapData,
@@ -164,6 +167,8 @@ const UNIT_VISUAL_RUN_CATCHUP_LAMBDA = 16;
 const HERO_VISUAL_RUN_CATCHUP_LAMBDA = UNIT_VISUAL_RUN_CATCHUP_LAMBDA;
 /** Exponential smoothing for visual velocity used by procedural lean/bob. */
 const UNIT_VISUAL_SPEED_LAMBDA = 9.5;
+/** Yaw error decay per second (higher = snappier). Replaces fixed 0.22/frame for stable feel across FPS. */
+const UNIT_VISUAL_YAW_LAMBDA = 13.5;
 /** Visual catch-up should tolerate low mobile FPS without slowing movement/animation relative to sim. */
 const RENDER_VISUAL_DT_CAP_SEC = 1 / 24;
 /** Pose jumps after a tab stall still need a guard, but 30fps caps made mobile run clips play in slow motion. */
@@ -1200,6 +1205,8 @@ export class GameRenderer {
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   private readonly controlProfile: ControlProfile;
+  /** Which side the local human controls in PvP (default blue / `player`). */
+  private localSeat: "player" | "enemy" = "player";
   private readonly ground: THREE.Mesh;
   private readonly groundOverlay: THREE.Mesh;
   private readonly hemiLight: THREE.HemisphereLight;
@@ -1327,18 +1334,10 @@ export class GameRenderer {
   private matchSkyboxTexture: THREE.Texture | null = null;
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
-  /** Debug: sample first frames for NDJSON ingest (session 8d1dc2). */
-  private agentDbgRenderSamples = 0;
-  /** Debug: sphere grounding verification (session 8d1dc2). */
-  private dbgSphereDecorSamples = 0;
-  private dbgCampSphereRingLogged = false;
-  private dbgCoreOrbSphereLogged = false;
-  private dbgStructureSphereRadialLogged = false;
-  /** Debug: unit sphere orientation — foot radial vs shell (session 8d1dc2). */
-  private dbgUnitSphereOrientLogged = false;
   private worldPlaneHalf = 0;
   private worldIsSphere = false;
-  private worldSphereR = 0;
+  /** Includes terrain params so procedural shells rebuild when authoring changes. */
+  private worldSphereGeomKey = "";
   private terrainSlab: THREE.Group | null = null;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
@@ -1466,27 +1465,6 @@ export class GameRenderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x10131a);
 
-    // #region agent log
-    {
-      const gl = this.renderer.getContext() as WebGLRenderingContext & { isContextLost?: () => boolean };
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "pre-fix",
-          hypothesisId: "B",
-          location: "scene.ts:GameRenderer.constructor",
-          message: "WebGL renderer created",
-          data: {
-            maxTextureSize: this.renderer.capabilities.maxTextureSize,
-            contextLost: typeof gl.isContextLost === "function" ? gl.isContextLost() : null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    }
-    // #endregion
 
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
@@ -1841,18 +1819,20 @@ export class GameRenderer {
   zoomCameraToSelectedUnit(): boolean {
     const st = this.currentState;
     if (!st || st.phase !== "playing") return false;
+    const want = this.localSeat === "player" ? "player" : "enemy";
+    const localHero = want === "player" ? st.hero : st.enemyHero;
     const selectedUnitId = st.selectedUnitIds.find((id) => id !== HERO_SELECTION_ID) ?? st.selectedUnitId;
-    const u = selectedUnitId != null ? st.units.find((x) => x.id === selectedUnitId && x.team === "player" && x.hp > 0) : null;
+    const u = selectedUnitId != null ? st.units.find((x) => x.id === selectedUnitId && x.team === want && x.hp > 0) : null;
     if (!u) {
-      if (!st.selectedUnitIds.includes(HERO_SELECTION_ID) || st.hero.hp <= 0) return false;
+      if (!st.selectedUnitIds.includes(HERO_SELECTION_ID) || localHero.hp <= 0) return false;
       this.cameraFollowHero = true;
       this.cameraFollowUnitId = null;
       this.controls.minDistance = Math.min(this.controls.minDistance, 8);
       if (isSphereWorld(st.map)) {
-        const enemy = st.map.enemyStart ?? st.enemyHero;
+        const enemy = want === "player" ? st.map.enemyStart ?? st.enemyHero : st.map.playerStart ?? st.hero;
         const rig = this.getSphereHeroCameraRig(
           st.map,
-          { x: st.hero.x, z: st.hero.z },
+          { x: localHero.x, z: localHero.z },
           { x: enemy.x, z: enemy.z },
           10,
           7,
@@ -1861,13 +1841,13 @@ export class GameRenderer {
         this.controls.target.copy(rig.tgt);
         this.camera.position.copy(rig.pos);
       } else {
-        this.controls.target.set(st.hero.x, CAMERA_HERO_PIVOT_Y, st.hero.z);
-        this.camera.position.set(st.hero.x - 10, CAMERA_HERO_PIVOT_Y + 7, st.hero.z - 10);
+        this.controls.target.set(localHero.x, CAMERA_HERO_PIVOT_Y, localHero.z);
+        this.camera.position.set(localHero.x - 10, CAMERA_HERO_PIVOT_Y + 7, localHero.z - 10);
       }
       this.controls.update();
       return true;
     }
-    const enemy = st.map.enemyStart ?? st.enemyHero;
+    const enemy = want === "player" ? st.map.enemyStart ?? st.enemyHero : st.map.playerStart ?? st.hero;
     let dx = enemy.x - u.x;
     let dz = enemy.z - u.z;
     const len = Math.hypot(dx, dz) || 1;
@@ -1881,8 +1861,8 @@ export class GameRenderer {
     this.cameraFollowUnitId = u.id;
     this.controls.minDistance = Math.min(this.controls.minDistance, 8);
     if (isSphereWorld(st.map)) {
-      const enemy = st.map.enemyStart ?? st.enemyHero;
-      const rig = this.getSphereHeroCameraRig(st.map, { x: u.x, z: u.z }, { x: enemy.x, z: enemy.z }, back, height, targetY);
+      const foe = want === "player" ? st.map.enemyStart ?? st.enemyHero : st.map.playerStart ?? st.hero;
+      const rig = this.getSphereHeroCameraRig(st.map, { x: u.x, z: u.z }, { x: foe.x, z: foe.z }, back, height, targetY);
       this.controls.target.copy(rig.tgt);
       this.camera.position.copy(rig.pos);
     } else {
@@ -1897,7 +1877,7 @@ export class GameRenderer {
   private snapCameraPivotToPlayerHero(): void {
     const st = this.currentState;
     if (!st || st.phase !== "playing") return;
-    const h = st.hero;
+    const h = this.localSeat === "player" ? st.hero : st.enemyHero;
     const t = this.controls.target;
     if (isSphereWorld(st.map)) {
       const f = worldFootXYZ(st.map, { x: h.x, z: h.z }, CAMERA_HERO_PIVOT_Y);
@@ -2097,12 +2077,17 @@ export class GameRenderer {
     const st = this.currentState;
     if (st && isSphereWorld(st.map) && this.terrainHits.length === 0) {
       const R = sphereRadiusOf(st.map);
-      const sph = new THREE.Sphere(new THREE.Vector3(0, 0, 0), R);
-      const hit = new THREE.Vector3();
-      if (this.raycaster.ray.intersectSphere(sph, hit)) {
-        const n = hit.clone().normalize();
-        const tan = tangentFromUnitAtPole(n.x, n.y, n.z, R);
-        return { x: tan.x, z: tan.z };
+      const hits = this.raycaster.intersectObject(this.ground, false);
+      const p = hits[0]?.point;
+      if (p) {
+        const tlen = Math.hypot(p.x, p.y, p.z);
+        if (tlen > 1e-6) {
+          const nx = p.x / tlen;
+          const ny = p.y / tlen;
+          const nz = p.z / tlen;
+          const tan = tangentFromUnitAtPole(nx, ny, nz, R);
+          return { x: tan.x, z: tan.z };
+        }
       }
       return null;
     }
@@ -2155,6 +2140,15 @@ export class GameRenderer {
     return true;
   }
 
+  /** Which battlefield seat the local player controls (PvP red seat uses rival picks + camera). */
+  setLocalSeat(seat: MatchSeat): void {
+    this.localSeat = seat;
+  }
+
+  getLocalSeat(): MatchSeat {
+    return this.localSeat;
+  }
+
   /** First unit mesh hit by screen ray (for selection); null if none. */
   pickUnitId(clientX: number, clientY: number, rect: DOMRect): number | null {
     const x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -2163,11 +2157,19 @@ export class GameRenderer {
     this.raycaster.setFromCamera(this.ndc, this.camera);
     if (this.unitMeshes.size === 0) return null;
     const hits = this.raycaster.intersectObjects([...this.unitMeshes.values()], true);
-    for (const h of hits) {
+    const want = this.localSeat === "player" ? "player" : "enemy";
+    hitLoop: for (const h of hits) {
       let o: THREE.Object3D | null = h.object;
       while (o) {
         const uid = o.userData["unitId"] as number | undefined;
-        if (uid !== undefined) return uid;
+        if (uid !== undefined) {
+          const st = this.currentState;
+          if (st) {
+            const u = st.units.find((x) => x.id === uid);
+            if (u && u.team !== want) continue hitLoop;
+          }
+          return uid;
+        }
         o = o.parent;
       }
     }
@@ -2182,14 +2184,16 @@ export class GameRenderer {
     const ids: number[] = [];
     const st = this.currentState;
     if (!st) return ids;
-    if (st.hero.hp > 0) {
-      const hp = new THREE.Vector3(st.hero.x, 1.6, st.hero.z).project(this.camera);
+    const want = this.localSeat === "player" ? "player" : "enemy";
+    const localHero = want === "player" ? st.hero : st.enemyHero;
+    if (localHero.hp > 0) {
+      const hp = new THREE.Vector3(localHero.x, 1.6, localHero.z).project(this.camera);
       const hsx = rect.left + ((hp.x + 1) / 2) * rect.width;
       const hsy = rect.top + ((1 - hp.y) / 2) * rect.height;
       if (hsx >= minX && hsx <= maxX && hsy >= minY && hsy <= maxY) ids.push(HERO_SELECTION_ID);
     }
     for (const u of st.units) {
-      if (u.team !== "player" || u.hp <= 0) continue;
+      if (u.team !== want || u.hp <= 0) continue;
       const p = new THREE.Vector3(u.x, 1.2, u.z).project(this.camera);
       const sx = rect.left + ((p.x + 1) / 2) * rect.width;
       const sy = rect.top + ((1 - p.y) / 2) * rect.height;
@@ -2222,21 +2226,6 @@ export class GameRenderer {
     const url = map.terrainGlbUrl?.trim();
     if (!url) {
       this.clearTerrain();
-      // #region agent log
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "pre-fix",
-          hypothesisId: "F",
-          location: "scene.ts:loadTerrainFromMap",
-          message: "no terrain GLB url",
-          data: { groundVisible: this.ground.visible },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return;
     }
     if (url === this.terrainSource && this.terrainRoot) return;
@@ -2262,40 +2251,10 @@ export class GameRenderer {
       this.terrainRoot = root;
       this.scene.add(root);
       this.ground.visible = false;
-      // #region agent log
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "pre-fix",
-          hypothesisId: "F",
-          location: "scene.ts:loadTerrainFromMap",
-          message: "terrain GLB loaded",
-          data: { url, terrainHitMeshes: this.terrainHits.length, groundVisible: this.ground.visible },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error("Failed to load terrain GLB:", url, e);
       this.clearTerrain();
-      // #region agent log
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "pre-fix",
-          hypothesisId: "F",
-          location: "scene.ts:loadTerrainFromMap",
-          message: "terrain GLB load failed",
-          data: { url, groundVisible: this.ground.visible },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
     }
   }
 
@@ -3603,30 +3562,6 @@ export class GameRenderer {
         }
       } else if (isSphereWorld(map)) {
         alignRingMeshToSphereTangent(aggro, map, campTan, 0.045);
-        // #region agent log
-        if (!this.dbgCampSphereRingLogged) {
-          this.dbgCampSphereRingLogged = true;
-          const foot = worldFootXYZ(map, campTan, 0);
-          const R = sphereRadiusOf(map);
-          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-            body: JSON.stringify({
-              sessionId: "8d1dc2",
-              runId: "sphere-grounding",
-              hypothesisId: "H2",
-              location: "scene.ts:syncCampZones",
-              message: "camp aggro ring on sphere",
-              data: {
-                aggroRadial: Math.hypot(aggro.position.x, aggro.position.y, aggro.position.z),
-                footRadial: Math.hypot(foot.x, foot.y, foot.z),
-                R,
-              },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
       } else {
         aggro.position.set(camp.origin.x, map.world.groundY + 0.045, camp.origin.z);
       }
@@ -3840,33 +3775,6 @@ export class GameRenderer {
           const qAlign = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
           const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
           g.quaternion.copy(qAlign).multiply(qYaw);
-          // #region agent log
-          if (!this.dbgStructureSphereRadialLogged) {
-            this.dbgStructureSphereRadialLogged = true;
-            const R = sphereRadiusOf(map);
-            const radial = g.position.length();
-            const analyticLift = structureFootAnalyticYLiftForCatalog(this.useGlb ? st.catalogId : undefined);
-            const analyticSink = -analyticLift;
-            void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-              body: JSON.stringify({
-                sessionId: "8d1dc2",
-                runId: "sphere-grounding",
-                hypothesisId: "H4",
-                location: "scene.ts:syncStructures",
-                message: "structure foot radial vs shell",
-                data: {
-                  radial,
-                  R,
-                  bury,
-                  expectedRadialApprox: R - analyticSink,
-                },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-          }
-          // #endregion
         } else {
           g.rotation.set(0, structureFacingYawRad(state, st), 0);
         }
@@ -4201,37 +4109,22 @@ export class GameRenderer {
   private syncWorldPlane(state: GameState): void {
     const map = state.map;
     if (isSphereWorld(map)) {
-      const R = sphereRadiusOf(map);
-      if (this.worldIsSphere && this.worldSphereR === R) return;
+      const gKey = sphereTerrainGeometryKey(map);
+      if (this.worldIsSphere && this.worldSphereGeomKey === gKey) return;
       this.worldIsSphere = true;
-      this.worldSphereR = R;
+      this.worldSphereGeomKey = gKey;
       this.worldPlaneHalf = map.world.halfExtents + 28;
       this.ground.geometry.dispose();
-      this.ground.geometry = new THREE.SphereGeometry(R, 80, 80);
+      this.ground.geometry = buildDisplacedSphereGeometry(map, 112, 112);
       this.ground.rotation.set(0, 0, 0);
       this.ground.position.set(0, 0, 0);
       (this.ground as THREE.Mesh).quaternion.identity();
       this.groundOverlay.visible = false;
       this.groundVisualKey = "";
-      // #region agent log
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "pre-fix",
-          hypothesisId: "D",
-          location: "scene.ts:syncWorldPlane",
-          message: "sphere world ground mesh",
-          data: { R, groundVisible: this.ground.visible, terrainRoot: !!this.terrainRoot },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return;
     }
     this.worldIsSphere = false;
-    this.worldSphereR = 0;
+    this.worldSphereGeomKey = "";
     const half = state.map.world.halfExtents + 28;
     if (this.worldPlaneHalf === half) return;
     this.worldPlaneHalf = half;
@@ -4680,28 +4573,6 @@ export class GameRenderer {
           fy = cy - r;
         }
         decorRoot = sphereAnchoredPropFromPlaneFloor(mesh, state.map, fx, fy, fz);
-        // #region agent log
-        if (this.dbgSphereDecorSamples < 4) {
-          this.dbgSphereDecorSamples++;
-          decorRoot.updateMatrixWorld(true);
-          const v = new THREE.Vector3();
-          decorRoot.getWorldPosition(v);
-          const R = sphereRadiusOf(state.map);
-          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-            body: JSON.stringify({
-              sessionId: "8d1dc2",
-              runId: "sphere-grounding",
-              hypothesisId: "H1",
-              location: "scene.ts:syncMapDecor",
-              message: "decor sphere anchor foot radial",
-              data: { decorKind: d.kind, radial: v.length(), R, deltaRadial: v.length() - R },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
       }
       this.decor.add(decorRoot);
     }
@@ -4754,26 +4625,6 @@ export class GameRenderer {
       const lift = 1.55 + breathe * 0.45;
       if (isSphereWorld(state.map)) {
         worldPointAlongSphereNormal(state.map, { x: camp.origin.x, z: camp.origin.z }, lift, orb.position);
-        // #region agent log
-        if (!this.dbgCoreOrbSphereLogged) {
-          this.dbgCoreOrbSphereLogged = true;
-          const R = sphereRadiusOf(state.map);
-          const len = orb.position.length();
-          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-            body: JSON.stringify({
-              sessionId: "8d1dc2",
-              runId: "sphere-grounding",
-              hypothesisId: "H3",
-              location: "scene.ts:syncCoreOrbs",
-              message: "core orb radial above shell",
-              data: { radial: len, R, lift, deltaRadial: len - R },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
       } else {
         orb.position.set(camp.origin.x, lift, camp.origin.z);
       }
@@ -5562,26 +5413,6 @@ export class GameRenderer {
         const yaw = (g.userData["sphereYaw"] as number | undefined) ?? 0;
         const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
         obj.quaternion.copy(qAlign).multiply(qYaw);
-        // #region agent log
-        if (!this.dbgUnitSphereOrientLogged && isSphereWorld(map)) {
-          this.dbgUnitSphereOrientLogged = true;
-          const R = sphereRadiusOf(map);
-          const radial = obj.position.length();
-          void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-            body: JSON.stringify({
-              sessionId: "8d1dc2",
-              runId: "sphere-grounding",
-              hypothesisId: "H5",
-              location: "scene.ts:syncUnits",
-              message: "unit sphere foot radial + yaw compose",
-              data: { radial, R, deltaRadial: radial - R, sphereYaw: yaw, meshGrounded },
-              timestamp: Date.now(),
-            }),
-          }).catch(() => {});
-        }
-        // #endregion
       } else {
         // Plane maps: never `quaternion.identity()` here — it resets euler each frame and destroys
         // accumulated yaw so units never finish turning (wrong facing, bogus lean in tickUnitProceduralMotion).
@@ -5944,16 +5775,18 @@ export class GameRenderer {
     /** Reject near-zero direction so single-frame separation noise near spawn rings can't pivot units. */
     if (Math.hypot(dx, dz) <= 0.05) return;
     const target = Math.atan2(dx, dz);
+    const dt = Math.max(1 / 240, Math.min(1 / 24, this.visualSyncDt));
+    const yawStep = 1 - Math.exp(-UNIT_VISUAL_YAW_LAMBDA * dt);
     if (!chartYawMode) {
       const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
-      root.rotation.y += delta * 0.22;
+      root.rotation.y += delta * yawStep;
       return;
     }
     const ud = root.userData as Record<string, unknown>;
     let yaw = ud["sphereYaw"] as number | undefined;
     if (yaw === undefined) yaw = target;
     const delta = Math.atan2(Math.sin(target - yaw), Math.cos(target - yaw));
-    yaw += delta * 0.22;
+    yaw += delta * yawStep;
     ud["sphereYaw"] = yaw;
   }
 
@@ -6318,11 +6151,11 @@ export class GameRenderer {
   /** Crossfade window for run ↔ idle (sim-smoothed mesh vs. choppy pops). */
   private glbLocomotionCrossfadeSec(ud: Record<string, unknown>): number {
     const sc = ud["sizeClass"];
-    if (sc === "Titan") return 0.28;
-    if (sc === "hero") return 0.22;
-    if (sc === "Swarm" || sc === "Line") return 0.24;
-    if (sc === "Heavy") return 0.22;
-    return 0.2;
+    if (sc === "Titan") return 0.34;
+    if (sc === "hero") return 0.28;
+    if (sc === "Swarm" || sc === "Line") return 0.3;
+    if (sc === "Heavy") return 0.28;
+    return 0.24;
   }
 
   /** Attack clip fade-out / recovery into locomotion (tick end, interrupt, hero run break). */
@@ -6332,11 +6165,11 @@ export class GameRenderer {
       ud["producedUnitId"] === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       ud["producedUnitId"] === PRODUCED_UNIT_CHRONO_SENTINELS
     )
-      return 0.42;
-    if (ud["sizeClass"] === "Titan") return 0.38;
-    if (ud["sizeClass"] === "hero") return 0.28;
-    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.34;
-    return 0.32;
+      return 0.48;
+    if (ud["sizeClass"] === "Titan") return 0.44;
+    if (ud["sizeClass"] === "hero") return 0.34;
+    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.4;
+    return 0.38;
   }
 
   /** Attack clip fade-in at swing start (overlaps base underlay). */
@@ -6346,12 +6179,12 @@ export class GameRenderer {
       ud["producedUnitId"] === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       ud["producedUnitId"] === PRODUCED_UNIT_CHRONO_SENTINELS
     )
-      return 0.24;
-    if (ud["sizeClass"] === "Titan") return 0.22;
-    if (ud["sizeClass"] === "hero") return 0.2;
-    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.2;
-    if (ud["sizeClass"] === "Heavy") return 0.19;
-    return 0.18;
+      return 0.28;
+    if (ud["sizeClass"] === "Titan") return 0.26;
+    if (ud["sizeClass"] === "hero") return 0.24;
+    if (ud["sizeClass"] === "Swarm" || ud["sizeClass"] === "Line") return 0.24;
+    if (ud["sizeClass"] === "Heavy") return 0.22;
+    return 0.21;
   }
 
   /**
@@ -6583,7 +6416,7 @@ export class GameRenderer {
     const ud = root.userData as Record<string, unknown>;
     const death = ud["glbDeathAction"] as THREE.AnimationAction | undefined;
     if (!death) return;
-    const dFade = 0.26;
+    const dFade = 0.34;
     for (const key of ["glbRunAction", "glbIdleAction", "glbAttackAction"] as const) {
       const a = ud[key] as THREE.AnimationAction | undefined;
       if (a) a.fadeOut(dFade);
@@ -6646,11 +6479,14 @@ export class GameRenderer {
     const to = next === "run" ? run : idle;
     if (!to) return;
     const moveFade = this.glbLocomotionCrossfadeSec(ud);
-    if (from && from !== to) from.fadeOut(moveFade);
     to.enabled = true;
     to.paused = false;
     to.play();
-    to.fadeIn(moveFade);
+    if (from && from !== to) {
+      to.crossFadeFrom(from, moveFade, false);
+    } else {
+      to.fadeIn(moveFade);
+    }
     ud["glbBaseState"] = next;
     ud["glbBaseFadeUntilMs"] = performance.now() + moveFade * 1000;
   }
@@ -6670,49 +6506,6 @@ export class GameRenderer {
     this.orientHpBars();
     stepFx(this.fx, dt);
     this.renderer.render(this.scene, this.camera);
-    this.agentDbgRenderSamples += 1;
-    const n = this.agentDbgRenderSamples;
-    if (n <= 5 || n === 180) {
-      const tgt = this.controls.target;
-      const bg = this.scene.background;
-      const bgKind =
-        bg instanceof THREE.Color ? "color" : bg && "isTexture" in bg && (bg as THREE.Texture).isTexture ? "texture" : "other";
-      // #region agent log
-      void fetch("http://127.0.0.1:7702/ingest/f3ce28ca-f348-413e-9ade-4ffc7615dfc9", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "8d1dc2" },
-        body: JSON.stringify({
-          sessionId: "8d1dc2",
-          runId: "post-fix",
-          hypothesisId: n <= 5 ? "C" : "E",
-          location: "scene.ts:GameRenderer.render",
-          message: "post-render sample",
-          data: {
-            sample: n,
-            polarMin: this.controls.minPolarAngle,
-            polarMax: this.controls.maxPolarAngle,
-            drawingBufferWidth: this.renderer.domElement.width,
-            drawingBufferHeight: this.renderer.domElement.height,
-            clientW: this.renderer.domElement.clientWidth,
-            clientH: this.renderer.domElement.clientHeight,
-            cam: {
-              x: Number(this.camera.position.x.toFixed(2)),
-              y: Number(this.camera.position.y.toFixed(2)),
-              z: Number(this.camera.position.z.toFixed(2)),
-            },
-            tgt: { x: Number(tgt.x.toFixed(2)), y: Number(tgt.y.toFixed(2)), z: Number(tgt.z.toFixed(2)) },
-            introActive: this.introCinematicStartMs !== null,
-            worldSphere: this.worldIsSphere,
-            sphereR: this.worldSphereR,
-            groundVisible: this.ground.visible,
-            bgKind,
-            sceneChildren: this.scene.children.length,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    }
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

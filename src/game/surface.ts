@@ -2,6 +2,7 @@
  * Spherical planet surface using tangent-plane coordinates from the north pole (+Y).
  * Positions match existing Vec2 {x,z}: arc-length offsets in the horizontal plane through the pole.
  */
+import { sphereTerrainHeightAtUnit, sphereTerrainEnabled } from "./sphereTerrain";
 import type { MapData, Vec2 } from "./types";
 
 const UP: [number, number, number] = [0, 1, 0];
@@ -202,7 +203,7 @@ export function ringPointOnSphere(map: MapData, center: Vec2, angleRad: number, 
   return tangentFromUnitAtPole(nu[0], nu[1], nu[2], R);
 }
 
-/** World-space foot position for rendering (Y-up). Plane: `(x, groundY+yLift, z)`. Sphere: `(R+yLift)*unitDir`. */
+/** World-space foot position for rendering (Y-up). Plane: `(x, groundY+yLift, z)`. Sphere: `(R+h+yLift)*unitDir`. */
 export function worldFootXYZ(map: MapData, tan: Vec2, yLift = 0): { x: number; y: number; z: number } {
   const gy = map.world.groundY;
   if (!isSphereWorld(map)) {
@@ -210,15 +211,60 @@ export function worldFootXYZ(map: MapData, tan: Vec2, yLift = 0): { x: number; y
   }
   const R = sphereRadiusOf(map);
   const u = unitFromTangentAtPole(tan.x, tan.z, R);
-  const s = R + yLift;
+  const h = sphereTerrainHeightAtUnit(map, u[0], u[1], u[2]);
+  const s = R + yLift + h;
   return { x: u[0] * s, y: u[1] * s, z: u[2] * s };
 }
 
-/** Unit outward normal on sphere (for orienting meshes). */
+/** Unit outward normal on the shell (smooth sphere or displaced terrain). */
 export function surfaceNormalFromTan(map: MapData, tan: Vec2): [number, number, number] {
   if (!isSphereWorld(map)) return [0, 1, 0];
   const R = sphereRadiusOf(map);
-  return unitFromTangentAtPole(tan.x, tan.z, R);
+  const u = unitFromTangentAtPole(tan.x, tan.z, R);
+  if (!sphereTerrainEnabled(map)) {
+    return u;
+  }
+  const h0 = sphereTerrainHeightAtUnit(map, u[0], u[1], u[2]);
+  const { east, north } = tangentEastNorth(u);
+  const eps = Math.max(0.32, R * 0.0018);
+  const ang = eps / R;
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const uex = c * u[0] + s * east[0];
+  const uey = c * u[1] + s * east[1];
+  const uez = c * u[2] + s * east[2];
+  const unx = c * u[0] + s * north[0];
+  const uny = c * u[1] + s * north[1];
+  const unz = c * u[2] + s * north[2];
+  const he = sphereTerrainHeightAtUnit(map, uex, uey, uez);
+  const hn = sphereTerrainHeightAtUnit(map, unx, uny, unz);
+  const p0x = (R + h0) * u[0];
+  const p0y = (R + h0) * u[1];
+  const p0z = (R + h0) * u[2];
+  const pex = (R + he) * uex;
+  const pey = (R + he) * uey;
+  const pez = (R + he) * uez;
+  const pnx = (R + hn) * unx;
+  const pny = (R + hn) * uny;
+  const pnz = (R + hn) * unz;
+  const ax = pex - p0x;
+  const ay = pey - p0y;
+  const az = pez - p0z;
+  const bx = pnx - p0x;
+  const by = pny - p0y;
+  const bz = pnz - p0z;
+  let cx = ay * bz - az * by;
+  let cy = az * bx - ax * bz;
+  let cz = ax * by - ay * bx;
+  const cl = Math.hypot(cx, cy, cz);
+  if (cl < 1e-10) return u;
+  cx /= cl;
+  cy /= cl;
+  cz /= cl;
+  if (cx * u[0] + cy * u[1] + cz * u[2] < 0) {
+    return [-cx, -cy, -cz];
+  }
+  return [cx, cy, cz];
 }
 
 /**
