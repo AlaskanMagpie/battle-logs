@@ -2,6 +2,9 @@ import type { Room } from "@colyseus/sdk";
 import type { PlayerIntent } from "../game/intents";
 import { MULTIPLAYER_PROTOCOL_VERSION, type MatchSeat, type NetworkGameSnapshot, type SeatIntentBatch } from "./protocol";
 
+const MAX_RECENT_INTENT_BATCHES = 12;
+const INTENT_RESEND_INTERVAL_MS = 100;
+
 export interface SnapshotBufferStats {
   buffered: number;
   droppedStale: number;
@@ -131,6 +134,10 @@ export function attachOnlineMatchRoom(
 ): OnlineMatchSession {
   const snapshots = new SnapshotBuffer({ matchId: handlers.matchId });
   const intentLedger = new RemoteIntentLedger();
+  const sentIntentKeys = new Map<number, string>();
+  const recentIntentBatches: Array<Omit<SeatIntentBatch, "seat">> = [];
+  let resendCursor = 0;
+  let lastResendAtMs = Date.now();
   const snapshotHandler = (snapshot: NetworkGameSnapshot): void => {
     if (!snapshots.push(snapshot)) return;
     handlers.onSnapshot?.(snapshot);
@@ -158,13 +165,47 @@ export function attachOnlineMatchRoom(
   room.onMessage("invalid_message", invalidHandler);
   room.onMessage("room_lifecycle", lifecycleHandler);
   room.onMessage("intent_batch", relayedIntentHandler);
+  const rememberIntentBatch = (batch: Omit<SeatIntentBatch, "seat">): void => {
+    const existing = recentIntentBatches.findIndex((b) => b.tick === batch.tick);
+    if (existing >= 0) recentIntentBatches.splice(existing, 1);
+    recentIntentBatches.push(batch);
+    while (recentIntentBatches.length > MAX_RECENT_INTENT_BATCHES) {
+      const dropped = recentIntentBatches.shift();
+      if (dropped) sentIntentKeys.delete(dropped.tick);
+    }
+    if (resendCursor >= recentIntentBatches.length) resendCursor = 0;
+  };
+  const sendIntentBatch = (batch: Omit<SeatIntentBatch, "seat">): void => {
+    room.send("intent_batch", batch);
+  };
+  const resendRecentIntentBatch = (currentTick: number): void => {
+    if (recentIntentBatches.length < 2) return;
+    const now = Date.now();
+    if (now - lastResendAtMs < INTENT_RESEND_INTERVAL_MS) return;
+    lastResendAtMs = now;
+    for (let i = 0; i < recentIntentBatches.length; i++) {
+      const index = (resendCursor + i) % recentIntentBatches.length;
+      const candidate = recentIntentBatches[index]!;
+      if (candidate.tick === currentTick) continue;
+      resendCursor = (index + 1) % recentIntentBatches.length;
+      sendIntentBatch(candidate);
+      return;
+    }
+  };
   return {
     snapshots,
     intentLedger,
     sendIntents(tick, intents) {
       if (!Number.isInteger(tick) || tick < 0) return;
       const batch: Omit<SeatIntentBatch, "seat"> = { tick, intents: intents.slice(0, 32) };
-      room.send("intent_batch", batch);
+      const key = JSON.stringify(batch);
+      if (sentIntentKeys.get(tick) !== key) {
+        sentIntentKeys.set(tick, key);
+        rememberIntentBatch(batch);
+        sendIntentBatch(batch);
+      } else {
+        resendRecentIntentBatch(tick);
+      }
     },
     stats: () => snapshots.stats(),
     dispose() {

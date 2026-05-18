@@ -28,7 +28,25 @@ export const MAP_REGISTRY: readonly { id: string; label: string; url: string }[]
   { id: "sphere_planet", label: "Sphere Planet (demo)", url: "/maps/sphere_planet.json" },
 ] as const;
 
+/** Looping match BGM per battle map (`public/assets/audio/`). Beta maps omit here until shipped. */
+export const MATCH_MUSIC_BY_MAP_URL: Readonly<Record<string, string>> = {
+  "/map.json": "/assets/audio/level_cluster_captain.mp3",
+  "/maps/forgewarden.json": "/assets/audio/level_aphelion_burn.mp3",
+  "/maps/glacierline.json": "/assets/audio/level_cluster_captain_b.mp3",
+  "/maps/mesa_badlands.json": "/assets/audio/level_equipping_the_future.mp3",
+};
+
 export const DEFAULT_MAP_URL = "/map.json";
+
+/** Sphere Planet stays in the picker but has no dedicated BGM while in beta. */
+const SPHERE_PLANET_MAP_URL = "/maps/sphere_planet.json";
+
+/** Resolved BGM URL, or `null` when this map intentionally has no match music yet. */
+export function matchMusicUrlForMap(mapUrl: string): string | null {
+  const key = mapUrl.trim() || DEFAULT_MAP_URL;
+  if (key === SPHERE_PLANET_MAP_URL) return null;
+  return MATCH_MUSIC_BY_MAP_URL[key] ?? MATCH_MUSIC_BY_MAP_URL[DEFAULT_MAP_URL]!;
+}
 
 /**
  * Load a battle map JSON, then deep-merge `map.local.json` on top (optional dev override).

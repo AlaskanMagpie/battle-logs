@@ -12,6 +12,7 @@ import {
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_CHRONO_SENTINELS,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_STEELBARK_M81A,
   STRUCTURE_MESH_VISUAL_SCALE,
   TAP_YIELD_MAX,
   MAP_DECOR_BLOCK_BOX_XZ,
@@ -137,71 +138,6 @@ function structureFootAnalyticYLiftForCatalog(catalogId: string | null | undefin
 }
 /** Sphere: analytic ray seed inset inside smooth R so downward casts still hit the rendered shell first. */
 const STRUCTURE_SPHERE_GROUNDING_SEED_INSET = 0.55;
-
-/** Line-strip segments for one stadium (capsule) outline in XZ at `lineY`. */
-function appendTerritoryStadiumOutlinePositions(
-  positions: number[],
-  ax: number,
-  az: number,
-  bx: number,
-  bz: number,
-  rCap: number,
-  lineY: number,
-  capSegs: number,
-  edgeSegs: number,
-): void {
-  const ux = bx - ax;
-  const uz = bz - az;
-  const len0 = Math.hypot(ux, uz);
-  if (len0 < 1e-5) return;
-  const uxn = ux / len0;
-  const uzn = uz / len0;
-  const px = -uzn;
-  const pz = uxn;
-  const push = (x0: number, z0: number, x1: number, z1: number): void => {
-    positions.push(x0, lineY, z0, x1, lineY, z1);
-  };
-  const axT = ax + px * rCap;
-  const azT = az + pz * rCap;
-  const bxT = bx + px * rCap;
-  const bzT = bz + pz * rCap;
-  const axB = ax - px * rCap;
-  const azB = az - pz * rCap;
-  const bxB = bx - px * rCap;
-  const bzB = bz - pz * rCap;
-  for (let i = 0; i < edgeSegs; i++) {
-    const t0 = i / edgeSegs;
-    const t1 = (i + 1) / edgeSegs;
-    push(axT + (bxT - axT) * t0, azT + (bzT - azT) * t0, axT + (bxT - axT) * t1, azT + (bzT - azT) * t1);
-  }
-  for (let i = 0; i < capSegs; i++) {
-    const t0 = (i / capSegs) * Math.PI;
-    const t1 = ((i + 1) / capSegs) * Math.PI;
-    const ang0 = Math.PI / 2 - t0;
-    const ang1 = Math.PI / 2 - t1;
-    const x0 = bx + rCap * (Math.cos(ang0) * px + Math.sin(ang0) * uxn);
-    const z0 = bz + rCap * (Math.cos(ang0) * pz + Math.sin(ang0) * uzn);
-    const x1 = bx + rCap * (Math.cos(ang1) * px + Math.sin(ang1) * uxn);
-    const z1 = bz + rCap * (Math.cos(ang1) * pz + Math.sin(ang1) * uzn);
-    push(x0, z0, x1, z1);
-  }
-  for (let i = 0; i < edgeSegs; i++) {
-    const t0 = i / edgeSegs;
-    const t1 = (i + 1) / edgeSegs;
-    push(bxB + (axB - bxB) * t0, bzB + (azB - bzB) * t0, bxB + (axB - bxB) * t1, bzB + (azB - bzB) * t1);
-  }
-  for (let i = 0; i < capSegs; i++) {
-    const t0 = (i / capSegs) * Math.PI;
-    const t1 = ((i + 1) / capSegs) * Math.PI;
-    const ang0 = -Math.PI / 2 + t0;
-    const ang1 = -Math.PI / 2 + t1;
-    const x0 = ax + rCap * (Math.cos(ang0) * -px + Math.sin(ang0) * -uxn);
-    const z0 = az + rCap * (Math.cos(ang0) * -pz + Math.sin(ang0) * -uzn);
-    const x1 = ax + rCap * (Math.cos(ang1) * -px + Math.sin(ang1) * -uxn);
-    const z1 = az + rCap * (Math.cos(ang1) * -pz + Math.sin(ang1) * -uzn);
-    push(x0, z0, x1, z1);
-  }
-}
 
 const QUAT_RING_FLAT_XZ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 const scratchSphereA = new THREE.Vector3();
@@ -770,6 +706,8 @@ function facetedBoxGeometry(w: number, h: number, d: number, seed = 1, chip = 0.
     const j = (facetJitter(x, y, z, seed) - 0.5) * amp;
     p.setXYZ(i, x + Math.sign(x || 1) * j, y + Math.sign(y || 1) * j * 0.7, z + Math.sign(z || 1) * j);
   }
+  /** BoxGeometry ships `uv`; procedural frustum/shard pieces do not — mergeGeometries requires a match. */
+  g.deleteAttribute("uv");
   return finalizeLowPolyGeometry(g);
 }
 
@@ -1254,6 +1192,94 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   return g;
 }
 
+/**
+ * Claimed-tap siege anchor — replaces the legacy bright tapered cylinder that read as a flat “debug cone”.
+ * `userData.bodyMesh` is an inner group so HP bars on the outer root are not scaled by hit-pulse.
+ */
+function buildTapAnchorClaimPillar(): THREE.Group {
+  const root = new THREE.Group();
+  const sway = new THREE.Group();
+  root.add(sway);
+
+  const teamMaterials: THREE.MeshStandardMaterial[] = [];
+  const mkTeamMat = (rough: number, metal: number): THREE.MeshStandardMaterial => {
+    const m = new THREE.MeshStandardMaterial({
+      color: 0x6a7482,
+      roughness: rough,
+      metalness: metal,
+      emissive: 0x050608,
+      emissiveIntensity: 0.28,
+    });
+    teamMaterials.push(m);
+    return m;
+  };
+  const darkMetal = matFor(0x1e1c22, 0.78, 0.32);
+  const bandMetal = matFor(0x26242c, 0.62, 0.48);
+
+  const dish = new THREE.Mesh(facetedFrustumGeometry(0.56, 0.46, 0.12, 10, 401, 1, 1), darkMetal);
+  dish.position.y = 0.06;
+  dish.castShadow = true;
+  dish.receiveShadow = true;
+  sway.add(dish);
+
+  const ringFoot = new THREE.Mesh(facetedRingGeometry(0.36, 0.085, 16, 409), bandMetal);
+  ringFoot.position.y = 0.14;
+  ringFoot.castShadow = true;
+  sway.add(ringFoot);
+
+  const column = new THREE.Mesh(
+    facetedFrustumGeometry(0.29, 0.25, 0.68, 8, 419, 0.96, 1.04),
+    mkTeamMat(0.4, 0.3),
+  );
+  column.position.y = 0.5;
+  column.castShadow = true;
+  column.receiveShadow = true;
+  sway.add(column);
+
+  const ringMid = new THREE.Mesh(facetedRingGeometry(0.31, 0.065, 14, 431), bandMetal);
+  ringMid.position.y = 0.56;
+  ringMid.castShadow = true;
+  sway.add(ringMid);
+
+  const housing = new THREE.Mesh(
+    facetedFrustumGeometry(0.3, 0.2, 0.26, 8, 443),
+    mkTeamMat(0.36, 0.38),
+  );
+  housing.position.y = 0.92;
+  housing.castShadow = true;
+  sway.add(housing);
+
+  const shard = new THREE.Mesh(facetedShardGeometry(0.11, 0.34, 7, 457), mkTeamMat(0.28, 0.18));
+  shard.position.y = 1.18;
+  shard.castShadow = true;
+  sway.add(shard);
+
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const glow = new THREE.Mesh(new THREE.RingGeometry(0.4, 0.5, 30), glowMat);
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.025;
+  sway.add(glow);
+
+  sway.traverse((c) => {
+    if (c instanceof THREE.Mesh) {
+      c.castShadow = true;
+      c.receiveShadow = true;
+    }
+  });
+
+  root.userData["bodyMesh"] = sway;
+  root.userData["tapAnchorTeamMaterials"] = teamMaterials;
+  root.userData["tapAnchorGlowMat"] = glowMat;
+  return root;
+}
+
 function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
   const ud = g.userData as Record<string, unknown>;
   const silhouette = ud["structureSilhouette"] as THREE.Object3D | undefined;
@@ -1510,11 +1536,6 @@ export class GameRenderer {
   private enemyTerritoryField: THREE.Mesh | null = null;
   private territoryTexture: THREE.CanvasTexture | null = null;
   private enemyTerritoryTexture: THREE.CanvasTexture | null = null;
-  private territoryOutline: THREE.LineSegments | null = null;
-  private enemyTerritoryOutline: THREE.LineSegments | null = null;
-  /** Passable low “curb” meshes along territory link corridors (player / enemy). */
-  private territoryLinkDecorPlayer: THREE.Group | null = null;
-  private territoryLinkDecorEnemy: THREE.Group | null = null;
   /** Bumps when only territory *visual* style changes (fill texture, opacities); not derived from sim sources. */
   private static readonly TERRITORY_OVERLAY_STYLE = "v6";
   private territoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
@@ -3673,7 +3694,7 @@ export class GameRenderer {
           this.markers.add(label.sprite);
           this.tapLabels.set(t.defId, label);
         }
-        drawLabel(label, "Destroy red anchor", "#ff9a7a");
+        drawLabel(label, "Destroy hostile anchor", "#ff9a7a");
         label.sprite.position.set(t.x, Math.max(6, claimR * 0.48 + 4.2), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
@@ -3721,29 +3742,32 @@ export class GameRenderer {
       aliveAnchors.add(t.defId);
       let g = this.tapAnchorRoots.get(t.defId);
       if (!g) {
-        g = new THREE.Group();
-        const body = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.42, 0.52, 1.12, 12),
-          new THREE.MeshStandardMaterial({
-            color: 0x9eb6d4,
-            roughness: 0.52,
-            metalness: 0.12,
-            emissive: 0x0a1420,
-          }),
-        );
-        body.position.y = 0.56;
-        body.castShadow = true;
-        body.receiveShadow = true;
-        body.userData["bodyMesh"] = body;
-        g.userData["bodyMesh"] = body;
-        g.add(body);
+        g = buildTapAnchorClaimPillar();
         this.markers.add(g);
         this.tapAnchorRoots.set(t.defId, g);
       }
       g.position.set(t.x, 0, t.z);
-      const body = g.userData["bodyMesh"] as THREE.Mesh;
-      const mat = body.material as THREE.MeshStandardMaterial;
-      mat.color.setHex(t.ownerTeam === "player" ? 0x5ba8e8 : 0xd86060);
+      const teamMats = g.userData["tapAnchorTeamMaterials"] as THREE.MeshStandardMaterial[] | undefined;
+      if (teamMats?.length) {
+        if (t.ownerTeam === "player") {
+          for (const m of teamMats) {
+            m.color.setHex(0x4a8fd4);
+            m.emissive.setHex(0x061a2c);
+            m.emissiveIntensity = 0.42;
+          }
+        } else {
+          for (const m of teamMats) {
+            m.color.setHex(0x5c3e44);
+            m.emissive.setHex(0x2a0a10);
+            m.emissiveIntensity = 0.52;
+          }
+        }
+      }
+      const glowMat = g.userData["tapAnchorGlowMat"] as THREE.MeshBasicMaterial | undefined;
+      if (glowMat) {
+        glowMat.color.setHex(t.ownerTeam === "player" ? 0x5cd8ff : 0xff7a62);
+        glowMat.opacity = t.ownerTeam === "player" ? 0.26 : 0.32;
+      }
       const fg = t.ownerTeam === "player" ? 0x7ec8ff : 0xff8888;
       const pair = this.ensureHpBarPair(g, "tapA", 1.32, fg);
       const maxA = Math.max(1, t.anchorMaxHp ?? 1);
@@ -5228,7 +5252,7 @@ export class GameRenderer {
   }
 
   private syncTerritory(state: GameState): void {
-    /** Higher fill + rim stroke + outline: territory must read on all maps without guessing. */
+    /** Soft floor tint only — line/corridor overlays were dropped as too visually noisy. */
     this.syncTerritoryTeam("player", state.map, territorySources(state), 0x5fd8ff, 0.46);
     this.syncTerritoryTeam("enemy", state.map, enemyTerritorySources(state), 0xff665d, 0.3);
   }
@@ -5283,99 +5307,31 @@ export class GameRenderer {
     field.renderOrder = -6;
 
     this.territoryGroup.add(field);
-    const outline = this.createTerritoryOutline(sources, links, color, team === "player" ? 0.95 : 0.8, fieldY + 0.002);
-    if (outline) this.territoryGroup.add(outline);
-
-    const linkDecor = this.buildTerritoryLinkDecor(links, color, fieldY + 0.01, team === "player" ? 0.42 : 0.34);
-    if (linkDecor) {
-      this.territoryGroup.add(linkDecor);
-      if (team === "player") this.territoryLinkDecorPlayer = linkDecor;
-      else this.territoryLinkDecorEnemy = linkDecor;
-    }
     if (team === "player") {
       this.territoryField = field;
       this.territoryTexture = texture;
-      this.territoryOutline = outline;
     } else {
       this.enemyTerritoryField = field;
       this.enemyTerritoryTexture = texture;
-      this.enemyTerritoryOutline = outline;
     }
   }
 
   private disposeTerritoryTeam(team: "player" | "enemy"): void {
     const field = team === "player" ? this.territoryField : this.enemyTerritoryField;
     const texture = team === "player" ? this.territoryTexture : this.enemyTerritoryTexture;
-    const outline = team === "player" ? this.territoryOutline : this.enemyTerritoryOutline;
-    const linkDecor = team === "player" ? this.territoryLinkDecorPlayer : this.territoryLinkDecorEnemy;
     if (field) {
       this.territoryGroup.remove(field);
       field.geometry.dispose();
       (field.material as THREE.Material).dispose();
     }
     if (texture) texture.dispose();
-    if (outline) {
-      this.territoryGroup.remove(outline);
-      outline.geometry.dispose();
-      (outline.material as THREE.Material).dispose();
-    }
-    if (linkDecor) {
-      this.territoryGroup.remove(linkDecor);
-      linkDecor.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
-          o.geometry.dispose();
-          (o.material as THREE.Material).dispose();
-        }
-      });
-    }
     if (team === "player") {
       this.territoryField = null;
       this.territoryTexture = null;
-      this.territoryOutline = null;
-      this.territoryLinkDecorPlayer = null;
     } else {
       this.enemyTerritoryField = null;
       this.enemyTerritoryTexture = null;
-      this.enemyTerritoryOutline = null;
-      this.territoryLinkDecorEnemy = null;
     }
-  }
-
-  private buildTerritoryLinkDecor(
-    links: readonly TerritoryLink[],
-    color: number,
-    yBase: number,
-    opacity: number,
-  ): THREE.Group | null {
-    if (links.length === 0) return null;
-    const root = new THREE.Group();
-    const matBase = {
-      color,
-      transparent: true,
-      opacity,
-      depthWrite: false,
-      depthTest: true,
-      polygonOffset: true,
-      polygonOffsetFactor: -1,
-      polygonOffsetUnits: -1,
-    };
-    for (const L of links) {
-      const ax = L.a.x;
-      const az = L.a.z;
-      const bx = L.b.x;
-      const bz = L.b.z;
-      const dx = bx - ax;
-      const dz = bz - az;
-      const len = Math.hypot(dx, dz);
-      if (len < 1e-6) continue;
-      const w = Math.min(4.2, L.rCap * 2 + 0.6);
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(len, 0.36, w), new THREE.MeshBasicMaterial(matBase));
-      mesh.position.set((ax + bx) * 0.5, yBase + 0.18, (az + bz) * 0.5);
-      mesh.rotation.y = Math.atan2(dz, dx);
-      mesh.renderOrder = -5;
-      root.add(mesh);
-    }
-    return root.children.length > 0 ? root : null;
   }
 
   private createTerritoryTexture(
@@ -5435,66 +5391,14 @@ export class GameRenderer {
     ctx.putImageData(img, 0, 0);
 
     const tex = new THREE.CanvasTexture(canvas);
+    /** Default `flipY` mirrors V vs `PlaneGeometry` UVs after `rotation.x = -π/2`, shifting the fill off the outline. */
+    tex.flipY = false;
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.generateMipmaps = false;
     tex.needsUpdate = true;
     return tex;
-  }
-
-  private createTerritoryOutline(
-    sources: { x: number; z: number }[],
-    links: readonly TerritoryLink[],
-    color: number,
-    opacity: number,
-    /** Match the fill plane height (outline was at y=0.16, which parallax-skewed vs the disk on the floor). */
-    lineY: number,
-  ): THREE.LineSegments | null {
-    const positions: number[] = [];
-    const segs = 96;
-    const r = TERRITORY_RADIUS;
-    const coverR2 = (r - 1.2) * (r - 1.2);
-    for (let si = 0; si < sources.length; si++) {
-      const p = sources[si]!;
-      for (let i = 0; i < segs; i++) {
-        const a0 = (i / segs) * Math.PI * 2;
-        const a1 = ((i + 1) / segs) * Math.PI * 2;
-        const am = (a0 + a1) * 0.5;
-        const mx = p.x + Math.cos(am) * r;
-        const mz = p.z + Math.sin(am) * r;
-        let covered = false;
-        for (let sj = 0; sj < sources.length; sj++) {
-          if (sj === si) continue;
-          const o = sources[sj]!;
-          const dx = mx - o.x;
-          const dz = mz - o.z;
-          if (dx * dx + dz * dz < coverR2) {
-            covered = true;
-            break;
-          }
-        }
-        if (covered) continue;
-        positions.push(p.x + Math.cos(a0) * r, lineY, p.z + Math.sin(a0) * r);
-        positions.push(p.x + Math.cos(a1) * r, lineY, p.z + Math.sin(a1) * r);
-      }
-    }
-    for (const L of links) {
-      appendTerritoryStadiumOutlinePositions(positions, L.a.x, L.a.z, L.b.x, L.b.z, L.rCap, lineY, 10, 10);
-    }
-    if (positions.length === 0) return null;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    const mat = new THREE.LineBasicMaterial({
-      color,
-      transparent: true,
-      opacity,
-      depthWrite: false,
-      depthTest: true,
-    });
-    const line = new THREE.LineSegments(geo, mat);
-    line.renderOrder = -5;
-    return line;
   }
 
   private buildHeroMesh(): THREE.Group {
@@ -5879,7 +5783,7 @@ export class GameRenderer {
           const placeholder = (g.userData["bodyMesh"] as THREE.Mesh | undefined) ?? null;
           if (placeholder) {
             placeholder.visible = false;
-            void requestGlbForUnit(u.sizeClass, placeholder, u.team, u.producedUnitId, u.producerCatalogId);
+            void requestGlbForUnit(u.sizeClass, placeholder, u.team, u.producedUnitId, u.producerCatalogId, u.equipmentLoadout);
           }
         }
       }
@@ -5909,6 +5813,7 @@ export class GameRenderer {
       const simDz = u.z - visual.y;
       const simMoveDist = Math.hypot(simDx, simDz);
       const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
+      const steelbarkAttackActive = attackActive && u.producedUnitId === PRODUCED_UNIT_STEELBARK_M81A;
       const teleportSnapVisual = simMoveDist > UNIT_VISUAL_TELEPORT_SNAP_DIST;
       const orderTargetDist =
         u.order && u.order.mode !== "stay" ? Math.hypot(u.order.x - u.x, u.order.z - u.z) : 0;
@@ -5918,7 +5823,7 @@ export class GameRenderer {
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
         (!attackActive || simMoveDist > UNIT_VISUAL_ATTACK_RUN_LAG_EPS);
-      if (shouldRun && attackActive && !mobileLodPlaceholder) {
+      if (shouldRun && attackActive && !steelbarkAttackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
         const fade = this.glbAttackOutFadeSec(ud);
@@ -5948,7 +5853,7 @@ export class GameRenderer {
         delete g.userData["sphereYaw"];
       }
       if (!attackActive) this.unitFaceTargets.delete(u.id);
-      const faceTarget = attackActive && !shouldRun ? this.unitFaceTargets.get(u.id) : undefined;
+      const faceTarget = attackActive && (!shouldRun || steelbarkAttackActive) ? this.unitFaceTargets.get(u.id) : undefined;
       /**
        * Prefer EMA velocity (LAMBDA=9.5 ≈ 100 ms) for facing — single-frame `simDx/simDz` flickers
        * direction near HQ where Swarms get tiny separation pushes from packed neighbors. The smoothed
@@ -6015,6 +5920,7 @@ export class GameRenderer {
       (pair.bg.material as THREE.MeshBasicMaterial).opacity = selected || hpFrac < 0.995 ? 0.82 : 0.42;
       this.setHpBarPairVisible(g, "u", true);
       this.syncUnitSpellStatusVisuals(g, u);
+      this.syncSteelbarkHoverVisuals(g, u);
       let label = this.unitCountLabels.get(u.id);
       if (!label) {
         label = makeLabelSprite("x1", u.team === "player" ? "#7ec8ff" : "#ff8888");
@@ -6498,6 +6404,72 @@ export class GameRenderer {
     ud["unitSpellStatusFxSig"] = signature;
   }
 
+  private syncSteelbarkHoverVisuals(root: THREE.Group, u: GameState["units"][number]): void {
+    const ud = root.userData as Record<string, unknown>;
+    const old = ud["steelbarkHoverFx"] as THREE.Group | undefined;
+    if (u.producedUnitId !== PRODUCED_UNIT_STEELBARK_M81A) {
+      if (old) {
+        root.remove(old);
+        this.disposeObject(old);
+        delete ud["steelbarkHoverFx"];
+      }
+      return;
+    }
+    const height = (ud["unitHeight"] as number | undefined) ?? unitMeshLinearSize("Titan");
+    const radius = Math.max(1.15, unitMeshLinearSize("Titan") * 0.3);
+    let group = old;
+    if (!group) {
+      group = new THREE.Group();
+      group.name = "steelbark-hover-fx";
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(radius, 42),
+        new THREE.MeshBasicMaterial({
+          color: u.team === "player" ? 0x76d9ff : 0xff8f66,
+          transparent: true,
+          opacity: 0.12,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      disc.name = "steelbark-hover-disc";
+      disc.rotation.x = -Math.PI / 2;
+      group.add(disc);
+
+      for (let i = 0; i < 2; i++) {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(radius * (0.72 + i * 0.22), Math.max(0.018, radius * 0.012), 5, 44),
+          new THREE.MeshBasicMaterial({
+            color: i === 0 ? 0xd8fbff : 0x6fd6ff,
+            transparent: true,
+            opacity: i === 0 ? 0.22 : 0.16,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          }),
+        );
+        ring.name = `steelbark-hover-ring-${i}`;
+        ring.rotation.x = Math.PI / 2;
+        group.add(ring);
+      }
+      root.add(group);
+      ud["steelbarkHoverFx"] = group;
+    }
+
+    const t = this.clock.getElapsedTime() + (u.visualSeed % 997) * 0.001;
+    group.position.y = Math.max(0.08, height * 0.045);
+    group.scale.setScalar(1 + Math.sin(t * 3.4) * 0.035);
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh;
+      const mat = mesh.material as THREE.MeshBasicMaterial | undefined;
+      if (!mat) continue;
+      if (child.name === "steelbark-hover-disc") {
+        mat.color.setHex(u.team === "player" ? 0x76d9ff : 0xff8f66);
+        mat.opacity = 0.1 + Math.sin(t * 2.6) * 0.025;
+      } else {
+        mat.opacity = 0.13 + Math.sin(t * 4.1 + child.id) * 0.04;
+      }
+    }
+  }
+
   private tickUnitProceduralMotion(dt: number): void {
     const ease = 1 - Math.exp(-10.5 * dt);
     for (const [id, root] of this.unitMeshes) {
@@ -6513,6 +6485,25 @@ export class GameRenderer {
       /** Azure spear scouts already carry bounce/spin in clips; extra procedural motion reads as double-motion. */
       const acrobatSwarmGlb = producedId === PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS;
       const L = unitMeshLinearSize(m.sizeClass);
+      if (producedId === PRODUCED_UNIT_STEELBARK_M81A) {
+        const yaw =
+          typeof udRoot["sphereYaw"] === "number" ? (udRoot["sphereYaw"] as number) : root.rotation.y;
+        const localForward = Math.sin(yaw) * m.velX + Math.cos(yaw) * m.velZ;
+        const localSide = Math.cos(yaw) * m.velX - Math.sin(yaw) * m.velZ;
+        const hoverPhase = this.clock.getElapsedTime() * 2.15 + ((udRoot["unitId"] as number | undefined) ?? 0) * 0.37;
+        const hoverLift = L * 0.09 + Math.sin(hoverPhase) * L * 0.012;
+        const chargeDip = Math.sin(m.attackKick * Math.PI) * L * 0.022;
+        const targetPitch =
+          THREE.MathUtils.clamp(-localForward * 0.012 / Math.max(1, L), -0.045, 0.045) * m.movingBlend -
+          chargeDip * 0.012;
+        const targetRoll =
+          THREE.MathUtils.clamp(-localSide * 0.018 / Math.max(1, L), -0.07, 0.07) * m.movingBlend +
+          Math.sin(hoverPhase * 1.7) * 0.008;
+        m.leanPitch += (targetPitch - m.leanPitch) * ease;
+        m.leanRoll += (targetRoll - m.leanRoll) * ease;
+        this.applyUnitMotionPose(root, hoverLift - chargeDip, m.leanPitch, m.leanRoll);
+        continue;
+      }
       const cadence = m.sizeClass === "Swarm" ? 7.8 : m.sizeClass === "Line" ? 6.2 : m.sizeClass === "Heavy" ? 4.6 : 3.4;
       const stride = Math.min(1.8, Math.max(0.35, m.speed / Math.max(1.2, L)));
       const cadenceMul = acrobatSwarmGlb ? 0.55 : 1;
@@ -6855,10 +6846,14 @@ export class GameRenderer {
       isHero && strikePool && strikePool.length > 0
         ? strikePool[Math.floor(Math.random() * strikePool.length)]!
         : attackDefault;
-    if (!attack) return;
     if (ud["glbAttackTimer"] !== undefined) return;
     const titan = ud["sizeClass"] === "Titan";
     const producedId = ud["producedUnitId"] as string | undefined;
+    if (!attack && producedId === PRODUCED_UNIT_STEELBARK_M81A) {
+      ud["glbAttackTimer"] = 2.15;
+      return;
+    }
+    if (!attack) return;
     const punchyLineMonks =
       producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
       producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||

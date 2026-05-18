@@ -18,6 +18,7 @@ import {
   COMBAT_ARTILLERY_FLIGHT_TICKS_MIN,
   COMBAT_ARTILLERY_FLIGHT_TICKS_MAX,
   COMBAT_ARTILLERY_FLIGHT_DIST_SCALE,
+  PRODUCED_UNIT_STEELBARK_M81A,
 } from "../../constants";
 import { enemyAttackSpeedScalar } from "../../difficulty";
 import {
@@ -74,6 +75,46 @@ function tickAttackCooldowns(units: UnitRuntime[]): void {
 
 function attackReady(u: UnitRuntime): boolean {
   return (u.attackCooldownTicksRemaining ?? 0) <= 0;
+}
+
+function isSteelbarkSiegeTank(u: UnitRuntime): boolean {
+  return u.producedUnitId === PRODUCED_UNIT_STEELBARK_M81A;
+}
+
+function nearestFoeTitanInRange(
+  s: GameState,
+  u: UnitRuntime,
+  foeTeam: "player" | "enemy",
+  buckets: Map<string, UnitRuntime[]>,
+): UnitRuntime | null {
+  let best: UnitRuntime | null = null;
+  let bestD = u.range * u.range;
+  for (const candidate of unitsNearXZ(buckets, u.x, u.z, u, cell, u.range)) {
+    if (candidate.team !== foeTeam || candidate.sizeClass !== "Titan" || candidate.hp <= 0) continue;
+    const d = gameDist2(s.map, u, candidate);
+    if (d <= bestD) {
+      bestD = d;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function hasPriorityBuildingTargetInRange(s: GameState, u: UnitRuntime): boolean {
+  const r2 = u.range * u.range;
+  if (u.team === "player") {
+    for (const er of s.enemyRelays) {
+      if (er.hp > 0 && gameDist2(s.map, u, er) <= r2) return true;
+    }
+    for (const st of s.structures) {
+      if (st.team === "enemy" && gameDist2(s.map, u, st) <= r2) return true;
+    }
+    return false;
+  }
+  for (const st of s.structures) {
+    if (st.team === "player" && gameDist2(s.map, u, st) <= r2) return true;
+  }
+  return false;
 }
 
 function commitAttack(s: GameState, u: UnitRuntime): void {
@@ -241,8 +282,11 @@ export function combat(s: GameState): void {
     if (!attackReady(u)) continue;
     const foeTeam = u.team === "player" ? "enemy" : "player";
     const band = classifyAttackRangeBand(u.range);
+    const priorityTitan = isSteelbarkSiegeTank(u) ? nearestFoeTitanInRange(s, u, foeTeam, buckets) : null;
+    if (isSteelbarkSiegeTank(u) && !priorityTitan && hasPriorityBuildingTargetInRange(s, u)) continue;
     const best =
-      band === "long"
+      priorityTitan ??
+      (band === "long"
         ? nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell, s.map)
         : nearestFoeInBucketsWithLineOfSight(
             u,
@@ -253,7 +297,7 @@ export function combat(s: GameState): void {
             COMBAT_LOS_SEGMENT_AGENT_R,
             structureFootprints,
             cell,
-          );
+          ));
     if (!best) continue;
     if (band === "long") {
       const dist = Math.sqrt(gameDist2(s.map, u, best));
@@ -327,6 +371,7 @@ export function combat(s: GameState): void {
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
+    if (isSteelbarkSiegeTank(u) && hasPriorityBuildingTargetInRange(s, u)) continue;
     if (s.hero.hp <= 0) break;
     if (gameDist2(s.map, u, s.hero) <= u.range * u.range) {
       const raw =
@@ -345,6 +390,7 @@ export function combat(s: GameState): void {
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
+    if (isSteelbarkSiegeTank(u) && hasPriorityBuildingTargetInRange(s, u)) continue;
     if (s.enemyHero.hp <= 0) break;
     if (gameDist2(s.map, u, s.enemyHero) <= u.range * u.range) {
       const raw =

@@ -15,6 +15,33 @@ body,
   touch-action: manipulation;
 }
 
+button.menu-music-mute {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 2147483000;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(180, 210, 255, 0.35);
+  background: rgba(12, 18, 32, 0.82);
+  color: #e8f0ff;
+  font: 600 13px system-ui, Segoe UI, sans-serif;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+button.menu-music-mute:hover {
+  border-color: rgba(200, 230, 255, 0.55);
+  background: rgba(18, 26, 44, 0.92);
+}
+
+button.menu-music-mute:focus-visible {
+  outline: 2px solid #7ddbff;
+  outline-offset: 2px;
+}
+
 .hud-help-item--mobile {
   display: none;
 }
@@ -57,8 +84,8 @@ html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn {
   border: 0;
 }
 :root {
-  /* In-match doctrine tray — taller cap so compact cards read more like previews. */
-  --doctrine-tray-h: clamp(168px, min(52dvh, calc(28vw + 96px)), 460px);
+  /* In-match doctrine tray — reserve less vertical space so the canvas stays primary. */
+  --doctrine-tray-h: clamp(148px, min(36dvh, calc(22vw + 72px)), 340px);
   /* TCG card face ratio (width : height) — Magic ~2.5×3.5" */
   --tcg-aspect-w: 5;
   --tcg-aspect-h: 7;
@@ -74,7 +101,7 @@ html.is-mobile-profile .hud-chrome > .hud-match-side-controls .hud-btn {
 
 @media (pointer: coarse) {
   :root {
-    --doctrine-tray-h: clamp(176px, min(54dvh, calc(30vw + 100px)), 470px);
+    --doctrine-tray-h: clamp(156px, min(38dvh, calc(24vw + 78px)), 352px);
   }
 }
 
@@ -600,7 +627,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  font-size: clamp(11px, 1.05vw, 12.5px);
+  font-size: clamp(10px, 0.88vw, 11.5px);
   line-height: 1.35;
   color: #d0def2;
   opacity: 0.94;
@@ -1083,6 +1110,9 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .doctrine-wrap--rail .doctrine-view {
   overflow: visible;
   width: 100%;
+  /* Size doctrine slots from the rail strip width — not `100vw` (fixes clipped hand when row is narrower than the viewport). */
+  container-type: inline-size;
+  container-name: doctrine-rail;
 }
 .doctrine-wrap.doctrine-wrap--rail::before {
   display: none;
@@ -1129,8 +1159,8 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   justify-content: center;
   overflow: hidden;
   gap: 0;
-  padding: 14px max(10px, env(safe-area-inset-left, 0px)) 0 max(10px, env(safe-area-inset-right, 0px));
-  --hand-card-h: clamp(104px, 18dvh, 156px);
+  padding: 8px max(10px, env(safe-area-inset-left, 0px)) 0 max(10px, env(safe-area-inset-right, 0px));
+  --hand-card-h: clamp(88px, 13dvh, 128px);
   --hand-reveal: clamp(8px, 1.5vw, 20px);
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
@@ -1146,7 +1176,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   width: 100%;
   min-width: 0;
-  --hand-card-h: clamp(56px, min(11dvh, 11vw), 100px);
+  --hand-card-h: clamp(48px, min(9.5dvh, 9.5vw), 88px);
   --hand-reveal: 22px;
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
@@ -1164,8 +1194,8 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   width: 100%;
   min-width: 0;
-  --hand-card-h: clamp(118px, min(34dvh, 24vw), 248px);
-  --hand-reveal: clamp(12px, 2.2vw, 36px);
+  --hand-card-h: clamp(92px, min(22dvh, 16vw), 176px);
+  --hand-reveal: clamp(10px, 1.65vw, 26px);
   --hand-card-w: calc(var(--hand-card-h) * var(--tcg-aspect-w) / var(--tcg-aspect-h));
 }
 
@@ -1173,6 +1203,11 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   max-width: min(1720px, 100%);
   min-height: 0;
   width: 100%;
+}
+
+/* Straight rail: use full strip width (overrides deck10 cap above) so slot math matches layout. */
+.doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail .doctrine-hand--match {
+  max-width: 100%;
 }
 
 /* In-match: one straight row 1–0 — 10 cards, edge-to-edge (minus safe areas + corner widget), tight gaps, 2:3 from width (matches `cardArtOverlay`). */
@@ -1185,13 +1220,13 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   --hand-rail-pr: max(calc(6px + var(--hud-corner-widget-reserve, 118px)), env(safe-area-inset-right, 0px));
   padding: 0 var(--hand-rail-pr) max(2px, env(safe-area-inset-bottom, 0px)) var(--hand-rail-pl);
   --hand-reveal: 0px;
-  --hand-card-w: min(
-    400px,
-    max(
-      56px,
-      calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)
-    )
-  );
+  /* `100cqw` = rail container (`.doctrine-view`), not full window — keeps 10 slots inside the strip. */
+  --hand-slot-budget: calc(100cqw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap));
+  --hand-card-w-from-track: max(56px, calc(var(--hand-slot-budget) / 10));
+  /* Cap height on ultrawide / short windows so the canvas keeps most of the screen. */
+  --hand-card-h-cap: min(188px, 22dvh);
+  --hand-card-w-from-dvh: calc(var(--hand-card-h-cap) * 100 / 150);
+  --hand-card-w: min(var(--hand-card-w-from-dvh), var(--hand-card-w-from-track));
   --hand-card-h: calc(var(--hand-card-w) * 150 / 100);
 }
 
@@ -1199,7 +1234,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   gap: var(--hand-slot-gap, 3px);
   max-width: 100%;
   width: 100%;
-  min-height: calc(var(--hand-card-h) + 14px);
+  min-height: calc(var(--hand-card-h) + 10px);
   justify-content: flex-start;
   flex-wrap: nowrap;
 }
@@ -1488,14 +1523,14 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.12;
-  font-size: clamp(9px, 14cqi, 15px);
+  font-size: clamp(8px, 12cqi, 13px);
   word-break: normal;
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dc-subtitle {
   font-size: clamp(6px, 8cqi, 9px);
 }
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dc-subtitle {
-  font-size: clamp(7px, 9cqi, 10px);
+  font-size: clamp(6px, 8cqi, 9px);
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-stats,
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-spell-fx,
@@ -1505,7 +1540,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-stats,
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-spell-fx,
 .doctrine-track--hand.doctrine-track--deck10 .doctrine-card-compact .dm-foot {
-  font-size: clamp(6.5px, 9cqi, 10px);
+  font-size: clamp(6px, 8cqi, 9px);
 }
 .doctrine-track--hand.doctrine-track--deck2x8 .doctrine-card-compact .dm-spell-fx-ul {
   display: -webkit-box;
@@ -2230,11 +2265,16 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   border-radius: 8px;
   color: rgba(236, 248, 255, 0.86);
   background: rgba(0, 0, 0, 0.24);
+  white-space: pre-wrap;
 }
 
 .card-overlay-editor-panel__actions {
   display: flex;
   gap: 8px;
+}
+
+.card-overlay-editor-panel__actions--top {
+  margin-bottom: 10px;
 }
 
 .card-overlay-editor-panel__actions button {
@@ -5528,7 +5568,8 @@ button.hud-btn--armed::after {
 .onboarding-overlay {
   position: fixed;
   inset: 0;
-  z-index: 140;
+  /* Above #doctrine-picker (50000) so the staged tutorial shows on the main menu, not hidden behind prematch chrome. */
+  z-index: 62000;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -9134,7 +9175,8 @@ html.is-mobile-profile #doctrine-picker .binder-picker-rail-btn__label--long {
 /* Prematch mobile: coachmark floats above rail; portal is primary Quick Match affordance. */
 
 html.is-mobile-profile #doctrine-picker .binder-picker-doctrine-hand-rail .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
-  --hand-card-w: min(58px, max(32px, calc((100vw - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)));
+  /* `100%` = hand rail width (already excludes bottom-right action column). `100vw` was too wide and squeezed/overlapped slots. */
+  --hand-card-w: min(58px, max(32px, calc((100% - var(--hand-rail-pl) - var(--hand-rail-pr) - 9 * var(--hand-slot-gap)) / 10)));
   --hand-card-h: calc(var(--hand-card-w) * 150 / 100);
   --hand-rail-pr: max(4px, env(safe-area-inset-right, 0px));
   --hand-rail-pl: max(4px, env(safe-area-inset-left, 0px));
@@ -9145,7 +9187,7 @@ html.is-mobile-profile .onboarding-overlay {
   padding: 0 max(8px, env(safe-area-inset-right, 0px))
     calc(max(74px, 18dvw) + max(8px, env(safe-area-inset-bottom, 0px)))
     max(8px, env(safe-area-inset-left, 0px));
-  z-index: 130;
+  z-index: 62000;
 }
 
 html.is-mobile-profile .onboarding-card {
@@ -9772,19 +9814,19 @@ html.is-mobile-profile .ob-btn {
 }
 
 .hud-chrome .hud-phase-timer {
-  font-size: clamp(26px, 2.75vw, 36px);
+  font-size: clamp(20px, 2.15vw, 28px);
 }
 
 .hud-chrome .hud-phase-stats {
   padding-top: 1px;
   padding-bottom: 2px;
-  font-size: clamp(15px, 1.45vw, 20px);
+  font-size: clamp(12px, 1.15vw, 16px);
 }
 
 .hud-chrome .hud-phase-tally {
   max-width: 100%;
   padding: 2px 10px 3px;
-  font-size: clamp(14px, 1.35vw, 19px);
+  font-size: clamp(11px, 1.05vw, 15px);
   line-height: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -9798,8 +9840,8 @@ html.is-mobile-profile .ob-btn {
   --hud-ornate-gold: rgba(192, 156, 94, 0.76);
   --hud-ornate-line: rgba(166, 202, 235, 0.34);
   --hud-ornate-panel: rgba(3, 8, 16, 0.92);
-  --hud-top-h: clamp(66px, 6.9vw, 92px);
-  --hud-obj-h: clamp(30px, 3.2vw, 42px);
+  --hud-top-h: clamp(54px, 5.5vw, 76px);
+  --hud-obj-h: clamp(24px, 2.55vw, 34px);
   top: max(8px, env(safe-area-inset-top, 0px));
   left: 0;
   right: 0;
@@ -9811,7 +9853,7 @@ html.is-mobile-profile .ob-btn {
     minmax(386px, 0.98fr)
     minmax(392px, 1.05fr);
   grid-template-rows: var(--hud-top-h) var(--hud-obj-h);
-  gap: 4px 6px;
+  gap: 3px 5px;
   align-items: stretch;
   overflow: visible;
   background: transparent;
@@ -9883,7 +9925,7 @@ html.is-mobile-profile .ob-btn {
   min-height: 0;
   padding: clamp(3px, 0.5vw, 7px) clamp(2px, 0.4vw, 5px);
   display: grid;
-  grid-template-rows: minmax(24px, 0.95fr) minmax(22px, auto);
+  grid-template-rows: minmax(20px, 0.9fr) minmax(18px, auto);
   justify-items: center;
   align-items: center;
   gap: 2px;
@@ -9911,8 +9953,8 @@ html.is-mobile-profile .ob-btn {
 .hud-chrome > .hud-match-side-controls .hud-side-sprite,
 .hud-chrome > .hud-match-side-controls .hud-side-ico {
   grid-row: 1;
-  width: clamp(21px, 2.1vw, 34px);
-  height: clamp(21px, 2.1vw, 34px);
+  width: clamp(18px, 1.75vw, 28px);
+  height: clamp(18px, 1.75vw, 28px);
   flex: 0 0 auto;
   margin: 0;
   display: grid;
@@ -9979,7 +10021,7 @@ html.is-mobile-profile .ob-btn {
   min-width: 0;
   margin: 0;
   color: #fff2dd;
-  font: 900 clamp(10px, 1.02vw, 15px) / 1.02 Georgia, "Times New Roman", serif;
+  font: 900 clamp(9px, 0.88vw, 13px) / 1.02 Georgia, "Times New Roman", serif;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -10024,7 +10066,7 @@ html.is-mobile-profile .ob-btn {
 
   .hud-chrome > .hud-match-side-controls .hud-btn,
   .hud-chrome > .hud-match-side-controls #btn-captain {
-    grid-template-rows: minmax(26px, 1fr) minmax(16px, auto);
+    grid-template-rows: minmax(22px, 1fr) minmax(14px, auto);
   }
 }
 
@@ -10033,7 +10075,7 @@ html.is-mobile-profile .ob-btn {
   grid-row: 1;
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(126px, clamp(126px, 13.5vw, 184px));
+  grid-template-columns: minmax(0, 1fr) minmax(112px, clamp(112px, 11.5vw, 158px));
   gap: 0;
   align-items: stretch;
 }
@@ -10091,7 +10133,7 @@ html.is-mobile-profile .ob-btn {
   min-height: 20px;
   max-width: 100%;
   color: #f6f1e8;
-  font-size: clamp(17px, 1.85vw, 30px);
+  font-size: clamp(14px, 1.45vw, 24px);
   letter-spacing: 0;
 }
 
@@ -10102,7 +10144,7 @@ html.is-mobile-profile .ob-btn {
 }
 
 .hud-chrome .hud-stat__value {
-  font-size: clamp(17px, 1.85vw, 30px);
+  font-size: clamp(14px, 1.45vw, 24px);
   text-overflow: clip;
 }
 
@@ -10130,12 +10172,12 @@ html.is-mobile-profile .ob-btn {
 }
 
 .hud-phase-timer {
-  font-size: clamp(24px, 2.9vw, 36px);
+  font-size: clamp(20px, 2.15vw, 28px);
 }
 
 .hud-phase-stats {
   padding: clamp(2px, 0.35vw, 5px) clamp(5px, 0.65vw, 10px);
-  font-size: clamp(15px, 1.45vw, 20px);
+  font-size: clamp(12px, 1.15vw, 16px);
   line-height: 1;
   border-radius: 3px;
 }
@@ -10166,9 +10208,9 @@ html.is-mobile-profile .ob-btn {
 
 .hud-status-card__ico,
 .hud-vital__ico {
-  width: clamp(22px, 2.15vw, 34px);
-  height: clamp(22px, 2.15vw, 34px);
-  flex-basis: clamp(22px, 2.15vw, 34px);
+  width: clamp(19px, 1.85vw, 28px);
+  height: clamp(19px, 1.85vw, 28px);
+  flex-basis: clamp(19px, 1.85vw, 28px);
 }
 
 .hud-readout__body,
@@ -10191,7 +10233,7 @@ html.is-mobile-profile .ob-btn {
 }
 
 .hud-readout__hostiles-val {
-  font-size: clamp(24px, 2.6vw, 38px);
+  font-size: clamp(18px, 2.05vw, 30px);
 }
 
 .hud-readout__camps-lbl {
@@ -10223,10 +10265,10 @@ html.is-mobile-profile .ob-btn {
   padding: clamp(3px, 0.42vw, 6px) clamp(5px, 0.7vw, 10px);
   display: grid;
   grid-template-columns:
-    clamp(22px, 2.15vw, 34px)
-    minmax(56px, 0.28fr)
-    minmax(64px, 1fr)
-    minmax(68px, auto);
+    clamp(19px, 1.85vw, 28px)
+    minmax(52px, 0.28fr)
+    minmax(60px, 1fr)
+    minmax(62px, auto);
   column-gap: clamp(4px, 0.55vw, 8px);
   align-items: center;
   overflow: hidden;
@@ -10248,9 +10290,9 @@ html.is-mobile-profile .ob-btn {
 }
 
 .hud-svg-vital-value {
-  min-width: 66px;
-  height: 20px;
-  font-size: clamp(12px, 1.05vw, 16px);
+  min-width: 60px;
+  height: 18px;
+  font-size: clamp(11px, 0.92vw, 14px);
 }
 
 .hud-chrome__objective,
@@ -10263,47 +10305,47 @@ html.is-mobile-profile .ob-btn {
   height: 100%;
   min-height: 0;
   margin: 0;
-  padding: 3px clamp(9px, 1vw, 14px);
+  padding: 2px clamp(7px, 0.85vw, 12px);
   display: grid;
-  grid-template-columns: clamp(22px, 2.25vw, 32px) minmax(0, 1fr);
-  gap: clamp(6px, 0.8vw, 10px);
+  grid-template-columns: clamp(18px, 1.9vw, 26px) minmax(0, 1fr);
+  gap: clamp(5px, 0.65vw, 8px);
   align-items: center;
   overflow: hidden;
 }
 
 .hud-chrome__objective-icon {
-  width: clamp(19px, 2vw, 27px);
-  height: clamp(19px, 2vw, 27px);
+  width: clamp(17px, 1.75vw, 24px);
+  height: clamp(17px, 1.75vw, 24px);
 }
 
 .hud-chrome__objective-body {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(96px, clamp(106px, 10vw, 154px)) minmax(0, 1fr);
-  gap: clamp(7px, 1vw, 14px);
+  grid-template-columns: minmax(88px, clamp(96px, 8.2vw, 132px)) minmax(0, 1fr);
+  gap: clamp(6px, 0.85vw, 11px);
   align-items: center;
   overflow: hidden;
 }
 
 .hud-chrome__objective-k {
-  height: 20px;
+  height: 18px;
   min-width: 0;
-  font-size: clamp(11px, 1vw, 15px);
+  font-size: clamp(10px, 0.88vw, 13px);
 }
 
 .hud-chrome__objective-t {
   width: 100%;
   min-width: 0;
-  height: clamp(19px, 1.8vw, 24px);
-  font-size: clamp(13px, 1.2vw, 17px);
+  height: clamp(17px, 1.55vw, 21px);
+  font-size: clamp(11px, 1.05vw, 15px);
 }
 
 @media (max-width: 1180px) {
   .hud-chrome {
-    --hud-top-h: clamp(52px, 6.2vw, 66px);
-    --hud-obj-h: 32px;
+    --hud-top-h: clamp(46px, 5.4vw, 58px);
+    --hud-obj-h: 28px;
     grid-template-columns: minmax(300px, 0.95fr) minmax(360px, 1fr);
-    grid-template-rows: var(--hud-top-h) clamp(42px, 5.3vw, 54px) var(--hud-obj-h);
+    grid-template-rows: var(--hud-top-h) clamp(34px, 4.5vw, 46px) var(--hud-obj-h);
   }
 
   .hud-chrome > .hud-match-side-controls {
@@ -10343,10 +10385,10 @@ html.is-mobile-profile .ob-btn {
 
 @media (max-width: 760px) {
   .hud-chrome {
-    --hud-top-h: 46px;
-    --hud-obj-h: 28px;
+    --hud-top-h: 42px;
+    --hud-obj-h: 26px;
     grid-template-columns: 1fr;
-    grid-template-rows: var(--hud-top-h) 40px 54px var(--hud-obj-h);
+    grid-template-rows: var(--hud-top-h) 36px 48px var(--hud-obj-h);
     gap: 3px;
     padding-inline: 4px;
   }

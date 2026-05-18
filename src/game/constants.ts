@@ -45,6 +45,8 @@ export const PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES = "hollowmarket_cutpurses";
 export const PRODUCED_UNIT_TOWN_LEVY = "town_levy";
 /** Thornkeep Colossus — Verdant Gatekeeper Titan profile already present in the unit manifest. */
 export const PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN = "verdant_gatekeeper_titan";
+/** Steelbark Motorpool — static M-81A siege hover tank, animated procedurally at runtime. */
+export const PRODUCED_UNIT_STEELBARK_M81A = "steelbark_m81a_siege_tank";
 
 /** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
 export const PLAYER_STARTING_FLUX = 380;

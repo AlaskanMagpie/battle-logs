@@ -28,6 +28,7 @@ import {
   PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_STEELBARK_M81A,
   PRODUCED_UNIT_TOWN_LEVY,
   PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN,
   TICK_HZ,
@@ -51,7 +52,7 @@ import {
   type UnitRuntime,
 } from "./state";
 import { isStructureEntry } from "./types";
-import type { MapData, UnitSizeClass } from "./types";
+import type { MapData, UnitEquipmentItemDef, UnitSizeClass } from "./types";
 
 const tinyMap: MapData = {
   version: 2,
@@ -113,7 +114,7 @@ function unit(id: number, team: "player" | "enemy", sizeClass: UnitSizeClass, st
 }
 
 describe("resource-first doctrine gates", () => {
-  it("ignores old tier and signal metadata when Mana, cooldown, and territory pass", () => {
+  it("ignores old tier and signal metadata when Mana and territory pass", () => {
     const s = createInitialState(tinyMap, ["verdant_citadel"]);
     s.flux = 1000;
 
@@ -131,7 +132,7 @@ describe("resource-first doctrine gates", () => {
 });
 
 describe("doctrine card playability", () => {
-  it("explains affordable, unaffordable, cooldown, and territory states", () => {
+  it("explains affordable, unaffordable, and territory states", () => {
     const ready = createInitialState(tinyMap, ["watchtower"]);
     ready.flux = 1000;
     expect(doctrineCardPlayability(ready, "watchtower", { x: -20, z: 0 }, 0).kind).toBe("ready");
@@ -142,20 +143,13 @@ describe("doctrine card playability", () => {
     expect(mana.kind).toBe("mana");
     expect(mana.reason).toContain("more Mana");
 
-    const cooling = createInitialState(tinyMap, ["watchtower"]);
-    cooling.flux = 1000;
-    cooling.doctrineCooldownTicks[0] = TICK_HZ * 3;
-    const cd = doctrineCardPlayability(cooling, "watchtower", { x: -20, z: 0 }, 0);
-    expect(cd.kind).toBe("cooldown");
-    expect(cd.liveLabel).toBe("CD 3s");
-
     const outside = createInitialState(tinyMap, ["watchtower"]);
     outside.flux = 1000;
     const territory = doctrineCardPlayability(outside, "watchtower", { x: 130, z: 0 }, 0);
     expect(territory.kind).toBe("territory");
   });
 
-  it("treats command spells as ready when Mana and cooldown allow (no per-match use cap)", () => {
+  it("treats command spells as ready when Mana allows (no per-match use cap)", () => {
     const s = createInitialState(tinyMap, ["firestorm"]);
     s.flux = 1000;
 
@@ -178,6 +172,7 @@ describe("batch production", () => {
     ["wooden_aerie", "Heavy", 2, PRODUCED_UNIT_GALEBARK_ADEPTS],
     ["frostroot_keep", "Line", 3, PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS],
     ["verdant_citadel", "Titan", 1, PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN],
+    ["steelbark_motorpool", "Titan", 1, PRODUCED_UNIT_STEELBARK_M81A],
   ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);
@@ -193,6 +188,59 @@ describe("batch production", () => {
     expect(spawned.every((u) => u.squadMaxCount === undefined && u.singleMaxHp === undefined)).toBe(true);
     expect(spawned.every((u) => u.maxHp === stats.maxHp && u.pop === stats.pop)).toBe(true);
     expect(spawned.every((u) => u.producedUnitId === producedUnitId)).toBe(true);
+    expect(spawned.every((u) => u.equipmentLoadout === undefined)).toBe(true);
+  });
+
+  it("copies opt-in producer equipment without changing stats for cosmetic props", () => {
+    const def = getCatalogEntry("watchtower");
+    if (!def || !isStructureEntry(def)) throw new Error("bad watchtower");
+    const prior = def.equipmentLoadout;
+    const cosmetic: UnitEquipmentItemDef = { id: "test-sword", name: "Test Sword", glb: "test-sword.glb" };
+    def.equipmentLoadout = { rightHand: cosmetic };
+    const s = createInitialState(tinyMap, []);
+    const st = structure("watchtower", 205);
+    s.structures.push(st);
+
+    try {
+      production(s);
+      const spawned = s.units.filter((u) => u.team === "player" && u.structureId === st.id);
+      const stats = unitStatsForCatalog("Swarm");
+      expect(spawned).toHaveLength(4);
+      expect(spawned.every((u) => u.equipmentLoadout?.rightHand?.id === "test-sword")).toBe(true);
+      expect(spawned.every((u) => u.range === stats.range && u.dmgPerTick === stats.dmgPerTick)).toBe(true);
+    } finally {
+      if (prior) def.equipmentLoadout = prior;
+      else delete def.equipmentLoadout;
+    }
+  });
+
+  it("merges explicit equipment stat modifiers into produced unit runtime fields", () => {
+    const def = getCatalogEntry("watchtower");
+    if (!def || !isStructureEntry(def)) throw new Error("bad watchtower");
+    const prior = def.equipmentLoadout;
+    def.equipmentLoadout = {
+      rightHand: {
+        id: "test-pike",
+        name: "Test Pike",
+        glb: "test-pike.glb",
+        stats: { rangeAdd: 2, dmgPerTickMult: 1.5, damageVsStructuresMult: 1.25 },
+      },
+    };
+    const s = createInitialState(tinyMap, []);
+    const st = structure("watchtower", 206);
+    s.structures.push(st);
+
+    try {
+      production(s);
+      const spawned = s.units.find((u) => u.team === "player" && u.structureId === st.id);
+      const stats = unitStatsForCatalog("Swarm");
+      expect(spawned?.range).toBe(stats.range + 2);
+      expect(spawned?.dmgPerTick).toBeCloseTo(stats.dmgPerTick * 1.5, 5);
+      expect(spawned?.damageVsStructuresMult).toBeCloseTo(1.25, 5);
+    } finally {
+      if (prior) def.equipmentLoadout = prior;
+      else delete def.equipmentLoadout;
+    }
   });
 
   it("ignores old local pop caps and always emits the full batch", () => {

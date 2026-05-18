@@ -66,10 +66,10 @@
   overflow: hidden;
 }
 
-/* Default: use almost full viewport width; scroll vertically if the page is taller than the pane. */
+/* Default: comfortable reading width; scroll vertically if the page is taller than the pane. */
 .comic-intro--fit-width .comic-intro__page-wrap {
-  /* Wider cap than 1080p so tall portrait pages read larger on common monitors. */
-  width: calc(min(98vw, min(2400px, 100dvw - 1.5rem)) * var(--comic-user-zoom, 1));
+  /* Cap below old 2400px so wide monitors are not blown out; zoom in for poster size. */
+  width: calc(min(76vw, min(1280px, 100dvw - 1.5rem)) * var(--comic-user-zoom, 1));
   height: auto;
   aspect-ratio: var(--comic-aw) / var(--comic-ah);
   max-width: none;
@@ -209,7 +209,7 @@
   }
 
   .comic-intro--fit-width .comic-intro__page-wrap {
-    width: calc(min(98vw, 100vw) * var(--comic-user-zoom, 1));
+    width: calc(min(90vw, 100vw) * var(--comic-user-zoom, 1));
   }
 
   .comic-intro--fit-screen .comic-intro__page-wrap {

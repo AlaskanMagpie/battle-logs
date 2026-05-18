@@ -37,6 +37,7 @@
 
 /* Bottom scene overlay: hand cards | action rail, matching the in-match HUD hand. */
 .binder-picker-prematch-bottom {
+  --binder-rail-actions-w: clamp(188px, 25vmin, 222px);
   position: absolute;
   left: 0;
   right: 0;
@@ -45,11 +46,11 @@
   display: flex;
   flex-direction: row;
   align-items: flex-end;
-  gap: 16px;
+  gap: 0;
   width: 100%;
   box-sizing: border-box;
-  padding: 8px max(10px, env(safe-area-inset-right, 0px)) max(3px, env(safe-area-inset-bottom, 0px))
-    max(10px, env(safe-area-inset-left, 0px));
+  padding: 8px max(0px, env(safe-area-inset-right, 0px)) max(0px, env(safe-area-inset-bottom, 0px))
+    max(0px, env(safe-area-inset-left, 0px));
   background: linear-gradient(to top, rgba(5, 7, 12, 0.88), rgba(5, 7, 12, 0.44) 58%, transparent);
   pointer-events: none;
 }
@@ -98,6 +99,10 @@
  * lives beside the action column — using `100%` keeps slots inside the hand rail so buttons
  * never cover slot 0.
  */
+#doctrine-picker .binder-picker-doctrine-hand-rail {
+  padding-right: calc(var(--binder-rail-actions-w, 200px) + 10px);
+}
+
 #doctrine-picker .binder-picker-doctrine-hand-rail .doctrine-track--hand.doctrine-track--deck10.doctrine-track--rail {
   overflow-x: hidden;
   flex: 1 1 auto;
@@ -118,9 +123,11 @@
   --hand-card-h: calc(var(--hand-card-w) * 150 / 100);
 }
 
-/* Fixed-width action column for prematch rail buttons. */
+/* Prematch rail — docked bottom-right (flush to screen / binder shelf edge). */
 .binder-picker-rail-actions {
-  position: relative;
+  position: absolute;
+  right: max(0px, env(safe-area-inset-right, 0px));
+  bottom: max(0px, env(safe-area-inset-bottom, 0px));
   z-index: 30;
   flex: 0 0 auto;
   width: auto;
@@ -128,28 +135,28 @@
   max-width: none;
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  align-items: center;
+  justify-content: flex-end;
+  align-items: flex-end;
   gap: 0;
   min-height: 0;
-  margin-bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+  margin: 0;
   pointer-events: auto;
 }
 
 .binder-picker-rail-actions__stack {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  width: auto;
+  gap: 6px;
+  width: var(--binder-rail-actions-w, clamp(188px, 25vmin, 222px));
   flex: 0 0 auto;
-  justify-content: flex-start;
-  align-items: center;
+  justify-content: flex-end;
+  align-items: stretch;
   min-height: 0;
 }
 
 /** Prematch rail — named action tiles. */
 .binder-picker-rail-btn {
-  --binder-rail-btn-w: clamp(188px, 25vmin, 222px);
+  --binder-rail-btn-w: var(--binder-rail-actions-w, clamp(188px, 25vmin, 222px));
   --binder-rail-btn-h: clamp(46px, 8.5vmin, 54px);
   appearance: none;
   margin: 0;
@@ -160,6 +167,7 @@
   box-sizing: border-box;
   cursor: pointer;
   display: block;
+  width: 100%;
   line-height: 1;
   filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.55));
 }
@@ -232,29 +240,25 @@
 }
 
 .binder-picker-rail-btn__label {
-  display: block;
-  width: 100%;
-  height: 24px;
+  display: flex;
+  align-items: center;
   min-width: 0;
+  min-height: 24px;
   overflow: hidden;
   color: #fff3d5;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(12px, 2.05vmin, 15px);
+  font-size: clamp(13px, 2.05vmin, 15px);
   font-weight: 800;
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-}
-
-.binder-picker-rail-btn__label text {
-  fill: currentColor;
-  paint-order: stroke fill;
-  stroke: rgba(0, 0, 0, 0.82);
-  stroke-width: 3px;
-}
-
-.binder-picker-rail-btn__label--long {
-  font-size: clamp(10.5px, 1.75vmin, 13px);
-  letter-spacing: 0.035em;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+  text-transform: none;
+  white-space: nowrap;
+  text-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(0, 0, 0, 0.45),
+    1px 0 0 rgba(0, 0, 0, 0.75),
+    -1px 0 0 rgba(0, 0, 0, 0.75),
+    0 -1px 0 rgba(0, 0, 0, 0.55);
 }
 
 .binder-picker-rail-btn--quickmatch .binder-picker-rail-btn__glyph {
@@ -362,15 +366,15 @@
   }
 
   .binder-picker-quickplay-coachmark--portal {
-    right: auto;
-    left: 50%;
-    transform: translateX(-50%);
+    right: 0;
+    left: auto;
+    transform: none;
   }
 
   .binder-picker-quickplay-coachmark--portal::after {
-    right: auto;
-    left: 50%;
-    margin-left: -9px;
+    right: calc(var(--binder-rail-actions-w, 200px) * 0.5 - 9px);
+    left: auto;
+    margin-left: 0;
     top: auto;
     bottom: -10px;
     border-top: 0;
@@ -400,21 +404,26 @@
   color: #ffd89a;
 }
 
+/* Right-align: `left:50%` was relative to the narrow rail, so wide toasts clipped off-screen right. */
 .binder-picker-quickplay-coachmark--portal {
-  right: auto;
-  left: 50%;
+  right: 0;
+  left: auto;
   top: auto;
   bottom: calc(100% + 10px);
-  transform: translateX(-50%);
-  width: min(300px, calc(100vw - 24px));
+  transform: none;
+  width: min(
+    300px,
+    calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px)
+  );
 }
 
+/* Caret at rail column center (toast can be wider than the rail). */
 .binder-picker-quickplay-coachmark--portal::after {
-  right: auto;
-  left: 50%;
+  right: calc(var(--binder-rail-actions-w, 200px) * 0.5 - 9px);
+  left: auto;
   top: auto;
   bottom: -10px;
-  margin-left: -9px;
+  margin-left: 0;
   border-top: 0;
   border-left: 1px solid rgba(249, 218, 145, 0.66);
   border-bottom: 1px solid rgba(249, 218, 145, 0.66);
@@ -620,35 +629,15 @@
     min-width: 0;
   }
 
-  .binder-picker-rail-actions {
-    flex: 0 0 auto;
-    width: auto;
-    max-width: none;
-    min-width: 0;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    align-items: flex-end;
-    justify-content: flex-end;
-    gap: 7px;
-    margin-left: auto;
-    margin-bottom: calc(44px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .binder-picker-rail-actions__stack {
-    flex: 0 0 auto;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-    align-items: flex-end;
-    gap: 7px;
-    min-width: 0;
+  .binder-picker-prematch-bottom {
+    --binder-rail-actions-w: clamp(184px, 50vw, 220px);
   }
 
   .binder-picker-rail-btn {
     flex: 0 0 auto;
     min-width: 0;
     max-width: none;
-    --binder-rail-btn-w: clamp(184px, 50vw, 220px);
+    --binder-rail-btn-w: var(--binder-rail-actions-w);
     --binder-rail-btn-h: clamp(46px, 12vw, 54px);
   }
 }
@@ -1188,159 +1177,4 @@
 
 .binder-picker-prematch-notice__dismiss:hover {
   background: rgba(255, 255, 255, 0.14);
-}
-
-/* Codex sort — tabs overlaid on the left page margin of the binder canvas (wrap is position:relative). */
-.binder-codex-sort-strip {
-  position: absolute;
-  top: max(14%, env(safe-area-inset-top, 0px));
-  bottom: max(12%, env(safe-area-inset-bottom, 0px));
-  left: max(5%, env(safe-area-inset-left, 0px));
-  width: auto;
-  max-width: min(52px, 11vw);
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 6px;
-  pointer-events: auto;
-}
-
-.binder-codex-sort-tab {
-  appearance: none;
-  margin: 0;
-  padding: 10px 5px 12px;
-  min-width: 34px;
-  box-sizing: border-box;
-  border: 1px solid rgba(42, 32, 22, 0.55);
-  border-left-width: 3px;
-  border-radius: 2px 10px 10px 2px;
-  cursor: pointer;
-  background:
-    linear-gradient(90deg, rgba(58, 44, 28, 0.92) 0%, rgba(112, 86, 52, 0.95) 38%, rgba(78, 58, 38, 0.98) 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 248, 220, 0.18),
-    2px 3px 10px rgba(0, 0, 0, 0.35);
-  color: #f5e6c8;
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  line-height: 1;
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55);
-}
-
-.binder-codex-sort-tab:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.binder-codex-sort-tab:active:not(:disabled) {
-  filter: brightness(0.95);
-}
-
-.binder-codex-sort-tab:disabled,
-.binder-codex-sort-dir:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.binder-codex-sort-tab--active {
-  border-color: rgba(200, 230, 255, 0.55);
-  background:
-    linear-gradient(90deg, rgba(36, 52, 72, 0.95) 0%, rgba(72, 98, 128, 0.96) 45%, rgba(44, 62, 88, 0.98) 100%);
-  color: #eaf4ff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    0 0 0 1px rgba(120, 175, 255, 0.35),
-    2px 4px 14px rgba(0, 0, 0, 0.4);
-}
-
-.binder-codex-sort-tab:focus {
-  outline: none;
-}
-
-.binder-codex-sort-tab:focus-visible,
-.binder-codex-sort-dir:focus-visible {
-  outline: 2px solid rgba(160, 210, 255, 0.95);
-  outline-offset: 3px;
-}
-
-.binder-codex-sort-tab__label {
-  display: block;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  font-size: clamp(11px, 1.9vmin, 13px);
-  text-transform: uppercase;
-}
-
-.binder-codex-sort-dir {
-  appearance: none;
-  margin: 2px 0 0;
-  padding: 8px 6px;
-  min-width: 34px;
-  box-sizing: border-box;
-  border-radius: 8px;
-  border: 1px solid rgba(42, 32, 22, 0.5);
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  background: linear-gradient(165deg, #2a2430 0%, #1a1620 100%);
-  color: #e8e0d4;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 2px 3px 10px rgba(0, 0, 0, 0.35);
-}
-
-.binder-codex-sort-dir:hover:not(:disabled) {
-  filter: brightness(1.1);
-}
-
-.binder-codex-sort-dir:focus {
-  outline: none;
-}
-
-.binder-codex-sort-dir__glyph {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.binder-codex-sort-dir__text {
-  font-variant-numeric: tabular-nums;
-}
-
-.binder-codex-sort-strip--mobile {
-  top: auto;
-  bottom: max(8px, env(safe-area-inset-bottom, 0px));
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  max-width: min(96vw, 520px);
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 5px;
-}
-
-.binder-codex-sort-strip--mobile .binder-codex-sort-tab__label {
-  writing-mode: horizontal-tb;
-  text-orientation: mixed;
-  font-size: 9px;
-  letter-spacing: 0.04em;
-}
-
-.binder-codex-sort-strip--mobile .binder-codex-sort-tab {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 8px 10px;
-}
-
-.binder-codex-sort-strip--mobile .binder-codex-sort-dir {
-  min-height: 44px;
-  min-width: 44px;
-  padding: 10px 8px;
 }

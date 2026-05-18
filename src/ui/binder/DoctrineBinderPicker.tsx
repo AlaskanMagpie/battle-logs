@@ -7,7 +7,11 @@ import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
-import { fillDoctrineSlotsWithDuplicatePicks, QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
+import {
+  fillDoctrineSlotsWithDuplicatePicks,
+  pickUniqueDoctrineSlotRow,
+  QUICK_MATCH_DOCTRINE_SLOTS,
+} from "../../game/quickMatchDoctrine";
 import type { PortalContext } from "../../game/portal";
 import {
   AI_LADDER_OPPONENTS,
@@ -38,7 +42,6 @@ import { showHowToPlayModal, showLoreModal } from "../intro/comicIntro";
 import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
 import { getBinderTextureForCatalogId, disposeBinderTextureCache } from "./binderCardTexture";
-import { buildSortedCodexPanelIds } from "./binderCodexLayout";
 import {
   BINDER_CELLS_PER_PAGE,
   BINDER_CELLS_PER_SHEET,
@@ -52,7 +55,6 @@ import {
 import { BinderLayoutCalibratePanel } from "./BinderLayoutCalibratePanel";
 import { BINDER_PREMATCH_GOALS_HTML, MATCH_HELP_INNER_HTML } from "../matchHelpContent";
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
-import { type CodexSortMode } from "./binderCodexSort";
 import "./binderPicker.css";
 
 const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
@@ -124,6 +126,7 @@ const QUICK_PICK_IDS: readonly string[] = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "steelbark_motorpool",
   "emberroot_bastion",
   "wooden_aerie",
   "hollowmarket_stump",
@@ -139,34 +142,6 @@ function makeDeferredBinderTexture(): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 2;
   return t;
-}
-
-async function hydrateCodexTexturesChunked(
-  texList: THREE.Texture[],
-  panelIds: readonly string[],
-  chunkControlMobile: boolean,
-  onChunkDone: (tex: THREE.Texture[]) => void,
-): Promise<void> {
-  const chunk = chunkControlMobile ? 9 : 18;
-  for (let start = 0; start < panelIds.length; start += chunk) {
-    const end = Math.min(panelIds.length, start + chunk);
-    const preloadIds = panelIds.slice(start, end).filter((id) => validBinderCodexIds.has(id));
-    try {
-      await preloadCardPreviewDataUrls(preloadIds);
-    } catch {
-      /* best-effort */
-    }
-    for (let i = start; i < end; i++) {
-      const cid = panelIds[i]!;
-      if (!validBinderCodexIds.has(cid)) continue;
-      try {
-        texList[i] = await getBinderTextureForCatalogId(cid);
-      } catch (err) {
-        console.warn("[binder] failed to hydrate deferred card texture", cid, err);
-      }
-    }
-    onChunkDone(texList);
-  }
 }
 
 function afterIdle(fn: () => void): void {
@@ -454,10 +429,6 @@ export function DoctrineBinderPicker({
   );
   const [binderHowToOpen, setBinderHowToOpen] = useState(false);
   const [tomeHintPressed, setTomeHintPressed] = useState(false);
-  /** Until user uses sort controls, codex order stays the initial shuffled layout. */
-  const [codexSortApplied, setCodexSortApplied] = useState(false);
-  const [codexSortMode, setCodexSortMode] = useState<CodexSortMode>("cost");
-  const [codexSortAsc, setCodexSortAsc] = useState(true);
   const binderHowToOpenRef = useRef(false);
   binderHowToOpenRef.current = binderHowToOpen;
   const binderHowToHoldTimerRef = useRef<number | null>(null);
@@ -487,86 +458,6 @@ export function DoctrineBinderPicker({
     setQuickplayCoachmarkOpen(false);
   }, []);
 
-  const emptyBinderSlotPick = useCallback(
-    (): (number | null)[] => Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null),
-    [],
-  );
-
-  const persistCodexPicks = useCallback((nextPick: (number | null)[]) => {
-    try {
-      const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slotsRef.current));
-      saveDoctrinePickerState(norm, nextPick);
-    } catch {
-      /* best-effort */
-    }
-  }, []);
-
-  const reapplyCodexTextures = useCallback(
-    async (panelIds: string[], sortUi: { applied: true; mode: CodexSortMode; asc: boolean } | { applied: false }): Promise<void> => {
-      const eng = engineRef.current;
-      if (!eng || loading) return;
-      const nextTex = panelIds.map(() => makeDeferredBinderTexture());
-      orderedRef.current = panelIds;
-      binderPanelTexturesRef.current = nextTex;
-      eng.setTextures(nextTex);
-      eng.clearCodexCatalogSelection();
-      setActiveDoctrineSlot(null);
-      await hydrateCodexTexturesChunked(nextTex, panelIds, controlProfile.mode === "mobile", (tex) => {
-        eng.setTextures(tex);
-      });
-      setCodexSortApplied(sortUi.applied);
-      if (sortUi.applied) {
-        setCodexSortMode(sortUi.mode);
-        setCodexSortAsc(sortUi.asc);
-      }
-    },
-    [controlProfile.mode, loading],
-  );
-
-  const applyCodexBrowseShuffle = useCallback(async () => {
-    if (codexDragBusyRef.current || codexDrag != null) return;
-    const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
-    const nextPick = emptyBinderSlotPick();
-    binderSlotPickRef.current = nextPick;
-    setBinderSlotPick(nextPick);
-    await reapplyCodexTextures(panelIds, { applied: false });
-    persistCodexPicks(nextPick);
-  }, [codexDrag, emptyBinderSlotPick, persistCodexPicks, reapplyCodexTextures]);
-
-  const applyCodexSortGo = useCallback(
-    async (mode: CodexSortMode, asc: boolean) => {
-      if (loading) return;
-      if (codexDragBusyRef.current || codexDrag != null) return;
-      const panelIds = buildSortedCodexPanelIds(mode, asc);
-      const nextPick = emptyBinderSlotPick();
-      binderSlotPickRef.current = nextPick;
-      setBinderSlotPick(nextPick);
-      await reapplyCodexTextures(panelIds, { applied: true, mode, asc });
-      persistCodexPicks(nextPick);
-    },
-    [codexDrag, emptyBinderSlotPick, loading, persistCodexPicks, reapplyCodexTextures],
-  );
-
-  const applyCodexSortToggle = useCallback(
-    (mode: CodexSortMode) => {
-      if (loading) return;
-      if (codexDragBusyRef.current || codexDrag != null) return;
-      if (codexSortApplied && codexSortMode === mode) {
-        void applyCodexBrowseShuffle();
-        return;
-      }
-      void applyCodexSortGo(mode, codexSortAsc);
-    },
-    [applyCodexBrowseShuffle, applyCodexSortGo, codexDrag, codexSortApplied, codexSortAsc, codexSortMode, loading],
-  );
-
-  const applyCodexSortDirectionToggle = useCallback(() => {
-    if (!codexSortApplied) return;
-    const nextAsc = !codexSortAsc;
-    setCodexSortAsc(nextAsc);
-    void applyCodexSortGo(codexSortMode, nextAsc);
-  }, [applyCodexSortGo, codexSortApplied, codexSortAsc, codexSortMode]);
-
   const resetDefaults = useCallback(() => {
     setActiveDoctrineSlot(null);
     setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
@@ -578,14 +469,11 @@ export function DoctrineBinderPicker({
   }, []);
 
   const pickForMe = useCallback(() => {
-    const pool = QUICK_PICK_IDS.filter((id) => validIds.has(id));
-    if (!pool.length) return;
-    const raw: (string | null)[] = [];
-    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-      raw.push(pool[Math.floor(Math.random() * pool.length)]!);
-    }
-    let norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
-    norm = fillDoctrineSlotsWithDuplicatePicks(norm);
+    const primary = QUICK_PICK_IDS.filter((id) => validIds.has(id));
+    const secondary = BINDER_GRID_CATALOG_IDS.filter((id) => validIds.has(id));
+    if (!primary.length && !secondary.length) return;
+    const raw = pickUniqueDoctrineSlotRow(primary, secondary, DOCTRINE_SLOT_COUNT);
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
     const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
     setMapUrl(mapPick.url);
     setActiveDoctrineSlot(null);
@@ -1568,82 +1456,6 @@ export function DoctrineBinderPicker({
             <>
               <div
                 className={[
-                  "binder-codex-sort-strip",
-                  controlProfile.mode === "mobile" ? "binder-codex-sort-strip--mobile" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                role="toolbar"
-                aria-label="Sort codex pages"
-              >
-                <button
-                  type="button"
-                  className={[
-                    "binder-codex-sort-tab",
-                    codexSortApplied && codexSortMode === "cost" ? "binder-codex-sort-tab--active" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-pressed={codexSortApplied && codexSortMode === "cost"}
-                  aria-label="Sort codex by cost"
-                  disabled={loading || codexDrag != null}
-                  onClick={() => applyCodexSortToggle("cost")}
-                >
-                  <span className="binder-codex-sort-tab__label">Cost</span>
-                </button>
-                <button
-                  type="button"
-                  className={[
-                    "binder-codex-sort-tab",
-                    codexSortApplied && codexSortMode === "class" ? "binder-codex-sort-tab--active" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-pressed={codexSortApplied && codexSortMode === "class"}
-                  aria-label="Sort codex by unit class"
-                  disabled={loading || codexDrag != null}
-                  onClick={() => applyCodexSortToggle("class")}
-                >
-                  <span className="binder-codex-sort-tab__label">Class</span>
-                </button>
-                <button
-                  type="button"
-                  className={[
-                    "binder-codex-sort-tab",
-                    codexSortApplied && codexSortMode === "type" ? "binder-codex-sort-tab--active" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-pressed={codexSortApplied && codexSortMode === "type"}
-                  aria-label="Sort codex by card type"
-                  disabled={loading || codexDrag != null}
-                  onClick={() => applyCodexSortToggle("type")}
-                >
-                  <span className="binder-codex-sort-tab__label">Type</span>
-                </button>
-                <button
-                  type="button"
-                  className={[
-                    "binder-codex-sort-dir",
-                    codexSortAsc ? "binder-codex-sort-dir--asc" : "binder-codex-sort-dir--desc",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  aria-pressed={codexSortAsc}
-                  aria-label={codexSortAsc ? "Codex sort direction ascending" : "Codex sort direction descending"}
-                  disabled={loading || codexDrag != null || !codexSortApplied}
-                  onClick={() => {
-                    applyCodexSortDirectionToggle();
-                  }}
-                >
-                  <span className="binder-codex-sort-dir__glyph" aria-hidden>
-                    {codexSortAsc ? "↑" : "↓"}
-                  </span>
-                  <span className="binder-codex-sort-dir__text">{codexSortAsc ? "Asc" : "Desc"}</span>
-                </button>
-              </div>
-              <div
-                className={[
                   "binder-picker-tome-hint",
                   tomeHintPressed ? "binder-picker-tome-hint--pressed" : "",
                 ]
@@ -1768,42 +1580,18 @@ export function DoctrineBinderPicker({
                 <button
                   type="button"
                   className="binder-picker-rail-btn binder-picker-rail-btn--match"
-                  aria-label="Match select"
+                  aria-label="Match setup"
                   aria-expanded={prematchSetupOpen}
                   aria-controls="binder-prematch-setup-panel"
                   id="binder-prematch-setup-trigger"
-                  title="Match select: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
+                  title="Match setup: map, page nav, save, start — LMB/MMB/RMB help in the hint above the binder"
                   onClick={() => setPrematchSetupOpen((o) => !o)}
                 >
                   <span className="binder-picker-rail-btn__inner">
                     <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
                       ✶
                     </span>
-                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
-                      <text x="80" y="16" textAnchor="middle">
-                        Match Setup
-                      </text>
-                    </svg>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="binder-picker-rail-btn binder-picker-rail-btn--lore"
-                  aria-label="Lore"
-                  title="Open the lore comic (two pages)"
-                  onClick={() => {
-                    void showLoreModal();
-                  }}
-                >
-                  <span className="binder-picker-rail-btn__inner">
-                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
-                      ●
-                    </span>
-                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
-                      <text x="80" y="16" textAnchor="middle">
-                        Lore
-                      </text>
-                    </svg>
+                    <span className="binder-picker-rail-btn__label">Match Setup</span>
                   </span>
                 </button>
                 <button
@@ -1819,11 +1607,23 @@ export function DoctrineBinderPicker({
                     <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
                       ?
                     </span>
-                    <svg className="binder-picker-rail-btn__label binder-picker-rail-btn__label--long" viewBox="0 0 190 24" preserveAspectRatio="none" aria-hidden="true">
-                      <text x="95" y="16" textAnchor="middle" textLength="172" lengthAdjust="spacingAndGlyphs">
-                        How To Play
-                      </text>
-                    </svg>
+                    <span className="binder-picker-rail-btn__label">How to Play</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="binder-picker-rail-btn binder-picker-rail-btn--lore"
+                  aria-label="Lore"
+                  title="Open the lore comic (two pages)"
+                  onClick={() => {
+                    void showLoreModal();
+                  }}
+                >
+                  <span className="binder-picker-rail-btn__inner">
+                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
+                      ●
+                    </span>
+                    <span className="binder-picker-rail-btn__label">Lore</span>
                   </span>
                 </button>
               </div>

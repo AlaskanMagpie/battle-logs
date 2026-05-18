@@ -59,6 +59,44 @@ function normalizedUserHandOrNull(slots: (string | null)[]): (string | null)[] |
   return normalizeDoctrineSlotsForMatch(slotsFilteredToBinderGrid(slots));
 }
 
+function shuffleInPlace<T>(items: T[]): void {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = items[i]!;
+    items[i] = items[j]!;
+    items[j] = t;
+  }
+}
+
+/**
+ * Random row of **distinct** catalog ids for binder “Pick for me”: draw from shuffled `primary`, then
+ * shuffled `secondary`, without replacement. Trailing nulls only if both pools are exhausted before `slotCount`.
+ */
+export function pickUniqueDoctrineSlotRow(
+  primary: readonly string[],
+  secondary: readonly string[],
+  slotCount: number,
+): (string | null)[] {
+  const chosen = new Set<string>();
+  const out: (string | null)[] = [];
+
+  const pullFrom = (pool: readonly string[]): void => {
+    const copy = [...pool];
+    shuffleInPlace(copy);
+    for (const id of copy) {
+      if (out.length >= slotCount) return;
+      if (!id || chosen.has(id)) continue;
+      chosen.add(id);
+      out.push(id);
+    }
+  };
+
+  pullFrom(primary);
+  if (out.length < slotCount) pullFrom(secondary);
+  while (out.length < slotCount) out.push(null);
+  return out.slice(0, slotCount);
+}
+
 /**
  * Fill empty doctrine slots by cycling through the player’s distinct picks (first-seen row order).
  * Duplicates are allowed so the match always runs with a full {@link DOCTRINE_SLOT_COUNT} row when the pool is non-empty.

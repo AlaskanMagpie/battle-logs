@@ -14,6 +14,7 @@ import {
   PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_STEELBARK_M81A,
   PRODUCED_UNIT_TOWN_LEVY,
 } from "./constants";
 import { productionBatchSizeForClass } from "./sim/systems/helpers";
@@ -43,6 +44,7 @@ describe("Doctrine binder catalog", () => {
       "watchtower",
       "bastion_keep",
       "verdant_citadel",
+      "steelbark_motorpool",
       "emberroot_bastion",
       "aionroot_observatory",
       "frostroot_keep",
@@ -136,5 +138,22 @@ describe("Doctrine binder catalog", () => {
   it("only Townwatch Keep uses the town_levy animation profile", () => {
     const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_TOWN_LEVY).map((s) => s.id);
     expect(ids).toEqual(["townwatch_keep"]);
+  });
+
+  it("maps Steelbark Motorpool to one M-81A siege hover tank", () => {
+    const entry = getCatalogEntry("steelbark_motorpool");
+    expect(entry).toBeTruthy();
+    expect(isStructureEntry(entry!)).toBe(true);
+    if (!entry || !isStructureEntry(entry)) return;
+    expect(entry.producedSizeClass).toBe("Titan");
+    expect(productionBatchSizeForClass(entry.producedSizeClass)).toBe(1);
+    expect(entry.producedUnitId).toBe(PRODUCED_UNIT_STEELBARK_M81A);
+    expect(entry.unitFlying).toBe(true);
+    expect(entry.producedDamageVsStructuresMult).toBeGreaterThan(1);
+  });
+
+  it("only Steelbark Motorpool uses the M-81A siege hover tank profile", () => {
+    const ids = STRUCTURES.filter((s) => s.producedUnitId === PRODUCED_UNIT_STEELBARK_M81A).map((s) => s.id);
+    expect(ids).toEqual(["steelbark_motorpool"]);
   });
 });

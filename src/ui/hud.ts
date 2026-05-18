@@ -1079,8 +1079,7 @@ export function updateHud(state: GameState): void {
     }
 
     const play = doctrineCardPlayability(state, id, null, i);
-    if (play.kind === "cooldown") b.classList.add("slot-locked");
-    else if (play.kind === "mana") b.classList.add("slot-need-mana");
+    if (play.kind === "mana") b.classList.add("slot-need-mana");
     else if (!play.ok) b.classList.add("slot-blocked");
     else b.classList.add("slot-ready");
 

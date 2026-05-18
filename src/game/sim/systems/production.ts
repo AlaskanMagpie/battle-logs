@@ -1,6 +1,7 @@
 import { getCatalogEntry } from "../../catalog";
 import { TICK_HZ } from "../../constants";
 import { enemyDamageScalar, enemyProductionSpeedScalar } from "../../difficulty";
+import { applyEquipmentStatModifiers, resolveEquipmentLoadout } from "../../equipment";
 import {
   dominantSignal,
   rand,
@@ -37,6 +38,7 @@ function pushSpawnedUnitFromStructureDef(
   const angle = baseAngle + (batchIndex / spread) * Math.PI * 2 + (rand(s) - 0.5) * 0.32;
   const radius = SPAWN_JITTER * (0.52 + rand(s) * 0.35);
   const p = ringPointOnSphere(s.map, center, angle, radius);
+  const equipmentLoadout = resolveEquipmentLoadout(def.equipmentLoadout);
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
@@ -47,7 +49,7 @@ function pushSpawnedUnitFromStructureDef(
     maxHp: stStats.maxHp,
     sizeClass: def.producedSizeClass,
     pop: stStats.pop,
-    speedPerSec: stStats.speedPerSec,
+    speedPerSec: stStats.speedPerSec * (def.producedSpeedMult ?? 1),
     range: stStats.range,
     dmgPerTick: team === "enemy" ? stStats.dmgPerTick * enemyDamageScalar(s.map) : stStats.dmgPerTick,
     visualSeed: randU32(s),
@@ -63,6 +65,10 @@ function pushSpawnedUnitFromStructureDef(
     vxImpulse: 0,
     vzImpulse: 0,
   };
+  if (equipmentLoadout) {
+    u.equipmentLoadout = equipmentLoadout;
+    applyEquipmentStatModifiers(u, equipmentLoadout);
+  }
   s.units.push(u);
   if (team === "player") s.stats.unitsProduced += 1;
 }

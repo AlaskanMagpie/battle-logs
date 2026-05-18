@@ -92,7 +92,7 @@ function roomPayload(room: Room<BattleRoomState>, request: MatchmakingRequest): 
   const playerSession = state.playerSession;
   const enemySession = state.enemySession;
   const seat = sessionId === playerSession ? "player" : sessionId === enemySession ? "enemy" : null;
-  if (!seat || !state.matchId || typeof state.seed !== "number") return null;
+  if (!seat || !playerSession || !enemySession || !state.matchId || typeof state.seed !== "number") return null;
   return {
     version: MULTIPLAYER_PROTOCOL_VERSION,
     roomId: room.roomId,
@@ -131,6 +131,10 @@ function messagePayload(room: Room<BattleRoomState>, message: MatchFoundMessage,
   };
 }
 
+function windowTimers(): Pick<Window, "setTimeout" | "clearTimeout"> {
+  return typeof window !== "undefined" ? window : globalThis;
+}
+
 export async function findHumanMatch(options: MatchmakingClientOptions): Promise<MatchmakingResult> {
   activeBattleRoom = null;
   const strict = options.strictHumanMatch ?? false;
@@ -151,8 +155,9 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
     joinedRoom = room;
     return room;
   });
+  const timers = windowTimers();
   const timeoutPromise = new Promise<"timeout">((resolve) => {
-    window.setTimeout(() => resolve("timeout"), options.timeoutMs);
+    timers.setTimeout(() => resolve("timeout"), options.timeoutMs);
   });
   const abortSig = options.abortSignal;
   try {
@@ -166,24 +171,34 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
       return strict ? humanNotFound("timeout") : fallback("timeout");
     }
     const result = first;
-    const fallbackMs = Math.min(800, options.timeoutMs);
+    // Server may broadcast `room_lifecycle` while we wait for `match_found`; register early so the SDK
+    // does not warn before `attachOnlineMatchRoom` runs after map load.
+    result.onMessage("room_lifecycle", () => {});
     const payload = await Promise.race([
       new Promise<MatchFoundPayload | null | "abort">((resolve) => {
         let settled = false;
-        let fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
+        let statePollTimer: ReturnType<typeof window.setTimeout> | null = null;
         const finish = (v: MatchFoundPayload | null | "abort") => {
           if (settled) return;
           settled = true;
-          if (fallbackTimer != null) window.clearTimeout(fallbackTimer);
+          if (statePollTimer != null) timers.clearTimeout(statePollTimer);
           abortSig?.removeEventListener("abort", onAbort);
           resolve(v);
+        };
+        const pollStatePayload = () => {
+          const payload = roomPayload(result, request);
+          if (payload) {
+            finish(payload);
+            return;
+          }
+          statePollTimer = timers.setTimeout(pollStatePayload, 100);
         };
         const onAbort = () => finish("abort");
         if (abortSig?.aborted) {
           finish("abort");
         } else {
           if (abortSig) abortSig.addEventListener("abort", onAbort, { once: true });
-          fallbackTimer = window.setTimeout(() => finish(roomPayload(result, request)), fallbackMs);
+          pollStatePayload();
         }
         result.onMessage("match_found", (message: MatchFoundMessage) => {
           finish(messagePayload(result, message, request));

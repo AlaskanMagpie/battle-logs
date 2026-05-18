@@ -254,7 +254,6 @@ function paintBinderLegacyPanelLayout(
     const popCap = st.localPopCap + (st.structureLocalPopCapBonus ?? 0);
     const candidates: Array<{ id: string; v: string; l: string; color: string }> = [
       { id: "hp", v: String(st.maxHp), l: "HP", color: "#e85555" },
-      { id: "cooldown", v: `${st.chargeCooldownSeconds}s`, l: "CD", color: "#6ab0ff" },
       { id: "prod", v: `${st.productionSeconds}s`, l: "PROD", color: "#d4b060" },
       { id: "batch", v: `${productionBatchSizeForClass(st.producedSizeClass)}x/${popCap}`, l: "BATCH", color: "#b090ff" },
     ];
@@ -273,10 +272,9 @@ function paintBinderLegacyPanelLayout(
     const cmd = e as CommandCatalogEntry;
     const candidates: Array<{ id: string; v: string; l: string; color: string }> = [
       { id: "mana", v: String(cmd.fluxCost), l: "MANA", color: "#b080ff" },
-      { id: "cooldown", v: `${cmd.chargeCooldownSeconds}s`, l: "CD", color: "#6ab0ff" },
       { id: "salvage", v: `${cmd.salvagePctOnCast}%`, l: "SALV", color: "#7cdb9f" },
     ];
-    const cols = candidates.filter((c) => isCardOverlayFieldVisible(catalogId, c.id));
+    const cols = candidates.filter((c) => c.id === "mana" && isCardOverlayFieldVisible(catalogId, c.id));
     const colW = cols.length > 0 ? (w - pad * 2) / cols.length : 0;
     for (let i = 0; i < cols.length; i++) {
       const cx = pad + colW * i + colW / 2;

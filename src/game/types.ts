@@ -336,6 +336,38 @@ export interface SpellFxColorTint {
  */
 export type ProducedUnitId = string;
 
+export type EquipmentSlot = "leftHand" | "rightHand" | "back";
+
+export interface UnitEquipmentTransform {
+  position?: readonly [number, number, number];
+  rotation?: readonly [number, number, number];
+  scale?: number | readonly [number, number, number];
+}
+
+export interface UnitEquipmentStatModifiers {
+  rangeAdd?: number;
+  rangeMult?: number;
+  dmgPerTickAdd?: number;
+  dmgPerTickMult?: number;
+  trait?: UnitTrait;
+  aoeRadiusAdd?: number;
+  aoeRadiusSet?: number;
+  damageVsStructuresMult?: number;
+}
+
+export interface UnitEquipmentItemDef {
+  id: string;
+  name: string;
+  /** GLB file name under `/assets/units/`, or a root-relative URL beginning with `/`. */
+  glb: string;
+  slot?: EquipmentSlot;
+  stats?: UnitEquipmentStatModifiers;
+  transform?: UnitEquipmentTransform;
+}
+
+export type UnitEquipmentLoadout = Partial<Record<EquipmentSlot, UnitEquipmentItemDef>>;
+export type UnitEquipmentLoadoutDef = Partial<Record<EquipmentSlot, string | UnitEquipmentItemDef | null>>;
+
 export interface StructureCatalogEntry {
   id: string;
   name: string;
@@ -352,6 +384,8 @@ export interface StructureCatalogEntry {
   producedSizeClass: UnitSizeClass;
   /** Optional GLB/visual identity for produced squads (see `UnitRuntime.producedUnitId`). */
   producedUnitId?: ProducedUnitId;
+  /** Optional equipment props/stat modifiers copied to produced units. Omitted means no equipment. */
+  equipmentLoadout?: UnitEquipmentLoadoutDef;
   producedPop: number;
   localPopCap: number;
   maxHp: number;
@@ -362,6 +396,7 @@ export interface StructureCatalogEntry {
   /** +50% damage vs each listed enemy size class. Preferred over `producedAntiClass`. */
   producedAntiClasses?: UnitSizeClass[];
   maxCharges: number;
+  /** Legacy catalog field — doctrine slots no longer use a recharge timer; repeat plays are Mana-only. */
   chargeCooldownSeconds: number;
   /** Data-driven structure effect applied while alive. */
   aura?: StructureAura;
@@ -373,6 +408,8 @@ export interface StructureCatalogEntry {
   unitAoeRadius?: number;
   /** Produced unit ignores ground collision / walks over obstacles (flying). */
   unitFlying?: boolean;
+  /** Multiplies the produced unit's class movement speed. */
+  producedSpeedMult?: number;
   /** Flavor: what the structure produces (UI copy only). */
   producedFlavor?: string;
   /** Extra damage multiplier when this structure's units attack enemy structures (e.g. Siege Works). */
@@ -420,6 +457,7 @@ export interface CommandCatalogEntry {
   /** 100 = all spell cost goes to Salvage pool (PRD). */
   salvagePctOnCast: number;
   maxCharges: number;
+  /** Legacy catalog field — doctrine slots no longer use a recharge timer; repeat casts are Mana-only. */
   chargeCooldownSeconds: number;
   effect: CommandEffect;
 }

@@ -35,6 +35,7 @@ import { gameDist2, unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
   CatalogEntry,
+  UnitEquipmentLoadout,
   GamePhase,
   MapData,
   ProducedUnitId,
@@ -325,6 +326,8 @@ export interface UnitRuntime {
   producerCatalogId?: string;
   /** GLB animation profile id when spawned from a structure with `StructureCatalogEntry.producedUnitId`. */
   producedUnitId?: ProducedUnitId;
+  /** Optional resolved equipment copied from the producing structure. Omitted means no equipment. */
+  equipmentLoadout?: UnitEquipmentLoadout;
   /** Number of visual/combat models represented by this shared-movement squad. */
   squadCount?: number;
   /** Original squad size for display/stat accounting. */
@@ -506,7 +509,6 @@ export interface GameState {
   doctrineSlotCatalogIds: (string | null)[];
   /** Remaining placements per doctrine slot (match start). */
   doctrineChargesRemaining: number[];
-  doctrineCooldownTicks: number[];
   selectedDoctrineIndex: number | null;
   /** @deprecated No longer set by gameplay; kept for replay/checksum compat. */
   selectedStructureId: number | null;
@@ -831,15 +833,13 @@ export function heroStandPositionNearKeepAnchor(anchor: Vec2, map: MapData, team
   return clampPlaneArenaPadded(map, { x: anchor.x + dx, z: anchor.z + dz }, margin);
 }
 
-function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
+function initDoctrineCharges(_slots: (string | null)[]): number[] {
   const charges: number[] = [];
-  const cd: number[] = [];
   for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-    /** Unused for locking — doctrine uses per-cast cooldown only. */
+    /** Unused for locking — kept for compat with older UI paths. */
     charges.push(1);
-    cd.push(0);
   }
-  return { charges, cd };
+  return charges;
 }
 
 /**
@@ -948,7 +948,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
       ? rawIn.slice(0, DOCTRINE_SLOT_COUNT)
       : [...rawIn, ...Array.from({ length: DOCTRINE_SLOT_COUNT - rawIn.length }, () => null)];
   const slots = normalizeDoctrineSlotsForMatch(rawSlots);
-  const rt = initDoctrineRuntime(slots);
+  const doctrineChargesRemaining = initDoctrineCharges(slots);
   const globalPopCapBonus = doctrineMatchGlobalPopCapBonus(slots);
 
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
@@ -1062,8 +1062,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
     units: [],
     nextId: { structure: 1, unit: 1, formation: 1, projectile: 1 },
     doctrineSlotCatalogIds: slots,
-    doctrineChargesRemaining: rt.charges,
-    doctrineCooldownTicks: rt.cd,
+    doctrineChargesRemaining,
     selectedDoctrineIndex: null,
     selectedStructureId: null,
     selectedUnitId: null,
@@ -1313,7 +1312,6 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
 
 export type DoctrinePlayabilityKind =
   | "ready"
-  | "cooldown"
   | "mana"
   | "territory"
   | "enemy"
@@ -1328,7 +1326,6 @@ export interface DoctrinePlayability {
   hint: string;
   liveLabel: string;
   missingMana?: number;
-  cooldownSeconds?: number;
 }
 
 function blocked(kind: DoctrinePlayabilityKind, reason: string, liveLabel: string, extra?: Partial<DoctrinePlayability>): DoctrinePlayability {
@@ -1354,14 +1351,6 @@ export function doctrineCardPlayability(
   if (!entry) return blocked("invalid", "Unknown card.", "Unknown");
   if (s.doctrineSlotCatalogIds[slotIndex] !== catalogId) {
     return blocked("invalid", "Card is not in this doctrine slot.", "Invalid");
-  }
-
-  const cdTicks = s.doctrineCooldownTicks[slotIndex] ?? 0;
-  if (!TRAILER_HERO_MODE && cdTicks > 0) {
-    const secs = Math.max(1, Math.ceil(cdTicks / TICK_HZ));
-    return blocked("cooldown", `Card on cooldown (${secs}s).`, `CD ${secs}s`, {
-      cooldownSeconds: secs,
-    });
   }
 
   if (isCommandEntry(entry) && !DOCTRINE_COMMANDS_ENABLED) {
@@ -1454,7 +1443,7 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
 
 /**
  * Specific, player-facing explanation of why a card cannot be used right now.
- * Mirrors the shared doctrine card gates: cooldown, Mana, territory, enemy
+ * Mirrors the shared doctrine card gates: Mana, territory, enemy
  * proximity, and terrain. A null result means playable.
  */
 export function placementFailureReason(

@@ -1,8 +1,8 @@
+import { getBlobUrlForMediaPath } from "../../audio/blobMediaUrl";
 import {
   INTRO_BGM_SRC,
   INTRO_HOW_TO_PLAY_PAGES,
   INTRO_LORE_PAGES,
-  INTRO_PAGES,
   introPageCandidateSrcs,
   type IntroPage,
   type ResolvedIntroPage,
@@ -228,13 +228,18 @@ function showComicModal(pagesSource: readonly IntroPage[], options: ComicModalOp
 
     const tryStartAudio = (): void => {
       stopAudio();
-      audio = new Audio(INTRO_BGM_SRC);
-      audio.loop = true;
-      audio.volume = 0.4;
-      void audio.play().catch(() => {
-        stopAudio();
-        storageSet(localStorage, INTRO_BGM_KEY, "0");
-        syncBgmButton();
+      const a = new Audio();
+      a.loop = true;
+      a.volume = 0.4;
+      audio = a;
+      void getBlobUrlForMediaPath(INTRO_BGM_SRC).then((src) => {
+        if (audio !== a) return;
+        a.src = src;
+        void a.play().catch(() => {
+          stopAudio();
+          storageSet(localStorage, INTRO_BGM_KEY, "0");
+          syncBgmButton();
+        });
       });
     };
 

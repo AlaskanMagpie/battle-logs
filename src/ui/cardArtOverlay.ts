@@ -14,7 +14,7 @@ type OverlayField = {
   width?: number;
   /** Hit box height in overlay units (viewBox height — matches `CARD_OVERLAY_HEIGHT`). */
   height?: number;
-  tone?: "mana" | "hp" | "prod" | "batch" | "cooldown" | "uses" | "salvage";
+  tone?: "mana" | "hp" | "prod" | "batch" | "uses" | "salvage";
   size?: "xl" | "lg" | "md" | "sm";
   anchor?: "middle" | "start" | "end";
 };
@@ -85,7 +85,6 @@ const OVERLAY_FIELD_VISIBILITY_BY_CARD_KEY = "battleLogs.cardOverlay.fieldVisibi
 /** Per-field visibility toggles (asset lab + global card art). IDs shared by structure/command where applicable. */
 export const CARD_OVERLAY_FIELD_TOGGLES: readonly { id: string; label: string }[] = [
   { id: "mana", label: "Mana" },
-  { id: "cooldown", label: "Cooldown" },
   { id: "hp", label: "HP" },
   { id: "prod", label: "Production" },
   { id: "batch", label: "Batch" },
@@ -143,13 +142,10 @@ function getOverlayFieldVisibilityPerCardMap(): Record<string, Record<string, bo
 }
 
 function overlayFieldIsIncluded(fieldId: string, catalogId: string): boolean {
-  const entry = getCatalogEntry(catalogId);
   const perCard = getOverlayFieldVisibilityPerCardMap()[catalogId];
   if (perCard && Object.prototype.hasOwnProperty.call(perCard, fieldId)) {
     return perCard[fieldId] !== false;
   }
-  // Global legacy map is structure-centric; do not let it dim spell/command stat lines.
-  if (entry && isCommandEntry(entry)) return true;
   const legacy = getOverlayFieldVisibilityLegacyMap()[fieldId];
   if (legacy !== undefined) return legacy !== false;
   return true;
@@ -162,14 +158,16 @@ export function isCardOverlayFieldVisible(catalogId: string, fieldId: string): b
 
 /** Bumps binder texture cache when overlay visibility changes so canvases repaint. */
 export function overlayVisibilityStampForCatalog(catalogId: string): string {
-  return CARD_OVERLAY_FIELD_TOGGLES.map(({ id }) => (overlayFieldIsIncluded(id, catalogId) ? "1" : "0")).join("");
+  const vis = CARD_OVERLAY_FIELD_TOGGLES.map(({ id }) => (overlayFieldIsIncluded(id, catalogId) ? "1" : "0")).join("");
+  const entry = getCatalogEntry(catalogId);
+  if (entry && isCommandEntry(entry)) return `${vis} spellManaOnly`;
+  return vis;
 }
 
 let overlayLayouts: OverlayLayoutConfig = overlayLayoutsJson as OverlayLayoutConfig;
 
 const DEFAULT_STRUCTURE_FIELDS = {
   mana: { x: 16.7, y: 25.7, width: 14 },
-  cooldown: { x: 84.5, y: 19.3, width: 13 },
   hp: { x: 23.6, y: 96.2, width: 17 },
   prod: { x: 24.0, y: 110.6, width: 17 },
   batch: { x: 75.0, y: 110.6, width: 24 },
@@ -177,7 +175,6 @@ const DEFAULT_STRUCTURE_FIELDS = {
 
 const DEFAULT_COMMAND_FIELDS = {
   mana: { x: 16.7, y: 25.7, width: 14 },
-  cooldown: { x: 84.5, y: 19.3, width: 13 },
   uses: { x: 24.0, y: 99.6, width: 17 },
   salvage: { x: 50.0, y: 99.6, width: 17 },
   effect: { x: 75.0, y: 110.6, width: 24 },
@@ -246,13 +243,6 @@ function structureFields(e: StructureCatalogEntry): OverlayField[] {
   const batch = `${n}x`;
   return [
     { id: "mana", value: String(e.fluxCost), tone: "mana", size: "xl", ...DEFAULT_STRUCTURE_FIELDS.mana },
-    {
-      id: "cooldown",
-      value: `${e.chargeCooldownSeconds}s`,
-      tone: "cooldown",
-      size: "sm",
-      ...DEFAULT_STRUCTURE_FIELDS.cooldown,
-    },
     { id: "hp", value: String(e.maxHp), tone: "hp", size: "md", ...DEFAULT_STRUCTURE_FIELDS.hp },
     {
       id: "prod",
@@ -290,13 +280,6 @@ function commandFields(e: CommandCatalogEntry): OverlayField[] {
   return [
     { id: "mana", value: String(e.fluxCost), tone: "mana", size: "xl", ...DEFAULT_COMMAND_FIELDS.mana },
     {
-      id: "cooldown",
-      value: `${e.chargeCooldownSeconds}s`,
-      tone: "cooldown",
-      size: "sm",
-      ...DEFAULT_COMMAND_FIELDS.cooldown,
-    },
-    {
       id: "salvage",
       value: `${e.salvagePctOnCast}%`,
       tone: "salvage",
@@ -322,8 +305,11 @@ function mergedOverlayFields(entry: CatalogEntry, catalogId: string): OverlayFie
 function fieldsForEntry(e: CatalogEntry, catalogId: string): OverlayField[] {
   const entry = effectiveOverlayCatalogEntry(catalogId, e);
   // Same stat fields as canvas binder (`drawCardArtOverlayOnCanvasRect`). Authored card
-  // SVGs may have text stripped when rasterized — overlays keep mana / CD / salvage readable.
-  return mergedOverlayFields(entry, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
+  // SVGs may have text stripped when rasterized — structure overlays keep extra stats readable.
+  let fields = mergedOverlayFields(entry, catalogId).filter((f) => overlayFieldIsIncluded(f.id, catalogId));
+  // Contest polish / temporary: spell faces only render the Mana stat glyph in SVG (no salvage % / FX labels).
+  if (isCommandEntry(entry)) fields = fields.filter((f) => f.id === "mana");
+  return fields;
 }
 
 function baseValueFontUserUnits(field: OverlayField): number {
@@ -342,7 +328,6 @@ function baseValueFontUserUnits(field: OverlayField): number {
 const TONE_VALUE_FILL: Record<NonNullable<OverlayField["tone"]>, string> = {
   mana: "#fff7ee",
   hp: "#ffddd6",
-  cooldown: "#d9ecff",
   prod: "#ffe38b",
   batch: "#ead7ff",
   uses: "#ead7ff",
@@ -918,14 +903,18 @@ function renderEditorPanel(): void {
   const catalogId = editorState.catalogId ?? "No card selected";
   const fieldId = editorState.fieldId ?? "No stat selected";
   const dirty = editorState.dirty ? "Unsaved changes" : "Saved / unchanged";
+  const saveDisabled = editorState.catalogId ? "" : "disabled";
   panel.innerHTML = `
     <div class="card-overlay-editor-panel__eyebrow">Dev card overlay editor</div>
+    <div class="card-overlay-editor-panel__actions card-overlay-editor-panel__actions--top">
+      <button type="button" data-overlay-editor-action="save" ${saveDisabled}>Save card default</button>
+    </div>
     <div class="card-overlay-editor-panel__row"><strong>Card</strong><span>${escapeHtml(catalogId)}</span></div>
     <div class="card-overlay-editor-panel__row"><strong>Field</strong><span>${escapeHtml(fieldId)}</span></div>
     <div class="card-overlay-editor-panel__row"><strong>State</strong><span>${escapeHtml(dirty)}</span></div>
     <div class="card-overlay-editor-panel__status">${escapeHtml(editorState.status)}</div>
     <div class="card-overlay-editor-panel__actions">
-      <button type="button" data-overlay-editor-action="save" ${editorState.catalogId ? "" : "disabled"}>Save card default</button>
+      <button type="button" data-overlay-editor-action="save" ${saveDisabled}>Save card default</button>
       <button type="button" data-overlay-editor-action="copy" ${editorState.catalogId ? "" : "disabled"}>Copy JSON</button>
     </div>
   `;
@@ -940,6 +929,37 @@ function selectEditorField(catalogId: string, fieldId: string): void {
   };
   syncSelectedFieldClasses();
   renderEditorPanel();
+}
+
+/** Prefer server-returned fields so the tab matches disk after `sanitizeOverlayFields` clamps. */
+function overlayLayoutFieldsFromSaveResponse(
+  bodyText: string,
+  fallback: Record<string, OverlayFieldLayout>,
+): Record<string, OverlayFieldLayout> {
+  try {
+    const parsed = JSON.parse(bodyText) as { fields?: unknown };
+    if (typeof parsed?.fields !== "object" || parsed.fields === null || Array.isArray(parsed.fields)) {
+      return fallback;
+    }
+    const raw = parsed.fields as Record<string, unknown>;
+    const next: Record<string, OverlayFieldLayout> = {};
+    for (const [id, val] of Object.entries(raw)) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(id) || typeof val !== "object" || val === null || Array.isArray(val)) continue;
+      const o = val as Record<string, unknown>;
+      const x = Number(o.x);
+      const y = Number(o.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const row: OverlayFieldLayout = { x, y };
+      const w = Number(o.width);
+      const h = Number(o.height);
+      if (Number.isFinite(w)) row.width = w;
+      if (Number.isFinite(h)) row.height = h;
+      next[id] = row;
+    }
+    return Object.keys(next).length ? next : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 async function saveCurrentEditorLayout(): Promise<void> {
@@ -958,10 +978,17 @@ async function saveCurrentEditorLayout(): Promise<void> {
       headers,
       body: JSON.stringify({ catalogId, fields }),
     });
-    if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-    replaceRuntimeCardFields(catalogId, fields);
+    const bodyText = await res.text();
+    if (!res.ok) throw new Error(bodyText || `HTTP ${res.status}`);
+    const savedFields = overlayLayoutFieldsFromSaveResponse(bodyText, fields);
+    replaceRuntimeCardFields(catalogId, savedFields);
     syncDocumentOverlays(catalogId);
-    editorState = { ...editorState, status: "Saved to src/ui/cardArtOverlayLayouts.json.", dirty: false };
+    const n = Object.keys(savedFields).length;
+    editorState = {
+      ...editorState,
+      status: `Dev server wrote ${n} stat box(es) for “${catalogId}” to src/ui/cardArtOverlayLayouts.json.\nThis tab now matches that file. Hard-refresh other tabs/windows. Production still needs a build after you commit.`,
+      dirty: false,
+    };
   } catch (err) {
     editorState = {
       ...editorState,

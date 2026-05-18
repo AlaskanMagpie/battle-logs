@@ -38,6 +38,8 @@
     "oasis.glb",
     "snow tower.glb",
     "starbound_arcanist_hero.glb",
+    "steelbark_m81a_siege_tank.glb",
+    "steelbark_motorpool.glb",
     "town levy tower.glb",
     "town_levy.glb",
     "townwatch_keep_tower.glb",
@@ -214,6 +216,16 @@
       },
       "files": [
         "starbound_arcanist_hero.glb"
+      ]
+    },
+    {
+      "id": "steelbark_m81a_siege_tank",
+      "sizeClass": "Titan",
+      "roles": {
+        "model": "steelbark_m81a_siege_tank.glb"
+      },
+      "files": [
+        "steelbark_m81a_siege_tank.glb"
       ]
     },
     {
@@ -943,6 +955,20 @@
           "scaleTracks": 24
         }
       ]
+    },
+    {
+      "file": "steelbark_m81a_siege_tank.glb",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "steelbark_motorpool.glb",
+      "error": "fetch failed",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
     },
     {
       "file": "town levy tower.glb",

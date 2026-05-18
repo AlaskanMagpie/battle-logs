@@ -10,6 +10,7 @@ export const FULL_ART_STRUCTURE_CARD_IDS = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "steelbark_motorpool",
   "emberroot_bastion",
   "aionroot_observatory",
   "frostroot_keep",

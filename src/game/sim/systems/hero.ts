@@ -10,7 +10,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
-import { trailerHeroModeCooldownTicks, trailerHeroModeSpend } from "../../../dev/heroMode";
+import { trailerHeroModeSpend } from "../../../dev/heroMode";
 import { planChainedPathAroundMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
   armTapClaimAnchor,
@@ -272,7 +272,6 @@ function captainAutoBuildChoices(s: GameState): { catalogId: string; slotIndex: 
     if (!catalogId) continue;
     const e = getCatalogEntry(catalogId);
     if (!e || !isStructureEntry(e)) continue;
-    if ((s.doctrineCooldownTicks[slotIndex] ?? 0) > 0) continue;
     if (s.flux < e.fluxCost) continue;
     const costWeight = 1 / Math.sqrt(Math.max(28, e.fluxCost));
     const diversityWeight = 1 / (1 + (counts.get(catalogId) ?? 0) * 0.65);
@@ -337,11 +336,6 @@ function placeCaptainStructure(s: GameState, catalogId: string, slotIndex: numbe
   };
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
-  if (def.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[slotIndex] = trailerHeroModeCooldownTicks(
-      Math.round(def.chargeCooldownSeconds * TICK_HZ),
-    );
-  }
   emitCaptainSummonFx(s, catalogId, pos);
   logGame("combat", `Captain mode built ${def.name} at (${pos.x.toFixed(0)}, ${pos.z.toFixed(0)})`, s.tick);
   s.lastMessage = `Captain mode: ${def.name} summoned automatically.`;

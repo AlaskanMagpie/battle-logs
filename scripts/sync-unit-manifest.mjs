@@ -237,6 +237,14 @@ const MANUAL_ANIMATION_PROFILES = [
     },
     files: ["town_levy.glb"],
   },
+  {
+    id: "steelbark_m81a_siege_tank",
+    sizeClass: "Titan",
+    roles: {
+      model: "steelbark_m81a_siege_tank.glb",
+    },
+    files: ["steelbark_m81a_siege_tank.glb"],
+  },
 ];
 
 const profileIds = new Set(animationProfiles.map((p) => p.id));

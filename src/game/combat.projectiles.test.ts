@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PRODUCED_UNIT_STEELBARK_M81A } from "./constants";
 import { combat } from "./sim/systems/combat";
 import { createInitialState } from "./state";
 import { unitStatsForCatalog } from "./sim/systems/helpers";
@@ -90,5 +91,26 @@ describe("combat projectiles and LOS", () => {
     s.tick = proj.impactTick;
     combat(s);
     expect(a.attackCooldownTicksRemaining).toBe(Math.max(0, cd - 1));
+  });
+
+  it("Steelbark siege tanks prefer buildings over regular units in range", () => {
+    const s = createInitialState(walledMap, []);
+    const a = mkUnit(801, "player", "Titan", 65, 0);
+    a.producedUnitId = PRODUCED_UNIT_STEELBARK_M81A;
+    a.damageVsStructuresMult = 1.75;
+    a.range = 40;
+    const d = mkUnit(802, "enemy", "Swarm", 67, 0);
+    s.units.push(a, d);
+    const relay = s.enemyRelays[0]!;
+    const relayHp0 = relay.hp;
+    const unitHp0 = d.hp;
+
+    combat(s);
+
+    expect(relay.hp).toBeLessThan(relayHp0);
+    expect(d.hp).toBe(unitHp0);
+    expect(s.combatHitMarks.some((m) => m.attackerId === a.id && m.producedUnitId === PRODUCED_UNIT_STEELBARK_M81A)).toBe(
+      true,
+    );
   });
 });

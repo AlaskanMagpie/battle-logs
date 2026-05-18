@@ -9,16 +9,25 @@ import {
   PRODUCED_UNIT_GALEBARK_ADEPTS,
   PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_STEELBARK_M81A,
   PRODUCED_UNIT_TOWN_LEVY,
   STRUCTURE_MESH_VISUAL_SCALE,
 } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
 import { effectiveProducedSizeClassForAssetLab } from "../game/assetLabCatalogPreview";
+import { EQUIPMENT_SLOTS, equipmentSignature, resolveEquipmentLoadout } from "../game/equipment";
 import { getDoctrineForCard } from "../game/assetLabDoctrine";
 import { donorFileIsInManifest, parseDoctrineClipRef } from "../game/doctrineClipRef";
 import { applyClipRetargetOverride, type ClipRetargetOverride } from "../game/clipRetargetLimited";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
-import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
+import {
+  isCommandEntry,
+  type EquipmentSlot,
+  type TeamId,
+  type UnitEquipmentItemDef,
+  type UnitEquipmentLoadout,
+  type UnitSizeClass,
+} from "../game/types";
 
 type UnitAnimationRole = "model" | "run" | "idle" | "attack" | "death";
 type UnitAnimationProfile = {
@@ -292,6 +301,14 @@ function animationProfileById(id: string, m: UnitGlbManifest): UnitAnimationProf
   return (m.animationProfiles ?? []).find((p) => p.id === id) ?? null;
 }
 
+/** Manifest entry is mesh-only (no clip roles) — skip dev animation warnings; unit is shown as a static prop. */
+function profileIsStaticMeshOnly(producedUnitId: string | undefined, m: UnitGlbManifest): boolean {
+  if (!producedUnitId) return false;
+  const r = animationProfileById(producedUnitId, m)?.roles;
+  if (!r?.model) return false;
+  return !r.run && !r.idle && !r.attack && !r.death;
+}
+
 /** Prefer `animationProfiles` entry matched by `producedUnitId`, else size-class profile. */
 function animationProfileForUnit(
   kind: UnitSizeClass | "hero",
@@ -508,6 +525,28 @@ function animClipLeafLower(name: string): string {
   const t = name.trim();
   const parts = t.split(/[|/\\]/u);
   return (parts[parts.length - 1] ?? t).trim().toLowerCase();
+}
+
+/** Asset Lab merged dropdown values use `stem — clipName`; loader clips are raw `clipName`. */
+function clipNameFromAssetLabMergedLabel(ex: string): string {
+  const t = ex.trim();
+  const sep = " — ";
+  const i = t.lastIndexOf(sep);
+  return i >= 0 ? t.slice(i + sep.length).trim() : t;
+}
+
+function findClipByExplicitName(animations: THREE.AnimationClip[], ex: string): THREE.AnimationClip | null {
+  const raw = ex.trim();
+  if (!raw) return null;
+  const variants = [...new Set([raw, clipNameFromAssetLabMergedLabel(raw)].filter((s) => s.length > 0))];
+  for (const v of variants) {
+    const hit =
+      animations.find((c) => c.name === v) ??
+      animations.find((c) => animClipLeafLower(c.name) === animClipLeafLower(v)) ??
+      null;
+    if (hit && movingTrackCount(hit) > 0) return hit;
+  }
+  return null;
 }
 
 const mergedPackNormalizedAnimArrays = new WeakSet<THREE.AnimationClip[]>();
@@ -796,20 +835,29 @@ export function clipForRole(
   if (isMergedSquadMeshyPackFile(file)) {
     const ex = explicitClipName?.trim();
     if (ex) {
-      const foundEarly =
-        animations.find((c) => c.name === ex) ??
-        animations.find((c) => animClipLeafLower(c.name) === animClipLeafLower(ex));
-      if (foundEarly && movingTrackCount(foundEarly) > 0) {
+      const foundEarly = findClipByExplicitName(animations, ex);
+      if (foundEarly) {
         const badDeathBinding =
           isMergedSquadMeshyPackFile(file) && role !== "death" && mergedMeshyPackLooksLikeDeathClip(foundEarly);
-        if (!badDeathBinding) return foundEarly;
-        const key = `badMergedClip:${file}:${role}:${ex}`;
-        if (!warnedAnimationRoles.has(key)) {
-          warnedAnimationRoles.add(key);
-          console.warn(
-            `[glb] Ignoring doctrine clip "${ex}" for merged-pack role "${role}" in ${file} ` +
-              `(clip reads as death/knockdown; use Running / Idle / Punch_* / dying_backwards).`,
-          );
+        if (badDeathBinding) {
+          const key = `badMergedClip:${file}:${role}:${ex}`;
+          if (!warnedAnimationRoles.has(key)) {
+            warnedAnimationRoles.add(key);
+            console.warn(
+              `[glb] Ignoring doctrine clip "${ex}" for merged-pack role "${role}" in ${file} ` +
+                `(clip reads as death/knockdown; use Running / Idle / Punch_* / dying_backwards).`,
+            );
+          }
+        } else if ((role === "run" || role === "idle") && mergedMeshyPackLooksLikeCombatClip(foundEarly)) {
+          /* Bad doctrine / guess: never use punch/slam clips as locomotion. */
+        } else if (
+          role === "attack" &&
+          !mergedMeshyPackLooksLikeCombatClip(foundEarly) &&
+          !/^attack_\d+$/i.test(animClipLeafLower(foundEarly.name))
+        ) {
+          /* Ignore walk/run/idle picked into the attack slot. */
+        } else {
+          return foundEarly;
         }
       }
     }
@@ -1135,6 +1183,122 @@ export function setGlbOpacity(group: THREE.Group, opacity: number): void {
   if (glb) setOpacityRecursive(glb, opacity);
 }
 
+function compactBoneName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function sideBoneScore(name: string, side: "left" | "right"): number {
+  const n = compactBoneName(name);
+  const isLeft = side === "left";
+  const strong =
+    isLeft
+      ? /(^|mixamorig)lefthand|handl$|lh(hand)?$/.test(n)
+      : /(^|mixamorig)righthand|handr$|rh(hand)?$/.test(n);
+  if (strong) return 100;
+  const wrist =
+    isLeft
+      ? /leftwrist|wristl$|l(wrist)$/.test(n)
+      : /rightwrist|wristr$|r(wrist)$/.test(n);
+  if (wrist) return 82;
+  const forearm =
+    isLeft
+      ? /leftforearm|leftlowerarm|forearml$|lowerarml$/.test(n)
+      : /rightforearm|rightlowerarm|forearmr$|lowerarmr$/.test(n);
+  if (forearm) return 60;
+  return 0;
+}
+
+function backBoneScore(name: string): number {
+  const n = compactBoneName(name);
+  if (/spine2|chest|upperchest/.test(n)) return 90;
+  if (/spine1|spine/.test(n)) return 70;
+  return 0;
+}
+
+export function findEquipmentAttachmentTarget(root: THREE.Object3D, slot: EquipmentSlot): THREE.Object3D | null {
+  let best: THREE.Object3D | null = null;
+  let bestScore = 0;
+  root.traverse((o) => {
+    const score =
+      slot === "leftHand"
+        ? sideBoneScore(o.name, "left")
+        : slot === "rightHand"
+          ? sideBoneScore(o.name, "right")
+          : backBoneScore(o.name);
+    if (score > bestScore) {
+      best = o;
+      bestScore = score;
+    }
+  });
+  return best;
+}
+
+function defaultEquipmentOffset(slot: EquipmentSlot, targetName: string): THREE.Vector3 {
+  if (slot === "back") return new THREE.Vector3(0, 0.02, -0.18);
+  const n = compactBoneName(targetName);
+  const wristish = /wrist|forearm|lowerarm/.test(n);
+  const side = slot === "leftHand" ? 1 : -1;
+  return new THREE.Vector3(side * (wristish ? 0.18 : 0.1), 0, wristish ? 0.04 : 0.02);
+}
+
+function applyEquipmentTransform(prop: THREE.Object3D, item: UnitEquipmentItemDef, slot: EquipmentSlot, target: THREE.Object3D): void {
+  const t = item.transform;
+  const fallback = defaultEquipmentOffset(slot, target.name);
+  const pos = t?.position;
+  prop.position.set(pos?.[0] ?? fallback.x, pos?.[1] ?? fallback.y, pos?.[2] ?? fallback.z);
+  const rot = t?.rotation;
+  if (rot) prop.rotation.set(rot[0] ?? 0, rot[1] ?? 0, rot[2] ?? 0);
+  else if (slot === "back") prop.rotation.set(0, Math.PI, 0);
+  else prop.rotation.set(0, slot === "leftHand" ? Math.PI * 0.5 : -Math.PI * 0.5, 0);
+  const scale = t?.scale;
+  if (Array.isArray(scale)) prop.scale.set(scale[0] ?? 1, scale[1] ?? 1, scale[2] ?? 1);
+  else prop.scale.setScalar(typeof scale === "number" ? scale : 1);
+}
+
+function equipmentAssetUrl(glb: string): string {
+  return glb.startsWith("/") ? glb : `/assets/units/${encodeURIComponent(glb)}`;
+}
+
+async function attachEquipmentItem(root: THREE.Object3D, slot: EquipmentSlot, item: UnitEquipmentItemDef): Promise<THREE.Object3D | null> {
+  const target = findEquipmentAttachmentTarget(root, slot);
+  if (!target) return null;
+  try {
+    const template = await loadGltfTemplate(equipmentAssetUrl(item.glb));
+    const prop = cloneSkeleton(template.root);
+    cloneInstanceMaterials(prop);
+    setShadowRecursive(prop, true, true);
+    prop.name = `equipment-${slot}-${item.id}`;
+    prop.userData["equipmentSlot"] = slot;
+    prop.userData["equipmentId"] = item.id;
+    applyEquipmentTransform(prop, item, slot, target);
+    target.add(prop);
+    return prop;
+  } catch {
+    /* Missing / incompatible prop assets should not affect the unit GLB. */
+    return null;
+  }
+}
+
+async function attachEquipmentLoadout(parent: THREE.Object3D, root: THREE.Object3D, loadout: UnitEquipmentLoadout | undefined): Promise<void> {
+  const sig = equipmentSignature(loadout);
+  if (parent.userData["equipmentSignature"] === sig) return;
+  const prior = parent.userData["equipmentProps"] as THREE.Object3D[] | undefined;
+  for (const prop of prior ?? []) {
+    prop.parent?.remove(prop);
+  }
+  parent.userData["equipmentProps"] = [];
+  parent.userData["equipmentSignature"] = sig;
+  if (!loadout) return;
+  const attached: THREE.Object3D[] = [];
+  for (const slot of EQUIPMENT_SLOTS) {
+    const item = loadout[slot];
+    if (!item) continue;
+    const prop = await attachEquipmentItem(root, slot, item);
+    if (prop) attached.push(prop);
+  }
+  parent.userData["equipmentProps"] = attached;
+}
+
 type AttachGlbOpts = {
   /** If set, hide this object (from `parent.userData[key]`) after a successful load. */
   hideSilhouetteUserDataKey?: string;
@@ -1163,6 +1327,10 @@ type AttachGlbOpts = {
   roleClipNames?: Partial<Record<"run" | "idle" | "attack" | "death", string>>;
   /** After normalization, shift model down in parent space so bases meet ground (tower pivots vary). */
   extraFootSinkWorld?: number;
+  /** Authored model-space yaw correction before normalization; game forward is local +Z. */
+  modelYawOffsetRad?: number;
+  /** Optional visual equipment props to attach to hand/back bones. */
+  equipmentLoadout?: UnitEquipmentLoadout;
 };
 
 function mergeManifestAndDoctrineRoleFiles(
@@ -1237,6 +1405,15 @@ function mergeManifestAndDoctrineRoleFiles(
   };
 }
 
+function equipmentLoadoutFromAssetLabDoctrine(producerCatalogId: string | undefined): UnitEquipmentLoadout | undefined {
+  if (!producerCatalogId) return undefined;
+  try {
+    return resolveEquipmentLoadout(getDoctrineForCard(producerCatalogId).equipmentLoadout);
+  } catch {
+    return undefined;
+  }
+}
+
 async function attachGlbByFile(
   file: string,
   placeholder: THREE.Mesh,
@@ -1293,6 +1470,7 @@ async function attachGlbByFile(
     const inst = cloneSkeleton(template.root);
     cloneInstanceMaterials(inst);
     setShadowRecursive(inst, true, true);
+    if (opts?.modelYawOffsetRad) inst.rotation.y += opts.modelYawOffsetRad;
 
     inst.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -1430,6 +1608,7 @@ async function attachGlbByFile(
     if (footSink > 0) inst.position.y -= footSink;
 
     if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
+    await attachEquipmentLoadout(parent, inst, opts?.equipmentLoadout);
 
     const hideKey = opts?.hideSilhouetteUserDataKey;
     if (hideKey) {
@@ -1475,6 +1654,7 @@ export async function attachGlbForClass(
   producedUnitId?: string,
   /** When set, applies unit clip names from asset lab for this structure card (`battleLogs.assetLab.doctrine.v1`). */
   producerCatalogId?: string,
+  equipmentLoadout?: UnitEquipmentLoadout,
 ): Promise<void> {
   const m = await loadManifest();
   const file = pickFileForUnit(kind, producedUnitId, m);
@@ -1483,6 +1663,7 @@ export async function attachGlbForClass(
   parent.userData["sizeClass"] = kind;
   if (teamTint) parent.userData["team"] = teamTint;
   if (producedUnitId) parent.userData["producedUnitId"] = producedUnitId;
+  const staticMeshOnly = profileIsStaticMeshOnly(producedUnitId, m);
   const roleLabel =
     producedUnitId !== undefined && producedUnitId.length > 0 ? `${kind}:${producedUnitId}` : kind;
   const manifestRun = runFileForUnit(kind, producedUnitId, m);
@@ -1492,6 +1673,7 @@ export async function attachGlbForClass(
     attackFile: attackFileForUnit(kind, producedUnitId, m),
     deathFile: deathFileForUnit(kind, producedUnitId, m),
   });
+  const effectiveEquipmentLoadout = equipmentLoadoutFromAssetLabDoctrine(producerCatalogId) ?? equipmentLoadout;
   await attachGlbByFile(file, placeholder, targetMaxExtent, {
     ...(teamTint ? { teamTint } : {}),
     runFile: merged.runFile,
@@ -1499,9 +1681,11 @@ export async function attachGlbForClass(
     idleFile: merged.idleFile,
     deathFile: merged.deathFile,
     attackPlaybackSeconds: attackPlaybackSeconds(kind, producedUnitId),
-    animationRoleLabel: roleLabel,
+    animationRoleLabel: staticMeshOnly ? undefined : roleLabel,
     keepPlaceholderHidden: true,
+    modelYawOffsetRad: producedUnitId === PRODUCED_UNIT_STEELBARK_M81A ? Math.PI / 2 : undefined,
     ...(merged.roleClipNames ? { roleClipNames: merged.roleClipNames } : {}),
+    ...(effectiveEquipmentLoadout ? { equipmentLoadout: effectiveEquipmentLoadout } : {}),
   });
 }
 
@@ -1512,9 +1696,10 @@ export async function requestGlbForUnit(
   team: TeamId = "player",
   producedUnitId?: string,
   producerCatalogId?: string,
+  equipmentLoadout?: UnitEquipmentLoadout,
 ): Promise<void> {
   const extent = unitMeshLinearSize(kind);
-  await attachGlbForClass(kind, placeholder, extent, team, producedUnitId, producerCatalogId);
+  await attachGlbForClass(kind, placeholder, extent, team, producedUnitId, producerCatalogId, equipmentLoadout);
 }
 
 export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = "player"): Promise<void> {
@@ -1534,6 +1719,7 @@ const TOWER_GLB_MANIFEST_ORDER = [
   "watchtower",
   "bastion_keep",
   "verdant_citadel",
+  "steelbark_motorpool",
   "emberroot_bastion",
   "aionroot_observatory",
   "frostroot_keep",
@@ -1562,6 +1748,7 @@ const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
   /** Townwatch Keep — circular stone keep + town shell (Draco-compressed Meshy export). */
   townwatch_keep: "townwatch_keep_tower.glb",
   verdant_citadel: "verdant_citadel_titan_base.glb",
+  steelbark_motorpool: "steelbark_motorpool.glb",
 };
 
 /** Permanent HQ (`KEEP_ID`) — prefetch at match boot so the first frame is not network-bound. */
@@ -1598,6 +1785,7 @@ const TOWER_EXTRA_FOOT_SINK_BY_CATALOG: Partial<Record<string, number>> = {
   bastion_keep: 1.15,
   watchtower: 1.2,
   emberroot_bastion: 1.25,
+  steelbark_motorpool: 0.55,
 };
 
 function towerExtraFootSinkWorld(catalogId: string, towerFile: string): number {

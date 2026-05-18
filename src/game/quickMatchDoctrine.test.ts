@@ -5,6 +5,7 @@ import {
   doctrineSlotsForUrlQuickMatch,
   fillDoctrineSlotsWithDuplicatePicks,
   isUserDoctrineHandViableForQuickMatch,
+  pickUniqueDoctrineSlotRow,
   QUICK_MATCH_DOCTRINE_SLOTS,
 } from "./quickMatchDoctrine";
 
@@ -53,6 +54,29 @@ describe("quickMatch doctrine resolution", () => {
     expect(resolved[3]).toBe("firestorm");
     expect(resolved.filter(Boolean)).toHaveLength(4);
     expect(resolved.slice(4).every((x) => x == null)).toBe(true);
+  });
+
+  it("pickUniqueDoctrineSlotRow never repeats an id when pools are large enough", () => {
+    const primary = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+    const secondary = ["m", "n"];
+    for (let t = 0; t < 80; t++) {
+      const row = pickUniqueDoctrineSlotRow(primary, secondary, DOCTRINE_SLOT_COUNT);
+      const ids = row.filter((x): x is string => x != null);
+      expect(ids).toHaveLength(DOCTRINE_SLOT_COUNT);
+      expect(new Set(ids).size).toBe(DOCTRINE_SLOT_COUNT);
+    }
+  });
+
+  it("pickUniqueDoctrineSlotRow pulls from secondary only after primary is exhausted", () => {
+    const primary = ["only_one"];
+    const secondary = ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+    for (let t = 0; t < 40; t++) {
+      const row = pickUniqueDoctrineSlotRow(primary, secondary, DOCTRINE_SLOT_COUNT);
+      const ids = row.filter((x): x is string => x != null);
+      expect(ids).toHaveLength(DOCTRINE_SLOT_COUNT);
+      expect(new Set(ids).size).toBe(DOCTRINE_SLOT_COUNT);
+      expect(ids).toContain("only_one");
+    }
   });
 
   it("fillDoctrineSlotsWithDuplicatePicks cycles distinct picks in first-seen order", () => {

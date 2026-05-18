@@ -16,7 +16,7 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
-import { trailerHeroModeCooldownTicks, trailerHeroModeSpend } from "../../../dev/heroMode";
+import { trailerHeroModeSpend } from "../../../dev/heroMode";
 import { enemyBuildSpeedScalar, enemyProductionSpeedScalar } from "../../difficulty";
 import type { PlayerIntent } from "../../intents";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
@@ -706,11 +706,6 @@ function tryPlaceEnemyHumanStructure(s: GameState, catalogId: string, pos: Vec2,
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
   emitSummonFx(s, catalogId, pos);
-  if (def.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[doctrineSlotIndex] = trailerHeroModeCooldownTicks(
-      Math.round(def.chargeCooldownSeconds * TICK_HZ),
-    );
-  }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
   s.lastMessage = `${def.name} drops on the rival side.`;
@@ -846,11 +841,6 @@ function tryPlaceStructure(
   s.structures.push(st);
   s.stats.structuresBuilt += 1;
   emitSummonFx(s, catalogId, pos);
-  if (def.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[doctrineSlotIndex] = trailerHeroModeCooldownTicks(
-      Math.round(def.chargeCooldownSeconds * TICK_HZ),
-    );
-  }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
   s.lastMessage = `${def.name} zaps down${placementForward ? " (forward — fragile)" : ""} — charging up.`;
@@ -864,9 +854,6 @@ function consumeCommandSlot(s: GameState, slotIdx: number, cmd: CommandCatalogEn
     s.stats.salvageRecovered += toPool;
   }
   s.stats.commandsCast += 1;
-  if (cmd.chargeCooldownSeconds > 0) {
-    s.doctrineCooldownTicks[slotIdx] = trailerHeroModeCooldownTicks(Math.round(cmd.chargeCooldownSeconds * TICK_HZ));
-  }
   s.pendingPlacementCatalogId = null;
   s.selectedDoctrineIndex = null;
 }

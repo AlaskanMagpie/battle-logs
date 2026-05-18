@@ -3,6 +3,7 @@ import {
   FX_ABSOLUTE_MAX_LIFETIME_SEC,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
+  PRODUCED_UNIT_STEELBARK_M81A,
 } from "../game/constants";
 import type { CastFxKind, CombatHitMark, CombatProjectile, HeroStrikeFxVariant } from "../game/state";
 import {
@@ -15,6 +16,7 @@ import {
   type SpellFxElement,
   type SpellFxShape,
 } from "../game/types";
+import { isSphereWorld } from "../game/surface";
 import {
   buildConeBasis,
   projectOntoTangentPlane,
@@ -128,6 +130,21 @@ function applyGroundedDiscPose(
 /** Terrain snap when not on mobile LOD — canonical grounded root for disc/cone-style FX. */
 function groundFxRoot(group: THREE.Group, host: FxHost, pos: { x: number; z: number }, yBias: number): void {
   applyGroundedDiscPose(group, host, pos, yBias, !host.mobileLod);
+}
+
+/**
+ * Parent `group` is surface-aligned (local +Y = ground normal). Lightning polylines are authored
+ * along +Y, so on sloped terrain they would hug the slope. On plane maps, return a child whose
+ * rotation cancels the parent so bolts use world vertical. Sphere maps keep bolts on the parent
+ * so +Y stays radial (sky toward ground).
+ */
+function lightningBoltAttachParent(group: THREE.Group, host: FxHost): THREE.Group {
+  if (isSphereWorld(host.map)) return group;
+  const align = new THREE.Group();
+  align.name = "lightning-bolt-world-up";
+  align.quaternion.copy(group.quaternion).invert();
+  group.add(align);
+  return align;
 }
 
 /**
@@ -1949,7 +1966,112 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
  * Ground **cone** of elemental energy rooted on the attacker, opening toward the target.
  * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
  */
+function spawnSteelbarkSiegeBeam(host: FxHost, m: CombatHitMark): void {
+  const dx = m.tx - m.ax;
+  const dz = m.tz - m.az;
+  const dist = Math.hypot(dx, dz);
+  const reach = Math.max(1.2, Math.min(m.range, dist + 0.45));
+  const group = new THREE.Group();
+  const fromTan = { x: m.ax, z: m.az };
+  const toTan = { x: m.tx, z: m.tz };
+  tangentForwardWorld(_gFwd, host.map, fromTan, toTan);
+  resolveFxFoot(host, fromTan, 0.1, true, _gFoot, _gNorm);
+  buildConeBasis(_gFoot, _gFwd, _gNorm, _gMat, _gSf, _gSr);
+  group.matrixAutoUpdate = false;
+  group.matrix.copy(_gMat);
+
+  const teamBlue = m.team === "player";
+  const coreColor = teamBlue ? 0xbff8ff : 0xffd1aa;
+  const rimColor = teamBlue ? 0x55d8ff : 0xff8655;
+  const hotColor = teamBlue ? 0xffffff : 0xfff0cc;
+  const muzzleY = m.sizeClass === "Titan" ? 1.55 : 1.0;
+  const charge = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 18, 10),
+    new THREE.MeshBasicMaterial({
+      color: hotColor,
+      transparent: true,
+      opacity: 0.78,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  charge.position.set(0, muzzleY, Math.min(1.1, reach * 0.1));
+  group.add(charge);
+
+  const beam = meshBoltTubeFromPoints(
+    [
+      new THREE.Vector3(0, muzzleY, Math.min(0.7, reach * 0.06)),
+      new THREE.Vector3(0, muzzleY + 0.08, reach * 0.55),
+      new THREE.Vector3(0, muzzleY - 0.02, reach),
+    ],
+    0.13,
+    22,
+    7,
+    coreColor,
+    rimColor,
+  );
+  group.add(beam);
+
+  const casing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.2, reach * 0.94, 18, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: rimColor,
+      transparent: true,
+      opacity: 0.16,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  casing.rotation.x = Math.PI / 2;
+  casing.position.set(0, muzzleY, reach * 0.52);
+  group.add(casing);
+
+  const impact = new THREE.Mesh(
+    new THREE.RingGeometry(0.18, 0.46, fxRingSegments(host, 28)),
+    new THREE.MeshBasicMaterial({
+      color: rimColor,
+      transparent: true,
+      opacity: 0.62,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+    }),
+  );
+  impact.rotation.x = -Math.PI / 2;
+  impact.position.set(0, 0.16, reach);
+  group.add(impact);
+
+  const life = 0.74;
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const chargeP = Math.min(1, p / 0.32);
+    const fireP = Math.max(0, (p - 0.22) / 0.78);
+    charge.scale.setScalar(0.65 + chargeP * 1.45);
+    (charge.material as THREE.MeshBasicMaterial).opacity = (0.78 - fireP * 0.66) * (1 - Math.max(0, p - 0.8) * 5);
+    setShaderTime(beam.material, t * 1.8);
+    setShaderAlpha(beam.material, fireP < 0.04 ? fireP * 14 : 0.86 * (1 - fireP * 0.72));
+    casing.scale.setScalar(1 + Math.sin(t * 54) * 0.04 * (1 - p));
+    (casing.material as THREE.MeshBasicMaterial).opacity = 0.18 * fireP * (1 - p * 0.8);
+    impact.scale.setScalar(0.65 + fireP * 2.2);
+    (impact.material as THREE.MeshBasicMaterial).opacity = 0.62 * fireP * (1 - p);
+  });
+  if (m.aoeRadius != null && m.aoeRadius > 0) {
+    spawnSplashRipple(
+      host,
+      { x: m.splashPx ?? m.tx, z: m.splashPz ?? m.tz },
+      m.aoeRadius,
+      { core: coreColor, rim: rimColor },
+      m.visualSeed,
+    );
+  }
+}
+
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
+  if (m.producedUnitId === PRODUCED_UNIT_STEELBARK_M81A) {
+    spawnSteelbarkSiegeBeam(host, m);
+    return;
+  }
   if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS || m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
     spawnGeodeMonkForwardRings(host, m);
     return;
@@ -3050,6 +3172,7 @@ function spawnLightningSummon(host: FxHost, pos: { x: number; z: number }, opts?
   const life = 0.58;
   const group = new THREE.Group();
   groundFxRoot(group, host, pos, 0);
+  const boltParent = lightningBoltAttachParent(group, host);
   const seed = (opts?.visualSeed ?? Math.floor(pos.x * 31.1 + pos.z * 17.7)) >>> 0;
   const prongCount = 3 + Math.floor(rndSummon(seed, 0) * 3);
   const skyY = 46;
@@ -3072,7 +3195,7 @@ function spawnLightningSummon(host: FxHost, pos: { x: number; z: number }, opts?
     }
     pts.push(new THREE.Vector3(topX, skyY, topZ));
     const bolt = meshBoltTubeFromPoints(pts, boltR, Math.max(16, segments * 3), 6, 0xf2fbff, 0xffffff);
-    group.add(bolt);
+    boltParent.add(bolt);
     mainBolts.push(bolt);
   }
 
@@ -3168,6 +3291,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }, opts?: Cast
   const life = 0.42;
   const group = new THREE.Group();
   groundFxRoot(group, host, pos, 0);
+  const boltParent = lightningBoltAttachParent(group, host);
 
   const skyY = 34;
   const segments = 10;
@@ -3185,7 +3309,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }, opts?: Cast
 
   const boltR = host.mobileLod ? 0.085 : 0.12;
   const bolt = meshBoltTubeFromPoints(pts, boltR, Math.max(14, segments * 3), 6, 0xe8f6ff, 0xffffff);
-  group.add(bolt);
+  boltParent.add(bolt);
 
   // Short-lived branch bolts.
   const branches: THREE.Mesh[] = [];
@@ -3204,7 +3328,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }, opts?: Cast
       bpts.push(cur);
     }
     const bl = meshBoltTubeFromPoints(bpts, boltR * 0.72, 16, 5, 0xcfeaff, 0xe8f6ff);
-    group.add(bl);
+    boltParent.add(bl);
     branches.push(bl);
   }
 

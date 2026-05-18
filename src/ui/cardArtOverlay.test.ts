@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { getCatalogEntry } from "../game/catalog";
+import { isCommandEntry } from "../game/types";
 import { type CardArtContainRect, cardArtOverlayHtml, containCardArtRect } from "./cardArtOverlay";
 import overlayLayoutsJson from "./cardArtOverlayLayouts.json";
 
@@ -36,11 +38,11 @@ describe("isCardOverlayFieldVisible vs asset-lab legacy storage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("ignores legacy global visibility for command cards so spells keep stat lines", async () => {
-    localStorage.setItem("battleLogs.cardOverlay.fieldVisibility", JSON.stringify({ mana: false, cooldown: false }));
+  it("honors legacy global visibility for command cards too", async () => {
+    localStorage.setItem("battleLogs.cardOverlay.fieldVisibility", JSON.stringify({ mana: false, effect: false }));
     const { isCardOverlayFieldVisible } = await import("./cardArtOverlay");
-    expect(isCardOverlayFieldVisible("firestorm", "mana")).toBe(true);
-    expect(isCardOverlayFieldVisible("firestorm", "cooldown")).toBe(true);
+    expect(isCardOverlayFieldVisible("firestorm", "mana")).toBe(false);
+    expect(isCardOverlayFieldVisible("firestorm", "effect")).toBe(false);
   });
 
   it("still honors legacy global visibility for structure cards", async () => {
@@ -103,6 +105,9 @@ describe("card art overlay layout", () => {
       const html = cardArtOverlayHtml(catalogId);
       expect(html, catalogId).toContain(`data-card-art-overlay="${catalogId}"`);
       for (const [fieldId, fieldLayout] of Object.entries(layout.fields ?? {})) {
+        if (fieldId === "cooldown") continue;
+        const entry = getCatalogEntry(catalogId);
+        if (entry && isCommandEntry(entry) && fieldId !== "mana") continue;
         const fieldMatch = html.match(
           new RegExp(
             `data-overlay-field="${fieldId}"[^>]*data-overlay-x="([^"]+)"[^>]*data-overlay-y="([^"]+)"[^>]*data-overlay-w="([^"]+)"[^>]*data-overlay-h="([^"]+)"`,

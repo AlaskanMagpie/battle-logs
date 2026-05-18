@@ -41,8 +41,38 @@ export async function loadManaNodeTextures(loader: THREE.TextureLoader): Promise
   return { neutral, friendly, hostile };
 }
 
-export async function loadManaNodeSpinTexture(loader: THREE.TextureLoader): Promise<THREE.Texture> {
-  const t = await loader.loadAsync(TEX_SPIN);
+/**
+ * SVG maps are unreliable for WebGL uploads (`texSubImage2D: bad image data` in Chrome when size is implicit).
+ * Rasterize once to a fixed canvas so the dash overlay always has valid RGBA for the GPU.
+ */
+export async function loadManaNodeSpinTexture(_loader: THREE.TextureLoader): Promise<THREE.Texture> {
+  const rasterW = 256;
+  const rasterH = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = rasterW;
+  canvas.height = rasterH;
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, rasterW, rasterH);
+  try {
+    const res = await fetch(TEX_SPIN);
+    const svgText = await res.text();
+    const blob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error("mana spin svg decode"));
+        im.src = url;
+      });
+      ctx.drawImage(img, 0, 0, rasterW, rasterH);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    /* transparent fallback — spin ring is cosmetic */
+  }
+  const t = new THREE.CanvasTexture(canvas);
   configureTex(t);
   return t;
 }

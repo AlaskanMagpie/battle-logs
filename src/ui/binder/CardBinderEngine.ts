@@ -3,7 +3,11 @@ import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { getControlProfile, type ControlProfile } from "../../controlProfile";
 import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
-import { createBinderCardBackTexture } from "./binderCardBackTexture";
+import {
+  BINDER_CARD_BACK_IMAGE_URL,
+  createBinderCardBackPlaceholderTexture,
+  loadBinderCardBackTexture,
+} from "./binderCardBackTexture";
 import {
   BINDER_FULLY_OPEN_PROGRESS,
   deriveBinderUiMode,
@@ -428,7 +432,7 @@ export class CardBinderEngine {
   private readonly _ownedLights: THREE.Light[] = [];
   private readonly pg: THREE.PlaneGeometry;
   private etex: THREE.CanvasTexture;
-  private readonly cardBackTex: THREE.CanvasTexture;
+  private cardBackTex: THREE.Texture;
   private ctex: THREE.Texture[];
   /** Per physical sheet: 18 catalog texture indices (0–8 front, 9–17 back). */
   private chunks: number[][];
@@ -642,7 +646,22 @@ export class CardBinderEngine {
     this.pg = new THREE.PlaneGeometry(colW, rowH);
     this.paperStackGeo = new THREE.PlaneGeometry(BINDER_CFG.pageWidth * 0.98, BINDER_CFG.pageHeight * 0.97);
     this.etex = makeEmptyTexture();
-    this.cardBackTex = createBinderCardBackTexture();
+    this.cardBackTex = createBinderCardBackPlaceholderTexture();
+    void loadBinderCardBackTexture(new THREE.TextureLoader(), BINDER_CARD_BACK_IMAGE_URL)
+      .then((tex) => {
+        if (this.disposed) {
+          tex.dispose();
+          return;
+        }
+        const hadPull = this.codexPulledPickIndices.size > 0;
+        const prev = this.cardBackTex;
+        this.cardBackTex = tex;
+        this._v();
+        if (!hadPull) prev.dispose();
+      })
+      .catch(() => {
+        /* Keep placeholder if the image is missing or blocked. */
+      });
     this.ctex = this._withTestPagePadding(textures);
     this.chunks = this._mkChunks();
 

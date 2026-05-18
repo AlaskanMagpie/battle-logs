@@ -1,5 +1,4 @@
 import {
-  DOCTRINE_SLOT_COUNT,
   ENEMY_AI_PASSIVE_FLUX_PER_SEC,
   SALVAGE_FLUX_CAP_PER_SEC,
   SALVAGE_FLUX_PER_POOL_PER_SEC,
@@ -40,9 +39,3 @@ export function salvageTrickle(s: GameState): void {
   s.salvage -= take;
 }
 
-export function tickDoctrineCooldowns(s: GameState): void {
-  for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-    const v = s.doctrineCooldownTicks[i] ?? 0;
-    if (v > 0) s.doctrineCooldownTicks[i] = v - 1;
-  }
-}

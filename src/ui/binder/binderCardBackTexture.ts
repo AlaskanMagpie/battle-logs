@@ -1,64 +1,85 @@
 import * as THREE from "three";
 import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
+import { composeCardIntoBinderSleeve } from "./binderSleeveComposite";
 
 /** Match `binderPanelPixelSize()` / sleeve composite aspect (no import cycle with `CardBinderEngine`). */
 function panelPixelSize(): { w: number; h: number } {
   return { w: TCG_FULL_CARD_W, h: TCG_FULL_CARD_H };
 }
 
-/**
- * One shared texture for every binder card back (lightweight vs per-card raster).
- * Shield plate + stacked "Battle Logs" title; reads clearly when pages turn.
- */
-export function createBinderCardBackTexture(): THREE.CanvasTexture {
+/** Root-relative art for binder sleeve backs (see `public/assets/cards/card_back.png`). */
+export const BINDER_CARD_BACK_IMAGE_URL = "/assets/cards/card_back.png";
+
+/** Slight inset inside the inner 400×600 so the back reads a touch smaller than full bleed (matches neighbor faces). */
+const INNER_ART_INSET_FRAC = 0.045;
+
+function intrinsicPx(img: CanvasImageSource): { iw: number; ih: number } {
+  if (img instanceof HTMLImageElement) return { iw: img.naturalWidth, ih: img.naturalHeight };
+  if (img instanceof HTMLVideoElement) return { iw: img.videoWidth, ih: img.videoHeight };
+  if (img instanceof HTMLCanvasElement) return { iw: img.width, ih: img.height };
+  if (typeof OffscreenCanvas !== "undefined" && img instanceof OffscreenCanvas) return { iw: img.width, ih: img.height };
+  return { iw: 256, ih: 256 };
+}
+
+function drawImageContain(
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  x: number,
+  y: number,
+  cw: number,
+  ch: number,
+): void {
+  const { iw, ih } = intrinsicPx(img);
+  if (iw < 1 || ih < 1) return;
+  const scale = Math.min(cw / iw, ch / ih);
+  const sw = iw * scale;
+  const sh = ih * scale;
+  const ox = x + (cw - sw) / 2;
+  const oy = y + (ch - sh) / 2;
+  ctx.drawImage(img, ox, oy, sw, sh);
+}
+
+function rasterBackIntoSleeveTexture(img: CanvasImageSource | null): THREE.CanvasTexture {
   const { w: W, h: H } = panelPixelSize();
-  const c = document.createElement("canvas");
-  c.width = W;
-  c.height = H;
-  const ctx = c.getContext("2d");
-  if (!ctx) {
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+  const inner = document.createElement("canvas");
+  inner.width = W;
+  inner.height = H;
+  const ctx = inner.getContext("2d");
+  if (ctx) {
+    ctx.fillStyle = "#0b0c10";
+    ctx.fillRect(0, 0, W, H);
+    if (img) {
+      const px = W * INNER_ART_INSET_FRAC;
+      const py = H * INNER_ART_INSET_FRAC;
+      drawImageContain(ctx, img, px, py, W - px * 2, H - py * 2);
+    }
   }
-
-  const bg = "#121b2a";
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
-
-  const cx = W * 0.5;
-  const top = H * 0.14;
-  const shW = W * 0.52;
-  const shH = H * 0.62;
-  const shL = cx - shW / 2;
-
-  ctx.beginPath();
-  ctx.moveTo(cx, top + shH * 0.08);
-  ctx.lineTo(shL + shW * 0.92, top + shH * 0.12);
-  ctx.lineTo(shL + shW, top + shH * 0.22);
-  ctx.lineTo(shL + shW * 0.96, top + shH * 0.78);
-  ctx.lineTo(cx, top + shH);
-  ctx.lineTo(shL + shW * 0.04, top + shH * 0.78);
-  ctx.lineTo(shL, top + shH * 0.22);
-  ctx.lineTo(shL + shW * 0.08, top + shH * 0.12);
-  ctx.closePath();
-  ctx.fillStyle = "#354d72";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(150, 195, 255, 0.62)";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.fillStyle = "#eef4ff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.font = `700 ${Math.round(H * 0.09)}px system-ui, Segoe UI, sans-serif`;
-  ctx.fillText("BATTLE", cx, top + shH * 0.42);
-  ctx.font = `650 ${Math.round(H * 0.085)}px system-ui, Segoe UI, sans-serif`;
-  ctx.fillText("LOGS", cx, top + shH * 0.58);
-
-  const t = new THREE.CanvasTexture(c);
+  const composed = composeCardIntoBinderSleeve(inner);
+  const t = new THREE.CanvasTexture(composed);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 8;
   t.needsUpdate = true;
   return t;
+}
+
+/**
+ * Dark placeholder until `loadBinderCardBackTexture` finishes (avoids flashing “Battle Logs” text).
+ * Same sleeve framing as catalog faces so scale matches the grid.
+ */
+export function createBinderCardBackPlaceholderTexture(): THREE.CanvasTexture {
+  return rasterBackIntoSleeveTexture(null);
+}
+
+/**
+ * Loads PNG/WebP art and rasterizes through the binder sleeve composite (same footprint as codex faces).
+ */
+export async function loadBinderCardBackTexture(
+  loader: THREE.TextureLoader,
+  url: string,
+): Promise<THREE.CanvasTexture> {
+  const loaded = await loader.loadAsync(url);
+  const img = loaded.image as HTMLImageElement | HTMLCanvasElement | OffscreenCanvas;
+  const out = rasterBackIntoSleeveTexture(img);
+  loaded.dispose();
+  return out;
 }

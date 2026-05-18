@@ -4,7 +4,7 @@ import type { IncomingMessage } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, loadEnv, normalizePath, type Plugin } from "vite";
 
 /** Keep in sync with `DEFAULT_CARD_OVERLAY_WRITE_KEY` in `src/ui/cardArtOverlay.ts`. */
 const CARD_OVERLAY_WRITE_KEY_FALLBACK = "9889";
@@ -51,8 +51,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-  },
-  server: {
+    },
+    server: {
     /**
      * IPv4 loopback avoids Windows resolving `localhost` to IPv6 (::1) while Node listens on IPv4-only,
      * which looks like “nothing loads” in the browser.
@@ -63,10 +63,11 @@ export default defineConfig(({ mode }) => {
     strictPort: true,
     fs: { strict: false },
     /**
-     * `cardOverlayLayoutPlugin` writes this JSON on “Save card default”. Watching it invalidates
-     * `cardArtOverlay.ts` (static JSON import) and full-reloads Asset Lab / any open page — losing
-     * GLB picks, class preview, zoom, etc. Runtime layout is already updated via `replaceRuntimeCardFields`;
-     * ignore disk writes so dev stays stable. Reload the tab if you edit the JSON by hand in the IDE.
+     * `cardOverlayLayoutPlugin` writes this JSON on “Save card default”. Watching it would full-reload
+     * Asset Lab / any open page — losing GLB picks, class preview, zoom, etc. We ignore the watcher
+     * and instead call `server.moduleGraph.onFileChange(...)` after each successful save so the
+     * static JSON import cache is invalidated without nuking the whole tab. Manual edits in the IDE
+     * still need a refresh (or touch-save from Asset Lab) to pick up.
      */
     watch: {
       ignored: [CARD_OVERLAY_LAYOUT_FILE],
@@ -77,7 +78,7 @@ export default defineConfig(({ mode }) => {
     port: 2223,
     strictPort: true,
   },
-  assetsInclude: ["**/*.glb"],
+    assetsInclude: ["**/*.glb"],
   };
 });
 
@@ -216,6 +217,13 @@ function cardOverlayLayoutPlugin(writeKey: string): Plugin {
             },
           };
           await writeFile(CARD_OVERLAY_LAYOUT_FILE, `${JSON.stringify(next, null, 2)}\n`);
+          // `server.watch` ignores this file on purpose — without invalidation, Vite keeps serving a
+          // stale transformed JSON module so refresh / new tabs look like “Save did nothing”.
+          try {
+            server.moduleGraph.onFileChange(normalizePath(CARD_OVERLAY_LAYOUT_FILE));
+          } catch {
+            /* ignore if API shape changes */
+          }
           res.statusCode = 200;
           res.setHeader("Content-Type", "application/json");
           res.end(JSON.stringify({ ok: true, catalogId, fields }));

@@ -6,7 +6,7 @@ import { movement, wakeCamps } from "./systems/ai";
 import { auras } from "./systems/auras";
 import { combat } from "./systems/combat";
 import { cleanupDead } from "./systems/deaths";
-import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/economy";
+import { economy, salvageTrickle } from "./systems/economy";
 import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
 import { applyPlayerIntents, applySeatIntents } from "./systems/intents";
@@ -28,7 +28,6 @@ function runTickSimulation(s: GameState, applyIntents: () => void): void {
     s.tacticsFieldZones = s.tacticsFieldZones.filter((z) => z.untilTick > s.tick);
   }
   pruneUnitSpellStatuses(s);
-  tickDoctrineCooldowns(s);
   tickHeroTeleportCooldown(s);
   applyIntents();
   economy(s);

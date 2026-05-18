@@ -449,7 +449,6 @@ function updateClassBalanceReadout(catalogId: string): void {
     ["Guide flux cost", `${bp.cost} <span class="al-muted">(this card ${entry.fluxCost})</span>`],
     ["Guide tower HP", `${bp.structureHp} <span class="al-muted">(this card ${entry.maxHp})</span>`],
     ["Guide prod interval", `${bp.productionSeconds}s <span class="al-muted">(this card ${entry.productionSeconds}s)</span>`],
-    ["Guide charge CD", `${bp.cooldownSeconds}s <span class="al-muted">(this card ${entry.chargeCooldownSeconds}s)</span>`],
   ];
   classBalanceEl.innerHTML = `<div class="al-muted" style="margin-bottom:4px">Smooth balance curve for <strong>${eff}</strong> — catalog numbers on the card stay in the right column.</div><table>${rows
     .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${v}</td></tr>`)

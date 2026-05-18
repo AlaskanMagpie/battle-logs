@@ -1,8 +1,6 @@
-import { getCatalogEntry } from "../../game/catalog";
 import { BINDER_CELLS_PER_SHEET, BINDER_CODEX_TOTAL_CELLS } from "./CardBinderEngine";
 import { BINDER_GRID_CATALOG_IDS } from "../../game/binderCodexIds";
 import { type CodexSortMode, sortBinderCodexCellOrder } from "./binderCodexSort";
-import { isCommandEntry, isStructureEntry } from "../../game/types";
 
 /** Sentinel catalog id for padded codex cells (no card art). Not in `validBinderCodexIds`. */
 export const CODEX_EMPTY_SLOT = "__binder_codex_empty__";
@@ -32,30 +30,19 @@ function sortSection(ids: readonly string[], mode: CodexSortMode, asc: boolean):
 }
 
 /**
- * Sorted codex only: one copy per card in the main block (binder grid order deduped),
- * packed into full sheets; then structure-only and command-only appendix sections
- * (each sorted the same way, sheet-padded). Finally pad to at least browse minimum length.
+ * Sorted codex: one deduped pass over the binder catalog, ordered by the active sort keys,
+ * then padded with {@link CODEX_EMPTY_SLOT} to {@link BINDER_CODEX_TOTAL_CELLS}. Each real
+ * card appears at most once (no cycling repeats), so row-major order matches the sort.
  */
 export function buildSortedCodexPanelIds(mode: CodexSortMode, asc: boolean): string[] {
+  const cap = BINDER_CODEX_TOTAL_CELLS;
   const gridUnique = dedupePreserveOrder(BINDER_GRID_CATALOG_IDS);
   const mainSorted = sortSection(gridUnique, mode, asc);
-  const mainPacked = padCodexIdsToSheets(mainSorted);
-
-  const structurePool = BINDER_GRID_CATALOG_IDS.filter((id) => {
-    const e = getCatalogEntry(id);
-    return e && isStructureEntry(e);
-  });
-  const structureSorted = sortSection(dedupePreserveOrder(structurePool), mode, asc);
-  const structurePacked = padCodexIdsToSheets(structureSorted);
-
-  const commandPool = BINDER_GRID_CATALOG_IDS.filter((id) => {
-    const e = getCatalogEntry(id);
-    return e && isCommandEntry(e);
-  });
-  const commandSorted = sortSection(dedupePreserveOrder(commandPool), mode, asc);
-  const commandPacked = padCodexIdsToSheets(commandSorted);
-
-  const merged = [...mainPacked, ...structurePacked, ...commandPacked];
-  while (merged.length < BINDER_CODEX_TOTAL_CELLS) merged.push(CODEX_EMPTY_SLOT);
-  return padCodexIdsToSheets(merged);
+  if (mainSorted.length === 0) {
+    return Array.from({ length: cap }, () => CODEX_EMPTY_SLOT);
+  }
+  const clipped = mainSorted.length > cap ? mainSorted.slice(0, cap) : mainSorted;
+  const out: string[] = [...clipped];
+  while (out.length < cap) out.push(CODEX_EMPTY_SLOT);
+  return out;
 }

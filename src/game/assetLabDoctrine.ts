@@ -6,6 +6,7 @@
  * Cross-GLB **retargeting** is not implemented — borrowed clips must target the same bone names as
  * the base rig. Donor GLBs are optional via merged labels `stem — clipName` (see `doctrineClipRef.ts`).
  */
+import type { UnitEquipmentLoadoutDef } from "./types";
 
 export type UnitAnimRole = "run" | "idle" | "attack" | "die";
 
@@ -19,6 +20,8 @@ export type AssetLabCardDoctrine = {
   towerClip: string;
   /** Clip names: raw names on manifest-routed GLBs, or `stem — clipName` to borrow from `stem.glb`. */
   unitClips: Partial<Record<UnitAnimRole, string>>;
+  /** Optional per-card equipment override; omitted means no equipment override. */
+  equipmentLoadout?: UnitEquipmentLoadoutDef;
 };
 
 type DoctrineStoreV1 = {
@@ -35,6 +38,20 @@ function emptyDoctrine(): AssetLabCardDoctrine {
     towerClip: "",
     unitClips: {},
   };
+}
+
+function cleanEquipmentLoadout(raw: unknown): UnitEquipmentLoadoutDef | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: UnitEquipmentLoadoutDef = {};
+  for (const slot of ["leftHand", "rightHand", "back"] as const) {
+    const v = (raw as UnitEquipmentLoadoutDef)[slot];
+    if (v === null || typeof v === "string") {
+      out[slot] = v;
+    } else if (v && typeof v === "object" && typeof v.glb === "string" && typeof v.id === "string") {
+      out[slot] = { ...v };
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function loadStore(): DoctrineStoreV1 {
@@ -61,6 +78,7 @@ export function getDoctrineForCard(catalogId: string): AssetLabCardDoctrine {
   const s = loadStore();
   const row = s.cards[catalogId];
   if (!row) return emptyDoctrine();
+  const equipmentLoadout = cleanEquipmentLoadout(row.equipmentLoadout);
   return {
     towerGlb: typeof row.towerGlb === "string" ? row.towerGlb : "",
     unitGlb: typeof row.unitGlb === "string" ? row.unitGlb : "",
@@ -69,6 +87,7 @@ export function getDoctrineForCard(catalogId: string): AssetLabCardDoctrine {
       row.unitClips && typeof row.unitClips === "object"
         ? { ...row.unitClips }
         : {},
+    ...(equipmentLoadout ? { equipmentLoadout } : {}),
   };
 }
 
@@ -92,6 +111,13 @@ export function mergeDoctrineForCard(catalogId: string, patch: Partial<AssetLabC
     unitGlb: patch.unitGlb !== undefined ? patch.unitGlb : cur.unitGlb,
     towerClip: patch.towerClip !== undefined ? patch.towerClip : cur.towerClip,
     unitClips,
+    ...(patch.equipmentLoadout !== undefined
+      ? cleanEquipmentLoadout(patch.equipmentLoadout)
+        ? { equipmentLoadout: cleanEquipmentLoadout(patch.equipmentLoadout) }
+        : {}
+      : cur.equipmentLoadout
+        ? { equipmentLoadout: cur.equipmentLoadout }
+        : {}),
   };
   const s = loadStore();
   s.cards[catalogId] = next;
@@ -116,6 +142,7 @@ export function importDoctrineStoreJson(text: string): { merged: number; error?:
     for (const [id, row] of Object.entries(j.cards)) {
       if (!/^[a-z0-9_-]+$/i.test(id)) continue;
       const existing = cur.cards[id] ?? emptyDoctrine();
+      const equipmentLoadout = cleanEquipmentLoadout(row.equipmentLoadout) ?? existing.equipmentLoadout;
       cur.cards[id] = {
         towerGlb: typeof row.towerGlb === "string" ? row.towerGlb : existing.towerGlb,
         unitGlb: typeof row.unitGlb === "string" ? row.unitGlb : existing.unitGlb,
@@ -124,6 +151,7 @@ export function importDoctrineStoreJson(text: string): { merged: number; error?:
           ...existing.unitClips,
           ...(row.unitClips && typeof row.unitClips === "object" ? row.unitClips : {}),
         },
+        ...(equipmentLoadout ? { equipmentLoadout } : {}),
       };
       n += 1;
     }

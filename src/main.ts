@@ -31,6 +31,14 @@ import { unitStatsForCatalog } from "./game/sim/systems/helpers";
 import { advanceTick, advanceTickPvp, type PvpSeatIntentBundle } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
 import { prefetchMatchCriticalGlbs } from "./render/glbPool";
+import {
+  beginMatchMusicSession,
+  endMatchMusicSession,
+  restartMatchMusicSession,
+} from "./audio/matchMusic";
+import { beginMenuMusicSession, endMenuMusicSession } from "./audio/menuMusic";
+import { installGameMusicMuteControl, syncGameMusicMuteButtonFromPref } from "./audio/gameMusicMuteUi";
+import { setGameMusicChromeMatch } from "./audio/musicChrome";
 import { MatchSfx } from "./audio/matchSfx";
 import { GameRenderer } from "./render/scene";
 import { hydrateCardPreviewImages, syncCardArtOverlayContainFit } from "./ui/cardGlbPreview";
@@ -691,6 +699,7 @@ function runMatch(
   launchOptions: Partial<MatchLaunchOptions> = {},
 ): void {
   void (async () => {
+    setGameMusicChromeMatch(true);
     const requestedMode = launchOptions.mode ?? "ai";
     const matchId = launchOptions.matchId ?? makeClientMatchId();
     const ownerAiBattle = requestedMode === "ai" && isOwnerAiDuelAuthorized(params);
@@ -734,6 +743,7 @@ function runMatch(
         });
         if (result.mode === "search_aborted") {
           dismissMatchmakingOverlay?.();
+          endMatchMusicSession();
           mountPortalPicker();
           return;
         }
@@ -744,6 +754,7 @@ function runMatch(
           } catch {
             /* ignore */
           }
+          endMatchMusicSession();
           mountPortalPicker();
           return;
         }
@@ -788,6 +799,8 @@ function runMatch(
     const matchSfx = new MatchSfx();
     renderer.attachMatchSfx(matchSfx);
     await Promise.all([renderer.loadTerrainFromMap(map), prefetchMatchCriticalGlbs()]);
+    beginMatchMusicSession(mapUrl);
+    syncGameMusicMuteButtonFromPref();
     let state: GameState = createInitialState(map, initialDoctrine);
     applyControlProfileDefaults(state);
     configureGamePortals(state, portalContext, window.location.href);
@@ -933,6 +946,8 @@ function runMatch(
     window.visualViewport?.addEventListener("scroll", resize, { signal });
 
     const pendingIntents: PlayerIntent[] = [];
+    const PVP_INPUT_DELAY_TICKS = 6;
+    const pvpLocalIntentBatches = new Map<number, PlayerIntent[]>();
     const doctrineDragRef = { active: false };
     let invalidCommandTargetAttempts = 0;
 
@@ -1036,7 +1051,6 @@ function runMatch(
       if (state.phase !== "playing") return null;
       if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return null;
       state.flux = Math.max(state.flux, 9999);
-      state.doctrineCooldownTicks[slotIndex] = 0;
       invalidCommandTargetAttempts = 0;
       pendingIntents.push({ type: "select_doctrine_slot", index: slotIndex });
       pendingIntents.push({ type: "try_click_world", pos: { x, z }, shiftKey: false, altKey: false });
@@ -1162,22 +1176,33 @@ function runMatch(
           first = false;
           const tickBefore = state.tick;
           if (resolvedLaunch.mode === "pvp" && onlineSession) {
-            onlineSession.sendIntents(tickBefore, chunk);
             const localSeat = (resolvedLaunch.seat ?? "player") as MatchSeat;
-            if (!onlineSession.intentLedger.hasPartnerIntents(tickBefore, localSeat)) break;
-            const partnerChunk = onlineSession.intentLedger.takePartnerIntents(tickBefore, localSeat) ?? [];
+            const sendTick = tickBefore + PVP_INPUT_DELAY_TICKS;
+            const existingFutureChunk = pvpLocalIntentBatches.get(sendTick) ?? [];
+            const futureChunk = chunk.length > 0 ? [...existingFutureChunk, ...chunk] : existingFutureChunk;
+            pvpLocalIntentBatches.set(sendTick, futureChunk);
+            onlineSession.sendIntents(sendTick, futureChunk);
+            const localChunk = pvpLocalIntentBatches.get(tickBefore) ?? [];
+            const waitingForBufferedPartner =
+              tickBefore >= PVP_INPUT_DELAY_TICKS && !onlineSession.intentLedger.hasPartnerIntents(tickBefore, localSeat);
+            if (waitingForBufferedPartner) break;
+            const partnerChunk =
+              tickBefore < PVP_INPUT_DELAY_TICKS
+                ? []
+                : (onlineSession.intentLedger.takePartnerIntents(tickBefore, localSeat) ?? []);
+            pvpLocalIntentBatches.delete(tickBefore);
             const bundles: PvpSeatIntentBundle[] =
               localSeat === "player"
                 ? [
-                    { seat: "player", intents: chunk },
+                    { seat: "player", intents: localChunk },
                     { seat: "enemy", intents: partnerChunk },
                   ]
                 : [
                     { seat: "player", intents: partnerChunk },
-                    { seat: "enemy", intents: chunk },
+                    { seat: "enemy", intents: localChunk },
                   ];
             advanceTickPvp(state, bundles);
-            captureReplayTick(replay, tickBefore, chunk, state);
+            captureReplayTick(replay, tickBefore, localChunk, state);
           } else {
             if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
             advanceTick(state, chunk);
@@ -1234,8 +1259,10 @@ function runMatch(
       onlineSession?.dispose();
       onlineSession = null;
       pendingIntents.length = 0;
+      pvpLocalIntentBatches.clear();
       clearGameLog();
       renderer.clearCastFx();
+      restartMatchMusicSession(mapUrl);
       state = createInitialState(map, initialDoctrine);
       applyControlProfileDefaults(state);
       configureGamePortals(state, portalContext, window.location.href);
@@ -1270,8 +1297,10 @@ function runMatch(
       cancelAnimationFrame(rafId);
       onlineSession?.dispose();
       onlineSession = null;
+      endMatchMusicSession();
       matchAbort.abort();
       pendingIntents.length = 0;
+      pvpLocalIntentBatches.clear();
       clearGameLog();
       hideSelectBox();
       renderer.clearCastFx();
@@ -1308,7 +1337,6 @@ function runMatch(
     syncCameraFollowUi(hudRoot, renderer.getCameraFollowHero());
     const doctrineTrackEl = hudRoot.querySelector("#doctrine-track");
     if (doctrineTrackEl) attachDoctrineHandPeek(doctrineTrackEl as HTMLElement, () => doctrineDragRef.active);
-    showRulesToast();
 
     const digitKeyToDoctrineSlot: Record<string, number> = {
       Digit1: 0,
@@ -1951,6 +1979,8 @@ const portalContext = parsePortalContext(params);
 const quickMatch = params.get("quickMatch") === "1" || params.get("testMatch") === "1";
 function mountPortalPicker(onReady?: () => void): void {
   pickerRoot.style.display = "";
+  beginMenuMusicSession();
+  syncGameMusicMuteButtonFromPref();
   if (portalContext.enteredViaPortal) {
     try {
       sessionStorage.setItem("signalWarsPortalReturn", "1");
@@ -1958,18 +1988,29 @@ function mountPortalPicker(onReady?: () => void): void {
       /* ignore */
     }
   }
-  mountDoctrinePicker(pickerRoot, (slots, chosenMapUrl, mode = "ai", launchOptions = {}) => {
-    runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext, {
-      ...launchOptions,
-      mode,
-      matchId: makeClientMatchId(),
-      queueState: mode === "matchmake" || mode === "matchmake_strict" ? "searching" : "idle",
-    });
-  }, portalContext, onReady);
+  mountDoctrinePicker(
+    pickerRoot,
+    (slots, chosenMapUrl, mode = "ai", launchOptions = {}) => {
+      hideRulesToast();
+      endMenuMusicSession();
+      runMatch(slots, chosenMapUrl, mountPortalPicker, portalContext, {
+        ...launchOptions,
+        mode,
+        matchId: makeClientMatchId(),
+        queueState: mode === "matchmake" || mode === "matchmake_strict" ? "searching" : "idle",
+      });
+    },
+    portalContext,
+    () => {
+      onReady?.();
+      showRulesToast();
+    },
+  );
 }
 
 async function boot(): Promise<void> {
   prefetchMatchCriticalGlbs();
+  installGameMusicMuteControl();
   if (quickMatch) {
     pickerRoot.style.display = "none";
     const stored = loadDoctrineSlots();

@@ -43,7 +43,7 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
   payLine: string;
 } {
   const fx = e.effect;
-  const payLine = `Costs ${e.fluxCost} Mana · ${e.salvagePctOnCast}% of that cost goes to Salvage · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
+  const payLine = `Costs ${e.fluxCost} Mana · ${e.salvagePctOnCast}% of that cost goes to Salvage`;
   switch (fx.type) {
     case "aoe_line_damage":
       return {
@@ -91,7 +91,7 @@ function commandSpellFxRows(e: CommandCatalogEntry): {
 }
 
 function dmSpellCostLine(e: CommandCatalogEntry, catalogId?: string): string {
-  const base = `${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown`;
+  const base = `${e.fluxCost} Mana`;
   if (catalogId != null && catalogId !== "" && !isCardOverlayFieldVisible(catalogId, "salvage")) {
     return base;
   }
@@ -114,7 +114,7 @@ function dcSpellEffectPanel(e: CommandCatalogEntry, catalogId: string): string {
   const { target, rolls, payLine } = commandSpellFxRows(e);
   const pay = isCardOverlayFieldVisible(catalogId, "salvage")
     ? payLine
-    : `Costs ${e.fluxCost} Mana · ${e.chargeCooldownSeconds}s cooldown on this slot after casting`;
+    : `Costs ${e.fluxCost} Mana (repeat casts limited by your Mana pool)`;
   const lis = rolls.map((t) => `<li>${escapeHtml(t)}</li>`).join("");
   return `<section class="dc-spell-panel" aria-label="Spell effect details">
     <div class="dc-spell-panel__banner" role="heading" aria-level="3">Spell effect</div>
@@ -508,23 +508,22 @@ function dmHeroArt(catalogId: string, portrait: string, usePreview: boolean, spe
 }
 
 function dmCdTitle(cmd: boolean): string {
-  return cmd ? "Per-use cooldown after casting this spell" : "Cooldown between spawned units";
+  return cmd ? "Casts spend Mana — no extra cooldown between casts" : "Seconds between spawned batches from this tower";
 }
 
 function dmStatsOneLine(e: CatalogEntry): string {
   if (isCommandEntry(e)) {
-    return `${e.fluxCost} · ${e.chargeCooldownSeconds}s · ${e.salvagePctOnCast}%`;
+    return `${e.fluxCost} · ${e.salvagePctOnCast}% salvage`;
   }
-  return `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
+  return `${e.maxHp} HP · ${structureProductionLine(e)}`;
 }
 
-function dcHeroTopTags(cmd: boolean, classOrSpell: string, cdSeconds: number): string {
-  const cdShow = cdSeconds > 0 ? `${cdSeconds}s` : "—";
+function dcHeroTopTags(cmd: boolean, classOrSpell: string, secondPill: string): string {
   const pillClass = cmd ? "dc-pill dc-pill--spell" : "dc-pill dc-pill--class";
   const pillCd = "dc-pill dc-pill--cd";
   return `<div class="dc-hero-tags">
     <span class="${pillClass}"><span class="dc-pill-dot" aria-hidden="true"></span>${escapeHtml(classOrSpell)}</span>
-    <span class="${pillCd}"><span class="dc-pill-dot dc-pill-dot--cd" aria-hidden="true"></span>${escapeHtml(cdShow)}</span>
+    <span class="${pillCd}"><span class="dc-pill-dot dc-pill-dot--cd" aria-hidden="true"></span>${escapeHtml(secondPill)}</span>
   </div>`;
 }
 
@@ -560,18 +559,12 @@ function dcUnitPill(e: StructureCatalogEntry): string {
 
 function dcAbilityStructure(e: StructureCatalogEntry): string {
   const anti = antiClassList(e);
-  if (e.chargeCooldownSeconds <= 0 && anti.length === 0) return "";
-  const title = anti.length ? `Anti ${anti.join(" / ")}` : "Unit ability";
-  const cd = e.chargeCooldownSeconds > 0 ? `${e.chargeCooldownSeconds}s` : "—";
+  if (anti.length === 0) return "";
   return `<div class="dc-ability" role="group" aria-label="Spawned unit ability">
     <div class="dc-ability-ico" aria-hidden="true">⌖</div>
     <div class="dc-ability-mid">
-      <div class="dc-ability-title">${escapeHtml(title)}</div>
-      <div class="dc-ability-sub">Unlimited uses</div>
-    </div>
-    <div class="dc-ability-right">
-      <div class="dc-ability-cd">${escapeHtml(cd)}</div>
-      <div class="dc-ability-cd-lbl">COOLDOWN</div>
+      <div class="dc-ability-title">Anti ${anti.join(" / ")}</div>
+      <div class="dc-ability-sub">Damage bonus vs these classes</div>
     </div>
   </div>`;
 }
@@ -621,12 +614,11 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
       ? `<div class="tcg-deck-no" aria-label="Deck slot ${deckSlotIndex + 1}">${deckSlotIndex + 1}</div>`
       : "";
   const kindClass = cmd ? "tcg--kind-spell tcg--command" : `tcg--kind-structure tcg--structure${sizeMod}`;
-  const cdSec = e.chargeCooldownSeconds;
-  const cdShow = cdSec > 0 ? `${cdSec}s` : "—";
+  const secondPill = cmd ? "Mana" : `${(e as StructureCatalogEntry).productionSeconds}s`;
   const statsLine = dmStatsOneLine(e);
   const statsTitle = isCommandEntry(e)
     ? commandSpellTooltipSummary(e as CommandCatalogEntry)
-    : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)} · ${structurePopCapLine(e)} per event`;
+    : `${e.maxHp} HP · ${structureProductionLine(e as StructureCatalogEntry)} · ${structurePopCapLine(e as StructureCatalogEntry)} per event`;
   const spellFx = cmd && isCardOverlayFieldVisible(catalogId, "effect") ? dmSpellFxCompact(e as CommandCatalogEntry) : "";
   const statsBlock = cmd
     ? `<div class="dm-stats dm-stats--spell-cost" title="${escapeHtml(statsTitle)}">${escapeHtml(dmSpellCostLine(e as CommandCatalogEntry, catalogId))}</div>`
@@ -639,7 +631,7 @@ export function tcgCardCompactHtml(catalogId: string, variant: TcgCardVariant, d
     <div class="dm-top">
       <span class="dm-mana" title="Mana (flux) cost">${escapeHtml(manaVal)}</span>
       <span class="dm-class" title="${cmd ? "Command spell" : "Produced unit class"}">${escapeHtml(classTag)}</span>
-      <span class="dm-cd" title="${escapeHtml(dmCdTitle(cmd))}">${escapeHtml(cdShow)}</span>
+      <span class="dm-cd" title="${escapeHtml(dmCdTitle(cmd))}">${escapeHtml(secondPill)}</span>
     </div>
     <div class="dm-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</div>
     ${spellFx}
@@ -671,7 +663,7 @@ export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deck
   const subtitle = cmd
     ? ""
     : structureProductionLine(e as StructureCatalogEntry);
-  const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${e.chargeCooldownSeconds}s CD · ${structureProductionLine(e)}`;
+  const title = cmd ? commandSpellTooltipSummary(e) : `${e.maxHp} HP · ${structureProductionLine(e as StructureCatalogEntry)}`;
   const overlay = cardArtOverlayHtml(catalogId, { handSlot: hudHand });
 
   return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact ${kindClass} ${previewTypeClass} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
@@ -724,14 +716,12 @@ export function tcgCardFullHtml(
     const ec = e as CommandCatalogEntry;
     const cells: Array<{ v: string; l: string; t: DcStatTone }> = [];
     if (isCardOverlayFieldVisible(catalogId, "mana")) cells.push({ v: manaVal, l: "MANA", t: "mana" });
-    if (isCardOverlayFieldVisible(catalogId, "cooldown")) cells.push({ v: `${ec.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" });
     if (isCardOverlayFieldVisible(catalogId, "salvage")) cells.push({ v: `${ec.salvagePctOnCast}%`, l: "SALVAGE", t: "salv" });
     rail = dcStatRailCells(cells, false);
   } else {
     const st = e as StructureCatalogEntry;
     const cells: Array<{ v: string; l: string; t: DcStatTone }> = [];
     if (isCardOverlayFieldVisible(catalogId, "hp")) cells.push({ v: String(st.maxHp), l: "HP", t: "hp" });
-    if (isCardOverlayFieldVisible(catalogId, "cooldown")) cells.push({ v: `${st.chargeCooldownSeconds}s`, l: "COOLDOWN", t: "cd" });
     if (isCardOverlayFieldVisible(catalogId, "prod")) cells.push({ v: `${st.productionSeconds}s`, l: "PROD", t: "prod" });
     if (isCardOverlayFieldVisible(catalogId, "batch"))
       cells.push({ v: structurePopCapLine(st), l: "BATCH", t: "pop" });
@@ -750,7 +740,7 @@ export function tcgCardFullHtml(
       <div class="dc-hero-scrim" aria-hidden="true"></div>
       <div class="dc-hero-top">
         <span class="dc-mana" title="Mana cost">${escapeHtml(manaVal)}</span>
-        ${dcHeroTopTags(cmd, classTag, e.chargeCooldownSeconds)}
+        ${dcHeroTopTags(cmd, classTag, cmd ? "Mana" : `${(e as StructureCatalogEntry).productionSeconds}s`)}
       </div>
       ${dcTitleBlock(e.name, cmd ? "Command" : "Structure", false)}
     </header>
