@@ -1,7 +1,11 @@
 /** Simulation ticks per second — higher = smoother movement/combat cadence (balance uses per-tick scaling). */
 export const TICK_HZ = 20;
 
-/** Maximum `playing` phase length in wall-clock seconds (time-limit tie-break uses this cap). */
+/**
+ * Maximum `playing` phase length in **simulation** seconds at `TICK_HZ` (not wall-clock).
+ * The main loop clamps catch-up so tab backgrounds do not fast-forward many minutes of sim per
+ * wall second; see `main.ts` accumulator clamp.
+ */
 export const MATCH_MAX_DURATION_SEC = 3 * 60;
 
 /** Sim ticks until `timeLimitCheck` may end the match (`MATCH_MAX_DURATION_SEC` of game time at `TICK_HZ`). */
@@ -39,6 +43,8 @@ export const PRODUCED_UNIT_GALEBARK_ADEPTS = "galebark_adepts";
 export const PRODUCED_UNIT_HOLLOWMARKET_CUTPURSES = "hollowmarket_cutpurses";
 /** Townwatch Keep — merged Town Levy militia swarm (`town_levy.glb`; manual profile for Node Draco inspect). */
 export const PRODUCED_UNIT_TOWN_LEVY = "town_levy";
+/** Thornkeep Colossus — Verdant Gatekeeper Titan profile already present in the unit manifest. */
+export const PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN = "verdant_gatekeeper_titan";
 
 /** Player opening Mana pool (rival uses `PLAYER_STARTING_FLUX * map.difficulty.enemyEconomyMult` — default ≈60%). */
 export const PLAYER_STARTING_FLUX = 380;
@@ -276,6 +282,16 @@ export const CUT_LINE_DAMAGE_PER_UNIT = 56;
 export const ATTACK_RANGE_CLOSE_MAX = 10;
 export const ATTACK_RANGE_MEDIUM_MAX = 16;
 
+/** Expanded segment radius for direct unit-vs-unit LOS vs map decor + structure discs (world units). */
+export const COMBAT_LOS_SEGMENT_AGENT_R = 0.55;
+/** In-flight artillery projectiles cap (oldest dropped when exceeded). */
+export const COMBAT_PROJECTILE_CAP = 96;
+/** Artillery travel time in sim ticks (at `TICK_HZ` ≈ 0.25s–0.6s). */
+export const COMBAT_ARTILLERY_FLIGHT_TICKS_MIN = 5;
+export const COMBAT_ARTILLERY_FLIGHT_TICKS_MAX = 12;
+/** Scales horizontal distance to extra flight ticks (before clamp). */
+export const COMBAT_ARTILLERY_FLIGHT_DIST_SCALE = 0.42;
+
 /** Shatter (interim vs enemy relay): pick radius and burst damage; production pause when enemy structures exist uses structure runtime. */
 export const SHATTER_TARGET_RADIUS = 12;
 export const SHATTER_DAMAGE = 340;
@@ -362,12 +378,18 @@ export const FORWARD_STRUCTURE_HP_MULT = 0.58;
 export const HERO_STRIKE_NEAR_ENEMY_TAP_RADIUS = 22;
 export const HERO_STRIKE_STRUCTURE_ON_ENEMY_NODE_MULT = 1.42;
 
-/** Procedural Mana nodes per match (each side). Used when thinning authored tap lists. */
-export const TAP_NODES_PER_SIDE = 4;
 /** Full-arena scatter target for procedural Mana nodes (`scatterArenaTapSlots`). */
-export const TAP_ARENA_TOTAL = 32;
+export const TAP_ARENA_TOTAL = 11;
 /** Minimum spacing between procedurally placed Mana nodes (world units). */
-export const TAP_GENERATION_MIN_SEP = 36;
+export const TAP_GENERATION_MIN_SEP = 44;
 
 /** Territory: union of radii around the Keep and owned Mana anchors (world units). */
 export const TERRITORY_RADIUS = 72;
+/**
+ * When two territory sources are farther than `2 * TERRITORY_RADIUS` apart (no disk overlap),
+ * still connect them with a passable corridor up to this extra center-to-center gap (world units).
+ * Tuned so typical arena tap spacing (`TAP_GENERATION_MIN_SEP`) stays disk-only, while Keep↔deep tap can read as one zone.
+ */
+export const TERRITORY_LINK_MAX_GAP = 56;
+/** Small padding added to computed corridor half-width so fills and outlines stay numerically closed. */
+export const TERRITORY_LINK_RADIUS_PAD = 0.35;

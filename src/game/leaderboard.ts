@@ -28,6 +28,16 @@ export function scoreMatchResult(s: GameState): number {
   );
 }
 
+/** In-match components of `scoreMatchResult` (no win/draw bonus) for HUD live tally. */
+export function liveTallyPoints(s: GameState): number {
+  const nodesClaimed = s.taps.filter((t) => t.active && t.ownerTeam === "player").length;
+  const timePenalty = Math.floor(s.tick / TICK_HZ / 60);
+  return Math.max(
+    0,
+    s.stats.enemyKills * 14 + nodesClaimed * 180 + s.stats.structuresBuilt * 55 - s.stats.unitsLost * 5 - timePenalty,
+  );
+}
+
 function safeEntries(raw: string | null): LocalLeaderboardEntry[] {
   if (!raw) return [];
   try {

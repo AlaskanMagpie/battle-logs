@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+/** Dev uses 2223 by default (`vite.config.ts`); still clear 2222 for stale processes. */
 const ports = [2222, 2223, 2224];
+const DEV_PORT = 2223;
 
 function run(command, args, opts = {}) {
   return spawnSync(command, args, {
@@ -75,18 +77,23 @@ function viteBin() {
 killPids(process.platform === "win32" ? listeningPidsWin32() : listeningPidsPosix());
 clearViteCache();
 
+const sync = run(process.execPath, [join(root, "scripts", "sync-card-manifest.mjs")], { stdio: "inherit" });
+if (sync.status != null && sync.status !== 0) {
+  process.exit(sync.status);
+}
+
 const bin = viteBin();
 if (!existsSync(bin)) {
   console.error("[localhost] Missing local Vite binary. Run npm install first.");
   process.exit(1);
 }
 
-const origin = "http://127.0.0.1:2222/";
+const origin = `http://127.0.0.1:${DEV_PORT}/`;
 console.log(`[localhost] Starting Vite on ${origin}`);
 console.log("[localhost] Opening browser (--open). If a tab stays blank, paste the URL above (not “localhost” if Windows IPv6 bites).");
 console.log("[localhost] Stale UI: hard refresh (Ctrl+F5).");
 
-const child = spawn(bin, ["--host", "127.0.0.1", "--port", "2222", "--strictPort", "--open"], {
+const child = spawn(bin, ["--host", "127.0.0.1", "--port", String(DEV_PORT), "--strictPort", "--open"], {
   cwd: root,
   stdio: "inherit",
   shell: process.platform === "win32",

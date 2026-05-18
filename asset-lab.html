@@ -331,7 +331,19 @@
         object-position: center;
         display: block;
       }
-      .al-card-frame .card-art-overlay {
+      /* Match `.tcg--slot-preview … .card-art-overlay`: stats share the object-fit:contain rect (see `syncCardArtOverlayContainFit`). */
+      .al-card-frame:has(.tcg-card-preview-img:not([hidden])) .card-art-overlay {
+        position: absolute;
+        display: block;
+        left: var(--overlay-fit-left, 0);
+        top: var(--overlay-fit-top, 0);
+        right: auto;
+        bottom: auto;
+        width: var(--overlay-fit-width, 100%);
+        height: var(--overlay-fit-height, 100%);
+        pointer-events: auto;
+      }
+      .al-card-frame:not(:has(.tcg-card-preview-img:not([hidden]))) .card-art-overlay {
         position: absolute;
         inset: 0;
         width: 100%;
@@ -655,7 +667,7 @@
                 <div>
                   <div class="al-card-zoom-outer al-card-drop-zone" id="al-card-drop-zone">
                     <div class="al-card-zoom-inner" id="al-card-zoom-inner">
-                      <div class="al-card-frame" id="al-card-frame"></div>
+                      <div class="al-card-frame card-art-stack" id="al-card-frame"></div>
                     </div>
                   </div>
                   <p class="al-status" id="al-card-hint" data-default-hint="1" style="margin-top: 8px; max-width: none">

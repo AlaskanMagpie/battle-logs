@@ -3,17 +3,13 @@
   "mapId": "sphere_planet",
   "worldGeometry": "sphere",
   "world": {
-    "halfExtents": 610,
+    "halfExtents": 260,
     "groundY": 0,
     "sphereRadius": 200,
-    "sphereTerrain": {
-      "amplitude": 15,
-      "seed": 722,
-      "octaves": 5,
-      "macroScale": 1.15
-    }
+    "sphereTerrain": { "amplitude": 12, "seed": 722, "octaves": 4, "macroScale": 1.05 },
+    "arenaFootprint": { "kind": "circle", "radiusMult": 0.9 }
   },
-  "useAuthorTapSlots": false,
+  "useAuthorTapSlots": true,
   "visual": {
     "groundPreset": "ember_wastes",
     "fogHex": 1421142,
@@ -22,10 +18,52 @@
     "skyHex": 6185050,
     "sunHex": 16777212
   },
-  "tapSlots": [],
-  "playerRelaySlots": [],
-  "enemyRelaySlots": [],
-  "playerStart": { "x": -95, "z": 0 },
-  "enemyStart": { "x": 95, "z": 0 },
-  "enemyCamps": []
+  "tapSlots": [
+    { "id": "tap_sp_p1", "x": -155, "z": 0, "role": "lane" },
+    { "id": "tap_sp_p2", "x": -118, "z": 88, "role": "flank" },
+    { "id": "tap_sp_p3", "x": -118, "z": -88, "role": "flank" },
+    { "id": "tap_sp_p4", "x": -62, "z": 0, "role": "contested" },
+    { "id": "tap_sp_e1", "x": 155, "z": 0, "role": "lane" },
+    { "id": "tap_sp_e2", "x": 118, "z": 88, "role": "flank" },
+    { "id": "tap_sp_e3", "x": 118, "z": -88, "role": "flank" },
+    { "id": "tap_sp_e4", "x": 62, "z": 0, "role": "contested" }
+  ],
+  "playerRelaySlots": [
+    { "id": "p_relay_1", "x": -228, "z": 0 },
+    { "id": "p_relay_2", "x": -218, "z": 72 }
+  ],
+  "enemyRelaySlots": [
+    { "id": "e_relay_1", "x": 228, "z": 0 },
+    { "id": "e_relay_2", "x": 218, "z": -70 }
+  ],
+  "playerStart": { "x": -210, "z": 8 },
+  "enemyStart": { "x": 208, "z": -8 },
+  "enemyCamps": [
+    {
+      "id": "camp_ridge",
+      "origin": { "x": 108, "z": 52 },
+      "aggroRadius": 22,
+      "wakeRadius": 44,
+      "coreMaxHp": 420,
+      "roster": [
+        { "sizeClass": "Swarm", "offset": { "x": 4, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -3, "z": 3 } },
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -4 } }
+      ]
+    },
+    {
+      "id": "camp_crater",
+      "origin": { "x": 128, "z": -48 },
+      "aggroRadius": 22,
+      "wakeRadius": 44,
+      "coreMaxHp": 440,
+      "roster": [
+        { "sizeClass": "Line", "offset": { "x": 3, "z": 1 } },
+        { "sizeClass": "Swarm", "offset": { "x": -4, "z": -2 } },
+        { "sizeClass": "Heavy", "offset": { "x": 2, "z": 4 } }
+      ]
+    }
+  ],
+  "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
+  "decor": []
 }

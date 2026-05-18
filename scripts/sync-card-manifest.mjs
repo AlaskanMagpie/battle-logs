@@ -1,6 +1,7 @@
 /**
- * Scans public/assets/cards/ for image files and writes manifest.json:
- *   { "catalog_id": "/assets/cards/catalog_id.png", ... }
+ * Scans public/assets/cards/ for image files and writes:
+ * - public/assets/cards/manifest.json (runtime fetch URL `/assets/cards/manifest.json`)
+ * - src/game/cardArtManifest.bundle.json (same JSON for Vite/TS imports — **do not** import from `public/`)
  *
  * Naming: filename stem must match doctrine catalog id (e.g. watchtower.png → watchtower).
  * Run after adding/replacing card art: npm run assets:sync-cards
@@ -52,5 +53,10 @@ const out = {
   cards: Object.fromEntries(Object.entries(cards).sort(([a], [b]) => a.localeCompare(b))),
 };
 
-await writeFile(join(DIR, "manifest.json"), JSON.stringify(out, null, 2) + "\n", "utf8");
-console.log(`[sync-card-manifest] wrote manifest.json (${Object.keys(cards).length} card art file(s)).`);
+const json = JSON.stringify(out, null, 2) + "\n";
+await writeFile(join(DIR, "manifest.json"), json, "utf8");
+const bundlePath = join(ROOT, "src", "game", "cardArtManifest.bundle.json");
+await writeFile(bundlePath, json, "utf8");
+console.log(
+  `[sync-card-manifest] wrote manifest.json + src/game/cardArtManifest.bundle.json (${Object.keys(cards).length} card art file(s)).`,
+);

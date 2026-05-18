@@ -1,4 +1,5 @@
 import { COMBAT_SPATIAL_CELL } from "../constants";
+import { segmentHitsMapObstacles, type MapObstacleFootprint } from "../mapObstacles";
 import type { MapData } from "../types";
 import type { GameState, UnitRuntime } from "../state";
 import { gameDist2 } from "./systems/helpers";
@@ -48,6 +49,48 @@ export function nearestFoeInBuckets(
           bestD = d;
           best = o;
         }
+      }
+    }
+  }
+  return best;
+}
+
+/** Like {@link nearestFoeInBuckets}, but skips foes whose segment to `from` intersects map/structure blocking decor. */
+export function nearestFoeInBucketsWithLineOfSight(
+  from: UnitRuntime,
+  foeTeam: "player" | "enemy",
+  maxD2: number,
+  buckets: Map<string, UnitRuntime[]>,
+  map: MapData,
+  losAgentR: number,
+  extraFootprints: MapObstacleFootprint[],
+  cell: number = COMBAT_SPATIAL_CELL,
+): UnitRuntime | null {
+  let best: UnitRuntime | null = null;
+  let bestD = maxD2;
+  const gx = Math.floor(from.x / cell);
+  const gz = Math.floor(from.z / cell);
+  const reachCells = Math.max(1, Math.ceil(Math.sqrt(maxD2) / cell));
+  for (let ox = -reachCells; ox <= reachCells; ox++) {
+    for (let oz = -reachCells; oz <= reachCells; oz++) {
+      const list = buckets.get(`${gx + ox},${gz + oz}`);
+      if (!list) continue;
+      for (const o of list) {
+        if (o === from || o.team !== foeTeam || o.hp <= 0) continue;
+        const d = gameDist2(map, from, o);
+        if (d > bestD) continue;
+        if (
+          segmentHitsMapObstacles(
+            map,
+            { x: from.x, z: from.z },
+            { x: o.x, z: o.z },
+            losAgentR,
+            extraFootprints,
+          )
+        )
+          continue;
+        bestD = d;
+        best = o;
       }
     }
   }

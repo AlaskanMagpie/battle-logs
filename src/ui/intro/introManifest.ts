@@ -17,7 +17,8 @@ export const INTRO_HEAVY_GLB_TOP_N = 6;
 export const INTRO_BGM_SRC = `${INTRO_ASSET_BASE}/bgm.ogg`;
 export const INTRO_PAGE_EXTENSIONS = [".png", ".webp", ".jpg", ".jpeg", ".svg"] as const;
 
-export const INTRO_PAGES: IntroPage[] = [
+/** Lore comic: narrative order (meet Idama → premise). */
+export const INTRO_LORE_PAGES: IntroPage[] = [
   {
     id: "page-01",
     fallbackSrc: `${INTRO_ASSET_BASE}/page-01.svg`,
@@ -28,12 +29,19 @@ export const INTRO_PAGES: IntroPage[] = [
     fallbackSrc: `${INTRO_ASSET_BASE}/page-02.svg`,
     alt: "Doctrine — premise",
   },
+];
+
+/** Rules comic only (single page in the modal). */
+export const INTRO_HOW_TO_PLAY_PAGES: IntroPage[] = [
   {
     id: "page-03",
     fallbackSrc: `${INTRO_ASSET_BASE}/page-03.svg`,
     alt: "Doctrine — how to play",
   },
 ];
+
+/** Union for preload / any flow that still wants all intro art. */
+export const INTRO_PAGES: IntroPage[] = [...INTRO_LORE_PAGES, ...INTRO_HOW_TO_PLAY_PAGES];
 
 export function introPageCandidateSrcs(page: IntroPage): string[] {
   return INTRO_PAGE_EXTENSIONS.map((ext) => `${INTRO_ASSET_BASE}/${page.id}${ext}`);

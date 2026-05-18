@@ -1,17 +1,14 @@
 import * as THREE from "three";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { CATALOG, DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "../../game/catalog";
+import { BINDER_GRID_CATALOG_IDS, validBinderCodexIds } from "../../game/binderCodexIds";
+import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "../../game/catalog";
 import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
 import { fillDoctrineSlotsWithDuplicatePicks, QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
-import {
-  buildReturnPortalUrlForPrematch,
-  buildVibeJamExitUrlForPrematch,
-  type PortalContext,
-} from "../../game/portal";
+import type { PortalContext } from "../../game/portal";
 import {
   AI_LADDER_OPPONENTS,
   AI_LADDER_WINS_TO_UNLOCK,
@@ -22,7 +19,12 @@ import {
   winsAgainst,
 } from "../../ai/aiLadder";
 import type { MatchLaunchOptions, MatchMode } from "../../net/protocol";
-import { hydrateCardPreviewImages, preloadCardPreviewDataUrls } from "../cardGlbPreview";
+import {
+  hydrateCardPreviewImages,
+  preloadCardPreviewDataUrls,
+  resetCardPreviewDataUrlCache,
+  syncCardArtOverlayContainFit,
+} from "../cardGlbPreview";
 import { resetCardArtManifestCache } from "../cardArtManifest";
 import {
   CARD_PREVIEW_BINDER_HAND_MS,
@@ -32,10 +34,11 @@ import {
 } from "../cardDetailPop";
 import { doctrineSlotButtonInnerHtml, tcgCardSlotHtml } from "../doctrineCard";
 import { attachDoctrineHandPeek } from "../hud";
-import { showComicLoreModal } from "../intro/comicIntro";
+import { showHowToPlayModal, showLoreModal } from "../intro/comicIntro";
 import { doctrineSlotHudTone } from "../doctrineSlotHudTone";
 import { loadDoctrinePickerState, saveDoctrinePickerState } from "../doctrineStorage";
-import { getBinderTextureForCatalogId } from "./binderCardTexture";
+import { getBinderTextureForCatalogId, disposeBinderTextureCache } from "./binderCardTexture";
+import { buildSortedCodexPanelIds } from "./binderCodexLayout";
 import {
   BINDER_CELLS_PER_PAGE,
   BINDER_CELLS_PER_SHEET,
@@ -49,6 +52,7 @@ import {
 import { BinderLayoutCalibratePanel } from "./BinderLayoutCalibratePanel";
 import { BINDER_PREMATCH_GOALS_HTML, MATCH_HELP_INNER_HTML } from "../matchHelpContent";
 import { sortPickerHandByFluxCost } from "./doctrinePickerHandSort";
+import { type CodexSortMode } from "./binderCodexSort";
 import "./binderPicker.css";
 
 const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
@@ -105,24 +109,9 @@ function isBinderLayoutCalibrateMode(): boolean {
   return new URLSearchParams(window.location.search).get("binderCalibrate") === "1";
 }
 
-const FULL_ART_STRUCTURE_CARD_IDS = [
-  "outpost",
-  "watchtower",
-  "bastion_keep",
-  "verdant_citadel",
-  "emberroot_bastion",
-  "aionroot_observatory",
-  "frostroot_keep",
-  "wooden_aerie",
-  "hollowmarket_stump",
-  "townwatch_keep",
-] as const;
-const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
-/** Codex panel order: updated visual structure cards + legacy spell/command placeholders only. */
-const BINDER_GRID_CATALOG_IDS: readonly string[] = [...FULL_ART_STRUCTURE_CARD_IDS, ...COMMAND_CARD_IDS];
 const MAP_URL_STORAGE_KEY = "signalWarsMapUrl.v2";
 const LEGACY_MAP_URL_STORAGE_KEY = "signalWarsMapUrl";
-const validIds = new Set(BINDER_GRID_CATALOG_IDS);
+const validIds = validBinderCodexIds;
 const validMapUrls = new Set(MAP_REGISTRY.map((m) => m.url));
 const MIN_FILLED = 4;
 /** Long-press on the tome hint strip to open goals + controls without resizing the 3D view. */
@@ -150,6 +139,34 @@ function makeDeferredBinderTexture(): THREE.CanvasTexture {
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 2;
   return t;
+}
+
+async function hydrateCodexTexturesChunked(
+  texList: THREE.Texture[],
+  panelIds: readonly string[],
+  chunkControlMobile: boolean,
+  onChunkDone: (tex: THREE.Texture[]) => void,
+): Promise<void> {
+  const chunk = chunkControlMobile ? 9 : 18;
+  for (let start = 0; start < panelIds.length; start += chunk) {
+    const end = Math.min(panelIds.length, start + chunk);
+    const preloadIds = panelIds.slice(start, end).filter((id) => validBinderCodexIds.has(id));
+    try {
+      await preloadCardPreviewDataUrls(preloadIds);
+    } catch {
+      /* best-effort */
+    }
+    for (let i = start; i < end; i++) {
+      const cid = panelIds[i]!;
+      if (!validBinderCodexIds.has(cid)) continue;
+      try {
+        texList[i] = await getBinderTextureForCatalogId(cid);
+      } catch (err) {
+        console.warn("[binder] failed to hydrate deferred card texture", cid, err);
+      }
+    }
+    onChunkDone(texList);
+  }
 }
 
 function afterIdle(fn: () => void): void {
@@ -365,23 +382,12 @@ function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
 export function DoctrineBinderPicker({
   onStart,
   onReady,
-  portalContext = { enteredViaPortal: false, params: {}, ref: null },
+  portalContext: _portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
   onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode, launchOptions?: PrematchLaunchOptions) => void;
   onReady?: () => void;
   portalContext?: PortalContext;
 }): ReactElement {
-  const prematchVibeJamHref = useMemo(
-    () =>
-      typeof window !== "undefined"
-        ? buildVibeJamExitUrlForPrematch(portalContext, window.location.href)
-        : "https://vibej.am/portal/2026",
-    [portalContext],
-  );
-  const prematchReturnHref = useMemo(
-    () => (typeof window !== "undefined" ? buildReturnPortalUrlForPrematch(portalContext, window.location.href) : null),
-    [portalContext],
-  );
   const controlProfile = useMemo(() => getControlProfile(), []);
   const layoutCalibrateAllowed = useMemo(isBinderLayoutCalibrateMode, []);
   const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(isBinderLayoutCalibrateMode);
@@ -443,19 +449,17 @@ export function DoctrineBinderPicker({
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
   const [dragOverHandZone, setDragOverHandZone] = useState(false);
   const [portalTransitioning, setPortalTransitioning] = useState(false);
-  const [portalExitConfirmOpen, setPortalExitConfirmOpen] = useState(false);
-  /** 2 → 1 while dialog open; auto-assign Vibe Jam URL when reaching 0. */
-  const [portalExitSecondsLeft, setPortalExitSecondsLeft] = useState<number | null>(null);
-  const [quickfillConfirmOpen, setQuickfillConfirmOpen] = useState(false);
   const [quickplayCoachmarkOpen, setQuickplayCoachmarkOpen] = useState(
     () => initialPicker.isFirstRun === true && !onboardingHintsDisabledByUrl() && !quickplayCoachmarkDismissed(),
   );
   const [binderHowToOpen, setBinderHowToOpen] = useState(false);
   const [tomeHintPressed, setTomeHintPressed] = useState(false);
+  /** Until user uses sort controls, codex order stays the initial shuffled layout. */
+  const [codexSortApplied, setCodexSortApplied] = useState(false);
+  const [codexSortMode, setCodexSortMode] = useState<CodexSortMode>("cost");
+  const [codexSortAsc, setCodexSortAsc] = useState(true);
   const binderHowToOpenRef = useRef(false);
   binderHowToOpenRef.current = binderHowToOpen;
-  const quickfillConfirmOpenRef = useRef(false);
-  quickfillConfirmOpenRef.current = quickfillConfirmOpen;
   const binderHowToHoldTimerRef = useRef<number | null>(null);
 
   const slotsRef = useRef(slots);
@@ -483,9 +487,217 @@ export function DoctrineBinderPicker({
     setQuickplayCoachmarkOpen(false);
   }, []);
 
-  /** Force refetch card manifest + bust `/assets/cards/*` cache each visit (browser loves to cache JSON/SVG). */
+  const emptyBinderSlotPick = useCallback(
+    (): (number | null)[] => Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null),
+    [],
+  );
+
+  const persistCodexPicks = useCallback((nextPick: (number | null)[]) => {
+    try {
+      const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slotsRef.current));
+      saveDoctrinePickerState(norm, nextPick);
+    } catch {
+      /* best-effort */
+    }
+  }, []);
+
+  const reapplyCodexTextures = useCallback(
+    async (panelIds: string[], sortUi: { applied: true; mode: CodexSortMode; asc: boolean } | { applied: false }): Promise<void> => {
+      const eng = engineRef.current;
+      if (!eng || loading) return;
+      const nextTex = panelIds.map(() => makeDeferredBinderTexture());
+      orderedRef.current = panelIds;
+      binderPanelTexturesRef.current = nextTex;
+      eng.setTextures(nextTex);
+      eng.clearCodexCatalogSelection();
+      setActiveDoctrineSlot(null);
+      await hydrateCodexTexturesChunked(nextTex, panelIds, controlProfile.mode === "mobile", (tex) => {
+        eng.setTextures(tex);
+      });
+      setCodexSortApplied(sortUi.applied);
+      if (sortUi.applied) {
+        setCodexSortMode(sortUi.mode);
+        setCodexSortAsc(sortUi.asc);
+      }
+    },
+    [controlProfile.mode, loading],
+  );
+
+  const applyCodexBrowseShuffle = useCallback(async () => {
+    if (codexDragBusyRef.current || codexDrag != null) return;
+    const panelIds = buildShuffledBinderPanelIds(BINDER_GRID_CATALOG_IDS);
+    const nextPick = emptyBinderSlotPick();
+    binderSlotPickRef.current = nextPick;
+    setBinderSlotPick(nextPick);
+    await reapplyCodexTextures(panelIds, { applied: false });
+    persistCodexPicks(nextPick);
+  }, [codexDrag, emptyBinderSlotPick, persistCodexPicks, reapplyCodexTextures]);
+
+  const applyCodexSortGo = useCallback(
+    async (mode: CodexSortMode, asc: boolean) => {
+      if (loading) return;
+      if (codexDragBusyRef.current || codexDrag != null) return;
+      const panelIds = buildSortedCodexPanelIds(mode, asc);
+      const nextPick = emptyBinderSlotPick();
+      binderSlotPickRef.current = nextPick;
+      setBinderSlotPick(nextPick);
+      await reapplyCodexTextures(panelIds, { applied: true, mode, asc });
+      persistCodexPicks(nextPick);
+    },
+    [codexDrag, emptyBinderSlotPick, loading, persistCodexPicks, reapplyCodexTextures],
+  );
+
+  const applyCodexSortToggle = useCallback(
+    (mode: CodexSortMode) => {
+      if (loading) return;
+      if (codexDragBusyRef.current || codexDrag != null) return;
+      if (codexSortApplied && codexSortMode === mode) {
+        void applyCodexBrowseShuffle();
+        return;
+      }
+      void applyCodexSortGo(mode, codexSortAsc);
+    },
+    [applyCodexBrowseShuffle, applyCodexSortGo, codexDrag, codexSortApplied, codexSortAsc, codexSortMode, loading],
+  );
+
+  const applyCodexSortDirectionToggle = useCallback(() => {
+    if (!codexSortApplied) return;
+    const nextAsc = !codexSortAsc;
+    setCodexSortAsc(nextAsc);
+    void applyCodexSortGo(codexSortMode, nextAsc);
+  }, [applyCodexSortGo, codexSortApplied, codexSortAsc, codexSortMode]);
+
+  const resetDefaults = useCallback(() => {
+    setActiveDoctrineSlot(null);
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+    setSlots(
+      normalizeDoctrineSlotsForMatch(
+        padDoctrineSlotsLocal(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null))),
+      ),
+    );
+  }, []);
+
+  const pickForMe = useCallback(() => {
+    const pool = QUICK_PICK_IDS.filter((id) => validIds.has(id));
+    if (!pool.length) return;
+    const raw: (string | null)[] = [];
+    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
+      raw.push(pool[Math.floor(Math.random() * pool.length)]!);
+    }
+    let norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
+    norm = fillDoctrineSlotsWithDuplicatePicks(norm);
+    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    setMapUrl(mapPick.url);
+    setActiveDoctrineSlot(null);
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+    setSlots(norm);
+    saveDoctrinePickerState(norm, null);
+    try {
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const saveDoctrine = useCallback(() => {
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
+    saveDoctrinePickerState(norm, binderSlotPick);
+    setSlots(norm);
+    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
+  }, [slots, binderSlotPick]);
+
+  const startMatch = useCallback(() => {
+    if (slots.filter(Boolean).length < MIN_FILLED) return;
+    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
+    saveDoctrinePickerState(norm, binderSlotPick);
+    try {
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapUrl);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setPortalTransitioning(true);
+    void (async () => {
+      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+      onStart(norm, mapUrl, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
+    })();
+  }, [slots, binderSlotPick, onStart, mapUrl, opponentMode, launchOptionsForOpponent]);
+
+  const commitQuickMatchStart = useCallback(
+    (normSlots: (string | null)[], pickSnapshot: (number | null)[], url: string) => {
+      setActiveDoctrineSlot(null);
+      saveDoctrinePickerState(normSlots, pickSnapshot);
+      try {
+        localStorage.setItem(MAP_URL_STORAGE_KEY, url);
+        localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      setPrematchSetupOpen(false);
+      setPortalTransitioning(true);
+      void (async () => {
+        await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+        onStart(normSlots, url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
+      })();
+    },
+    [onStart, opponentMode, launchOptionsForOpponent],
+  );
+
+  const quickMatchAndStart = useCallback(() => {
+    if (loading || portalTransitioning) return;
+    dismissQuickplayCoachmark();
+    const userFiltered = padDoctrineSlotsLocal(slots.map((id) => (id && validIds.has(id) ? id : null)));
+    const userNorm = normalizeDoctrineSlotsForMatch(userFiltered);
+    const filled = userNorm.filter(Boolean).length;
+    if (filled >= MIN_FILLED) {
+      commitQuickMatchStart(userNorm, binderSlotPick, mapUrl);
+      return;
+    }
+
+    const raw = padDoctrineSlotsLocal([...QUICK_MATCH_DOCTRINE_SLOTS]);
+    const norm = normalizeDoctrineSlotsForMatch(raw);
+    if (norm.filter(Boolean).length < MIN_FILLED) return;
+    const emptyPick = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null as number | null);
+    const sorted = sortPickerHandByFluxCost(norm, emptyPick);
+    let finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
+    finalSlots = fillDoctrineSlotsWithDuplicatePicks(finalSlots);
+    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    setActiveDoctrineSlot(null);
+    setBinderSlotPick(sorted.binderPick);
+    setSlots(finalSlots);
+    setMapUrl(mapPick.url);
+    saveDoctrinePickerState(finalSlots, sorted.binderPick);
+    try {
+      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
+      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setPrematchSetupOpen(false);
+    setPortalTransitioning(true);
+    void (async () => {
+      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
+      onStart(finalSlots, mapPick.url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
+    })();
+  }, [
+    loading,
+    portalTransitioning,
+    onStart,
+    commitQuickMatchStart,
+    slots,
+    binderSlotPick,
+    mapUrl,
+    opponentMode,
+    launchOptionsForOpponent,
+    dismissQuickplayCoachmark,
+  ]);
+
+  /** Force refetch card manifest + bust caches so binder 3D uses the same art URLs as Asset Lab (not stale GLB snapshots). */
   useEffect(() => {
     resetCardArtManifestCache();
+    resetCardPreviewDataUrlCache();
+    disposeBinderTextureCache();
   }, []);
 
   useEffect(() => {
@@ -577,11 +789,6 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
-        if (quickfillConfirmOpenRef.current) {
-          e.preventDefault();
-          setQuickfillConfirmOpen(false);
-          return;
-        }
         if (binderHowToOpenRef.current) {
           e.preventDefault();
           setBinderHowToOpen(false);
@@ -642,130 +849,131 @@ export function DoctrineBinderPicker({
         next.onClearDoctrineSelection = () => setActiveDoctrineSlot(null);
         next.onPageChange = (c, t) => setPage({ c, t });
         next.onCodexPointerDrag = (ev: CodexPointerDragEvent) => {
-        if (ev.phase === "start") {
-          const id = orderedRef.current[ev.pickIndex];
-          if (!id || !validIds.has(id)) return;
-          codexDragBusyRef.current = true;
-          setDragOverSlot(null);
-          setDragOverHandZone(false);
-          codexDragPosRef.current = { x: ev.clientX, y: ev.clientY };
-          setCodexDrag({ catalogId: id });
-          return;
-        }
-        if (ev.phase === "move") {
-          moveCodexGhost(ev.clientX, ev.clientY);
-          const track = handTrackRef.current;
-          const strip = doctrineStripHitRef.current;
-          if (!track) {
+          next.noteBinderSurfaceActivity();
+          if (ev.phase === "start") {
+            const id = orderedRef.current[ev.pickIndex];
+            if (!id || !validIds.has(id)) return;
+            codexDragBusyRef.current = true;
+            setDragOverSlot(null);
+            setDragOverHandZone(false);
+            codexDragPosRef.current = { x: ev.clientX, y: ev.clientY };
+            setCodexDrag({ catalogId: id });
+            return;
+          }
+          if (ev.phase === "move") {
+            moveCodexGhost(ev.clientX, ev.clientY);
+            const track = handTrackRef.current;
+            const strip = doctrineStripHitRef.current;
+            if (!track) {
+              setDragOverSlot(null);
+              setDragOverHandZone(false);
+              return;
+            }
+            const zr = strip?.getBoundingClientRect();
+            const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
+            setDragOverHandZone(inZone);
+            const over = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
+            setDragOverSlot(over);
+            return;
+          }
+          if (ev.phase === "end") {
+            const id = orderedRef.current[ev.pickIndex];
+            const from = ev.pickIndex;
+            codexDragBusyRef.current = false;
+            setCodexDrag(null);
+            const track = handTrackRef.current;
+            const strip = doctrineStripHitRef.current;
+            const zr = strip?.getBoundingClientRect();
+            const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
+            let handDropHandled = false;
+            if (track && id && validIds.has(id)) {
+              const pointed = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
+              if (pointed == null) {
+                const to = next.pickAt(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
+                if (to != null && to >= 0 && to !== from) {
+                  const o = orderedRef.current;
+                  const idTo = o[to];
+                  if (idTo && validIds.has(idTo) && o[from] && validIds.has(o[from]!)) {
+                    const texArr = binderPanelTexturesRef.current;
+                    if (texArr && from < texArr.length && to < texArr.length) {
+                      const t0 = o[from]!;
+                      const t1 = o[to]!;
+                      o[from] = t1;
+                      o[to] = t0;
+                      const a = texArr[from]!;
+                      const bT = texArr[to]!;
+                      texArr[from] = bT;
+                      texArr[to] = a;
+                      next.setTextures(texArr);
+                      const nextPick = swapBinderSlotPicks(binderSlotPickRef.current, from, to);
+                      setBinderSlotPick(nextPick);
+                      try {
+                        const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slotsRef.current));
+                        saveDoctrinePickerState(norm, nextPick);
+                      } catch {
+                        /* best-effort */
+                      }
+                      handDropHandled = true;
+                    }
+                  }
+                }
+              }
+              if (!handDropHandled) {
+                let dropSlot: number | null = null;
+                let explicitHandSlot = false;
+                if (pointed !== null) {
+                  dropSlot = pointed;
+                  explicitHandSlot = true;
+                } else if (inZone) {
+                  const s = slotsRef.current;
+                  const firstEmpty = s.findIndex((x) => x == null);
+                  if (firstEmpty >= 0) {
+                    dropSlot = firstEmpty;
+                  } else {
+                    const handRow = track.querySelector(".doctrine-hand--match") as HTMLElement | null;
+                    const r = handRow?.getBoundingClientRect() ?? zr;
+                    if (r) {
+                      const t = (ev.clientX - r.left) / Math.max(1e-6, r.width);
+                      dropSlot = Math.min(
+                        DOCTRINE_SLOT_COUNT - 1,
+                        Math.max(0, Math.floor(t * DOCTRINE_SLOT_COUNT)),
+                      );
+                    }
+                  }
+                }
+                if (dropSlot !== null) {
+                  const bp = [...binderSlotPickRef.current];
+                  while (bp.length < DOCTRINE_SLOT_COUNT) bp.push(null);
+                  const b = bp.slice(0, DOCTRINE_SLOT_COUNT);
+                  const nextSlots = [...slotsRef.current];
+                  nextSlots[dropSlot] = id;
+                  b[dropSlot] = ev.pickIndex;
+                  if (explicitHandSlot) {
+                    setActiveDoctrineSlot(dropSlot);
+                    setBinderSlotPick(b);
+                    setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(nextSlots)));
+                  } else {
+                    const sorted = sortPickerHandByFluxCost(nextSlots, b);
+                    const landed = sorted.binderPick.findIndex(
+                      (p, i) => p === ev.pickIndex && sorted.slots[i] === id,
+                    );
+                    setActiveDoctrineSlot(landed >= 0 ? landed : null);
+                    setBinderSlotPick(sorted.binderPick);
+                    setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots)));
+                  }
+                }
+              }
+            }
             setDragOverSlot(null);
             setDragOverHandZone(false);
             return;
           }
-          const zr = strip?.getBoundingClientRect();
-          const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
-          setDragOverHandZone(inZone);
-          const over = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
-          setDragOverSlot(over);
-          return;
-        }
-        if (ev.phase === "end") {
-          const id = orderedRef.current[ev.pickIndex];
-          const from = ev.pickIndex;
-          codexDragBusyRef.current = false;
-          setCodexDrag(null);
-          const track = handTrackRef.current;
-          const strip = doctrineStripHitRef.current;
-          const zr = strip?.getBoundingClientRect();
-          const inZone = zr ? pointInRect(ev.clientX, ev.clientY, zr) : false;
-          let handDropHandled = false;
-          if (track && id && validIds.has(id)) {
-            const pointed = slotUnderPointerInTrack(ev.clientX, ev.clientY, track);
-            if (pointed == null) {
-              const to = next.pickAt(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
-              if (to != null && to >= 0 && to !== from) {
-                const o = orderedRef.current;
-                const idTo = o[to];
-                if (idTo && validIds.has(idTo) && o[from] && validIds.has(o[from]!)) {
-                  const texArr = binderPanelTexturesRef.current;
-                  if (texArr && from < texArr.length && to < texArr.length) {
-                    const t0 = o[from]!;
-                    const t1 = o[to]!;
-                    o[from] = t1;
-                    o[to] = t0;
-                    const a = texArr[from]!;
-                    const bT = texArr[to]!;
-                    texArr[from] = bT;
-                    texArr[to] = a;
-                    next.setTextures(texArr);
-                    const nextPick = swapBinderSlotPicks(binderSlotPickRef.current, from, to);
-                    setBinderSlotPick(nextPick);
-                    try {
-                      const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slotsRef.current));
-                      saveDoctrinePickerState(norm, nextPick);
-                    } catch {
-                      /* best-effort */
-                    }
-                    handDropHandled = true;
-                  }
-                }
-              }
-            }
-            if (!handDropHandled) {
-              let dropSlot: number | null = null;
-              let explicitHandSlot = false;
-              if (pointed !== null) {
-                dropSlot = pointed;
-                explicitHandSlot = true;
-              } else if (inZone) {
-                const s = slotsRef.current;
-                const firstEmpty = s.findIndex((x) => x == null);
-                if (firstEmpty >= 0) {
-                  dropSlot = firstEmpty;
-                } else {
-                  const handRow = track.querySelector(".doctrine-hand--match") as HTMLElement | null;
-                  const r = handRow?.getBoundingClientRect() ?? zr;
-                  if (r) {
-                    const t = (ev.clientX - r.left) / Math.max(1e-6, r.width);
-                    dropSlot = Math.min(
-                      DOCTRINE_SLOT_COUNT - 1,
-                      Math.max(0, Math.floor(t * DOCTRINE_SLOT_COUNT)),
-                    );
-                  }
-                }
-              }
-              if (dropSlot !== null) {
-                const bp = [...binderSlotPickRef.current];
-                while (bp.length < DOCTRINE_SLOT_COUNT) bp.push(null);
-                const b = bp.slice(0, DOCTRINE_SLOT_COUNT);
-                const nextSlots = [...slotsRef.current];
-                nextSlots[dropSlot] = id;
-                b[dropSlot] = ev.pickIndex;
-                if (explicitHandSlot) {
-                  setActiveDoctrineSlot(dropSlot);
-                  setBinderSlotPick(b);
-                  setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(nextSlots)));
-                } else {
-                  const sorted = sortPickerHandByFluxCost(nextSlots, b);
-                  const landed = sorted.binderPick.findIndex(
-                    (p, i) => p === ev.pickIndex && sorted.slots[i] === id,
-                  );
-                  setActiveDoctrineSlot(landed >= 0 ? landed : null);
-                  setBinderSlotPick(sorted.binderPick);
-                  setSlots(normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots)));
-                }
-              }
-            }
+          if (ev.phase === "cancel") {
+            codexDragBusyRef.current = false;
+            setCodexDrag(null);
+            setDragOverSlot(null);
+            setDragOverHandZone(false);
           }
-          setDragOverSlot(null);
-          setDragOverHandZone(false);
-          return;
-        }
-        if (ev.phase === "cancel") {
-          codexDragBusyRef.current = false;
-          setCodexDrag(null);
-          setDragOverSlot(null);
-          setDragOverHandZone(false);
-        }
         };
         const rc = wrap.getBoundingClientRect();
         next.resize(rc.width, rc.height);
@@ -789,7 +997,7 @@ export function DoctrineBinderPicker({
             const chunk = controlProfile.mode === "mobile" ? 9 : 18;
             const o = orderedRef.current;
             const end = Math.min(o.length, start + chunk);
-            const preloadIds = o.slice(start, end);
+            const preloadIds = o.slice(start, end).filter((id) => validBinderCodexIds.has(id));
             try {
               await preloadCardPreviewDataUrls(preloadIds);
             } catch {
@@ -798,6 +1006,7 @@ export function DoctrineBinderPicker({
             for (let i = start; i < end; i++) {
               if (cancelled || engineRef.current !== next) return;
               const cid = o[i]!;
+              if (!validBinderCodexIds.has(cid)) continue;
               try {
                 texList[i] = await getBinderTextureForCatalogId(cid);
               } catch (err) {
@@ -811,7 +1020,7 @@ export function DoctrineBinderPicker({
         };
 
         const initialArtEnd = Math.min(panelIds.length, BINDER_INITIAL_ART_CELLS);
-        const initialIds = [...new Set(panelIds.slice(0, initialArtEnd))];
+        const initialIds = [...new Set(panelIds.slice(0, initialArtEnd).filter((id) => validBinderCodexIds.has(id)))];
         const initialTextures = new Map<string, THREE.Texture>();
         await Promise.all(
           initialIds.map(async (id) => {
@@ -927,6 +1136,7 @@ export function DoctrineBinderPicker({
     }
 
     hydrateCardPreviewImages(track);
+    syncCardArtOverlayContainFit(track);
   }, [loading, slots]);
 
   useLayoutEffect(() => {
@@ -947,6 +1157,7 @@ export function DoctrineBinderPicker({
     const root = codexGhostRef.current;
     if (!root) return;
     hydrateCardPreviewImages(root);
+    syncCardArtOverlayContainFit(root);
   }, [codexDrag?.catalogId]);
 
   useEffect(() => {
@@ -1093,6 +1304,15 @@ export function DoctrineBinderPicker({
     };
   }, [loading]);
 
+  useEffect(() => {
+    if (!codexDrag || loading) return;
+    const onMove = (): void => {
+      engineRef.current?.noteBinderSurfaceActivity();
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [codexDrag, loading]);
+
   /**
    * `pointerup`/`pointercancel` often target the element under the cursor (hand strip), not the canvas.
    * While a codex card is lifted, finalize the gesture from a window-level capture listener so drops always commit.
@@ -1113,37 +1333,6 @@ export function DoctrineBinderPicker({
       window.removeEventListener("pointercancel", onGlobalPointerEnd, true);
     };
   }, [loading]);
-
-  const dismissPortalExitConfirm = useCallback(() => {
-    setPortalExitConfirmOpen(false);
-    setPortalExitSecondsLeft(null);
-  }, []);
-
-  const confirmVibeJamExit = useCallback(() => {
-    setPortalExitConfirmOpen(true);
-    setPortalExitSecondsLeft(2);
-  }, []);
-
-  const goToVibeJam = useCallback(() => {
-    window.location.assign(prematchVibeJamHref);
-  }, [prematchVibeJamHref]);
-
-  useEffect(() => {
-    if (!portalExitConfirmOpen || portalExitSecondsLeft === null) return;
-    if (portalExitSecondsLeft <= 0) return;
-
-    const id = window.setTimeout(() => {
-      setPortalExitSecondsLeft((s) => {
-        if (s === null || s <= 1) {
-          goToVibeJam();
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-
-    return () => window.clearTimeout(id);
-  }, [portalExitConfirmOpen, portalExitSecondsLeft, goToVibeJam]);
 
   const beginTouchCameraGesture = useCallback((canvas: HTMLCanvasElement): boolean => {
     const eng = engineRef.current;
@@ -1214,7 +1403,7 @@ export function DoctrineBinderPicker({
     if (portalAction === "enter") {
       e.preventDefault();
       e.stopPropagation();
-      confirmVibeJamExit();
+      quickMatchAndStart();
       return;
     }
     if (!loading) {
@@ -1242,7 +1431,7 @@ export function DoctrineBinderPicker({
       }
     }
     eng.pD(e.nativeEvent, rect);
-  }, [beginTouchCameraGesture, confirmVibeJamExit, loading]);
+  }, [beginTouchCameraGesture, quickMatchAndStart, loading]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType !== "mouse") {
@@ -1314,135 +1503,6 @@ export function DoctrineBinderPicker({
     openDetailAtClient(e.clientX, e.clientY, e.currentTarget);
   }, [openDetailAtClient]);
 
-  const resetDefaults = useCallback(() => {
-    setActiveDoctrineSlot(null);
-    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
-    setSlots(
-      normalizeDoctrineSlotsForMatch(
-        padDoctrineSlotsLocal(DEFAULT_DOCTRINE_SLOTS.map((id) => (id && validIds.has(id) ? id : null))),
-      ),
-    );
-  }, []);
-
-  const pickForMe = useCallback(() => {
-    const pool = QUICK_PICK_IDS.filter((id) => validIds.has(id));
-    if (!pool.length) return;
-    const raw: (string | null)[] = [];
-    for (let i = 0; i < DOCTRINE_SLOT_COUNT; i++) {
-      raw.push(pool[Math.floor(Math.random() * pool.length)]!);
-    }
-    let norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
-    norm = fillDoctrineSlotsWithDuplicatePicks(norm);
-    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
-    setMapUrl(mapPick.url);
-    setActiveDoctrineSlot(null);
-    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
-    setSlots(norm);
-    saveDoctrinePickerState(norm, null);
-    try {
-      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
-      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const saveDoctrine = useCallback(() => {
-    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
-    saveDoctrinePickerState(norm, binderSlotPick);
-    setSlots(norm);
-    setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
-  }, [slots, binderSlotPick]);
-
-  const startMatch = useCallback(() => {
-    if (slots.filter(Boolean).length < MIN_FILLED) return;
-    const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
-    saveDoctrinePickerState(norm, binderSlotPick);
-    try {
-      localStorage.setItem(MAP_URL_STORAGE_KEY, mapUrl);
-      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-    setPortalTransitioning(true);
-    void (async () => {
-      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(norm, mapUrl, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
-    })();
-  }, [slots, binderSlotPick, onStart, mapUrl, opponentMode, launchOptionsForOpponent]);
-
-  const commitQuickMatchStart = useCallback(
-    (normSlots: (string | null)[], pickSnapshot: (number | null)[], url: string) => {
-      setActiveDoctrineSlot(null);
-      saveDoctrinePickerState(normSlots, pickSnapshot);
-      try {
-        localStorage.setItem(MAP_URL_STORAGE_KEY, url);
-        localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-      setPrematchSetupOpen(false);
-      setPortalTransitioning(true);
-      void (async () => {
-        await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-        onStart(normSlots, url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
-      })();
-    },
-    [onStart, opponentMode, launchOptionsForOpponent],
-  );
-
-  const quickMatchAndStart = useCallback(() => {
-    if (loading || portalTransitioning) return;
-    dismissQuickplayCoachmark();
-    const userFiltered = padDoctrineSlotsLocal(slots.map((id) => (id && validIds.has(id) ? id : null)));
-    const userNorm = normalizeDoctrineSlotsForMatch(userFiltered);
-    const filled = userNorm.filter(Boolean).length;
-    if (filled >= MIN_FILLED) {
-      if (filled < DOCTRINE_SLOT_COUNT) {
-        setQuickfillConfirmOpen(true);
-        return;
-      }
-      commitQuickMatchStart(userNorm, binderSlotPick, mapUrl);
-      return;
-    }
-
-    const raw = padDoctrineSlotsLocal([...QUICK_MATCH_DOCTRINE_SLOTS]);
-    const norm = normalizeDoctrineSlotsForMatch(raw);
-    if (norm.filter(Boolean).length < MIN_FILLED) return;
-    const emptyPick = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null as number | null);
-    const sorted = sortPickerHandByFluxCost(norm, emptyPick);
-    let finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
-    finalSlots = fillDoctrineSlotsWithDuplicatePicks(finalSlots);
-    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
-    setActiveDoctrineSlot(null);
-    setBinderSlotPick(sorted.binderPick);
-    setSlots(finalSlots);
-    setMapUrl(mapPick.url);
-    saveDoctrinePickerState(finalSlots, sorted.binderPick);
-    try {
-      localStorage.setItem(MAP_URL_STORAGE_KEY, mapPick.url);
-      localStorage.removeItem(LEGACY_MAP_URL_STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-    setPrematchSetupOpen(false);
-    setPortalTransitioning(true);
-    void (async () => {
-      await (engineRef.current?.playPortalTransition("out") ?? Promise.resolve());
-      onStart(finalSlots, mapPick.url, matchModeFromPrematchChoice(opponentMode), launchOptionsForOpponent());
-    })();
-  }, [
-    loading,
-    portalTransitioning,
-    onStart,
-    commitQuickMatchStart,
-    slots,
-    binderSlotPick,
-    mapUrl,
-    opponentMode,
-    launchOptionsForOpponent,
-    dismissQuickplayCoachmark,
-  ]);
   useEffect(() => {
     if (loading) return;
     let shouldPlay = false;
@@ -1492,7 +1552,7 @@ export function DoctrineBinderPicker({
             className="binder-picker-canvas"
             tabIndex={0}
             role="application"
-            aria-label="Doctrine codex in the portal room. Tap card to select. Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. Right mouse, empty touch drag, or two-finger pinch and drag controls the camera. Double-click details."
+            aria-label="Doctrine codex in the portal room. Click the Quick Match portal to start. Tap a card to select; Esc or empty page clears. Drag card to hand, or hold to lift. Drag page outer edge to turn. Right mouse, empty touch drag, or two-finger pinch and drag controls the camera. Double-click details."
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerReleased}
@@ -1506,6 +1566,82 @@ export function DoctrineBinderPicker({
           />
           {!loading ? (
             <>
+              <div
+                className={[
+                  "binder-codex-sort-strip",
+                  controlProfile.mode === "mobile" ? "binder-codex-sort-strip--mobile" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                role="toolbar"
+                aria-label="Sort codex pages"
+              >
+                <button
+                  type="button"
+                  className={[
+                    "binder-codex-sort-tab",
+                    codexSortApplied && codexSortMode === "cost" ? "binder-codex-sort-tab--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-pressed={codexSortApplied && codexSortMode === "cost"}
+                  aria-label="Sort codex by cost"
+                  disabled={loading || codexDrag != null}
+                  onClick={() => applyCodexSortToggle("cost")}
+                >
+                  <span className="binder-codex-sort-tab__label">Cost</span>
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "binder-codex-sort-tab",
+                    codexSortApplied && codexSortMode === "class" ? "binder-codex-sort-tab--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-pressed={codexSortApplied && codexSortMode === "class"}
+                  aria-label="Sort codex by unit class"
+                  disabled={loading || codexDrag != null}
+                  onClick={() => applyCodexSortToggle("class")}
+                >
+                  <span className="binder-codex-sort-tab__label">Class</span>
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "binder-codex-sort-tab",
+                    codexSortApplied && codexSortMode === "type" ? "binder-codex-sort-tab--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-pressed={codexSortApplied && codexSortMode === "type"}
+                  aria-label="Sort codex by card type"
+                  disabled={loading || codexDrag != null}
+                  onClick={() => applyCodexSortToggle("type")}
+                >
+                  <span className="binder-codex-sort-tab__label">Type</span>
+                </button>
+                <button
+                  type="button"
+                  className={[
+                    "binder-codex-sort-dir",
+                    codexSortAsc ? "binder-codex-sort-dir--asc" : "binder-codex-sort-dir--desc",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-pressed={codexSortAsc}
+                  aria-label={codexSortAsc ? "Codex sort direction ascending" : "Codex sort direction descending"}
+                  disabled={loading || codexDrag != null || !codexSortApplied}
+                  onClick={() => {
+                    applyCodexSortDirectionToggle();
+                  }}
+                >
+                  <span className="binder-codex-sort-dir__glyph" aria-hidden>
+                    {codexSortAsc ? "↑" : "↓"}
+                  </span>
+                  <span className="binder-codex-sort-dir__text">{codexSortAsc ? "Asc" : "Desc"}</span>
+                </button>
+              </div>
               <div
                 className={[
                   "binder-picker-tome-hint",
@@ -1529,7 +1665,7 @@ export function DoctrineBinderPicker({
                   }
                 }}
               >
-                Tap card · Esc / empty page clears · drag to hand · edges turn pages · Hold here for how to play
+                Tap card · Esc / empty page clears · drag to hand · Quick Match portal · Hold here for match goals
               </div>
               {binderHowToOpen ? (
                 <div
@@ -1606,43 +1742,26 @@ export function DoctrineBinderPicker({
             </div>
             <div className="binder-picker-rail-actions">
               <div className="binder-picker-rail-actions__stack">
-                <button
-                  type="button"
-                  className="binder-picker-rail-btn binder-picker-rail-btn--quickmatch"
-                  aria-label="Quickmatch"
-                  disabled={loading || portalTransitioning || quickfillConfirmOpen}
-                  title="Fill all doctrine slots with a starter mix of towers and spells, pick a random battlefield, and start"
-                  onClick={quickMatchAndStart}
-                >
-                  <span className="binder-picker-rail-btn__inner">
-                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
-                      ⚔
-                    </span>
-                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
-                      <text x="80" y="16" textAnchor="middle">
-                        Quick Match
-                      </text>
-                    </svg>
-                  </span>
-                </button>
                 {quickplayCoachmarkOpen ? (
-                  <div className="binder-picker-quickplay-coachmark" role="dialog" aria-label="Quickplay tip">
+                  <div
+                    className="binder-picker-quickplay-coachmark binder-picker-quickplay-coachmark--portal"
+                    role="dialog"
+                    aria-label="Quick Match tip"
+                  >
                     <button
                       type="button"
                       className="binder-picker-quickplay-coachmark__close"
-                      aria-label="Dismiss quickplay tip"
+                      aria-label="Dismiss tip"
                       onClick={dismissQuickplayCoachmark}
                     >
                       x
                     </button>
-                    <p>Drag cards to zap in armies. Most damage in 3 minutes wins.</p>
-                    <button
-                      type="button"
-                      className="binder-picker-quickplay-coachmark__cta"
-                      disabled={loading || portalTransitioning || quickfillConfirmOpen}
-                      onClick={quickMatchAndStart}
-                    >
-                      Quickplay
+                    <p>
+                      Drag codex cards to your doctrine hand. Click the green <strong>Quick Match</strong> portal in the
+                      room to jump in — most damage in 3 minutes wins.
+                    </p>
+                    <button type="button" className="binder-picker-quickplay-coachmark__cta" onClick={dismissQuickplayCoachmark}>
+                      Got it
                     </button>
                   </div>
                 ) : null}
@@ -1670,19 +1789,39 @@ export function DoctrineBinderPicker({
                 <button
                   type="button"
                   className="binder-picker-rail-btn binder-picker-rail-btn--lore"
-                  aria-label="Lore / how to play"
-                  title="Open the optional lore / how-to-play comic"
+                  aria-label="Lore"
+                  title="Open the lore comic (two pages)"
                   onClick={() => {
-                    void showComicLoreModal();
+                    void showLoreModal();
                   }}
                 >
                   <span className="binder-picker-rail-btn__inner">
                     <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
                       ●
                     </span>
+                    <svg className="binder-picker-rail-btn__label" viewBox="0 0 160 24" preserveAspectRatio="none" aria-hidden="true">
+                      <text x="80" y="16" textAnchor="middle">
+                        Lore
+                      </text>
+                    </svg>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="binder-picker-rail-btn binder-picker-rail-btn--howto"
+                  aria-label="How to play"
+                  title="Open the how-to-play comic"
+                  onClick={() => {
+                    void showHowToPlayModal();
+                  }}
+                >
+                  <span className="binder-picker-rail-btn__inner">
+                    <span className="binder-picker-rail-btn__glyph" aria-hidden="true">
+                      ?
+                    </span>
                     <svg className="binder-picker-rail-btn__label binder-picker-rail-btn__label--long" viewBox="0 0 190 24" preserveAspectRatio="none" aria-hidden="true">
                       <text x="95" y="16" textAnchor="middle" textLength="172" lengthAdjust="spacingAndGlyphs">
-                        Lore / How To Play
+                        How To Play
                       </text>
                     </svg>
                   </span>
@@ -1839,32 +1978,6 @@ export function DoctrineBinderPicker({
                 </aside>
               ) : null}
             </div>
-            <div className="binder-picker-vibejam-insert binder-picker-vibejam-insert--floated">
-              {prematchReturnHref ? (
-                <a
-                  className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                  href={prematchReturnHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Return to the page that linked you here (portal continuity)"
-                >
-                  ← Return
-                </a>
-              ) : null}
-              <a
-                className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={
-                  portalContext.enteredViaPortal
-                    ? "Exit to Vibe Jam with continuity params"
-                    : "Vibe Jam 2026"
-                }
-              >
-                🎮 Vibe Jam 2026
-              </a>
-            </div>
           </div>
         ) : null}
       </div>
@@ -1880,106 +1993,6 @@ export function DoctrineBinderPicker({
             className="binder-picker-codex-ghost__inner"
             dangerouslySetInnerHTML={{ __html: tcgCardSlotHtml(codexDrag.catalogId, "picker") }}
           />
-        </div>
-      ) : null}
-
-      {portalExitConfirmOpen ? (
-        <div
-          className="binder-portal-exit-toast"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="binder-portal-exit-title"
-          aria-describedby="binder-portal-exit-body"
-          onClick={dismissPortalExitConfirm}
-        >
-          <div className="binder-portal-exit-toast__title" id="binder-portal-exit-title">
-            Visit the next Vibe Jam game?
-          </div>
-          <p id="binder-portal-exit-body">
-            Thanks for playing Doctrine. Hope you had fun here, and have fun at the next game.
-          </p>
-          {portalExitSecondsLeft != null && portalExitSecondsLeft > 0 ? (
-            <p
-              id="binder-portal-exit-countdown"
-              className="binder-portal-exit-toast__countdown"
-              aria-live="polite"
-            >
-              Continuing in {portalExitSecondsLeft}…
-            </p>
-          ) : null}
-          <div className="binder-portal-exit-toast__actions">
-            <button
-              type="button"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                goToVibeJam();
-              }}
-            >
-              Continue to next game
-            </button>
-            <button
-              type="button"
-              className="binder-portal-exit-toast__secondary"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                dismissPortalExitConfirm();
-              }}
-            >
-              Stay here
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {quickfillConfirmOpen ? (
-        <div
-          className="binder-portal-exit-toast"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="binder-quickfill-title"
-          onClick={() => setQuickfillConfirmOpen(false)}
-        >
-          <div onClick={(e) => e.stopPropagation()}>
-            <div className="binder-portal-exit-toast__title" id="binder-quickfill-title">
-              Fill remaining doctrine slots?
-            </div>
-            <p>
-              Quickmatch runs smoother with all ten slots filled. Fill the empty slots by repeating cards from your
-              loadout (duplicates allowed), then jump in?
-            </p>
-            <div className="binder-portal-exit-toast__actions">
-              <button
-                type="button"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  const userFiltered = padDoctrineSlotsLocal(
-                    slotsRef.current.map((id) => (id && validIds.has(id) ? id : null)),
-                  );
-                  const expanded = fillDoctrineSlotsWithDuplicatePicks(userFiltered);
-                  setSlots(expanded);
-                  setQuickfillConfirmOpen(false);
-                  commitQuickMatchStart(expanded, binderSlotPickRef.current, mapUrlRef.current);
-                }}
-              >
-                Yes — fill and start
-              </button>
-              <button
-                type="button"
-                className="binder-portal-exit-toast__secondary"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  const userFiltered = padDoctrineSlotsLocal(
-                    slotsRef.current.map((id) => (id && validIds.has(id) ? id : null)),
-                  );
-                  const userNorm = normalizeDoctrineSlotsForMatch(userFiltered);
-                  setQuickfillConfirmOpen(false);
-                  commitQuickMatchStart(userNorm, binderSlotPickRef.current, mapUrlRef.current);
-                }}
-              >
-                No — start as-is
-              </button>
-            </div>
-          </div>
         </div>
       ) : null}
 

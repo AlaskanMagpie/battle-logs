@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createInitialState } from "./state";
-import { scoreMatchResult } from "./leaderboard";
+import { liveTallyPoints, scoreMatchResult } from "./leaderboard";
 import { MATCH_DURATION_TICKS, TICK_HZ } from "./constants";
 import type { MapData } from "./types";
-import { formatMatchDurationFromTicks, simSecondsFromMatchTick } from "./matchDisplay";
+import { formatMatchDurationFromTicks, formatMatchClockCountdownFromTick, simSecondsFromMatchTick } from "./matchDisplay";
 
 const scoreTinyMap: MapData = {
   version: 2,
@@ -37,6 +37,22 @@ describe("matchDisplay", () => {
 
   it("formats shorter matches with seconds", () => {
     expect(formatMatchDurationFromTicks(2000)).toBe("1:40");
+  });
+
+  it("formats match clock countdown from tick", () => {
+    expect(formatMatchClockCountdownFromTick(0)).toBe("3:00");
+    expect(formatMatchClockCountdownFromTick(TICK_HZ * 60)).toBe("2:00");
+    expect(formatMatchClockCountdownFromTick(MATCH_DURATION_TICKS)).toBe("0:00");
+  });
+});
+
+describe("liveTallyPoints", () => {
+  it("matches score components without win bonus while playing", () => {
+    const s = createInitialState(scoreTinyMap, []);
+    s.stats.enemyKills = 2;
+    s.stats.structuresBuilt = 1;
+    s.stats.unitsLost = 3;
+    expect(liveTallyPoints(s)).toBe(2 * 14 + 55 - 15);
   });
 });
 

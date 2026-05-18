@@ -1,11 +1,19 @@
-import { INTRO_BGM_SRC, INTRO_PAGES, introPageCandidateSrcs, type IntroPage, type ResolvedIntroPage } from "./introManifest";
+import {
+  INTRO_BGM_SRC,
+  INTRO_HOW_TO_PLAY_PAGES,
+  INTRO_LORE_PAGES,
+  INTRO_PAGES,
+  introPageCandidateSrcs,
+  type IntroPage,
+  type ResolvedIntroPage,
+} from "./introManifest";
 
 const INTRO_BGM_KEY = "intro:bgm";
 const COMIC_FIT_KEY = "intro:comicFit";
 type ComicFitMode = "width" | "screen";
 
 const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 3;
+const ZOOM_MAX = 5;
 const ZOOM_STEP = 0.15;
 
 function storageGet(storage: Storage, key: string): string | null {
@@ -24,8 +32,8 @@ function storageSet(storage: Storage, key: string, value: string): void {
   }
 }
 
-function fallbackPages(): ResolvedIntroPage[] {
-  return INTRO_PAGES.map((page) => ({ ...page, src: page.fallbackSrc }));
+function fallbackPages(pages: IntroPage[]): ResolvedIntroPage[] {
+  return pages.map((page) => ({ ...page, src: page.fallbackSrc }));
 }
 
 function preloadImage(src: string): Promise<string> {
@@ -65,7 +73,13 @@ function syncComicFrameAspect(pageWrap: HTMLElement, image: HTMLImageElement): v
 
 let activeComicPromise: Promise<void> | null = null;
 
-export function showComicLoreModal(): Promise<void> {
+type ComicModalOptions = {
+  /** When true: one page only; Prev hidden; counter "1 / 1". */
+  singlePage?: boolean;
+  ariaLabel: string;
+};
+
+function showComicModal(pagesSource: readonly IntroPage[], options: ComicModalOptions): Promise<void> {
   if (activeComicPromise) return activeComicPromise;
   const root = document.querySelector<HTMLElement>("#comic-intro") ?? document.createElement("div");
   if (!root.id) {
@@ -73,21 +87,23 @@ export function showComicLoreModal(): Promise<void> {
     document.body.prepend(root);
   }
 
+  const singlePage = options.singlePage === true;
+  const sourcePages = [...pagesSource];
+
   activeComicPromise = new Promise<void>((resolve) => {
-    let pages = fallbackPages();
+    let pages = fallbackPages(sourcePages);
     let pageIndex = 0;
     let dismissed = false;
     let fitMode: ComicFitMode = storageGet(localStorage, COMIC_FIT_KEY) === "screen" ? "screen" : "width";
     let comicUserZoom = 1;
     let audio: HTMLAudioElement | null = null;
     let keyHandler: ((ev: KeyboardEvent) => void) | null = null;
-    let rootClickHandler: ((ev: MouseEvent) => void) | null = null;
     let wheelHandler: ((ev: WheelEvent) => void) | null = null;
 
     root.innerHTML = `
-      <section class="comic-intro comic-intro--manual" role="dialog" aria-modal="true" aria-label="Lore and how to play comic">
+      <section class="comic-intro comic-intro--manual" role="dialog" aria-modal="true" aria-label="${options.ariaLabel.replace(/"/g, "&quot;")}">
         <div class="comic-intro__scroll">
-          <div class="comic-intro__page-wrap" data-page-hitbox>
+          <div class="comic-intro__page-wrap">
             <img class="comic-intro__page" alt="" draggable="false" />
           </div>
         </div>
@@ -120,6 +136,11 @@ export function showComicLoreModal(): Promise<void> {
     const zoomOutBtn = root.querySelector<HTMLButtonElement>(".comic-intro__zoom-out")!;
     const zoomResetBtn = root.querySelector<HTMLButtonElement>(".comic-intro__zoom-reset")!;
     const zoomInBtn = root.querySelector<HTMLButtonElement>(".comic-intro__zoom-in")!;
+
+    if (singlePage) {
+      prevButton.hidden = true;
+      prevButton.style.display = "none";
+    }
 
     const stopAudio = (): void => {
       if (!audio) return;
@@ -164,10 +185,6 @@ export function showComicLoreModal(): Promise<void> {
         window.removeEventListener("keydown", keyHandler);
         keyHandler = null;
       }
-      if (rootClickHandler) {
-        root.removeEventListener("click", rootClickHandler);
-        rootClickHandler = null;
-      }
       stopAudio();
       shell.classList.add("comic-intro--leaving");
       window.setTimeout(() => {
@@ -181,11 +198,10 @@ export function showComicLoreModal(): Promise<void> {
       const page = pages[pageIndex] ?? pages[0]!;
       img.alt = page.alt;
       img.src = page.src;
-      comicUserZoom = 1;
       applyZoom();
       syncComicFrameAspect(pageWrap, img);
       count.textContent = `Page ${pageIndex + 1} / ${pages.length}`;
-      prevButton.disabled = pageIndex <= 0;
+      prevButton.disabled = singlePage || pageIndex <= 0;
       nextButton.textContent = pageIndex >= pages.length - 1 ? "Done" : "Next";
     };
 
@@ -199,7 +215,7 @@ export function showComicLoreModal(): Promise<void> {
     };
 
     const retreat = (): void => {
-      if (pageIndex <= 0) return;
+      if (singlePage || pageIndex <= 0) return;
       pageIndex -= 1;
       renderPage();
     };
@@ -221,13 +237,6 @@ export function showComicLoreModal(): Promise<void> {
         syncBgmButton();
       });
     };
-
-    rootClickHandler = (ev: MouseEvent) => {
-      const target = ev.target as HTMLElement | null;
-      if (target?.closest("button")) return;
-      advance();
-    };
-    root.addEventListener("click", rootClickHandler);
 
     skipButton.addEventListener("click", completeDismissal);
     prevButton.addEventListener("click", retreat);
@@ -272,8 +281,6 @@ export function showComicLoreModal(): Promise<void> {
       const canScrollY = scrollEl.scrollHeight > scrollEl.clientHeight + 2;
       const canScrollX = scrollEl.scrollWidth > scrollEl.clientWidth + 2;
       const modifierZoom = ev.ctrlKey || ev.metaKey || ev.altKey;
-      // After "Fit screen", content often fits exactly — no overflow so native wheel does nothing.
-      // Treat wheel as zoom whenever the pane cannot scroll; keep plain wheel = scroll when it can.
       const useWheelForZoom = modifierZoom || (!canScrollY && !canScrollX);
       if (!useWheelForZoom) return;
       ev.preventDefault();
@@ -314,7 +321,7 @@ export function showComicLoreModal(): Promise<void> {
     syncBgmButton();
     if (storageGet(localStorage, INTRO_BGM_KEY) === "1") tryStartAudio();
     renderPage();
-    void Promise.all(INTRO_PAGES.map(resolveIntroPage)).then(
+    void Promise.all(sourcePages.map(resolveIntroPage)).then(
       (resolvedPages) => {
         if (dismissed) return;
         pages = resolvedPages.length ? resolvedPages : pages;
@@ -328,4 +335,19 @@ export function showComicLoreModal(): Promise<void> {
   });
 
   return activeComicPromise;
+}
+
+/** Lore only: page 1 → page 2. */
+export function showLoreModal(): Promise<void> {
+  return showComicModal(INTRO_LORE_PAGES, { ariaLabel: "Doctrine lore comic" });
+}
+
+/** Rules comic: page 3 only. */
+export function showHowToPlayModal(): Promise<void> {
+  return showComicModal(INTRO_HOW_TO_PLAY_PAGES, { singlePage: true, ariaLabel: "Doctrine how to play comic" });
+}
+
+/** @deprecated Prefer showLoreModal or showHowToPlayModal */
+export function showComicLoreModal(): Promise<void> {
+  return showLoreModal();
 }

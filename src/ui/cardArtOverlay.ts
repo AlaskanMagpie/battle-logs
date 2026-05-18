@@ -414,16 +414,17 @@ function fieldClass(field: OverlayField): string {
     .join(" ");
 }
 
-function fieldSvg(field: OverlayField, entry: CatalogEntry): string {
+function fieldSvg(field: OverlayField, entry: CatalogEntry, includeHandles = true): string {
   const anchor = field.anchor ?? "middle";
   const { w, h } = fieldBoxDims(field);
   const { sx, sy } = fieldTextScale(field, entry);
+  const handles = includeHandles ? handlesSvg(field) : "";
   return `<g class="${fieldClass(field)}" data-overlay-field="${escapeHtml(field.id)}" data-overlay-x="${field.x}" data-overlay-y="${field.y}" data-overlay-w="${w}" data-overlay-h="${h}" transform="translate(${field.x} ${field.y})">
     <g class="card-art-overlay__text-scale" data-overlay-role="text-scale" transform="scale(${sx} ${sy})">
       <text class="card-art-overlay__value" text-anchor="${anchor}" dominant-baseline="middle" data-overlay-role="value">${escapeHtml(field.value)}</text>
     </g>
     <rect class="card-art-overlay__hit" x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" rx="2" />
-    ${handlesSvg(field)}
+    ${handles}
   </g>`;
 }
 
@@ -653,7 +654,7 @@ export function cardArtOverlayHtml(catalogId: string, opts?: CardArtOverlayHtmlO
     .join(" ");
   /** `meet` keeps uniform scale vs card art; `none` stretched X/Y independently and misaligned labels (binder-style glitch). */
   return `<svg class="${classes}" data-card-art-overlay="${escapeHtml(catalogId)}" viewBox="0 0 ${CARD_OVERLAY_WIDTH} ${CARD_OVERLAY_HEIGHT}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-    ${fields.map((f) => fieldSvg(f, overlayEntry)).join("")}
+    ${fields.map((f) => fieldSvg(f, overlayEntry, true)).join("")}
   </svg>`;
 }
 

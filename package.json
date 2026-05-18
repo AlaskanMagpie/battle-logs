@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node scripts/sync-card-manifest.mjs && vite --host 127.0.0.1",
+    "local": "node scripts/reset-localhost-dev.mjs",
     "localhost": "node scripts/reset-localhost-dev.mjs",
     "dev:reset": "node scripts/reset-localhost-dev.mjs",
-    "dev:lan": "vite --host",
+    "dev:lan": "node scripts/sync-card-manifest.mjs && vite --host",
     "ai:duel": "node scripts/ai-duel-url.mjs",
     "assets:sync-cards": "node scripts/sync-card-manifest.mjs",
     "cards:pipeline": "node scripts/cards-pipeline.mjs",

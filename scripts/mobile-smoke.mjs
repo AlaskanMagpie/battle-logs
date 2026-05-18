@@ -64,7 +64,6 @@ async function runViewport(browser, name, viewport, pathAndQuery) {
       hand: rect("#doctrine-track"),
       dock: rect("#hud-dock"),
       command: rect(".hud-match-side-controls"),
-      vibe: rect(".hud-vibejam-link"),
       profile: document.documentElement.dataset.controlProfile,
     };
   });

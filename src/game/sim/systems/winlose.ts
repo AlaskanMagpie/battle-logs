@@ -1,5 +1,5 @@
 import { MATCH_DURATION_TICKS } from "../../constants";
-import { findKeep, type GameState } from "../../state";
+import { findKeep, recordMatchDamageTimelinePoint, type GameState } from "../../state";
 
 /**
  * Defeat conditions (any of):
@@ -41,6 +41,7 @@ export function resolveMatchTimeLimit(s: GameState): void {
 export function timeLimitCheck(s: GameState): void {
   if (s.phase !== "playing" || s.tick < MATCH_DURATION_TICKS) return;
   resolveMatchTimeLimit(s);
+  recordMatchDamageTimelinePoint(s);
 }
 
 /** Enemy HQ: all Dark Fortress relays dead when present; otherwise all authored camp cores destroyed. */

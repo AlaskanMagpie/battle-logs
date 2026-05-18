@@ -30,8 +30,10 @@ import { computeFormationSlots, formationKindLabel } from "./game/sim/systems/fo
 import { unitStatsForCatalog } from "./game/sim/systems/helpers";
 import { advanceTick, advanceTickPvp, type PvpSeatIntentBundle } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
+import { prefetchMatchCriticalGlbs } from "./render/glbPool";
+import { MatchSfx } from "./audio/matchSfx";
 import { GameRenderer } from "./render/scene";
-import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
+import { hydrateCardPreviewImages, syncCardArtOverlayContainFit } from "./ui/cardGlbPreview";
 import { tcgCardSlotHtml } from "./ui/doctrineCard";
 import { loadDoctrineSlots } from "./ui/doctrineStorage";
 import {
@@ -453,6 +455,7 @@ function wireDoctrineDragToMap(
       );
       session.ghost.classList.add("doctrine-drag-ghost--card-face");
       hydrateCardPreviewImages(session.ghost);
+      syncCardArtOverlayContainFit(session.ghost);
     }
     if (!session.dragging || !session.ghost) return;
     moveDragGhost(session.ghost, ev.clientX, ev.clientY);
@@ -782,7 +785,9 @@ function runMatch(
           },
         };
     const renderer = new GameRenderer(canvas, CONTROL_PROFILE);
-    await renderer.loadTerrainFromMap(map);
+    const matchSfx = new MatchSfx();
+    renderer.attachMatchSfx(matchSfx);
+    await Promise.all([renderer.loadTerrainFromMap(map), prefetchMatchCriticalGlbs()]);
     let state: GameState = createInitialState(map, initialDoctrine);
     applyControlProfileDefaults(state);
     configureGamePortals(state, portalContext, window.location.href);
@@ -910,12 +915,19 @@ function runMatch(
       updateHud(state);
     };
     renderer.sync(state, USE_GLB);
+    renderer.render();
     renderer.setCameraFollowHero(true);
     const resize = (): void => {
       const { w, h } = viewportCssSize();
       renderer.setSize(w, h);
+      renderer.render();
     };
     resize();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => resize());
+      ro.observe(canvas);
+      signal.addEventListener("abort", () => ro.disconnect());
+    }
     window.addEventListener("resize", resize, { signal });
     window.visualViewport?.addEventListener("resize", resize, { signal });
     window.visualViewport?.addEventListener("scroll", resize, { signal });
@@ -1129,6 +1141,12 @@ function runMatch(
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       acc += dt;
+      /**
+       * Drop large accumulated sim debt so a backgrounded tab cannot fast-forward minutes of match
+       * sim in a few wall seconds (which made the V/D screen feel “earlier than 3 minutes”).
+       */
+      const MAX_ACC_CATCHUP_SEC = 0.22;
+      if (acc > MAX_ACC_CATCHUP_SEC) acc = MAX_ACC_CATCHUP_SEC;
 
       /** Avoid multi-second catch-up stalls after tab backgrounding or long breakpoints. */
       /** Wall-time catch-up cap (~2.4s of sim at current TICK_HZ). */
@@ -1257,6 +1275,7 @@ function runMatch(
       clearGameLog();
       hideSelectBox();
       renderer.clearCastFx();
+      matchSfx.dispose();
       renderer.dispose();
       hudRoot.innerHTML = "";
       hideRulesToast();
@@ -1505,6 +1524,7 @@ function runMatch(
     );
 
     canvas.addEventListener("pointerdown", (ev) => {
+      renderer.resumeMatchAudioFromGesture();
       hudRoot.querySelector("#doctrine-track")?.removeAttribute("data-hand-peek");
       if (state.phase !== "playing") return;
       if (isMobilePointer(ev)) {
@@ -1949,6 +1969,7 @@ function mountPortalPicker(onReady?: () => void): void {
 }
 
 async function boot(): Promise<void> {
+  prefetchMatchCriticalGlbs();
   if (quickMatch) {
     pickerRoot.style.display = "none";
     const stored = loadDoctrineSlots();
@@ -1974,4 +1995,19 @@ async function boot(): Promise<void> {
   }
 }
 
-void boot();
+function reportBootFailure(reason: unknown): void {
+  if (document.getElementById("doctrine-boot-fatal")) return;
+  const wrap = document.createElement("div");
+  wrap.id = "doctrine-boot-fatal";
+  wrap.setAttribute("role", "alert");
+  wrap.style.cssText =
+    "position:fixed;inset:0;z-index:2147483646;background:#180a0a;color:#ffd4d4;padding:26px 22px;font:14px/1.45 system-ui,Segoe UI,sans-serif;white-space:pre-wrap;overflow:auto;box-sizing:border-box";
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  const stack = reason instanceof Error && reason.stack ? `\n\n${reason.stack}` : "";
+  wrap.textContent = `Boot failed\n\n${msg}${stack}\n\nTry: npm install, hard refresh (Ctrl+Shift+R), and check the browser console.`;
+  document.body.appendChild(wrap);
+  // eslint-disable-next-line no-console
+  console.error(reason);
+}
+
+void boot().catch(reportBootFailure);

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { getCatalogPreviewAssetUrl, loadGltfTemplateRoot } from "../render/glbPool";
+import { getCatalogPreviewAssetUrl, loadGltfTemplateRoot, prefetchGltfTemplateRoots } from "../render/glbPool";
 import { containCardArtRect } from "./cardArtOverlay";
 import { CARD_ART_CACHE_BUSTER, getCardArtUrl } from "./cardArtManifest";
 
@@ -152,12 +152,37 @@ export async function getCardPreviewDataUrl(catalogId: string): Promise<string |
   return out;
 }
 
+/** Clear cached preview URLs (e.g. after manifest changes) so GLB snapshots are not pinned over new `/assets/cards/*` files. */
+export function resetCardPreviewDataUrlCache(): void {
+  dataUrlCache.clear();
+}
+
+/**
+ * Tower / structure previews use `loadGltfTemplateRoot` (network + Draco decode). Those steps are safe in
+ * parallel; only the shared WebGL snapshot studio must stay serial (see `previewSerial`).
+ */
+async function catalogTowerGlbUrlForPreviewIfNoRaster(catalogId: string): Promise<string | null> {
+  const cardArtUrl = await getCardArtUrl(catalogId);
+  if (cardArtUrl) {
+    const ok = await probeCardArtUrlLoads(cardArtUrl);
+    if (ok) return null;
+  }
+  return getCatalogPreviewAssetUrl(catalogId);
+}
+
 /** Warm the PNG preview cache for every id (sequential GL studio use — safe for WebGL). */
 export async function preloadCardPreviewDataUrls(catalogIds: readonly string[]): Promise<void> {
   const seen = new Set<string>();
-  for (const id of catalogIds) {
-    if (!id || seen.has(id)) continue;
+  const unique = catalogIds.filter((id) => {
+    if (!id || seen.has(id)) return false;
     seen.add(id);
+    return true;
+  });
+  const glbUrls = (await Promise.all(unique.map((id) => catalogTowerGlbUrlForPreviewIfNoRaster(id)))).filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  await prefetchGltfTemplateRoots(glbUrls);
+  for (const id of unique) {
     await getCardPreviewDataUrl(id);
   }
 }
@@ -179,8 +204,11 @@ function portraitFallbackEl(img: HTMLImageElement): HTMLElement | null {
 
 const overlayFitObservers = new WeakMap<HTMLElement, ResizeObserver>();
 
+/** Frames whose `.card-art-overlay` must match the same letterboxed rect as `object-fit: contain` card art. */
+const OVERLAY_FIT_FRAME_SELECTOR = ".card-art-stack, .slot-card-art, .card-detail-pop-card-frame, .al-card-frame";
+
 function overlayFitFrameFor(el: Element): HTMLElement | null {
-  return el.closest(".slot-card-art, .card-detail-pop-card-frame") as HTMLElement | null;
+  return el.closest(OVERLAY_FIT_FRAME_SELECTOR) as HTMLElement | null;
 }
 
 function setOverlayFitVars(frame: HTMLElement, img: HTMLImageElement | null): void {
@@ -207,24 +235,41 @@ function setOverlayFitVars(frame: HTMLElement, img: HTMLImageElement | null): vo
   frame.style.setProperty("--overlay-fit-height", `${r.h}px`);
 }
 
+function overlayFitImgInFrame(frame: HTMLElement): HTMLImageElement | null {
+  return frame.querySelector("img.tcg-card-preview-img:not([hidden]), img.card-detail-pop-card-img") as HTMLImageElement | null;
+}
+
+/** Re-run after layout / decode so `--overlay-fit-*` is not stuck on 100% (makes overlays huge vs letterboxed art). */
+function scheduleOverlayFitReassert(frame: HTMLElement): void {
+  if (typeof requestAnimationFrame === "undefined") return;
+  requestAnimationFrame(() => {
+    setOverlayFitVars(frame, overlayFitImgInFrame(frame));
+    requestAnimationFrame(() => setOverlayFitVars(frame, overlayFitImgInFrame(frame)));
+  });
+}
+
 function syncOverlayFitFrame(frame: HTMLElement): void {
-  const img = frame.querySelector("img.tcg-card-preview-img:not([hidden]), img.card-detail-pop-card-img") as HTMLImageElement | null;
-  setOverlayFitVars(frame, img);
+  setOverlayFitVars(frame, overlayFitImgInFrame(frame));
+  scheduleOverlayFitReassert(frame);
   if (typeof ResizeObserver !== "undefined" && !overlayFitObservers.has(frame)) {
-    const ro = new ResizeObserver(() => setOverlayFitVars(frame, img));
+    const ro = new ResizeObserver(() => setOverlayFitVars(frame, overlayFitImgInFrame(frame)));
     ro.observe(frame);
     overlayFitObservers.set(frame, ro);
   }
 }
 
-/** Keep stat overlays pinned to the same object-fit:contain rect as authored card rasters. */
+/**
+ * Keep stat overlays pinned to the same object-fit:contain rect as authored card rasters.
+ * Call after slot/template swaps; avoid subtree `MutationObserver` on doctrine roots (frequent
+ * innerHTML + live regions can schedule unbounded rAF work and freeze the WebGL view).
+ */
 export function syncCardArtOverlayContainFit(root: ParentNode): void {
   const frames = new Set<HTMLElement>();
   if (root instanceof HTMLElement) {
-    const directFrame = root.matches(".slot-card-art, .card-detail-pop-card-frame") ? root : overlayFitFrameFor(root);
+    const directFrame = root.matches(OVERLAY_FIT_FRAME_SELECTOR) ? root : overlayFitFrameFor(root);
     if (directFrame) frames.add(directFrame);
   }
-  root.querySelectorAll?.(".slot-card-art, .card-detail-pop-card-frame").forEach((el) => frames.add(el as HTMLElement));
+  root.querySelectorAll?.(OVERLAY_FIT_FRAME_SELECTOR).forEach((el) => frames.add(el as HTMLElement));
   frames.forEach(syncOverlayFitFrame);
 }
 

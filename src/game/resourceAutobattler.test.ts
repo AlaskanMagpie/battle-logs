@@ -29,6 +29,7 @@ import {
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
   PRODUCED_UNIT_TOWN_LEVY,
+  PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN,
   TICK_HZ,
   UNIT_ATTACK_COOLDOWN_TICKS,
   UNIT_ATTACK_DAMAGE_MULT,
@@ -176,7 +177,7 @@ describe("batch production", () => {
     ["bastion_keep", "Heavy", 2, PRODUCED_UNIT_AMBER_GEODE_MONKS],
     ["wooden_aerie", "Heavy", 2, PRODUCED_UNIT_GALEBARK_ADEPTS],
     ["frostroot_keep", "Line", 3, PRODUCED_UNIT_FROSTROOT_KEEP_GUARDS],
-    ["verdant_citadel", "Titan", 1, undefined],
+    ["verdant_citadel", "Titan", 1, PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN],
   ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);

@@ -62,13 +62,14 @@
     0 0 0 6px rgba(0, 0, 0, 0.5),
     0 34px 90px rgba(0, 0, 0, 0.68),
     inset 0 0 40px rgba(255, 216, 137, 0.08);
-  cursor: pointer;
+  cursor: default;
   overflow: hidden;
 }
 
 /* Default: use almost full viewport width; scroll vertically if the page is taller than the pane. */
 .comic-intro--fit-width .comic-intro__page-wrap {
-  width: calc(min(98vw, 1680px) * var(--comic-user-zoom, 1));
+  /* Wider cap than 1080p so tall portrait pages read larger on common monitors. */
+  width: calc(min(98vw, min(2400px, 100dvw - 1.5rem)) * var(--comic-user-zoom, 1));
   height: auto;
   aspect-ratio: var(--comic-aw) / var(--comic-ah);
   max-width: none;

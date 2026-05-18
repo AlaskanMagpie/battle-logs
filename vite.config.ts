@@ -58,8 +58,8 @@ export default defineConfig(({ mode }) => {
      * which looks like “nothing loads” in the browser.
      */
     host: "127.0.0.1",
-    port: 2222,
-    /** Always 2222 — no silent bump to 2223/2224 (README + Playwright assume this URL). */
+    port: 2223,
+    /** Always 2223 — `strictPort` (no silent bump). Use `npm run localhost` to free 2222–2224 if needed. */
     strictPort: true,
     fs: { strict: false },
     /**
@@ -74,7 +74,7 @@ export default defineConfig(({ mode }) => {
   },
   preview: {
     host: "127.0.0.1",
-    port: 2222,
+    port: 2223,
     strictPort: true,
   },
   assetsInclude: ["**/*.glb"],

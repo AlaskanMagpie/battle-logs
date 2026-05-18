@@ -159,6 +159,14 @@ const BINDER_ROOM_PORTAL_URL = "/assets/binder/arcane_portal.glb";
 const BINDER_ROOM_GLB_MAX_EXTENT = 11.5;
 const BINDER_ROOM_GLB_CENTER = new THREE.Vector3(0, -0.85, -3.45);
 const BINDER_FLOAT_Y = 0.18;
+
+/** Prematch idle: gentle “magical” drift (~1–2 inches at default framing). */
+const IDLE_BINDER_BOB_AMP = 0.022;
+const IDLE_BINDER_BOB_RAMP_IN_MS = 520;
+const IDLE_BINDER_BOB_RAMP_FULL_MS = 2600;
+/** First auto page turn after this much idle; repeat every `IDLE_SHOWCASE_REPEAT_MS`. */
+const IDLE_SHOWCASE_FIRST_MS = 10_000;
+const IDLE_SHOWCASE_REPEAT_MS = 20_000;
 const BINDER_LOOK_AT = new THREE.Vector3(0, 0, 0);
 const BINDER_DISPLAY_SCALE = 0.55;
 /** v2 is the normal prematch layout key; v1 is migrated so the old `?binderCalibrate=1` pose becomes the landing page. */
@@ -338,17 +346,17 @@ function makeEmptyTexture(): THREE.CanvasTexture {
   return t;
 }
 
-function makePortalTextPanel(text: string, width: number, height: number): THREE.Mesh {
+function makePortalTextPanel(text: string, width: number, height: number, opts?: { fillStyle?: string; shadowColor?: string }): THREE.Mesh {
   const c = document.createElement("canvas");
   c.width = 512;
   c.height = 128;
   const g = c.getContext("2d")!;
   g.clearRect(0, 0, c.width, c.height);
-  g.font = "900 46px system-ui, Segoe UI, sans-serif";
+  g.font = "900 42px system-ui, Segoe UI, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.fillStyle = "rgba(220, 250, 255, 0.98)";
-  g.shadowColor = "rgba(0, 20, 48, 0.95)";
+  g.fillStyle = opts?.fillStyle ?? "rgba(220, 250, 255, 0.98)";
+  g.shadowColor = opts?.shadowColor ?? "rgba(0, 20, 48, 0.95)";
   g.shadowBlur = 16;
   g.fillText(text, c.width / 2, c.height / 2);
   const tex = new THREE.CanvasTexture(c);
@@ -506,6 +514,14 @@ export class CardBinderEngine {
   private dragAngVelPrevT = 0;
   private lastMoveClientX = 0;
   private lastMoveT = 0;
+  /** Last canvas / binder surface pointer, wheel, or explicit `noteBinderSurfaceActivity` (idle bob + showcase). */
+  private lastBinderSurfaceActivityMs = performance.now();
+  /** Next idle page-turn showcase; `-1` = not armed yet (folio not fully open). */
+  private nextIdleShowcaseAtMs = -1;
+  /** True while starting / completing a page turn triggered by the idle showcase (see `_maybeIdleShowcasePageTurn`). */
+  private flipFromIdleShowcase = false;
+  private readonly _idleBinderBob = new THREE.Vector3();
+  private _idleBinderBobRy = 0;
   private _lastMechTe = 0;
   private _metalTickDoneForOpen = false;
   /** Shared thin quads faking page block thickness under static spreads. */
@@ -519,7 +535,8 @@ export class CardBinderEngine {
     this.R = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: true,
+      /** Opaque backing: prematch `#doctrine-picker` is very dark; alpha blending + empty first frames read as “all black”. */
+      alpha: false,
       powerPreference: "high-performance",
       /** Reduces folio / page / slot Z sparkles when many coplanar-ish surfaces stack (binder only uses this renderer). */
       logarithmicDepthBuffer: true,
@@ -645,22 +662,22 @@ export class CardBinderEngine {
   }
 
   private _addVibePortalSet(): void {
-    this.vibePortalGroup.name = "vibe_jam_foreground_portal";
+    this.vibePortalGroup.name = "quick_match_portal";
     this.vibePortalGroup.renderOrder = 20;
 
     const disc = new THREE.Mesh(
       new THREE.CircleGeometry(1.02, 96),
       new THREE.MeshBasicMaterial({
-        color: 0x48c9ff,
+        color: 0x2bbf78,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.18,
         depthWrite: false,
         depthTest: true,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide,
       }),
     );
-    disc.name = "vibe_jam_portal_enter_disc";
+    disc.name = "quick_match_portal_disc";
     disc.userData.vibePortalAction = "enter" satisfies VibePortalAction;
     disc.renderOrder = 20;
     this.vibePortalGroup.add(disc);
@@ -670,7 +687,7 @@ export class CardBinderEngine {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.7 + i * 0.16, 0.74 + i * 0.16, 96),
         new THREE.MeshBasicMaterial({
-          color: i === 0 ? 0xd8fbff : i === 1 ? 0x52d6ff : 0x286dff,
+          color: i === 0 ? 0xb8ffd8 : i === 1 ? 0x3cdd8a : i === 2 ? 0x148053 : 0x0a4f36,
           transparent: true,
           opacity: 0.58 - i * 0.08,
           depthWrite: false,
@@ -679,7 +696,7 @@ export class CardBinderEngine {
           side: THREE.DoubleSide,
         }),
       );
-      ring.name = `vibe_jam_portal_enter_ring_${i}`;
+      ring.name = `quick_match_portal_ring_${i}`;
       ring.userData.vibePortalAction = "enter" satisfies VibePortalAction;
       ring.userData.portalRingIndex = i + 10;
       ring.renderOrder = 21 + i;
@@ -687,7 +704,10 @@ export class CardBinderEngine {
       this.portalPulseMeshes.push(ring);
     }
 
-    const enter = makePortalTextPanel("NEXT GAME", 1.25, 0.25);
+    const enter = makePortalTextPanel("QUICK MATCH", 1.42, 0.26, {
+      fillStyle: "rgba(214, 255, 232, 0.98)",
+      shadowColor: "rgba(0, 32, 18, 0.92)",
+    });
     enter.position.set(0, 0.08, 0.035);
     enter.userData.vibePortalAction = "enter" satisfies VibePortalAction;
     this.vibePortalGroup.add(enter);
@@ -771,7 +791,9 @@ export class CardBinderEngine {
   }
 
   private _withTestPagePadding(incoming: THREE.Texture[]): THREE.Texture[] {
-    const targetPanels = BINDER_CODEX_TOTAL_CELLS;
+    const minBrowsePanels = BINDER_CODEX_TOTAL_CELLS;
+    /** Sorted codex can exceed 90 panels; browse mode stays at `minBrowsePanels`. */
+    const targetPanels = Math.max(minBrowsePanels, incoming.length);
     const extra = BINDER_TEST_EXTRA_PAGES * BINDER_CELLS_PER_SHEET;
 
     if (incoming.length === 0) {
@@ -781,8 +803,9 @@ export class CardBinderEngine {
       return out;
     }
 
-    if (incoming.length >= targetPanels) {
-      const out = incoming.slice(0, targetPanels);
+    if (incoming.length >= minBrowsePanels) {
+      const out = incoming.slice(0, incoming.length);
+      while (out.length < targetPanels) out.push(this.etex);
       for (let i = 0; i < extra; i++) out.push(this.etex);
       return out;
     }
@@ -793,13 +816,14 @@ export class CardBinderEngine {
       [base[i], base[j]] = [base[j]!, base[i]!];
     }
     const out: THREE.Texture[] = [];
-    for (let k = 0; k < targetPanels; k++) {
+    for (let k = 0; k < minBrowsePanels; k++) {
       out.push(base[k % base.length]!);
     }
     for (let i = out.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [out[i], out[j]] = [out[j]!, out[i]!];
     }
+    while (out.length < targetPanels) out.push(this.etex);
     for (let e = 0; e < extra; e++) out.push(this.etex);
     return out;
   }
@@ -850,8 +874,9 @@ export class CardBinderEngine {
     if (out.length === 0) {
       out.push(this._emptyChunk());
     }
-    /** Trailing all-empty sheets are dropped above; pad back to `BINDER_CODEX_SPREAD_COUNT` so navigation always has that many turnable spreads. */
-    while (out.length < BINDER_CODEX_SPREAD_COUNT) {
+    const minSheetsByPanels = Math.ceil(n / BINDER_CELLS_PER_SHEET);
+    const minSheets = Math.max(BINDER_CODEX_SPREAD_COUNT, minSheetsByPanels);
+    while (out.length < minSheets) {
       out.push(this._emptyChunk());
     }
     return out;
@@ -1488,6 +1513,8 @@ export class CardBinderEngine {
   }
 
   private _done(): void {
+    const idleShowcaseFlip = this.flipFromIdleShowcase;
+    this.flipFromIdleShowcase = false;
     if (this.fl === 1) this.cur++;
     else if (this.fl === -1) this.cur--;
     this.fl = 0;
@@ -1497,9 +1524,13 @@ export class CardBinderEngine {
     this.pageAudio.thud();
     this.pageAudio.frictionStop();
     this._v();
+    if (idleShowcaseFlip) this._armIdleShowcaseRepeatWait();
+    else this._armIdleShowcaseFirstWait();
   }
 
   private _canc(): void {
+    const idleShowcaseFlip = this.flipFromIdleShowcase;
+    this.flipFromIdleShowcase = false;
     this.fl = 0;
     this.ang = 0;
     this.vel = 0;
@@ -1507,6 +1538,8 @@ export class CardBinderEngine {
     this.pageAudio.rustle();
     this.pageAudio.frictionStop();
     this._v();
+    if (idleShowcaseFlip) this._armIdleShowcaseRepeatWait();
+    else this._armIdleShowcaseFirstWait();
   }
 
   private _notifyPage(): void {
@@ -1518,6 +1551,7 @@ export class CardBinderEngine {
     if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
     if (this.cur >= this.chunks.length - 1) return;
+    if (!this.flipFromIdleShowcase) this._noteBinderSurfaceActivity();
     this.fl = 1;
     this.ang = 0;
     this.vel = 0;
@@ -1530,6 +1564,7 @@ export class CardBinderEngine {
     if (this.chunks.length <= 1) return;
     this.cancelPendingCatalogPick();
     if (this.cur <= 0) return;
+    if (!this.flipFromIdleShowcase) this._noteBinderSurfaceActivity();
     this.fl = -1;
     this.ang = 0;
     this.vel = 0;
@@ -1544,6 +1579,7 @@ export class CardBinderEngine {
     this.cancelPendingCatalogPick();
     this.cur = 0;
     this._v();
+    this._armIdleShowcaseFirstWait();
   }
 
   /** Jump without animation to a specific codex spread. */
@@ -1554,6 +1590,7 @@ export class CardBinderEngine {
     this.cancelPendingCatalogPick();
     this.cur = next;
     this._v();
+    this._armIdleShowcaseFirstWait();
   }
 
   /** Jump without animation (only when idle). */
@@ -1564,6 +1601,7 @@ export class CardBinderEngine {
     this.cancelPendingCatalogPick();
     this.cur = last;
     this._v();
+    this._armIdleShowcaseFirstWait();
   }
 
   setTextures(incoming: THREE.Texture[]): void {
@@ -1576,6 +1614,7 @@ export class CardBinderEngine {
     this.vel = 0;
     this.tgt = null;
     this._v();
+    this._armIdleShowcaseFirstWait();
   }
 
   resize(w: number, h: number): void {
@@ -1696,6 +1735,7 @@ export class CardBinderEngine {
   }
 
   resetCam(): void {
+    this._noteBinderSurfaceActivity();
     this.yaw = 0;
     const open = this.openingProgress >= BINDER_FULLY_OPEN_PROGRESS;
     this.pitch = open ? -0.14 : -0.27;
@@ -1704,7 +1744,98 @@ export class CardBinderEngine {
     this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
   }
 
+  private _armIdleShowcaseFirstWait(): void {
+    this.nextIdleShowcaseAtMs = performance.now() + IDLE_SHOWCASE_FIRST_MS;
+  }
+
+  private _armIdleShowcaseRepeatWait(): void {
+    this.nextIdleShowcaseAtMs = performance.now() + IDLE_SHOWCASE_REPEAT_MS;
+  }
+
+  private _noteBinderSurfaceActivity(): void {
+    const now = performance.now();
+    this.lastBinderSurfaceActivityMs = now;
+    if (this.nextIdleShowcaseAtMs >= 0) {
+      this.nextIdleShowcaseAtMs = Math.max(this.nextIdleShowcaseAtMs, now + IDLE_SHOWCASE_FIRST_MS);
+    }
+  }
+
+  /**
+   * Doctrine picker: call when the user moves/releases pointer over the hand strip or window during a codex lift,
+   * so idle bob + auto page turns stay paused while they are still “in” the match-prep gesture off-canvas.
+   */
+  noteBinderSurfaceActivity(): void {
+    if (this.disposed) return;
+    this._noteBinderSurfaceActivity();
+  }
+
+  private _binderUserEngaged(): boolean {
+    if (typeof document !== "undefined" && document.hidden) return true;
+    if (this.orb || this.drag || this.codexDragActive) return true;
+    if (this.fl !== 0) return true;
+    if (this.openingTarget !== null) return true;
+    if (this.openingProgress < BINDER_FULLY_OPEN_PROGRESS - 0.02) return true;
+    if (performance.now() < this.portalTransitionUntil) return true;
+    if (this.flipArm !== null) return true;
+    if (this.pendingCardTap) return true;
+    return false;
+  }
+
+  private _updateIdleBinderBob(now: number): void {
+    if (
+      this._binderUserEngaged() ||
+      now < this.portalTransitionUntil ||
+      this.openingProgress < BINDER_FULLY_OPEN_PROGRESS - 0.02
+    ) {
+      this._idleBinderBob.set(0, 0, 0);
+      this._idleBinderBobRy = 0;
+      return;
+    }
+    const calmMs = now - this.lastBinderSurfaceActivityMs;
+    const w = THREE.MathUtils.smoothstep(calmMs, IDLE_BINDER_BOB_RAMP_IN_MS, IDLE_BINDER_BOB_RAMP_FULL_MS);
+    if (w <= 0) {
+      this._idleBinderBob.set(0, 0, 0);
+      this._idleBinderBobRy = 0;
+      return;
+    }
+    const t = now * 0.00082;
+    const u = IDLE_BINDER_BOB_AMP * w;
+    this._idleBinderBob.set(
+      u * 0.95 * Math.sin(t * 0.93 + 0.15),
+      u * 0.78 * Math.sin(t * 1.09 + 1.05),
+      u * 0.62 * Math.sin(t * 0.87 + 2.35),
+    );
+    this._idleBinderBobRy = w * 0.0068 * Math.sin(t * 0.66 + 0.45);
+  }
+
+  private _maybeIdleShowcasePageTurn(now: number): void {
+    if (this.nextIdleShowcaseAtMs < 0) return;
+    if (this._binderUserEngaged()) return;
+    if (this.chunks.length <= 1) {
+      this._armIdleShowcaseRepeatWait();
+      return;
+    }
+    if (now < this.nextIdleShowcaseAtMs) return;
+    if (this.fl !== 0 || this.drag) return;
+
+    this.flipFromIdleShowcase = true;
+    if (this.cur < this.chunks.length - 1) {
+      this.flipNext();
+    } else if (this.cur > 0) {
+      this.flipPrev();
+    } else {
+      this.flipFromIdleShowcase = false;
+      this._armIdleShowcaseFirstWait();
+      return;
+    }
+    if (this.fl === 0) {
+      this.flipFromIdleShowcase = false;
+      this._armIdleShowcaseFirstWait();
+    }
+  }
+
   orbitCameraByPixels(dxPx: number, dyPx: number, rect: DOMRect): void {
+    this._noteBinderSurfaceActivity();
     this.yaw = THREE.MathUtils.clamp(
       this.yaw + (dxPx / Math.max(1, rect.width)) * Math.PI,
       -BINDER_ORBIT_YAW_MAX,
@@ -1719,10 +1850,12 @@ export class CardBinderEngine {
 
   zoomCameraByScale(scale: number): void {
     if (!Number.isFinite(scale) || scale <= 0) return;
+    this._noteBinderSurfaceActivity();
     this.dist = THREE.MathUtils.clamp(this.dist / scale, 0.72, 12);
   }
 
   playPortalTransition(direction: "in" | "out", durationMs = 760): Promise<void> {
+    this._noteBinderSurfaceActivity();
     this.portalTransitionDirection = direction;
     this.portalTransitionDuration = durationMs;
     this.portalTransitionUntil = performance.now() + durationMs;
@@ -1759,6 +1892,7 @@ export class CardBinderEngine {
     this._setCatalogSelection(null);
     if (this.codexHandDragMode) this._v();
     if (this.drag) this._settleActivePageDrag();
+    this._noteBinderSurfaceActivity();
   }
 
   /** Doctrine picker: a recto card is mid “lift” drag toward the DOM hand (for global pointer release routing). */
@@ -1849,6 +1983,7 @@ export class CardBinderEngine {
 
   /** Long-press on a recto: sleeve shows card-back, DOM ghost drag begins. */
   private _startCodexBinderPullDrag(idx: number): void {
+    this._noteBinderSurfaceActivity();
     this._clearCodexLongPressTimer();
     this._setCatalogSelection(idx);
     this.codexPulledPickIndices.add(idx);
@@ -1924,6 +2059,7 @@ export class CardBinderEngine {
   }
 
   wheelAt(clientX: number, clientY: number, rect: DOMRect, dy: number): void {
+    this._noteBinderSurfaceActivity();
     const zoomingIn = dy < 0;
     if (zoomingIn && mayRaycastCatalog(this.getBinderUiMode())) {
       this.ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -1938,6 +2074,7 @@ export class CardBinderEngine {
   }
 
   wheel(dy: number): void {
+    this._noteBinderSurfaceActivity();
     this.dist = THREE.MathUtils.clamp(this.dist * Math.exp(dy * 0.0018), 0.72, 12);
   }
 
@@ -2031,6 +2168,7 @@ export class CardBinderEngine {
         this._syncMarginHits();
         /** Rebuild spreads once the folio is actually open — avoids the first `_v()` while `openingProgress===0` and keeps slots aligned with visibility gates. */
         if (!this.disposed) this._v();
+        this._armIdleShowcaseFirstWait();
       }
       this.onOpenStateChange?.(open);
     }
@@ -2047,10 +2185,13 @@ export class CardBinderEngine {
   }
 
   private _applyBinderTransform(yWave = 0, scaleMult = 1): void {
+    const bx = this._idleBinderBob.x;
+    const by = this._idleBinderBob.y;
+    const bz = this._idleBinderBob.z;
     this.G.position.set(
-      this.binderPlacement.x,
-      BINDER_FLOAT_Y + this.binderPlacement.y + yWave,
-      this.binderPlacement.z,
+      this.binderPlacement.x + bx,
+      BINDER_FLOAT_Y + this.binderPlacement.y + yWave + by,
+      this.binderPlacement.z + bz,
     );
     this.G.scale.setScalar(this.binderPlacement.scale * scaleMult);
     this._applyVibePortalTransform();
@@ -2175,6 +2316,7 @@ export class CardBinderEngine {
   clearCardHover(): void {}
 
   pD(e: PointerEvent, rect: DOMRect): void {
+    this._noteBinderSurfaceActivity();
     this.pageAudio.resumeFromGesture();
     this.cancelPendingCatalogPick();
     this._clearCodexLongPressTimer();
@@ -2266,6 +2408,7 @@ export class CardBinderEngine {
   }
 
   pM(e: PointerEvent, rect: DOMRect): void {
+    this._noteBinderSurfaceActivity();
     const dx = e.clientX - this.armSX;
     const dy = e.clientY - this.armSY;
     const dist = Math.hypot(dx, dy);
@@ -2412,6 +2555,7 @@ export class CardBinderEngine {
   }
 
   pU(e: PointerEvent, rect: DOMRect): void {
+    this._noteBinderSurfaceActivity();
     this.orb = false;
     this.touchEmptyOrbitArmed = false;
     this._clearCodexLongPressTimer();
@@ -2594,10 +2738,13 @@ export class CardBinderEngine {
       }
     }
     if (this.fp) this._aa(this.ang);
-    this._tickPortal(performance.now());
+    const now = performance.now();
+    this._updateIdleBinderBob(now);
+    this._maybeIdleShowcasePageTurn(now);
+    this._tickPortal(now);
     this.yaw = THREE.MathUtils.clamp(this.yaw, -BINDER_ORBIT_YAW_MAX, BINDER_ORBIT_YAW_MAX);
     this.pitch = THREE.MathUtils.clamp(this.pitch, BINDER_ORBIT_PITCH_MIN, BINDER_ORBIT_PITCH_MAX);
-    this.G.rotation.y = this.yaw;
+    this.G.rotation.y = this.yaw + this._idleBinderBobRy;
     const flipping = this.fl !== 0 && this.fp !== null;
     const tCam = easeOutCubic(this.openingProgress);
     let distBlend = THREE.MathUtils.lerp(4.75, this.dist, tCam);

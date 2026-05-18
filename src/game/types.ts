@@ -14,10 +14,14 @@ export interface Vec2 {
   z: number;
 }
 
+/** Optional layout hint for tooling / validation (gameplay ignores). */
+export type TapNodeRole = "home" | "lane" | "flank" | "contested" | "forward" | "neutral";
+
 export interface TapSlotDef {
   id: string;
   x: number;
   z: number;
+  role?: TapNodeRole;
 }
 
 export interface RelaySlotDef {
@@ -55,7 +59,23 @@ export interface MapDifficulty {
 }
 
 /** Optional biome read for renderer + tooling; sim still uses `blocksMovement` + shape for collision. */
-export type MapTerrainKind = "lake" | "hill" | "rock_spire" | "mesa_slab";
+export type MapTerrainKind =
+  | "lake"
+  | "hill"
+  | "rock_spire"
+  | "mesa_slab"
+  | "basalt"
+  | "ice"
+  | "metal"
+  | "timber"
+  | "ruins"
+  | "crystal"
+  | "lava"
+  | "foliage"
+  | "bridge";
+
+/** Visual style for `kind: "foliage"` clusters (non-blocking by default). */
+export type MapFoliageStyle = "bush" | "tree" | "pine" | "palm" | "scrub";
 
 /** Optional on any decor: when true, ground units / wizards cannot walk through this shape (sim). */
 type MapDecorBlock = { blocksMovement?: boolean; terrainKind?: MapTerrainKind };
@@ -108,6 +128,39 @@ export type MapDecorDef =
       tube: number;
       rotYDeg?: number;
       color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "water_basin";
+      x: number;
+      z: number;
+      /** Ellipse semi-axis along local X (after `rotYDeg`). */
+      radiusX: number;
+      /** Ellipse semi-axis along local Z. */
+      radiusZ: number;
+      rotYDeg?: number;
+      h?: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "bridge";
+      x: number;
+      z: number;
+      /** Deck length along local Z. */
+      span: number;
+      width: number;
+      rotYDeg?: number;
+      h?: number;
+      color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "foliage";
+      x: number;
+      z: number;
+      radius: number;
+      style?: MapFoliageStyle;
+      rotYDeg?: number;
+      h?: number;
+      color?: number;
     } & MapDecorBlock);
 
 /** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */
@@ -143,9 +196,39 @@ export interface SphereTerrainDef {
   macroScale?: number;
 }
 
+/** Playable XZ footprint on plane maps (optional; default is full square `halfExtents`). */
+export type MapArenaFootprintKind =
+  | "rectangle"
+  | "circle"
+  | "ellipse"
+  | "diamond"
+  | "capsule_x"
+  | "capsule_z"
+  | "twin_lobes";
+
+export interface MapArenaFootprint {
+  kind?: MapArenaFootprintKind;
+  /** Circle / spherical-cap style radius as a fraction of `halfExtents`. Default 1. */
+  radiusMult?: number;
+  /** Ellipse / diamond semi-axis along X as a fraction of `halfExtents`. Default 1. */
+  semiAxisXMult?: number;
+  /** Ellipse / diamond semi-axis along Z as a fraction of `halfExtents`. Default 1. */
+  semiAxisZMult?: number;
+  /** Capsule: half-length of the straight section + cap (along major axis), as fraction of `halfExtents`. */
+  capsuleLengthMult?: number;
+  /** Capsule: tube radius as a fraction of `halfExtents`. */
+  capsuleRadiusMult?: number;
+  /** Twin lobes: lobe center offset along ±X as a fraction of `halfExtents`. */
+  lobeCenterMult?: number;
+  /** Twin lobes: each lobe radius as a fraction of `halfExtents`. */
+  lobeRadiusMult?: number;
+}
+
 export interface MapWorldDef {
   halfExtents: number;
   groundY: number;
+  /** Non-square playable region on plane maps (optional). */
+  arenaFootprint?: MapArenaFootprint;
   /** Planet radius (world units). Required when `worldGeometry` is `sphere`. */
   sphereRadius?: number;
   /** Optional procedural terrain on the sphere shell. */

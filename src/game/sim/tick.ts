@@ -1,6 +1,7 @@
 import type { PlayerIntent } from "../intents";
 import type { MatchSeat } from "../../net/protocol";
-import { pruneUnitSpellStatuses, tickHeroTeleportCooldown, type GameState } from "../state";
+import { TICK_HZ } from "../constants";
+import { pruneUnitSpellStatuses, recordMatchDamageTimelinePoint, tickHeroTeleportCooldown, type GameState } from "../state";
 import { movement, wakeCamps } from "./systems/ai";
 import { auras } from "./systems/auras";
 import { combat } from "./systems/combat";
@@ -47,6 +48,11 @@ function runTickSimulation(s: GameState, applyIntents: () => void): void {
   loseCheck(s);
   winCheck(s);
   s.tick += 1;
+  if (s.phase === "playing") {
+    if (s.tick % TICK_HZ === 0) recordMatchDamageTimelinePoint(s);
+  } else {
+    recordMatchDamageTimelinePoint(s);
+  }
 }
 
 /** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */

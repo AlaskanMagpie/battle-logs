@@ -53,6 +53,17 @@ const loader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
 dracoLoader.setDecoderPath("/draco/gltf/");
 loader.setDRACOLoader(dracoLoader);
+if (typeof window !== "undefined") {
+  void Promise.resolve(dracoLoader.preload()).catch(() => undefined);
+}
+
+type StructureTowerAttachListener = (parent: THREE.Object3D) => void;
+let structureTowerAttachListener: StructureTowerAttachListener | null = null;
+
+/** Fires once a structure tower GLB is attached (HQ + placed buildings). */
+export function setStructureTowerAttachListener(listener: StructureTowerAttachListener | null): void {
+  structureTowerAttachListener = listener;
+}
 type GltfTemplate = { root: THREE.Object3D; animations: THREE.AnimationClip[]; triangleCount: number };
 /** Cached *template* GLTF data (never added to scene). */
 const cache = new Map<string, GltfTemplate>();
@@ -314,7 +325,6 @@ function attackFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string 
 }
 
 function idleFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | undefined, m: UnitGlbManifest): string | null {
-  if (kind === "hero" && m.files.includes(LANTERNBOUND_LINE_IDLE_FILE)) return LANTERNBOUND_LINE_IDLE_FILE;
   const profileFile = roleFileForUnit(kind, producedUnitId, "idle", m);
   if (profileFile) return profileFile;
   const files = m.files;
@@ -336,7 +346,6 @@ function deathFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string |
 }
 
 function runFileForUnit(kind: UnitSizeClass | "hero", producedUnitId: string | undefined, m: UnitGlbManifest): string | null {
-  if (kind === "hero" && m.files.includes(LANTERNBOUND_LINE_RUN_FILE)) return LANTERNBOUND_LINE_RUN_FILE;
   return roleFileForUnit(kind, producedUnitId, "run", m);
 }
 
@@ -985,6 +994,13 @@ export async function loadGltfTemplateRoot(url: string): Promise<THREE.Object3D>
   return (await loadGltfTemplate(url)).root;
 }
 
+/** Parallel decode into `loadGltfTemplate` cache — safe before serial card-preview rasterization. */
+export async function prefetchGltfTemplateRoots(urls: readonly string[]): Promise<void> {
+  const uniq = [...new Set(urls.filter((u) => typeof u === "string" && u.length > 0))];
+  if (!uniq.length) return;
+  await Promise.all(uniq.map((u) => loadGltfTemplateRoot(u)));
+}
+
 /** Stable class → manifest index mapping so each unit class always looks the same.
  *  Swarm=0, Line=1, Heavy=2, Titan=3, hero=4. Falls back modulo manifest length. */
 const CLASS_INDEX: Record<UnitSizeClass | "hero", number> = {
@@ -1284,9 +1300,11 @@ async function attachGlbByFile(
     });
 
     placeholder.visible = false;
+    const staticStructureTower = opts?.hideSilhouetteUserDataKey === "structureSilhouette";
     // Keep the cloned rig hidden until at least one animation/mixer update has posed it.
     // Otherwise role GLBs can flash their bind pose for a frame while run/idle clips load.
-    inst.visible = false;
+    // Static tower shells have no clips — show immediately so the HQ never reads "missing".
+    inst.visible = staticStructureTower;
     parent.add(inst);
     parent.userData["glbRoot"] = inst;
     parent.userData["glbTargetMaxExtent"] = targetMaxExtent;
@@ -1419,8 +1437,17 @@ async function attachGlbByFile(
       if (silo) silo.visible = false;
     }
     inst.visible = true;
-  } catch {
+    if (staticStructureTower && structureTowerAttachListener) {
+      queueMicrotask(() => structureTowerAttachListener?.(parent));
+    }
+  } catch (err) {
+    console.warn(`[glb] failed to load ${url}`, err);
     placeholder.visible = !opts?.keepPlaceholderHidden;
+    const hideKey = opts?.hideSilhouetteUserDataKey;
+    if (hideKey) {
+      const silo = parent.userData[hideKey] as THREE.Object3D | undefined;
+      if (silo) silo.visible = true;
+    }
   } finally {
     delete parent.userData["glbPending"];
     delete parent.userData["glbRunPickClip"];
@@ -1537,6 +1564,17 @@ const TOWER_GLB_OVERRIDES: Partial<Record<string, string>> = {
   verdant_citadel: "verdant_citadel_titan_base.glb",
 };
 
+/** Permanent HQ (`KEEP_ID`) — prefetch at match boot so the first frame is not network-bound. */
+export const PLAYER_KEEP_TOWER_GLB_URL = `/assets/units/${TOWER_GLB_OVERRIDES[KEEP_ID]}`;
+
+/** Player wizard hero mesh + clips (`animationProfiles` starbound_arcanist_hero). */
+export const PLAYER_HERO_GLB_URL = "/assets/units/starbound_arcanist_hero.glb";
+
+/** HQ tower + player wizard — start during binder / boot so Quick Match is not network-bound. */
+export function prefetchMatchCriticalGlbs(): Promise<void> {
+  return prefetchGltfTemplateRoots([PLAYER_KEEP_TOWER_GLB_URL, PLAYER_HERO_GLB_URL]);
+}
+
 function towerManifestIndex(catalogId: string): number {
   const i = (TOWER_GLB_MANIFEST_ORDER as readonly string[]).indexOf(catalogId);
   if (i >= 0) return i;
@@ -1556,6 +1594,8 @@ const TOWER_DEFAULT_EXTRA_FOOT_SINK_WORLD = 2.95;
 
 /** Cragrunner / Emberroot meshes already sit low; a large global sink read buried below ground. */
 const TOWER_EXTRA_FOOT_SINK_BY_CATALOG: Partial<Record<string, number>> = {
+  [KEEP_ID]: 1.15,
+  bastion_keep: 1.15,
   watchtower: 1.2,
   emberroot_bastion: 1.25,
 };
@@ -1566,6 +1606,7 @@ function towerExtraFootSinkWorld(catalogId: string, towerFile: string): number {
   const f = towerFile.toLowerCase();
   if (f.includes("acrobat_compressed")) return 1.2;
   if (f.includes("lava tower")) return 1.25;
+  if (f.includes("bastion_keep_compressed")) return 1.15;
   return TOWER_DEFAULT_EXTRA_FOOT_SINK_WORLD;
 }
 

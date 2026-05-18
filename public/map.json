@@ -5,7 +5,7 @@
     "halfExtents": 420,
     "groundY": 0
   },
-  "useAuthorTapSlots": false,
+  "useAuthorTapSlots": true,
   "visual": {
     "groundPreset": "ember_wastes",
     "fogHex": 1421142,
@@ -14,208 +14,84 @@
     "skyHex": 6185050,
     "sunHex": 16777212
   },
-  "tapSlots": [],
+  "tapSlots": [
+    { "id": "tap_tl_p_lane", "x": -295, "z": 0, "role": "lane" },
+    { "id": "tap_tl_p_fl_n", "x": -248, "z": 100, "role": "flank" },
+    { "id": "tap_tl_p_fl_s", "x": -248, "z": -118, "role": "flank" },
+    { "id": "tap_tl_p_mid", "x": -218, "z": 0, "role": "contested" },
+    { "id": "tap_tl_p_fwd", "x": -118, "z": 108, "role": "forward" },
+    { "id": "tap_tl_e_lane", "x": 295, "z": 0, "role": "lane" },
+    { "id": "tap_tl_e_fl_n", "x": 248, "z": 100, "role": "flank" },
+    { "id": "tap_tl_e_fl_s", "x": 248, "z": -118, "role": "flank" },
+    { "id": "tap_tl_e_mid", "x": 155, "z": 0, "role": "contested" },
+    { "id": "tap_tl_e_fwd", "x": 118, "z": 108, "role": "forward" }
+  ],
   "playerRelaySlots": [
-    {
-      "id": "p_relay_1",
-      "x": -412,
-      "z": 0
-    },
-    {
-      "id": "p_relay_2",
-      "x": -400,
-      "z": 78
-    },
-    {
-      "id": "p_relay_3",
-      "x": -396,
-      "z": -72
-    },
-    {
-      "id": "p_relay_4",
-      "x": -382,
-      "z": 44
-    },
-    {
-      "id": "p_relay_5",
-      "x": -368,
-      "z": -138
-    },
-    {
-      "id": "p_relay_6",
-      "x": -358,
-      "z": 152
-    }
+    { "id": "p_relay_1", "x": -412, "z": 0 },
+    { "id": "p_relay_2", "x": -400, "z": 78 },
+    { "id": "p_relay_3", "x": -396, "z": -72 },
+    { "id": "p_relay_4", "x": -382, "z": 44 },
+    { "id": "p_relay_5", "x": -368, "z": -138 },
+    { "id": "p_relay_6", "x": -358, "z": 152 }
   ],
   "enemyRelaySlots": [
-    {
-      "id": "e_relay_1",
-      "x": 412,
-      "z": 0
-    },
-    {
-      "id": "e_relay_2",
-      "x": 400,
-      "z": 82
-    },
-    {
-      "id": "e_relay_3",
-      "x": 392,
-      "z": -68
-    }
+    { "id": "e_relay_1", "x": 412, "z": 0 },
+    { "id": "e_relay_2", "x": 400, "z": 82 },
+    { "id": "e_relay_3", "x": 392, "z": -68 }
   ],
-  "playerStart": {
-    "x": -404,
-    "z": 14
-  },
-  "enemyStart": {
-    "x": 402,
-    "z": -12
-  },
+  "playerStart": { "x": -404, "z": 14 },
+  "enemyStart": { "x": 402, "z": -12 },
   "enemyCamps": [
     {
       "id": "camp_alpha",
-      "origin": {
-        "x": 95,
-        "z": 88
-      },
+      "origin": { "x": 95, "z": 88 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 480,
       "roster": [
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": 6,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": -5,
-            "z": 5
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 0,
-            "z": -6
-          }
-        }
+        { "sizeClass": "Swarm", "offset": { "x": 6, "z": 0 } },
+        { "sizeClass": "Swarm", "offset": { "x": -5, "z": 5 } },
+        { "sizeClass": "Line", "offset": { "x": 0, "z": -6 } }
       ]
     },
     {
       "id": "camp_beta",
-      "origin": {
-        "x": 118,
-        "z": -72
-      },
+      "origin": { "x": 118, "z": -72 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 480,
       "roster": [
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 5,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": -5,
-            "z": 4
-          }
-        },
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": 0,
-            "z": -6
-          }
-        }
+        { "sizeClass": "Line", "offset": { "x": 5, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -5, "z": 4 } },
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": -6 } }
       ]
     },
     {
       "id": "camp_gamma",
-      "origin": {
-        "x": 188,
-        "z": 28
-      },
+      "origin": { "x": 188, "z": 28 },
       "aggroRadius": 26,
       "wakeRadius": 52,
       "coreMaxHp": 520,
       "roster": [
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": 5,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": -6,
-            "z": 5
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": 7,
-            "z": -5
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": 0,
-            "z": 7
-          }
-        }
+        { "sizeClass": "Heavy", "offset": { "x": 5, "z": 0 } },
+        { "sizeClass": "Line", "offset": { "x": -6, "z": 5 } },
+        { "sizeClass": "Swarm", "offset": { "x": 7, "z": -5 } },
+        { "sizeClass": "Swarm", "offset": { "x": 0, "z": 7 } }
       ]
     },
     {
       "id": "camp_delta",
-      "origin": {
-        "x": 248,
-        "z": 92
-      },
+      "origin": { "x": 248, "z": 92 },
       "aggroRadius": 28,
       "wakeRadius": 56,
       "coreMaxHp": 560,
       "roster": [
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": 0,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": -6,
-            "z": 5
-          }
-        },
-        {
-          "sizeClass": "Titan",
-          "offset": {
-            "x": 6,
-            "z": -6
-          }
-        }
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": 0 } },
+        { "sizeClass": "Heavy", "offset": { "x": -6, "z": 5 } },
+        { "sizeClass": "Titan", "offset": { "x": 6, "z": -6 } }
       ]
     }
   ],
-  "difficulty": {
-    "enemyHpMult": 1,
-    "enemyDmgMult": 1
-  },
+  "difficulty": { "enemyHpMult": 1, "enemyDmgMult": 1 },
   "decor": []
 }

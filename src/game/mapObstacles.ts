@@ -1,4 +1,5 @@
 import { MAP_DECOR_BLOCK_BOX_XZ } from "./constants";
+import { clampPlaneArena } from "./arenaFootprint";
 import type { MapData, MapDecorDef, Vec2 } from "./types";
 import { clampWorldArena, isSphereWorld } from "./surface";
 
@@ -36,6 +37,21 @@ function collectFromDecor(decor: MapDecorDef[] | undefined): { discs: DiscObs[];
       discs.push({ cx: d.x, cz: d.z, r: d.radius });
     } else if (d.kind === "torus") {
       discs.push({ cx: d.x, cz: d.z, r: d.radius + d.tube });
+    } else if (d.kind === "water_basin") {
+      const rx = d.radiusX * MAP_DECOR_BLOCK_BOX_XZ;
+      const rz = d.radiusZ * MAP_DECOR_BLOCK_BOX_XZ;
+      discs.push({ cx: d.x, cz: d.z, r: Math.max(rx, rz) });
+    } else if (d.kind === "bridge") {
+      const th = ((((d.rotYDeg ?? 0) * Math.PI) / 180) as number);
+      const c = Math.cos(th);
+      const s = Math.sin(th);
+      const xz = MAP_DECOR_BLOCK_BOX_XZ;
+      const hx = (d.width * xz) * 0.5;
+      const hz = (d.span * xz) * 0.5;
+      boxes.push({ cx: d.x, cz: d.z, hx, hz, c, s });
+    } else if (d.kind === "foliage") {
+      /** Authoring-only blocking groves; matches renderer footprint (`d.radius` in world XZ). */
+      discs.push({ cx: d.x, cz: d.z, r: d.radius });
     }
   }
   return { discs, boxes };
@@ -241,18 +257,22 @@ function firstBlockingFootprint(
 function clampWorld(map: MapData, p: Vec2): Vec2 {
   if (isSphereWorld(map)) return clampWorldArena(map, p);
   const h = map.world.halfExtents;
-  return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
+  const q = clampPlaneArena(map, p);
+  return { x: Math.max(-h, Math.min(h, q.x)), z: Math.max(-h, Math.min(h, q.z)) };
 }
+
+/** Samples around disc / box hull so narrow gaps between props still get a usable detour. */
+const DISC_DETOUR_RING_STEPS = 16;
 
 function detourCandidates(o: MapObstacleFootprint, pad: number): Vec2[] {
   if (o.kind === "disc") {
     const r = o.r + pad;
-    return [
-      { x: o.cx + r, z: o.cz },
-      { x: o.cx - r, z: o.cz },
-      { x: o.cx, z: o.cz + r },
-      { x: o.cx, z: o.cz - r },
-    ];
+    const out: Vec2[] = [];
+    for (let i = 0; i < DISC_DETOUR_RING_STEPS; i++) {
+      const a = (i / DISC_DETOUR_RING_STEPS) * Math.PI * 2;
+      out.push({ x: o.cx + Math.cos(a) * r, z: o.cz + Math.sin(a) * r });
+    }
+    return out;
   }
   const hx = o.hx + pad;
   const hz = o.hz + pad;
@@ -262,7 +282,13 @@ function detourCandidates(o: MapObstacleFootprint, pad: number): Vec2[] {
     { lx: -hx, lz: hz },
     { lx: -hx, lz: -hz },
   ];
-  return corners.map((c) => worldFromLocal(o, c.lx, c.lz));
+  const edges = [
+    { lx: hx, lz: 0 },
+    { lx: -hx, lz: 0 },
+    { lx: 0, lz: hz },
+    { lx: 0, lz: -hz },
+  ];
+  return [...corners, ...edges].map((c) => worldFromLocal(o, c.lx, c.lz));
 }
 
 /**

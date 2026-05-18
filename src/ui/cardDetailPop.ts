@@ -157,7 +157,7 @@ function escapeAttr(s: string): string {
 
 function authoredCardImageHtml(catalogId: string, url: string): string {
   const name = getCatalogEntry(catalogId)?.name ?? catalogId;
-  return `<div class="card-detail-pop-fit card-detail-pop-fit--art"><div class="card-detail-pop-card-frame"><img class="card-detail-pop-card-img" src="${escapeAttr(url)}" alt="${escapeAttr(name)} full card" draggable="false" />${cardArtOverlayHtml(catalogId)}</div></div>`;
+  return `<div class="card-detail-pop-fit card-detail-pop-fit--art"><div class="card-detail-pop-card-frame card-art-stack"><img class="card-detail-pop-card-img" src="${escapeAttr(url)}" alt="${escapeAttr(name)} full card" draggable="false" />${cardArtOverlayHtml(catalogId)}</div></div>`;
 }
 
 function generatedCardHtml(catalogId: string): string {

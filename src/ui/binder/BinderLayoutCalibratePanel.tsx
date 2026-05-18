@@ -120,7 +120,7 @@ export function BinderLayoutCalibratePanel({
   return (
     <div className="binder-layout-calibrate" role="region" aria-label="Binder layout calibration">
       <div className="binder-layout-calibrate__head">
-        <div className="binder-layout-calibrate__title">Room layout (codex + Vibe portal)</div>
+        <div className="binder-layout-calibrate__title">Room layout (codex + Quick Match portal)</div>
         {onClose ? (
           <button type="button" className="binder-layout-calibrate__close" aria-label="Close layout panel" onClick={onClose}>
             ×
@@ -143,7 +143,7 @@ export function BinderLayoutCalibratePanel({
       </div>
 
       <div className="binder-layout-calibrate__section">
-        <strong>Vibe portal (NEXT GAME)</strong>
+        <strong>Quick Match portal</strong>
         <NumRow label="x" value={v.x} min={-3} max={4} step={0.02} onChange={(x) => pushPortal({ x })} />
         <NumRow label="y" value={v.y} min={-1} max={2.5} step={0.02} onChange={(y) => pushPortal({ y })} />
         <NumRow label="z" value={v.z} min={-5} max={2} step={0.02} onChange={(z) => pushPortal({ z })} />

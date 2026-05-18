@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { cardArtOverlayHtml, containCardArtRect } from "./cardArtOverlay";
+import { type CardArtContainRect, cardArtOverlayHtml, containCardArtRect } from "./cardArtOverlay";
 import overlayLayoutsJson from "./cardArtOverlayLayouts.json";
 
 function memoryLocalStorage(): Storage {
@@ -81,6 +81,18 @@ describe("containCardArtRect", () => {
   it("falls back to the normalized doctrine card aspect for invalid intrinsic sizes", () => {
     const r = containCardArtRect(0, 0, 300, 300, 0, 0);
     expect(r).toEqual({ x: 50, y: 0, w: 200, h: 300 });
+  });
+
+  it("table: overlay letterbox rects for common frame + intrinsic sizes", () => {
+    const cases: Array<{ bw: number; bh: number; iw: number; ih: number; exp: CardArtContainRect }> = [
+      { bw: 400, bh: 600, iw: 400, ih: 600, exp: { x: 0, y: 0, w: 400, h: 600 } },
+      { bw: 400, bh: 600, iw: 512, ih: 512, exp: { x: 0, y: 100, w: 400, h: 400 } },
+      { bw: 200, bh: 300, iw: 100, ih: 150, exp: { x: 0, y: 0, w: 200, h: 300 } },
+      { bw: 300, bh: 300, iw: 100, ih: 150, exp: { x: 50, y: 0, w: 200, h: 300 } },
+    ];
+    for (const { bw, bh, iw, ih, exp } of cases) {
+      expect(containCardArtRect(0, 0, bw, bh, iw, ih), `${bw}×${bh} box, ${iw}×${ih} art`).toEqual(exp);
+    }
   });
 });
 

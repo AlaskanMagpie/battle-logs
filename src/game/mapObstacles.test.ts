@@ -70,4 +70,33 @@ describe("mapObstacles", () => {
       cur = wp;
     }
   });
+
+  it("treats blocking foliage as a disc for overlap and path legs", () => {
+    const m: MapData = {
+      version: 2,
+      world: { halfExtents: 100, groundY: 0 },
+      tapSlots: [],
+      playerRelaySlots: [],
+      enemyRelaySlots: [],
+      playerStart: { x: 0, z: 0 },
+      enemyCamps: [],
+      decor: [
+        {
+          kind: "foliage",
+          x: 0,
+          z: 0,
+          radius: 6,
+          style: "tree",
+          blocksMovement: true,
+        },
+      ],
+    };
+    expect(circleOverlapsMapObstacles(m, { x: 0, z: 0 }, 1)).toBe(true);
+    const path = planChainedPathAroundMapObstacles(m, { x: -25, z: 0 }, { x: 25, z: 0 }, 1.2);
+    let cur = { x: -25, z: 0 };
+    for (const wp of path) {
+      expect(segmentHitsMapObstacles(m, cur, wp, 1.2)).toBe(false);
+      cur = wp;
+    }
+  });
 });

@@ -36,6 +36,9 @@ import {
   setOverlayFieldVisibilityForCard,
 } from "../ui/cardArtOverlay";
 import { getCardArtUrl, resetCardArtManifestCache } from "../ui/cardArtManifest";
+import { resetCardPreviewDataUrlCache } from "../ui/cardGlbPreview";
+import { disposeBinderTextureCache } from "../ui/binder/binderCardTexture";
+import { syncCardArtOverlayContainFit } from "../ui/cardGlbPreview";
 
 const SESSION_KEY = "battleLogs.assetLab.overlayKey";
 const FLEX_STORAGE_KEY = "battleLogs.assetLab.portFlex";
@@ -250,8 +253,19 @@ function mountCardPreview(catalogId: string, imageLabBust?: number): void {
     const esc = (s: string) =>
       s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     cardFrame.innerHTML = url
-      ? `<img alt="" draggable="false" src="${esc(url)}" />${cardArtOverlayHtml(catalogId)}`
+      ? `<img class="tcg-card-preview-img" alt="" draggable="false" src="${esc(url)}" />${cardArtOverlayHtml(catalogId)}`
       : `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:.7;padding:8px;text-align:center;">No card art — overlay preview only</div>${cardArtOverlayHtml(catalogId)}`;
+    const img = cardFrame.querySelector<HTMLImageElement>("img.tcg-card-preview-img");
+    const runFit = (): void => {
+      syncCardArtOverlayContainFit(cardFrame);
+    };
+    if (img) {
+      img.onload = runFit;
+      if (img.complete) runFit();
+      else runFit();
+    } else {
+      runFit();
+    }
     refreshCardArtOverlayUi();
   })();
 }
@@ -533,6 +547,8 @@ async function handleCardArtFileDrop(
     const msg = await res.text();
     if (!res.ok) throw new Error(msg || `HTTP ${res.status}`);
     resetCardArtManifestCache();
+    resetCardPreviewDataUrlCache();
+    disposeBinderTextureCache();
     mountCardPreview(catalogId, Date.now());
     hint.innerHTML = `<span class="al-ok">Saved</span> <code>public/assets/cards/${catalogId}.${ext}</code> — preview refreshed.`;
     window.setTimeout(() => {

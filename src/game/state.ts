@@ -20,13 +20,14 @@ import {
   KEEP_SWARM_PERIOD_SEC,
   PLAYER_STARTING_FLUX,
   TAP_ANCHOR_MAX_HP,
-  TAP_NODES_PER_SIDE,
+  TERRITORY_LINK_MAX_GAP,
   TERRITORY_RADIUS,
   TICK_HZ,
   GLOBAL_POP_CAP,
   GLOBAL_POP_CAP_MAX,
   ATTACK_RANGE_CLOSE_MAX,
   ATTACK_RANGE_MEDIUM_MAX,
+  COMBAT_PROJECTILE_CAP,
 } from "./constants";
 import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
 import { TRAILER_HERO_MODE, trailerHeroModeStartingFlux } from "../dev/heroMode";
@@ -49,7 +50,9 @@ import type {
   Vec2,
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
+import { inConnectedTerritory } from "./territoryRegion";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
+import { clampPlaneArenaPadded } from "./arenaFootprint";
 import { prepareMatchMapForRuntime, scatterArenaTapSlots } from "./mapArenaLayout";
 import { structureObstacleFootprints } from "./structureObstacles";
 
@@ -99,6 +102,25 @@ export interface CombatHitMark {
   splashPz?: number;
 }
 
+/** Delayed unit-vs-unit hit (long-range artillery arcs over decor; sim ignores decor for acquisition). */
+export type CombatProjectileKind = "artillery";
+
+export interface CombatProjectile {
+  id: number;
+  spawnTick: number;
+  impactTick: number;
+  attackerId: number;
+  defenderId: number;
+  kind: CombatProjectileKind;
+  /** Strike positions at fire time (world XZ) for renderer parabolic arc. */
+  fromX: number;
+  fromZ: number;
+  toX: number;
+  toZ: number;
+  /** Breath splash radius when present (same semantics as `UnitRuntime.aoeRadius`). */
+  aoeRadius?: number;
+}
+
 /** Wizard melee burst palette (both heroes). */
 export type HeroStrikeFxVariant =
   | "player_vs_unit"
@@ -135,6 +157,8 @@ export interface CastFxEvent {
   reach?: number;
   width?: number;
   visualSeed?: number;
+  /** When set with `kind === "lightning"`, renderer uses multi-prong summon strike. */
+  summonStrike?: boolean;
 }
 
 /** Arcane strike / rival strike FX: impact at `target`, optional bolt from `from`. */
@@ -152,6 +176,14 @@ export function pushFx(s: GameState, evt: Omit<CastFxEvent, "tick"> & { tick?: n
   const tick = evt.tick ?? s.tick;
   if (s.fxQueue.length >= FX_QUEUE_CAP) s.fxQueue.shift();
   s.fxQueue.push({ ...evt, tick } as CastFxEvent);
+}
+
+/** Enqueue delayed combat projectile; evicts oldest when over cap. */
+export function pushCombatProjectile(s: GameState, p: Omit<CombatProjectile, "id">): void {
+  while (s.combatProjectiles.length >= COMBAT_PROJECTILE_CAP) {
+    s.combatProjectiles.shift();
+  }
+  s.combatProjectiles.push({ ...p, id: s.nextId.projectile++ });
 }
 
 export function emitHeroStrikeFx(
@@ -414,6 +446,28 @@ export function recordDamageDealtBy(s: GameState, attackerTeam: TeamId, amount: 
   else s.stats.damageDealtEnemy += amount;
 }
 
+/** One sample for the post-match damage graph (not part of replay checksum). */
+export interface MatchDamageTimelinePoint {
+  tick: number;
+  damageDealtPlayer: number;
+  damageDealtEnemy: number;
+}
+
+const MATCH_DAMAGE_TIMELINE_CAP = 256;
+
+/** Append a timeline point if cap allows and `tick` differs from the last sample. */
+export function recordMatchDamageTimelinePoint(s: GameState): void {
+  if (s.matchDamageTimeline.length >= MATCH_DAMAGE_TIMELINE_CAP) return;
+  const prev = s.matchDamageTimeline[s.matchDamageTimeline.length - 1];
+  const t = s.tick;
+  if (prev && prev.tick === t) return;
+  s.matchDamageTimeline.push({
+    tick: t,
+    damageDealtPlayer: s.stats.damageDealtPlayer,
+    damageDealtEnemy: s.stats.damageDealtEnemy,
+  });
+}
+
 /** Player Fortify (and similar): persistent ground zone that buffs allies and debuffs enemies. */
 export interface TacticsFieldZone {
   x: number;
@@ -448,7 +502,7 @@ export interface GameState {
   enemyRelays: EnemyRelayRuntime[];
   structures: StructureRuntime[];
   units: UnitRuntime[];
-  nextId: { structure: number; unit: number; formation: number };
+  nextId: { structure: number; unit: number; formation: number; projectile: number };
   doctrineSlotCatalogIds: (string | null)[];
   /** Remaining placements per doctrine slot (match start). */
   doctrineChargesRemaining: number[];
@@ -472,6 +526,8 @@ export interface GameState {
    * Not part of replay checksum.
    */
   combatHitMarks: CombatHitMark[];
+  /** Delayed unit-vs-unit artillery shots; renderer reads for parabolic VFX. Not replay checksum. */
+  combatProjectiles: CombatProjectile[];
   pendingPlacementCatalogId: string | null;
   /** Global stance for friendly units. Offense → seek/engage; Defense → rally to wizard. */
   armyStance: ArmyStance;
@@ -496,6 +552,11 @@ export interface GameState {
   rngState: number;
   /** Per-match counters for end-screen / telemetry. */
   stats: MatchStats;
+  /**
+   * Throttled cumulative damage samples for the end-screen graph (~1 Hz during play + terminal).
+   * Not part of replay checksum.
+   */
+  matchDamageTimeline: MatchDamageTimelinePoint[];
   /** Per camp id: remaining HP for optional scenario core (see `EnemyCampDef.coreMaxHp`). */
   enemyCampCoreHp: Record<string, number>;
   /** Pending cast / proc FX for the renderer (drained each frame). */
@@ -752,7 +813,6 @@ export function structureFacingYawRad(s: GameState, st: StructureRuntime): numbe
 
 /** Wizard spawn/respawn disk — offset from the Keep anchor toward the field so the GLB clears the HQ mesh. */
 export function heroStandPositionNearKeepAnchor(anchor: Vec2, map: MapData, team: "player" | "enemy"): Vec2 {
-  const h = map.world.halfExtents;
   const margin = 12;
   const fwd = HERO_SPAWN_FORWARD_FROM_KEEP;
   const side = team === "player" ? HERO_SPAWN_SIDE_FROM_KEEP : -HERO_SPAWN_SIDE_FROM_KEEP;
@@ -768,9 +828,7 @@ export function heroStandPositionNearKeepAnchor(anchor: Vec2, map: MapData, team
     dx = team === "player" ? fwd : -fwd;
     dz += team === "player" ? side * 0.5 : -side * 0.5;
   }
-  const x = Math.max(-h + margin, Math.min(h - margin, anchor.x + dx));
-  const z = Math.max(-h + margin, Math.min(h - margin, anchor.z + dz));
-  return { x, z };
+  return clampPlaneArenaPadded(map, { x: anchor.x + dx, z: anchor.z + dz }, margin);
 }
 
 function initDoctrineRuntime(_slots: (string | null)[]): { charges: number[]; cd: number[] } {
@@ -817,46 +875,6 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
 }
 
 /** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
-function pickReadableTapSlots(slots: TapSlotDef[], halfExtents: number): TapSlotDef[] {
-  const perSide = TAP_NODES_PER_SIDE;
-  if (slots.length <= perSide * 2) return slots;
-
-  const targets = [
-    { p: 0.24, z: 0 },
-    { p: 0.5, z: -0.42 },
-    { p: 0.5, z: 0.42 },
-    { p: 0.82, z: 0 },
-  ];
-  const pickSide = (sideSlots: TapSlotDef[], side: "player" | "enemy"): TapSlotDef[] => {
-    const picked: TapSlotDef[] = [];
-    const used = new Set<string>();
-    for (const target of targets.slice(0, perSide)) {
-      let best: TapSlotDef | null = null;
-      let bestScore = Infinity;
-      for (const slot of sideSlots) {
-        if (used.has(slot.id)) continue;
-        const p = side === "player" ? (slot.x + halfExtents) / halfExtents : (halfExtents - slot.x) / halfExtents;
-        const z = halfExtents > 0 ? slot.z / halfExtents : 0;
-        const score = Math.abs(p - target.p) * 1.8 + Math.abs(z - target.z);
-        if (score < bestScore) {
-          bestScore = score;
-          best = slot;
-        }
-      }
-      if (best) {
-        picked.push(best);
-        used.add(best.id);
-      }
-    }
-    return picked;
-  };
-
-  const player = slots.filter((s) => s.x < 0);
-  const enemy = slots.filter((s) => s.x >= 0);
-  if (player.length === 0 || enemy.length === 0) return slots.slice(0, perSide * 2);
-  return [...pickSide(player, "player"), ...pickSide(enemy, "enemy")];
-}
-
 function isAuthorBoundaryDecor(map: MapData, decor: NonNullable<MapData["decor"]>[number]): boolean {
   if (decor.kind !== "box" || !decor.blocksMovement) return false;
   const half = map.world.halfExtents;
@@ -936,7 +954,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
   const taps: TapRuntime[] =
     map.useAuthorTapSlots && map.tapSlots.length > 0
-      ? pickReadableTapSlots(map.tapSlots, map.world.halfExtents).map((ts) => ({
+      ? map.tapSlots.map((ts) => ({
           defId: ts.id,
           x: ts.x,
           z: ts.z,
@@ -1013,14 +1031,22 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
   resolveCircleAgainstMapObstacles(mapResolved, hero, HERO_MAP_OBSTACLE_RADIUS);
   resolveCircleAgainstMapObstacles(mapResolved, enemyHero, HERO_MAP_OBSTACLE_RADIUS);
 
-  const portalExit = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x + 13),
-    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z - 12)),
-  };
-  const portalReturn = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x - 11),
-    z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z + 11)),
-  };
+  const portalExit = clampPlaneArenaPadded(
+    mapResolved,
+    {
+      x: playerKeepAnchor.x + 13,
+      z: playerKeepAnchor.z - 12,
+    },
+    12,
+  );
+  const portalReturn = clampPlaneArenaPadded(
+    mapResolved,
+    {
+      x: playerKeepAnchor.x - 11,
+      z: playerKeepAnchor.z + 11,
+    },
+    12,
+  );
 
   const state: GameState = {
     map: mapResolved,
@@ -1034,7 +1060,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
     enemyRelays,
     structures: [],
     units: [],
-    nextId: { structure: 1, unit: 1, formation: 1 },
+    nextId: { structure: 1, unit: 1, formation: 1, projectile: 1 },
     doctrineSlotCatalogIds: slots,
     doctrineChargesRemaining: rt.charges,
     doctrineCooldownTicks: rt.cd,
@@ -1048,6 +1074,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
     teleportClickPending: false,
     heroTeleportCooldownTicks: 0,
     combatHitMarks: [],
+    combatProjectiles: [],
     pendingPlacementCatalogId: null,
     armyStance: "offense",
     formationPreset: "line",
@@ -1072,6 +1099,7 @@ export function createInitialState(mapInput: MapData, doctrineSlots?: (string | 
       damageDealtPlayer: 0,
       damageDealtEnemy: 0,
     },
+    matchDamageTimeline: [{ tick: 0, damageDealtPlayer: 0, damageDealtEnemy: 0 }],
     enemyCampCoreHp: {},
     fxQueue: [],
     globalPopCapBonus,
@@ -1205,34 +1233,14 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   return false;
 }
 
-/** Territory = union of `TERRITORY_RADIUS` around the live Keep and owned Mana anchors. */
+/** Territory = disks + optional corridors between the live Keep and owned Mana anchors (`territorySources`). */
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
-  const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
-  const keep = findKeep(s);
-  if (keep && gameDist2(s.map, pos, keep) <= r2) return true;
-  for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
-    if (gameDist2(s.map, pos, t) <= r2) return true;
-  }
-  return false;
+  return inConnectedTerritory(s.map, pos, territorySources(s), TERRITORY_RADIUS, TERRITORY_LINK_MAX_GAP);
 }
 
-/** Union of territory disks around enemy relays, enemy-claimed taps, and completed enemy structures. */
+/** Enemy territory: disks + corridors between relays, enemy taps, and completed enemy structures. */
 export function inEnemyTerritory(s: GameState, pos: Vec2): boolean {
-  const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
-  for (const er of s.enemyRelays) {
-    if (er.hp <= 0) continue;
-    if (gameDist2(s.map, pos, er) <= r2) return true;
-  }
-  for (const t of s.taps) {
-    if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-    if (gameDist2(s.map, pos, t) <= r2) return true;
-  }
-  for (const st of s.structures) {
-    if (st.team !== "enemy" || !st.complete) continue;
-    if (gameDist2(s.map, pos, st) <= r2) return true;
-  }
-  return false;
+  return inConnectedTerritory(s.map, pos, enemyTerritorySources(s), TERRITORY_RADIUS, TERRITORY_LINK_MAX_GAP);
 }
 
 export function enemyTerritorySources(s: GameState): Vec2[] {
@@ -1249,7 +1257,7 @@ export function enemyTerritorySources(s: GameState): Vec2[] {
   return out;
 }
 
-/** Current list of positions feeding the territory union (Keep + claimed taps). */
+/** Centers for connected territory: Keep plus claimed taps with live anchors. */
 export function territorySources(s: GameState): Vec2[] {
   const out: Vec2[] = [];
   const keep = findKeep(s);
@@ -1378,7 +1386,7 @@ export function doctrineCardPlayability(
     if (actingTeam === "player") {
       if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
       if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-        return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+        return blocked("territory", "Outside your territory — claim Mana nodes so the cyan linked zone reaches here.", "Need territory");
       }
     } else {
       if (!inEnemyTerritory(s, pos) && !nearEnemyInfra(s, pos)) {

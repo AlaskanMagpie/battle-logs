@@ -1,4 +1,5 @@
 import { UNIT_FORMATION_SPACING } from "../../constants";
+import { clampPlaneArenaPadded } from "../../arenaFootprint";
 import type { MapData, UnitFormationKind, UnitSizeClass, Vec2 } from "../../types";
 import { isSphereWorld } from "../../surface";
 import { unitSeparationRadiusXZ } from "./helpers";
@@ -94,14 +95,6 @@ function basis(units: FormationLayoutUnit[], spec: FormationLayoutSpec): {
   return { cx, cz, lx, lz, bx, bz, len };
 }
 
-function clampToMapPlane(p: Vec2, halfExtents: number): Vec2 {
-  const pad = 2;
-  return {
-    x: clamp(p.x, -halfExtents + pad, halfExtents - pad),
-    z: clamp(p.z, -halfExtents + pad, halfExtents - pad),
-  };
-}
-
 /** Radial bound in pole tangent chart (matches spherical arena clamp). */
 function clampToMapSphere(p: Vec2, halfExtents: number): Vec2 {
   const pad = 2;
@@ -114,6 +107,7 @@ function clampToMapSphere(p: Vec2, halfExtents: number): Vec2 {
 
 export function computeFormationSlots(map: MapData, units: FormationLayoutUnit[], spec: FormationLayoutSpec): FormationSlot[] {
   const halfExtents = map.world.halfExtents;
+  const pad = 2;
   if (units.length === 0) return [];
   const ordered = orderedUnits(units);
   const { cx, cz, lx, lz, bx, bz, len } = basis(ordered, spec);
@@ -154,7 +148,7 @@ export function computeFormationSlots(map: MapData, units: FormationLayoutUnit[]
       x: cx + lx * lateral + bx * back,
       z: cz + lz * lateral + bz * back,
     };
-    const p = isSphereWorld(map) ? clampToMapSphere(raw, halfExtents) : clampToMapPlane(raw, halfExtents);
+    const p = isSphereWorld(map) ? clampToMapSphere(raw, halfExtents) : clampPlaneArenaPadded(map, raw, pad);
     out.push({ id: u.id, x: p.x, z: p.z });
   }
 

@@ -39,7 +39,7 @@ describe("quickMatch doctrine resolution", () => {
     expect(resolved).toEqual(fillDoctrineSlotsWithDuplicatePicks(normalizeDoctrineSlotsForMatch([...QUICK_MATCH_DOCTRINE_SLOTS])));
   });
 
-  it("keeps a full binder-codex hand instead of replacing with preset", () => {
+  it("preserves a viable partial hand without duplicate-filling empty slots", () => {
     const hand: (string | null)[] = Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null);
     hand[0] = "watchtower";
     hand[1] = "bastion_keep";
@@ -51,10 +51,8 @@ describe("quickMatch doctrine resolution", () => {
     expect(resolved[1]).toBe("bastion_keep");
     expect(resolved[2]).toBe("verdant_citadel");
     expect(resolved[3]).toBe("firestorm");
-    expect(resolved.filter(Boolean)).toHaveLength(DOCTRINE_SLOT_COUNT);
-    expect(resolved[4]).toBe("watchtower");
-    expect(resolved[5]).toBe("bastion_keep");
-    expect(resolved[9]).toBe("bastion_keep");
+    expect(resolved.filter(Boolean)).toHaveLength(4);
+    expect(resolved.slice(4).every((x) => x == null)).toBe(true);
   });
 
   it("fillDoctrineSlotsWithDuplicatePicks cycles distinct picks in first-seen order", () => {

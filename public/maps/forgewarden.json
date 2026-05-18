@@ -16,561 +16,77 @@
     "sunHex": 16764003
   },
   "tapSlots": [
-    {
-      "id": "tap_fw_p_00",
-      "x": -142,
-      "z": -82
-    },
-    {
-      "id": "tap_fw_p_01",
-      "x": -142,
-      "z": -28
-    },
-    {
-      "id": "tap_fw_p_02",
-      "x": -142,
-      "z": 28
-    },
-    {
-      "id": "tap_fw_p_03",
-      "x": -142,
-      "z": 82
-    },
-    {
-      "id": "tap_fw_p_04",
-      "x": -112,
-      "z": -104
-    },
-    {
-      "id": "tap_fw_p_05",
-      "x": -112,
-      "z": -56
-    },
-    {
-      "id": "tap_fw_p_06",
-      "x": -112,
-      "z": 56
-    },
-    {
-      "id": "tap_fw_p_07",
-      "x": -112,
-      "z": 104
-    },
-    {
-      "id": "tap_fw_p_08",
-      "x": -82,
-      "z": -76
-    },
-    {
-      "id": "tap_fw_p_09",
-      "x": -82,
-      "z": 76
-    },
-    {
-      "id": "tap_fw_p_10",
-      "x": -48,
-      "z": -108
-    },
-    {
-      "id": "tap_fw_p_11",
-      "x": -48,
-      "z": -62
-    },
-    {
-      "id": "tap_fw_p_12",
-      "x": -48,
-      "z": -16
-    },
-    {
-      "id": "tap_fw_p_13",
-      "x": -48,
-      "z": 20
-    },
-    {
-      "id": "tap_fw_p_14",
-      "x": -48,
-      "z": 64
-    },
-    {
-      "id": "tap_fw_p_15",
-      "x": -48,
-      "z": 110
-    },
-    {
-      "id": "tap_fw_e_00",
-      "x": 142,
-      "z": -82
-    },
-    {
-      "id": "tap_fw_e_01",
-      "x": 142,
-      "z": -28
-    },
-    {
-      "id": "tap_fw_e_02",
-      "x": 142,
-      "z": 28
-    },
-    {
-      "id": "tap_fw_e_03",
-      "x": 142,
-      "z": 82
-    },
-    {
-      "id": "tap_fw_e_04",
-      "x": 112,
-      "z": -104
-    },
-    {
-      "id": "tap_fw_e_05",
-      "x": 112,
-      "z": -56
-    },
-    {
-      "id": "tap_fw_e_06",
-      "x": 112,
-      "z": 56
-    },
-    {
-      "id": "tap_fw_e_07",
-      "x": 112,
-      "z": 104
-    },
-    {
-      "id": "tap_fw_e_08",
-      "x": 82,
-      "z": -76
-    },
-    {
-      "id": "tap_fw_e_09",
-      "x": 82,
-      "z": 76
-    },
-    {
-      "id": "tap_fw_e_10",
-      "x": 48,
-      "z": -108
-    },
-    {
-      "id": "tap_fw_e_11",
-      "x": 48,
-      "z": -62
-    },
-    {
-      "id": "tap_fw_e_12",
-      "x": 48,
-      "z": -16
-    },
-    {
-      "id": "tap_fw_e_13",
-      "x": 48,
-      "z": 20
-    },
-    {
-      "id": "tap_fw_e_14",
-      "x": 48,
-      "z": 64
-    },
-    {
-      "id": "tap_fw_e_15",
-      "x": 48,
-      "z": 110
-    }
+    { "id": "tap_fw_p0", "x": -120, "z": 0, "role": "lane" },
+    { "id": "tap_fw_p1", "x": -100, "z": 64, "role": "flank" },
+    { "id": "tap_fw_p2", "x": -100, "z": -64, "role": "flank" },
+    { "id": "tap_fw_p3", "x": -72, "z": 44, "role": "contested" },
+    { "id": "tap_fw_p4", "x": -36, "z": -80, "role": "forward" },
+    { "id": "tap_fw_e0", "x": 120, "z": 0, "role": "lane" },
+    { "id": "tap_fw_e1", "x": 100, "z": 64, "role": "flank" },
+    { "id": "tap_fw_e2", "x": 100, "z": -64, "role": "flank" },
+    { "id": "tap_fw_e3", "x": 72, "z": 44, "role": "contested" },
+    { "id": "tap_fw_e4", "x": 36, "z": -80, "role": "forward" }
   ],
   "playerRelaySlots": [
-    {
-      "id": "p_relay_1",
-      "x": -158,
-      "z": 0
-    },
-    {
-      "id": "p_relay_2",
-      "x": -150,
-      "z": 58
-    },
-    {
-      "id": "p_relay_3",
-      "x": -152,
-      "z": -52
-    },
-    {
-      "id": "p_relay_4",
-      "x": -142,
-      "z": 28
-    }
+    { "id": "p_relay_1", "x": -158, "z": 0 },
+    { "id": "p_relay_2", "x": -150, "z": 58 },
+    { "id": "p_relay_3", "x": -152, "z": -52 },
+    { "id": "p_relay_4", "x": -142, "z": 28 }
   ],
   "enemyRelaySlots": [
-    {
-      "id": "e_relay_1",
-      "x": 158,
-      "z": 0
-    },
-    {
-      "id": "e_relay_2",
-      "x": 150,
-      "z": 56
-    }
+    { "id": "e_relay_1", "x": 158, "z": 0 },
+    { "id": "e_relay_2", "x": 150, "z": 56 }
   ],
-  "playerStart": {
-    "x": -154,
-    "z": 10
-  },
-  "enemyStart": {
-    "x": 152,
-    "z": -10
-  },
+  "playerStart": { "x": -154, "z": 10 },
+  "enemyStart": { "x": 152, "z": -10 },
   "enemyCamps": [
     {
       "id": "camp_slag",
-      "origin": {
-        "x": 58,
-        "z": 38
-      },
+      "origin": { "x": 60, "z": 40 },
       "aggroRadius": 20,
       "wakeRadius": 38,
       "coreMaxHp": 380,
       "roster": [
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": 4,
-            "z": 1
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": -3,
-            "z": 3
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 1,
-            "z": -4
-          }
-        }
+        { "sizeClass": "Swarm", "offset": { "x": 4, "z": 1 } },
+        { "sizeClass": "Swarm", "offset": { "x": -3, "z": 3 } },
+        { "sizeClass": "Line", "offset": { "x": 1, "z": -4 } }
       ]
     },
     {
       "id": "camp_crucible",
-      "origin": {
-        "x": 72,
-        "z": -32
-      },
+      "origin": { "x": 74, "z": -34 },
       "aggroRadius": 20,
       "wakeRadius": 38,
       "roster": [
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 3,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": -2,
-            "z": 3
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 0,
-            "z": -4
-          }
-        }
+        { "sizeClass": "Line", "offset": { "x": 3, "z": 0 } },
+        { "sizeClass": "Heavy", "offset": { "x": -2, "z": 3 } },
+        { "sizeClass": "Line", "offset": { "x": 0, "z": -4 } }
       ]
     },
     {
       "id": "camp_anvil",
-      "origin": {
-        "x": 108,
-        "z": 8
-      },
+      "origin": { "x": 108, "z": 8 },
       "aggroRadius": 20,
       "wakeRadius": 38,
       "roster": [
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": 3,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": -4,
-            "z": 2
-          }
-        },
-        {
-          "sizeClass": "Swarm",
-          "offset": {
-            "x": 4,
-            "z": -3
-          }
-        },
-        {
-          "sizeClass": "Line",
-          "offset": {
-            "x": 0,
-            "z": 4
-          }
-        }
+        { "sizeClass": "Heavy", "offset": { "x": 3, "z": 0 } },
+        { "sizeClass": "Swarm", "offset": { "x": -4, "z": 2 } },
+        { "sizeClass": "Swarm", "offset": { "x": 4, "z": -3 } },
+        { "sizeClass": "Line", "offset": { "x": 0, "z": 4 } }
       ]
     },
     {
       "id": "camp_stack",
-      "origin": {
-        "x": 128,
-        "z": 44
-      },
+      "origin": { "x": 128, "z": 46 },
       "aggroRadius": 20,
       "wakeRadius": 38,
       "roster": [
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": 0,
-            "z": 0
-          }
-        },
-        {
-          "sizeClass": "Heavy",
-          "offset": {
-            "x": -3,
-            "z": 3
-          }
-        },
-        {
-          "sizeClass": "Titan",
-          "offset": {
-            "x": 4,
-            "z": -4
-          }
-        }
+        { "sizeClass": "Heavy", "offset": { "x": 0, "z": 0 } },
+        { "sizeClass": "Heavy", "offset": { "x": -3, "z": 3 } },
+        { "sizeClass": "Titan", "offset": { "x": 4, "z": -4 } }
       ]
     }
   ],
-  "difficulty": {
-    "enemyHpMult": 1.05,
-    "enemyDmgMult": 1
-  },
-  "decor": [
-    {
-      "kind": "box",
-      "x": 0,
-      "z": 118,
-      "w": 248,
-      "h": 22,
-      "d": 13,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 2899532
-    },
-    {
-      "kind": "box",
-      "x": 0,
-      "z": -118,
-      "w": 248,
-      "h": 22,
-      "d": 13,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 2899532
-    },
-    {
-      "kind": "box",
-      "x": -74,
-      "z": 0,
-      "w": 12,
-      "h": 24,
-      "d": 50,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 3026478
-    },
-    {
-      "kind": "box",
-      "x": 74,
-      "z": 0,
-      "w": 12,
-      "h": 24,
-      "d": 50,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 3026478
-    },
-    {
-      "kind": "box",
-      "x": 0,
-      "z": 36,
-      "w": 48,
-      "h": 20,
-      "d": 11,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 2763306
-    },
-    {
-      "kind": "box",
-      "x": 0,
-      "z": -36,
-      "w": 48,
-      "h": 20,
-      "d": 11,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 2763306
-    },
-    {
-      "kind": "box",
-      "x": -24,
-      "z": -18,
-      "w": 14,
-      "h": 4.2,
-      "d": 9,
-      "rotYDeg": 22,
-      "color": 3616816
-    },
-    {
-      "kind": "box",
-      "x": 18,
-      "z": 14,
-      "w": 11,
-      "h": 3.4,
-      "d": 16,
-      "rotYDeg": -14,
-      "color": 3158064
-    },
-    {
-      "kind": "cylinder",
-      "x": 44,
-      "z": -8,
-      "radius": 3.2,
-      "h": 5.5,
-      "color": 4276545
-    },
-    {
-      "kind": "sphere",
-      "x": 32,
-      "z": 52,
-      "radius": 2.8,
-      "color": 5197614
-    },
-    {
-      "kind": "cone",
-      "x": 58,
-      "z": 62,
-      "radius": 2.2,
-      "h": 5,
-      "rotYDeg": 40,
-      "color": 6301960
-    },
-    {
-      "kind": "box",
-      "x": 0,
-      "z": 162.0,
-      "w": 312.0,
-      "h": 12,
-      "d": 8,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 5978666
-    },
-    {
-      "kind": "box",
-      "x": 0,
-      "z": -162.0,
-      "w": 312.0,
-      "h": 12,
-      "d": 8,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 5978666
-    },
-    {
-      "kind": "box",
-      "x": 162.0,
-      "z": 0,
-      "w": 8,
-      "h": 12,
-      "d": 312.0,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 5978666
-    },
-    {
-      "kind": "box",
-      "x": -162.0,
-      "z": 0,
-      "w": 8,
-      "h": 12,
-      "d": 312.0,
-      "rotYDeg": 0,
-      "blocksMovement": true,
-      "color": 5978666
-    },
-    {
-      "kind": "box",
-      "x": -57.12,
-      "z": 47.04,
-      "w": 28,
-      "h": 5.5,
-      "d": 16,
-      "rotYDeg": 22,
-      "color": 7096884
-    },
-    {
-      "kind": "box",
-      "x": 57.12,
-      "z": 47.04,
-      "w": 28,
-      "h": 5.5,
-      "d": 16,
-      "rotYDeg": -22,
-      "color": 7096884
-    },
-    {
-      "kind": "cylinder",
-      "x": -35.41,
-      "z": -36.96,
-      "radius": 6.2,
-      "h": 5.2,
-      "color": 7096884
-    },
-    {
-      "kind": "cylinder",
-      "x": 35.41,
-      "z": -36.96,
-      "radius": 6.2,
-      "h": 5.2,
-      "color": 7096884
-    },
-    {
-      "kind": "box",
-      "x": -12.57,
-      "z": 10.08,
-      "w": 18,
-      "h": 4.6,
-      "d": 12,
-      "rotYDeg": -14,
-      "color": 7096884
-    },
-    {
-      "kind": "box",
-      "x": 12.57,
-      "z": 10.08,
-      "w": 18,
-      "h": 4.6,
-      "d": 12,
-      "rotYDeg": 14,
-      "color": 7096884
-    }
-  ]
+  "difficulty": { "enemyHpMult": 1.05, "enemyDmgMult": 1 },
+  "decor": []
 }

@@ -2,6 +2,8 @@
  * Plastic “binder sleeve” panel (2D) — layout mirrors CardBinder reference.
  * Keep numeric layout aligned with `BINDER_CFG` + 3×3 grid in CardBinderEngine.ts.
  */
+import { TCG_FULL_CARD_H, TCG_FULL_CARD_W } from "../tcgCardPrint";
+
 const PANEL_TEX_W = 400;
 const PAGE_W = 2.1;
 const PAGE_H = 2.85;
@@ -140,10 +142,18 @@ export function composeCardIntoBinderSleeve(inner: HTMLCanvasElement | null): HT
   roundRectPath(ctx, b + 3, b + 3, W - b * 2 - 6, H - b * 2 - 6, 6.5);
   ctx.stroke();
 
-  const cardX = b + 6;
-  const cardY = b + 6;
-  const cardW = W - b * 2 - 12;
-  const cardH = H - b * 2 - 12;
+  const cardMargin = b + 6;
+  const maxW = W - cardMargin * 2;
+  const maxH = H - cardMargin * 2;
+  const targetAspect = TCG_FULL_CARD_W / TCG_FULL_CARD_H;
+  let cardW = maxW;
+  let cardH = cardW / targetAspect;
+  if (cardH > maxH) {
+    cardH = maxH;
+    cardW = cardH * targetAspect;
+  }
+  const cardX = cardMargin + (maxW - cardW) / 2;
+  const cardY = cardMargin + (maxH - cardH) / 2;
 
   if (inner) {
     drawImageContain(ctx, inner, cardX, cardY, cardW, cardH);

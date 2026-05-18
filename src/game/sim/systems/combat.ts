@@ -14,22 +14,29 @@ import {
   UNIT_AOE_SPLASH_DAMAGE_MULT,
   UNIT_LIFESTEAL_DAMAGE_FRAC,
   UNIT_TAP_ANCHOR_DAMAGE_MULT,
+  COMBAT_LOS_SEGMENT_AGENT_R,
+  COMBAT_ARTILLERY_FLIGHT_TICKS_MIN,
+  COMBAT_ARTILLERY_FLIGHT_TICKS_MAX,
+  COMBAT_ARTILLERY_FLIGHT_DIST_SCALE,
 } from "../../constants";
 import { enemyAttackSpeedScalar } from "../../difficulty";
 import {
   classifyAttackRangeBand,
   liveSquadCount,
+  pushCombatProjectile,
   recordDamageDealtBy,
   shatterTapAnchor,
   tacticsFieldIncomingDamageMult,
   tacticsFieldOutgoingDamageMult,
+  type CombatProjectile,
   type GameState,
   type StructureRuntime,
   type UnitRuntime,
 } from "../../state";
 import type { UnitSizeClass, Vec2 } from "../../types";
-import { dist2, gameDist2, TRAMPLE } from "./helpers";
-import { buildCombatUnitBuckets, nearestFoeInBuckets, unitsNearXZ } from "../unitSpatial";
+import { structureObstacleFootprints } from "../../structureObstacles";
+import { gameDist2, TRAMPLE } from "./helpers";
+import { buildCombatUnitBuckets, nearestFoeInBuckets, nearestFoeInBucketsWithLineOfSight, unitsNearXZ } from "../unitSpatial";
 
 const IMPULSE_MASS: Record<UnitSizeClass, number> = {
   Swarm: 0.85,
@@ -124,6 +131,49 @@ function applyUnitDamage(s: GameState, attacker: UnitRuntime, defender: UnitRunt
   return d;
 }
 
+function artilleryFlightTicks(dist: number): number {
+  const raw = Math.round(dist * COMBAT_ARTILLERY_FLIGHT_DIST_SCALE + COMBAT_ARTILLERY_FLIGHT_TICKS_MIN - 2);
+  return Math.max(COMBAT_ARTILLERY_FLIGHT_TICKS_MIN, Math.min(COMBAT_ARTILLERY_FLIGHT_TICKS_MAX, raw));
+}
+
+function resolveArtilleryImpact(
+  s: GameState,
+  p: CombatProjectile,
+  markMax: number,
+  markAttackers: Set<number>,
+  buckets: Map<string, UnitRuntime[]>,
+  cellSz: number,
+): void {
+  const u = s.units.find((x) => x.id === p.attackerId);
+  const v = s.units.find((x) => x.id === p.defenderId);
+  if (!u || !v || u.hp <= 0 || v.hp <= 0) return;
+  const foeTeam = u.team === "player" ? "enemy" : "player";
+  if (v.team !== foeTeam) return;
+  const rSlack = u.range * 1.35;
+  if (gameDist2(s.map, u, v) > rSlack * rSlack) return;
+
+  applyUnitDamage(s, u, v);
+  applyAttackImpulse(v, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
+  const aoeR = p.aoeRadius ?? u.aoeRadius;
+  if (aoeR && aoeR > 0) {
+    const r2 = aoeR * aoeR;
+    const near = unitsNearXZ(buckets, v.x, v.z, v, cellSz, aoeR);
+    for (const splash of near) {
+      if (splash.team !== foeTeam || splash.hp <= 0) continue;
+      if (gameDist2(s.map, v, splash) > r2) continue;
+      const spBase = physicalDamage(u, splash) * UNIT_AOE_SPLASH_DAMAGE_MULT;
+      const sp =
+        spBase *
+        tacticsFieldOutgoingDamageMult(s, u.team, u.x, u.z) *
+        tacticsFieldIncomingDamageMult(s, splash.team, splash.x, splash.z);
+      splash.hp -= sp;
+      recordDamageDealtBy(s, u.team, sp);
+      applyAttackImpulse(splash, v, SPELL_AOE_KNOCKBACK);
+    }
+  }
+  pushAttackMark(s, u, v, markMax, markAttackers);
+}
+
 const cell = COMBAT_SPATIAL_CELL;
 
 function combatMarkBudget(unitCount: number): number {
@@ -172,14 +222,57 @@ export function combat(s: GameState): void {
   const markAttackers = new Set<number>();
   const buckets = buildCombatUnitBuckets(s, cell);
   const markMax = combatMarkBudget(s.units.length);
+  const structureFootprints = structureObstacleFootprints(s);
+
+  const keptProjectiles: CombatProjectile[] = [];
+  for (const p of s.combatProjectiles) {
+    if (p.impactTick < s.tick) continue;
+    if (p.impactTick > s.tick) {
+      keptProjectiles.push(p);
+      continue;
+    }
+    if (p.kind === "artillery") resolveArtilleryImpact(s, p, markMax, markAttackers, buckets, cell);
+  }
+  s.combatProjectiles = keptProjectiles;
 
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     const foeTeam = u.team === "player" ? "enemy" : "player";
-    const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell, s.map);
+    const band = classifyAttackRangeBand(u.range);
+    const best =
+      band === "long"
+        ? nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell, s.map)
+        : nearestFoeInBucketsWithLineOfSight(
+            u,
+            foeTeam,
+            u.range * u.range,
+            buckets,
+            s.map,
+            COMBAT_LOS_SEGMENT_AGENT_R,
+            structureFootprints,
+            cell,
+          );
     if (!best) continue;
+    if (band === "long") {
+      const dist = Math.sqrt(gameDist2(s.map, u, best));
+      const flight = artilleryFlightTicks(dist);
+      pushCombatProjectile(s, {
+        spawnTick: s.tick,
+        impactTick: s.tick + flight,
+        attackerId: u.id,
+        defenderId: best.id,
+        kind: "artillery",
+        fromX: u.x,
+        fromZ: u.z,
+        toX: best.x,
+        toZ: best.z,
+        aoeRadius: u.aoeRadius && u.aoeRadius > 0 ? u.aoeRadius : undefined,
+      });
+      commitAttack(s, u);
+      continue;
+    }
     applyUnitDamage(s, u, best);
     applyAttackImpulse(best, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
     if (u.aoeRadius && u.aoeRadius > 0) {

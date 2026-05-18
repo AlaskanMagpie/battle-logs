@@ -4,6 +4,7 @@ import {
   BINDER_CELLS_PER_SHEET,
   BINDER_CODEX_SPREAD_COUNT,
 } from "../ui/binder/CardBinderEngine";
+import { BINDER_GRID_CATALOG_IDS, validBinderCodexIds } from "./binderCodexIds";
 import {
   KEEP_ID,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
@@ -28,6 +29,11 @@ describe("Doctrine binder catalog", () => {
     expect(BINDER_CELLS_PER_PAGE).toBe(9);
     expect(BINDER_CELLS_PER_SHEET).toBe(18);
     expect(BINDER_CODEX_SPREAD_COUNT * BINDER_CELLS_PER_SHEET).toBe(90);
+  });
+
+  it("does not list Wizard Keep in the prematch binder codex (base asset, not a draft card)", () => {
+    expect(BINDER_GRID_CATALOG_IDS.includes(KEEP_ID)).toBe(false);
+    expect(validBinderCodexIds.has(KEEP_ID)).toBe(false);
   });
 
   it("only exposes the home base and current full-art structure cards", () => {

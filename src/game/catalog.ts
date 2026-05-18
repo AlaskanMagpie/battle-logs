@@ -31,6 +31,7 @@ import {
   PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
   PRODUCED_UNIT_TOWN_LEVY,
+  PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN,
 } from "./constants";
 import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
@@ -138,6 +139,7 @@ const STRUCTURE_DATA: StructureCatalogEntry[] = [
     chargeCooldownSeconds: 27,
     unitAoeRadius: 3.5,
     producedFlavor: "Living fortress that awakens into a titan and anchors the grove.",
+    producedUnitId: PRODUCED_UNIT_VERDANT_GATEKEEPER_TITAN,
   },
   {
     id: "emberroot_bastion",

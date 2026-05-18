@@ -8,8 +8,8 @@ import {
   TICK_HZ,
 } from "../game/constants";
 import type { PlayerIntent } from "../game/intents";
-import { readLocalLeaderboard, scoreMatchResult } from "../game/leaderboard";
-import { formatMatchDurationFromTicks, simSecondsFromMatchTick } from "../game/matchDisplay";
+import { readLocalLeaderboard, liveTallyPoints, scoreMatchResult } from "../game/leaderboard";
+import { formatMatchClockCountdownFromTick, formatMatchDurationFromTicks, simSecondsFromMatchTick } from "../game/matchDisplay";
 import {
   claimedTapCount,
   doctrineCardPlayability,
@@ -17,6 +17,7 @@ import {
   heroTeleportCooldownSeconds,
   totalPlayerPop,
   type GameState,
+  type MatchDamageTimelinePoint,
 } from "../game/state";
 import { isStructureEntry } from "../game/types";
 import {
@@ -29,6 +30,39 @@ import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
 const HAND_ACTIVE_LIFT = 5;
 const FIRST_MATCH_STRATEGY_TOAST_KEY = "signalWarsFirstMatchStrategyToastShown.v1";
+
+function endgameDamageTimelineSvg(
+  points: readonly MatchDamageTimelinePoint[],
+  durationTick: number,
+): string {
+  if (points.length < 2) return "";
+  const lastT = points[points.length - 1]!.tick;
+  const tMax = Math.max(1, durationTick, lastT);
+  const maxD = Math.max(
+    1,
+    ...points.map((p) => Math.max(p.damageDealtPlayer, p.damageDealtEnemy)),
+  );
+  const w = 300;
+  const h = 92;
+  const padL = 6;
+  const padR = 6;
+  const padT = 6;
+  const padB = 16;
+  const iw = w - padL - padR;
+  const ih = h - padT - padB;
+  const xAt = (t: number): number => padL + (t / tMax) * iw;
+  const yAt = (d: number): number => padT + ih - (d / maxD) * ih;
+  const poly = (key: "damageDealtPlayer" | "damageDealtEnemy", stroke: string): string => {
+    const pts = points.map((p) => `${xAt(p.tick).toFixed(1)},${yAt(p[key]).toFixed(1)}`).join(" ");
+    return `<polyline fill="none" stroke="${stroke}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round" points="${pts}" />`;
+  };
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" height="100%" aria-hidden="true">
+  <rect x="0.5" y="0.5" width="${w - 1}" height="${h - 1}" rx="7" fill="rgba(4,12,24,.58)" stroke="rgba(174,146,92,.38)" />
+  ${poly("damageDealtPlayer", "#5fd49a")}
+  ${poly("damageDealtEnemy", "#ff8f88")}
+  <text x="${padL}" y="${h - 4}" font-size="9" fill="rgba(230,220,200,.82)" font-family="system-ui,Segoe UI,sans-serif">You (green) vs foe (rose) — cumulative damage</text>
+</svg>`;
+}
 
 function escapeHudHtml(s: string): string {
   return s
@@ -523,22 +557,29 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           class="hud-chrome__phase"
           role="status"
           aria-live="polite"
-          aria-label="Match time remaining and total damage dealt in this match"
+          aria-label="Match clock, damage tiebreaker, and live score tally"
         >
           <div class="hud-phase__row hud-phase__row--time">
-            <span class="hud-phase__kicker">Time Left</span>
-            <span class="hud-phase-timer" id="hud-phase-timer">0s</span>
+            <span class="hud-phase__kicker">Match clock <span class="hud-phase__hint">(sim)</span></span>
+            <span class="hud-phase-timer" id="hud-phase-timer">3:00</span>
           </div>
           <div
             class="hud-phase__row hud-phase__row--damage"
             title="Total hit-point damage in this match: first number = damage you dealt to the enemy, second = damage they dealt to you. Used to break ties if the match timer runs out."
           >
-            <span class="hud-phase__kicker">Damage You / Foe</span>
+            <span class="hud-phase__kicker">Damage you / foe <span class="hud-phase__hint">(tiebreaker)</span></span>
             <span class="hud-phase-stats">
               <span class="hud-phase-stats-you" id="hud-phase-dmg-p">0</span>
               <span class="hud-phase-stats-sep" aria-hidden="true">/</span>
               <span class="hud-phase-stats-en" id="hud-phase-dmg-e">0</span>
             </span>
+          </div>
+          <div
+            class="hud-phase__row hud-phase__row--tally"
+            title="Running value of the post-match score formula without the win/draw bonus: kills, nodes, buildings built, your losses, and one point off per full sim minute."
+          >
+            <span class="hud-phase__kicker">Live tally <span class="hud-phase__hint">(score formula)</span></span>
+            <span class="hud-phase-tally" id="hud-phase-tally">0</span>
           </div>
         </div>
         <div class="hud-territory-key" role="group" aria-label="Territory map key">
@@ -586,15 +627,16 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
           <div class="hud-endgame-stat hud-endgame-stat--commands-cast"><dt>Commands cast</dt><dd id="hud-endgame-stat-commands-cast">—</dd></div>
           <div class="hud-endgame-stat hud-endgame-stat--salvage-recovered"><dt>Salvage recovered</dt><dd id="hud-endgame-stat-salvage-recovered">—</dd></div>
         </dl>
+        <div class="hud-endgame-chart-wrap" id="hud-endgame-chart-wrap" hidden>
+          <p class="hud-endgame-chart-label">Damage over match time</p>
+          <div class="hud-endgame-chart" id="hud-endgame-chart"></div>
+        </div>
         <div class="hud-endgame-actions">
           <button class="hud-endgame-action hud-endgame-action--rematch" type="button" id="btn-rematch">Rematch</button>
           <button class="hud-endgame-action hud-endgame-action--edit" type="button" id="btn-edit-doctrine">Edit doctrine</button>
         </div>
         <div class="hud-endgame-strategy-toast" id="hud-endgame-strategy-toast" role="status" hidden>
           <p>Try other cards and mix up your strategies.</p>
-          <button class="hud-endgame-strategy-toast__edit" type="button" id="btn-endgame-strategy-edit">
-            Edit doctrine
-          </button>
           <button class="hud-endgame-strategy-toast__dismiss" type="button" id="btn-endgame-strategy-dismiss" aria-label="Dismiss strategy tip">
             x
           </button>
@@ -619,16 +661,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
       </div>
     </footer>
-    <a
-      class="hud-vibejam-link"
-      href="https://vibej.am/"
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Vibe Jam 2026"
-      aria-label="Vibe Jam 2026"
-    >
-      🎮 Vibe Jam 2026
-    </a>
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
@@ -693,10 +725,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   root.querySelector("#btn-edit-doctrine")?.addEventListener("click", () => {
     onEditDoctrine?.();
   });
-  root.querySelector("#btn-endgame-strategy-edit")?.addEventListener("click", () => {
-    rememberFirstMatchStrategyToast();
-    onEditDoctrine?.();
-  });
   root.querySelector("#btn-endgame-strategy-dismiss")?.addEventListener("click", () => {
     rememberFirstMatchStrategyToast();
     const toast = root.querySelector<HTMLElement>("#hud-endgame-strategy-toast");
@@ -713,6 +741,7 @@ export function updateHud(state: GameState): void {
   const phaseTimer = document.querySelector("#hud-phase-timer");
   const phaseDmgP = document.querySelector("#hud-phase-dmg-p");
   const phaseDmgE = document.querySelector("#hud-phase-dmg-e");
+  const phaseTally = document.querySelector("#hud-phase-tally");
   const msg = document.querySelector("#msg");
   const captain = document.querySelector("#btn-captain");
   const nodeIncome = playerManaIncomePerSec(state);
@@ -734,7 +763,7 @@ export function updateHud(state: GameState): void {
     nodes.textContent = String(claimed);
     const parent = nodes.closest<HTMLElement>(".hud-stat");
     const activeYielding = state.taps.filter((t) => t.active && t.ownerTeam === "player" && t.yieldRemaining > 0 && (t.anchorHp ?? 0) > 0).length;
-    if (parent) parent.title = `${claimed} Mana nodes claimed; ${activeYielding} still producing. Claim neutral rings to expand the cyan build area.`;
+    if (parent) parent.title = `${claimed} Mana nodes claimed; ${activeYielding} still producing. Claim neutral rings so the cyan linked build zone reaches forward.`;
   }
   if (mode) {
     if (state.pendingPlacementCatalogId) {
@@ -752,14 +781,14 @@ export function updateHud(state: GameState): void {
             : "Idle";
     }
   }
-  if (phaseTimer && phaseDmgP && phaseDmgE) {
+  if (phaseTimer && phaseDmgP && phaseDmgE && phaseTally) {
     const dp = Math.round(state.stats.damageDealtPlayer);
     const de = Math.round(state.stats.damageDealtEnemy);
     phaseDmgP.textContent = String(dp);
     phaseDmgE.textContent = String(de);
+    phaseTally.textContent = String(liveTallyPoints(state));
     if (state.phase === "playing") {
-      const sec = Math.max(0, (MATCH_DURATION_TICKS - state.tick) / TICK_HZ);
-      phaseTimer.textContent = `${sec.toFixed(0)}s`;
+      phaseTimer.textContent = formatMatchClockCountdownFromTick(state.tick);
     } else {
       phaseTimer.textContent = state.phase;
     }
@@ -902,6 +931,10 @@ export function updateHud(state: GameState): void {
         endReason.textContent = "";
         endReason.hidden = true;
       }
+      const chartWrapClear = document.querySelector<HTMLElement>("#hud-endgame-chart-wrap");
+      const chartClear = document.querySelector<HTMLElement>("#hud-endgame-chart");
+      if (chartWrapClear) chartWrapClear.hidden = true;
+      if (chartClear) chartClear.innerHTML = "";
     } else {
       document.getElementById("signal-wars-onboarding")?.remove();
       const won = state.phase === "win";
@@ -925,7 +958,7 @@ export function updateHud(state: GameState): void {
       setEndStat(
         "time",
         formatMatchDurationFromTicks(state.tick),
-        `Match time in the simulation: ${timeSec < 10 ? timeSec.toFixed(2) : timeSec.toFixed(1)} s of game at ${TICK_HZ} ticks per second (same as the match clock). This is not wall-clock time if the game tab was throttled or paused.`,
+        `Match time in the simulation: ${timeSec < 10 ? timeSec.toFixed(2) : timeSec.toFixed(1)} s of game at ${TICK_HZ} ticks per second (same as the match clock). Catch-up after a long pause is capped so this clock stays close to wall time; heavy tab throttling can still skew it slightly.`,
       );
       setEndStat(
         "score",
@@ -960,6 +993,18 @@ export function updateHud(state: GameState): void {
         if (shouldShow && !alreadyShowing) {
           endStrategyToast.dataset.shownForCurrentEnd = "1";
           rememberFirstMatchStrategyToast();
+        }
+      }
+      const endChartWrap = document.querySelector<HTMLElement>("#hud-endgame-chart-wrap");
+      const endChart = document.querySelector<HTMLElement>("#hud-endgame-chart");
+      if (endChartWrap && endChart) {
+        const pts = state.matchDamageTimeline;
+        if (pts.length >= 2) {
+          endChartWrap.hidden = false;
+          endChart.innerHTML = endgameDamageTimelineSvg(pts, MATCH_DURATION_TICKS);
+        } else {
+          endChartWrap.hidden = true;
+          endChart.innerHTML = "";
         }
       }
     }

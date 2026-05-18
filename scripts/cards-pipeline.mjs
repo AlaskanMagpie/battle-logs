@@ -4,12 +4,15 @@
  * 2. If the manifest's card map **or** any card image bytes changed since last run, bump
  *    CARD_ART_CACHE_BUSTER in src/ui/cardArtManifest.ts so browsers and binder textures
  *    refetch fresh art (skip with CARDS_PIPELINE_NO_BUMP=1).
- * 3. Run binder-related unit tests.
+ * 3. Warn if raster card files under public/assets/cards are not exactly 400×600 (2:3, matches
+ *    tcgCardPrint). CARDS_PIPELINE_STRICT_CARD_SIZE=1 fails the run; CARDS_PIPELINE_SKIP_PRINT_SIZE=1 skips.
+ * 4. Run binder-related unit tests.
  */
 import { execSync } from "child_process";
 import { createHash } from "crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { dirname, extname, join } from "path";
+import sharp from "sharp";
 import { fileURLToPath } from "url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -61,6 +64,41 @@ function bumpCardArtCacheBuster() {
   console.log(`[cards-pipeline] bumped CARD_ART_CACHE_BUSTER → ${next}`);
 }
 
+/** Must match `TCG_FULL_CARD_W` / `TCG_FULL_CARD_H` in `src/ui/tcgCardPrint.ts` (2:3 print doctrine cards). */
+const PRINT_CARD_W = 400;
+const PRINT_CARD_H = 600;
+const PRINT_DIM_EXTS = new Set([".png", ".webp", ".jpg", ".jpeg"]);
+
+async function verifyDoctrineCardPrintDimensions() {
+  if (process.env.CARDS_PIPELINE_SKIP_PRINT_SIZE === "1" || process.env.CARDS_PIPELINE_SKIP_PRINT_SIZE === "true") {
+    console.log("[cards-pipeline] skipping print size check (CARDS_PIPELINE_SKIP_PRINT_SIZE)");
+    return;
+  }
+  const dir = join(ROOT, "public", "assets", "cards");
+  if (!existsSync(dir)) return;
+  const bad = [];
+  for (const f of readdirSync(dir)) {
+    const ext = extname(f).toLowerCase();
+    if (!PRINT_DIM_EXTS.has(ext)) continue;
+    const p = join(dir, f);
+    try {
+      const m = await sharp(p).metadata();
+      if (m.width !== PRINT_CARD_W || m.height !== PRINT_CARD_H) {
+        bad.push(`${f} (${m.width ?? "?"}×${m.height ?? "?"})`);
+      }
+    } catch (e) {
+      bad.push(`${f} (${e?.message ?? "metadata failed"})`);
+    }
+  }
+  if (!bad.length) return;
+  const msg = `[cards-pipeline] doctrine card rasters should be ${PRINT_CARD_W}×${PRINT_CARD_H} (2:3, matches src/ui/tcgCardPrint.ts). Off:\n  - ${bad.join("\n  - ")}\nSet CARDS_PIPELINE_STRICT_CARD_SIZE=1 to fail the run, or CARDS_PIPELINE_SKIP_PRINT_SIZE=1 to silence.`;
+  if (process.env.CARDS_PIPELINE_STRICT_CARD_SIZE === "1") {
+    console.error(msg);
+    process.exit(1);
+  }
+  console.warn(msg);
+}
+
 const beforeManifestFp = cardsFingerprint();
 const beforeAssetFp = cardArtFilesFingerprint();
 
@@ -87,6 +125,8 @@ if (!skipBump && (manifestChanged || assetsChangedSinceLastRun)) {
   writeFileSync(LAST_ASSET_FP, `${afterAssetFp}\n`, "utf8");
   console.log("[cards-pipeline] wrote scripts/last-card-assets.sha256 (baseline for future byte-level bumps)");
 }
+
+await verifyDoctrineCardPrintDimensions();
 
 execSync("npx vitest run src/game/doctrineBinderCatalog.test.ts", { stdio: "inherit", cwd: ROOT });
 

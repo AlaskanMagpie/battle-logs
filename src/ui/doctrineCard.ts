@@ -676,7 +676,7 @@ export function tcgCardSlotHtml(catalogId: string, variant: TcgCardVariant, deck
 
   return `<div class="tcg tcg--compact tcg--slot-preview doctrine-card-compact ${kindClass} ${previewTypeClass} tcg--${variant}" data-catalog-id="${escapeHtml(catalogId)}" style="--tcg-h:${hue}">
   <div class="slot-card-shell" title="${escapeHtml(title)}">
-    <div class="slot-card-art">
+    <div class="slot-card-art card-art-stack">
       ${art}
       ${overlay}
     </div>

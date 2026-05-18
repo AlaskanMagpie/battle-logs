@@ -7,6 +7,7 @@ import { getControlProfile, type ControlProfile } from "../controlProfile";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
+  KEEP_ID,
   PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
   PRODUCED_UNIT_CHRONO_SENTINELS,
@@ -16,10 +17,20 @@ import {
   MAP_DECOR_BLOCK_BOX_XZ,
   TERRITORY_RADIUS,
   TICK_HZ,
+  COMBAT_LOS_SEGMENT_AGENT_R,
 } from "../game/constants";
+import {
+  inConnectedTerritory,
+  territoryInteriorDepth,
+  territoryLinksForSources,
+  type TerritoryLink,
+} from "../game/territoryRegion";
 import { claimChannelSecForTap } from "../game/sim/systems/homeDistance";
 import { gameDist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
+import { segmentHitsMapObstacles } from "../game/mapObstacles";
+import { structureObstacleFootprints } from "../game/structureObstacles";
 import {
+  chordDist2SqWorld,
   clampWorldArena,
   greatCircleTangentToward,
   isSphereWorld,
@@ -50,6 +61,7 @@ import type {
   CommandEffect,
   MapData,
   MapGroundPreset,
+  MapTerrainKind,
   SignalType,
   StructureCatalogEntry,
   UnitSizeClass,
@@ -58,19 +70,25 @@ import type {
 import { isStructureEntry } from "../game/types";
 import {
   clearFx,
+  createArtilleryTravelerGroup,
   createFxHost,
+  disposeArtilleryTravelerGroup,
   spawnCastFx,
   spawnCombatHitMark,
   spawnSiegeTell,
   stepFx,
+  syncArtilleryTravelerPose,
   type FxHost,
 } from "./fx";
+import { MatchSfx } from "../audio/matchSfx";
 import { buildConeBasis, resolveFxFoot, tangentForwardWorld } from "./fxGrounding";
 import {
   glbBoxExtentRef,
+  prefetchMatchCriticalGlbs,
   requestGlbForHero,
   requestGlbForTower,
   requestGlbForUnit,
+  setStructureTowerAttachListener,
   type GlbExtentBasis,
 } from "./glbPool";
 import {
@@ -103,8 +121,15 @@ const STRUCTURE_FOOT_BURY_DEFAULT = 5.65;
 
 /** Raycast bury along −surface normal; lower for tower GLBs that already sink in `glbPool` (Cragrunner / Emberroot). */
 function structureFootBuryWorldForCatalog(catalogId: string | null | undefined): number {
-  if (catalogId === "watchtower" || catalogId === "emberroot_bastion") return 3.05;
+  if (catalogId === KEEP_ID) return 0.85;
+  if (catalogId === "watchtower" || catalogId === "emberroot_bastion" || catalogId === "bastion_keep") {
+    return 3.05;
+  }
   return STRUCTURE_FOOT_BURY_DEFAULT;
+}
+
+function structureGlbAttached(g: THREE.Group): boolean {
+  return !!(g.userData as Record<string, unknown>)["glbRoot"];
 }
 
 function structureFootAnalyticYLiftForCatalog(catalogId: string | null | undefined): number {
@@ -112,6 +137,71 @@ function structureFootAnalyticYLiftForCatalog(catalogId: string | null | undefin
 }
 /** Sphere: analytic ray seed inset inside smooth R so downward casts still hit the rendered shell first. */
 const STRUCTURE_SPHERE_GROUNDING_SEED_INSET = 0.55;
+
+/** Line-strip segments for one stadium (capsule) outline in XZ at `lineY`. */
+function appendTerritoryStadiumOutlinePositions(
+  positions: number[],
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+  rCap: number,
+  lineY: number,
+  capSegs: number,
+  edgeSegs: number,
+): void {
+  const ux = bx - ax;
+  const uz = bz - az;
+  const len0 = Math.hypot(ux, uz);
+  if (len0 < 1e-5) return;
+  const uxn = ux / len0;
+  const uzn = uz / len0;
+  const px = -uzn;
+  const pz = uxn;
+  const push = (x0: number, z0: number, x1: number, z1: number): void => {
+    positions.push(x0, lineY, z0, x1, lineY, z1);
+  };
+  const axT = ax + px * rCap;
+  const azT = az + pz * rCap;
+  const bxT = bx + px * rCap;
+  const bzT = bz + pz * rCap;
+  const axB = ax - px * rCap;
+  const azB = az - pz * rCap;
+  const bxB = bx - px * rCap;
+  const bzB = bz - pz * rCap;
+  for (let i = 0; i < edgeSegs; i++) {
+    const t0 = i / edgeSegs;
+    const t1 = (i + 1) / edgeSegs;
+    push(axT + (bxT - axT) * t0, azT + (bzT - azT) * t0, axT + (bxT - axT) * t1, azT + (bzT - azT) * t1);
+  }
+  for (let i = 0; i < capSegs; i++) {
+    const t0 = (i / capSegs) * Math.PI;
+    const t1 = ((i + 1) / capSegs) * Math.PI;
+    const ang0 = Math.PI / 2 - t0;
+    const ang1 = Math.PI / 2 - t1;
+    const x0 = bx + rCap * (Math.cos(ang0) * px + Math.sin(ang0) * uxn);
+    const z0 = bz + rCap * (Math.cos(ang0) * pz + Math.sin(ang0) * uzn);
+    const x1 = bx + rCap * (Math.cos(ang1) * px + Math.sin(ang1) * uxn);
+    const z1 = bz + rCap * (Math.cos(ang1) * pz + Math.sin(ang1) * uzn);
+    push(x0, z0, x1, z1);
+  }
+  for (let i = 0; i < edgeSegs; i++) {
+    const t0 = i / edgeSegs;
+    const t1 = (i + 1) / edgeSegs;
+    push(bxB + (axB - bxB) * t0, bzB + (azB - bzB) * t0, bxB + (axB - bxB) * t1, bzB + (azB - bzB) * t1);
+  }
+  for (let i = 0; i < capSegs; i++) {
+    const t0 = (i / capSegs) * Math.PI;
+    const t1 = ((i + 1) / capSegs) * Math.PI;
+    const ang0 = -Math.PI / 2 + t0;
+    const ang1 = -Math.PI / 2 + t1;
+    const x0 = ax + rCap * (Math.cos(ang0) * -px + Math.sin(ang0) * -uxn);
+    const z0 = az + rCap * (Math.cos(ang0) * -pz + Math.sin(ang0) * -uzn);
+    const x1 = ax + rCap * (Math.cos(ang1) * -px + Math.sin(ang1) * -uxn);
+    const z1 = az + rCap * (Math.cos(ang1) * -pz + Math.sin(ang1) * -uzn);
+    push(x0, z0, x1, z1);
+  }
+}
 
 const QUAT_RING_FLAT_XZ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 const scratchSphereA = new THREE.Vector3();
@@ -500,8 +590,52 @@ function decorRockPalette(preset: MapGroundPreset): {
   }
 }
 
-function makeDecorRockMaterial(preset: MapGroundPreset, tag: string, shade = 1): THREE.ShaderMaterial {
-  const p = decorRockPalette(preset);
+function decorRockPaletteFor(preset: MapGroundPreset, terrainKind: MapTerrainKind | undefined): ReturnType<typeof decorRockPalette> {
+  const b = decorRockPalette(preset);
+  switch (terrainKind) {
+    case "ice":
+      return { dark: 0x152331, base: 0x4a6d82, light: 0xb8dce8, accent: 0x9fe8ff, scale: b.scale * 1.05, blockiness: 0.48 };
+    case "metal":
+      return { dark: 0x1a1c22, base: 0x4a5058, light: 0x9aa4ad, accent: 0xc8b896, scale: b.scale * 0.95, blockiness: 0.88 };
+    case "basalt":
+      return { dark: 0x1a1816, base: 0x3a3532, light: 0x6a6058, accent: 0x8a7870, scale: b.scale * 1.08, blockiness: 0.62 };
+    case "ruins":
+      return { dark: 0x2a2218, base: 0x5a4a3a, light: 0x9a8870, accent: 0xc4a878, scale: b.scale, blockiness: 0.78 };
+    case "crystal":
+      return { dark: 0x1a2430, base: 0x4a5a6e, light: 0xa8c0d8, accent: 0x88d0ff, scale: b.scale * 1.1, blockiness: 0.42 };
+    case "lava":
+      return { dark: 0x220808, base: 0x5a2010, light: 0xa84828, accent: 0xff8030, scale: b.scale, blockiness: 0.55 };
+    case "timber":
+      return { dark: 0x2a1c12, base: 0x5a4030, light: 0x8a7058, accent: 0xa88858, scale: b.scale * 0.92, blockiness: 0.45 };
+    case "foliage":
+      return { dark: 0x1a2e14, base: 0x3d6b32, light: 0x6fa858, accent: 0xa8d878, scale: b.scale * 1.15, blockiness: 0.35 };
+    case "bridge":
+      return { dark: 0x2a1c12, base: 0x5a4030, light: 0x9a8068, accent: 0xc4a878, scale: b.scale * 0.88, blockiness: 0.5 };
+    default:
+      return b;
+  }
+}
+
+function makeWaterSurfaceMaterial(hex: number): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: hex,
+    transparent: true,
+    opacity: 0.9,
+    roughness: 0.12,
+    metalness: 0.04,
+    transmission: 0.42,
+    thickness: 0.55,
+    envMapIntensity: 0.8,
+  });
+}
+
+function makeDecorRockMaterial(
+  preset: MapGroundPreset,
+  tag: string,
+  shade = 1,
+  terrainKind?: MapTerrainKind,
+): THREE.ShaderMaterial {
+  const p = decorRockPaletteFor(preset, terrainKind);
   const seed = (hashTag(`${preset}:rock:${tag}`) % 997) / 997;
   const tint = (hex: number): THREE.Vector3 => {
     const c = new THREE.Color(hex).multiplyScalar(shade);
@@ -614,6 +748,121 @@ function matFor(color: number, roughness = 0.82, metalness = 0.08): THREE.MeshSt
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
 }
 
+function facetJitter(x: number, y: number, z: number, seed: number): number {
+  const n = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + seed * 19.19) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+function finalizeLowPolyGeometry(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = geometry.toNonIndexed();
+  out.computeVertexNormals();
+  return out;
+}
+
+function facetedBoxGeometry(w: number, h: number, d: number, seed = 1, chip = 0.08): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(w, h, d, 2, 2, 2);
+  const p = g.attributes.position as THREE.BufferAttribute;
+  const amp = Math.min(w, h, d) * chip;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i);
+    const y = p.getY(i);
+    const z = p.getZ(i);
+    const j = (facetJitter(x, y, z, seed) - 0.5) * amp;
+    p.setXYZ(i, x + Math.sign(x || 1) * j, y + Math.sign(y || 1) * j * 0.7, z + Math.sign(z || 1) * j);
+  }
+  return finalizeLowPolyGeometry(g);
+}
+
+function facetedFrustumGeometry(
+  radiusBottom: number,
+  radiusTop: number,
+  height: number,
+  sides = 7,
+  seed = 1,
+  ovalX = 1,
+  ovalZ = 1,
+): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const bottom: number[] = [];
+  const top: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    const wob = 0.86 + facetJitter(Math.cos(a), Math.sin(a), height, seed + i) * 0.26;
+    bottom.push(pos.length / 3);
+    pos.push(Math.cos(a) * radiusBottom * wob * ovalX, -height / 2, Math.sin(a) * radiusBottom * wob * ovalZ);
+    top.push(pos.length / 3);
+    pos.push(Math.cos(a) * radiusTop * (0.9 + wob * 0.12) * ovalX, height / 2, Math.sin(a) * radiusTop * (0.9 + wob * 0.12) * ovalZ);
+  }
+  const cb = pos.length / 3;
+  pos.push(0, -height / 2, 0);
+  const ct = pos.length / 3;
+  pos.push(0, height / 2, 0);
+  for (let i = 0; i < sides; i++) {
+    const n = (i + 1) % sides;
+    idx.push(bottom[i]!, bottom[n]!, top[n]!, bottom[i]!, top[n]!, top[i]!);
+    idx.push(cb, bottom[i]!, bottom[n]!);
+    idx.push(ct, top[n]!, top[i]!);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return finalizeLowPolyGeometry(g);
+}
+
+function facetedShardGeometry(radius: number, height: number, sides = 6, seed = 1): THREE.BufferGeometry {
+  const pos: number[] = [0, height / 2, 0, 0, -height / 2, 0];
+  const idx: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    const wob = 0.78 + facetJitter(Math.cos(a), height, Math.sin(a), seed + i) * 0.38;
+    pos.push(Math.cos(a) * radius * wob, 0, Math.sin(a) * radius * wob);
+  }
+  for (let i = 0; i < sides; i++) {
+    const a = 2 + i;
+    const b = 2 + ((i + 1) % sides);
+    idx.push(0, a, b, 1, b, a);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return finalizeLowPolyGeometry(g);
+}
+
+function facetedRingGeometry(radius: number, tube: number, sides = 18, seed = 1): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const idx: number[] = [];
+  const inner: number[] = [];
+  const outer: number[] = [];
+  const innerTop: number[] = [];
+  const outerTop: number[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    const wob = 0.92 + facetJitter(Math.cos(a), tube, Math.sin(a), seed + i) * 0.16;
+    const ri = Math.max(0.05, radius - tube * 0.5) * wob;
+    const ro = (radius + tube * 0.5) * wob;
+    inner.push(pos.length / 3);
+    pos.push(Math.cos(a) * ri, -tube * 0.28, Math.sin(a) * ri);
+    outer.push(pos.length / 3);
+    pos.push(Math.cos(a) * ro, -tube * 0.18, Math.sin(a) * ro);
+    innerTop.push(pos.length / 3);
+    pos.push(Math.cos(a) * ri, tube * 0.28, Math.sin(a) * ri);
+    outerTop.push(pos.length / 3);
+    pos.push(Math.cos(a) * ro, tube * 0.18, Math.sin(a) * ro);
+  }
+  for (let i = 0; i < sides; i++) {
+    const n = (i + 1) % sides;
+    idx.push(outer[i]!, outer[n]!, outerTop[n]!, outer[i]!, outerTop[n]!, outerTop[i]!);
+    idx.push(inner[n]!, inner[i]!, innerTop[i]!, inner[n]!, innerTop[i]!, innerTop[n]!);
+    idx.push(innerTop[i]!, outerTop[i]!, outerTop[n]!, innerTop[i]!, outerTop[n]!, innerTop[n]!);
+    idx.push(inner[n]!, outer[n]!, outer[i]!, inner[n]!, outer[i]!, inner[i]!);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  return finalizeLowPolyGeometry(g);
+}
+
 /** Token chunkiness on top of `unitMeshLinearSize` so classes read distinct at a glance. */
 function bipedBulkScale(size: UnitSizeClass): number {
   switch (size) {
@@ -648,35 +897,47 @@ function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, tea
   return basis.getHex();
 }
 
-/** Single merged fallback/LOD token: abstract game piece, not a mannequin. */
+/** Single merged fallback/LOD token: low-poly authored pawn, never a raw primitive. */
 function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferGeometry {
   const b = bipedBulkScale(size);
   const parts: THREE.BufferGeometry[] = [];
 
   const baseR = 0.18 * L * b;
   const baseH = 0.08 * L;
-  const base = new THREE.CylinderGeometry(baseR * 1.2, baseR * 1.38, baseH, 12);
+  const base = facetedFrustumGeometry(baseR * 1.42, baseR * 1.08, baseH, 9, L * 11);
   base.translate(0, baseH * 0.5, 0);
   parts.push(base);
 
-  const stemH = L * (size === "Swarm" ? 0.34 : size === "Line" ? 0.48 : size === "Heavy" ? 0.52 : 0.62);
+  const stemH = L * (size === "Swarm" ? 0.38 : size === "Line" ? 0.52 : size === "Heavy" ? 0.58 : 0.72);
   const stemR = baseR * (size === "Swarm" ? 0.52 : size === "Line" ? 0.66 : size === "Heavy" ? 0.86 : 1.02);
-  const stem = new THREE.CylinderGeometry(stemR * 0.7, stemR, stemH, size === "Swarm" ? 5 : 6);
+  const stem = facetedFrustumGeometry(stemR * 0.92, stemR * 0.54, stemH, size === "Swarm" ? 5 : 7, L * 17, 0.78, 1.08);
   stem.translate(0, baseH + stemH * 0.5, 0);
   parts.push(stem);
 
-  const capH = L * (size === "Titan" ? 0.28 : 0.2);
-  const cap = new THREE.ConeGeometry(stemR * (size === "Swarm" ? 1.0 : 1.16), capH, size === "Swarm" ? 5 : 6);
-  cap.translate(0, baseH + stemH + capH * 0.5, 0);
-  parts.push(cap);
+  const headH = L * (size === "Titan" ? 0.32 : 0.24);
+  const head = facetedShardGeometry(stemR * (size === "Swarm" ? 0.95 : 1.16), headH, size === "Swarm" ? 5 : 7, L * 23);
+  head.translate(0, baseH + stemH + headH * 0.5, L * 0.02);
+  parts.push(head);
+
+  const sash = facetedBoxGeometry(stemR * 1.9, baseH * 0.8, stemR * 0.18, L * 29, 0.12);
+  sash.translate(0, baseH + stemH * 0.42, stemR * 0.72);
+  sash.rotateZ(-0.36);
+  parts.push(sash);
 
   if (size === "Heavy" || size === "Titan") {
-    const shoulder = new THREE.BoxGeometry(stemR * 2.15, baseH * 1.35, stemR * 1.15);
+    const shoulder = facetedBoxGeometry(stemR * 2.35, baseH * 1.65, stemR * 1.25, L * 31, 0.14);
     shoulder.translate(0, baseH + stemH * 0.68, 0);
     parts.push(shoulder);
   }
 
-  return mergeGeometries(parts, false);
+  const weapon = facetedFrustumGeometry(stemR * 0.12, stemR * 0.08, L * (size === "Titan" ? 0.86 : 0.58), 5, L * 37);
+  weapon.rotateZ(-0.42);
+  weapon.translate(stemR * 1.4, baseH + stemH * 0.56, stemR * 0.28);
+  parts.push(weapon);
+
+  const merged = mergeGeometries(parts, false);
+  merged.computeVertexNormals();
+  return merged;
 }
 
 /** Builds a reusable CanvasTexture-backed Sprite for floating world-space labels.
@@ -803,7 +1064,7 @@ function addVanguardSilhouette(
 ): void {
   const baseH = h * 0.2;
   const base = new THREE.Mesh(
-    new THREE.BoxGeometry(w * 0.95, baseH, d * 0.95),
+    facetedBoxGeometry(w * 0.95, baseH, d * 0.95, w * 13, 0.11),
     matFor(hsl(color, -0.12).getHex()),
   );
   base.position.y = baseH / 2;
@@ -811,20 +1072,20 @@ function addVanguardSilhouette(
 
   const towerH = h * 0.55;
   const tower = new THREE.Mesh(
-    new THREE.CylinderGeometry(w * 0.22, w * 0.3, towerH, 8),
+    facetedFrustumGeometry(w * 0.3, w * 0.2, towerH, 8, w * 17),
     matFor(color),
   );
   tower.position.y = baseH + towerH / 2;
   root.add(tower);
 
   const coneH = h * 0.3;
-  const cone = new THREE.Mesh(new THREE.ConeGeometry(w * 0.22, coneH, 8), matFor(accent, 0.55, 0.35));
+  const cone = new THREE.Mesh(facetedShardGeometry(w * 0.22, coneH, 8, w * 19), matFor(accent, 0.55, 0.35));
   cone.position.y = baseH + towerH + coneH / 2;
   root.add(cone);
 
   for (const dir of [1, -1]) {
     const fin = new THREE.Mesh(
-      new THREE.BoxGeometry(w * 0.08, towerH * 0.7, d * 0.45),
+      facetedBoxGeometry(w * 0.08, towerH * 0.7, d * 0.45, w * (dir > 0 ? 23 : 29), 0.16),
       matFor(hsl(color, -0.08).getHex()),
     );
     fin.position.set(dir * w * 0.32, baseH + towerH * 0.55, 0);
@@ -838,13 +1099,13 @@ function addBastionSilhouette(
   color: number,
 ): void {
   const baseH = h * 0.55;
-  const base = new THREE.Mesh(new THREE.BoxGeometry(w, baseH, d), matFor(color));
+  const base = new THREE.Mesh(facetedBoxGeometry(w, baseH, d, w * 31, 0.1), matFor(color));
   base.position.y = baseH / 2;
   root.add(base);
 
   const topH = h * 0.35;
   const top = new THREE.Mesh(
-    new THREE.BoxGeometry(w * 0.7, topH, d * 0.7),
+    facetedBoxGeometry(w * 0.7, topH, d * 0.7, w * 37, 0.12),
     matFor(hsl(color, 0.06).getHex()),
   );
   top.position.y = baseH + topH / 2;
@@ -853,7 +1114,7 @@ function addBastionSilhouette(
   const crenel = w / 5;
   for (let i = 0; i < 4; i++) {
     const c = new THREE.Mesh(
-      new THREE.BoxGeometry(crenel * 0.7, h * 0.12, d * 0.15),
+      facetedBoxGeometry(crenel * 0.7, h * 0.12, d * 0.15, w * (41 + i), 0.14),
       matFor(hsl(color, -0.1).getHex()),
     );
     c.position.set(-w / 2 + crenel * (i + 0.5), baseH - 0.02, d * 0.42);
@@ -872,14 +1133,14 @@ function addReclaimSilhouette(
 ): void {
   const baseH = h * 0.35;
   const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(w * 0.48, w * 0.52, baseH, 10),
+    facetedFrustumGeometry(w * 0.52, w * 0.44, baseH, 10, w * 47),
     matFor(hsl(color, -0.1).getHex()),
   );
   base.position.y = baseH / 2;
   root.add(base);
 
   const bulbH = h * 0.4;
-  const bulb = new THREE.Mesh(new THREE.SphereGeometry(w * 0.38, 16, 12), matFor(color, 0.7, 0.02));
+  const bulb = new THREE.Mesh(facetedShardGeometry(w * 0.38, bulbH, 9, w * 53), matFor(color, 0.7, 0.02));
   bulb.position.y = baseH + bulbH / 2;
   bulb.scale.set(1, 0.9, 1);
   root.add(bulb);
@@ -887,14 +1148,14 @@ function addReclaimSilhouette(
   for (let i = 0; i < 4; i++) {
     const ang = (i / 4) * Math.PI * 2;
     const stalk = new THREE.Mesh(
-      new THREE.CylinderGeometry(w * 0.05, w * 0.08, h * 0.5, 6),
+      facetedFrustumGeometry(w * 0.08, w * 0.045, h * 0.5, 6, w * (59 + i)),
       matFor(hsl(color, 0.02).getHex()),
     );
     stalk.position.set(Math.cos(ang) * w * 0.32, baseH + h * 0.25, Math.sin(ang) * w * 0.32);
     stalk.rotation.z = Math.cos(ang) * 0.25;
     stalk.rotation.x = Math.sin(ang) * 0.25;
     root.add(stalk);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(w * 0.08, 8, 6), matFor(accent, 0.5, 0.3));
+    const tip = new THREE.Mesh(facetedShardGeometry(w * 0.08, w * 0.16, 6, w * (67 + i)), matFor(accent, 0.5, 0.3));
     tip.position.copy(stalk.position).setY(baseH + h * 0.5);
     root.add(tip);
   }
@@ -925,7 +1186,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   } else if (sCount.Vanguard && sCount.Bastion) {
     addBastionSilhouette(silo, { w: dims.w, h: dims.h * 0.6, d: dims.d }, color);
     const spire = new THREE.Mesh(
-      new THREE.ConeGeometry(dims.w * 0.18, dims.h * 0.45, 8),
+      facetedShardGeometry(dims.w * 0.18, dims.h * 0.45, 8, dims.w * 71),
       matFor(accent, 0.55, 0.3),
     );
     spire.position.y = dims.h * 0.78;
@@ -933,7 +1194,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   } else if (sCount.Reclaim && sCount.Bastion) {
     addBastionSilhouette(silo, { w: dims.w, h: dims.h * 0.6, d: dims.d }, color);
     const bulb = new THREE.Mesh(
-      new THREE.SphereGeometry(dims.w * 0.3, 12, 8),
+      facetedShardGeometry(dims.w * 0.3, dims.h * 0.28, 9, dims.w * 73),
       matFor(accent, 0.6, 0.2),
     );
     bulb.position.y = dims.h * 0.82;
@@ -941,7 +1202,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   } else if (sCount.Vanguard && sCount.Reclaim) {
     addReclaimSilhouette(silo, { w: dims.w * 0.8, h: dims.h * 0.55, d: dims.d * 0.8 }, color, accent);
     const spike = new THREE.Mesh(
-      new THREE.ConeGeometry(dims.w * 0.14, dims.h * 0.5, 8),
+      facetedShardGeometry(dims.w * 0.14, dims.h * 0.5, 8, dims.w * 79),
       matFor(signalColorHex("Vanguard"), 0.55, 0.25),
     );
     spike.position.y = dims.h * 0.72;
@@ -958,7 +1219,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   phMat.transparent = true;
   phMat.opacity = 0.04;
   const placeholder = new THREE.Mesh(
-    new THREE.BoxGeometry(dims.w * 0.55, dims.h * 0.52, dims.d * 0.55),
+    facetedBoxGeometry(dims.w * 0.55, dims.h * 0.52, dims.d * 0.55, dims.w * 83, 0.12),
     phMat,
   );
   placeholder.position.y = dims.h * 0.32;
@@ -969,7 +1230,7 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
 
   // Team plinth underneath for clarity.
   const plinth = new THREE.Mesh(
-    new THREE.CylinderGeometry(Math.max(dims.w, dims.d) * 0.65, Math.max(dims.w, dims.d) * 0.7, 0.18, 20),
+    facetedFrustumGeometry(Math.max(dims.w, dims.d) * 0.7, Math.max(dims.w, dims.d) * 0.65, 0.18, 16, dims.w * 89),
     new THREE.MeshStandardMaterial({
       color: team === "player" ? 0x2a5c8a : 0x8a2a2a,
       roughness: 0.9,
@@ -1094,37 +1355,37 @@ function buildCrowdUnitGeometry(size: UnitSizeClass): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
   const bodyH = L * (size === "Swarm" ? 0.55 : size === "Line" ? 0.72 : size === "Heavy" ? 0.82 : 1.05);
   const bodyR = L * b * (size === "Swarm" ? 0.13 : size === "Line" ? 0.16 : size === "Heavy" ? 0.2 : 0.25);
-  const foot = new THREE.CylinderGeometry(bodyR * 1.25, bodyR * 1.55, L * 0.075, 8);
+  const foot = facetedFrustumGeometry(bodyR * 1.55, bodyR * 1.16, L * 0.075, 8, L * 41);
   foot.translate(0, L * 0.037, 0);
   parts.push(foot);
 
-  const body = new THREE.CapsuleGeometry(bodyR, bodyH, 3, 8);
+  const body = facetedFrustumGeometry(bodyR * 0.88, bodyR * 0.66, bodyH, 7, L * 43, 0.78, 1.06);
   body.translate(0, L * 0.1 + bodyH * 0.5, 0);
   parts.push(body);
 
-  const head = new THREE.SphereGeometry(bodyR * 0.78, 8, 6);
+  const head = facetedShardGeometry(bodyR * 0.92, bodyR * 1.55, 6, L * 47);
   head.translate(0, L * 0.18 + bodyH + bodyR * 1.35, 0.02 * L);
   parts.push(head);
 
-  const shoulder = new THREE.BoxGeometry(bodyR * 2.35, bodyR * 0.38, bodyR * 0.72);
+  const shoulder = facetedBoxGeometry(bodyR * 2.35, bodyR * 0.38, bodyR * 0.72, L * 53, 0.12);
   shoulder.translate(0, L * 0.18 + bodyH * 0.73, 0);
   parts.push(shoulder);
 
   const weaponH = L * (size === "Titan" ? 1.16 : size === "Heavy" ? 0.98 : 0.78);
-  const weapon = new THREE.CylinderGeometry(bodyR * 0.12, bodyR * 0.14, weaponH, 5);
+  const weapon = facetedFrustumGeometry(bodyR * 0.14, bodyR * 0.1, weaponH, 5, L * 59);
   weapon.translate(bodyR * 1.35, L * 0.18 + weaponH * 0.53, bodyR * 0.18);
   weapon.rotateZ(size === "Swarm" ? -0.18 : -0.32);
   parts.push(weapon);
 
   if (size === "Line" || size === "Heavy" || size === "Titan") {
-    const blade = new THREE.ConeGeometry(bodyR * (size === "Titan" ? 0.42 : 0.34), bodyR * 1.15, 5);
+    const blade = facetedShardGeometry(bodyR * (size === "Titan" ? 0.42 : 0.34), bodyR * 1.15, 5, L * 61);
     blade.translate(bodyR * 1.58, L * 0.18 + weaponH * 1.06, bodyR * 0.18);
     blade.rotateZ(-0.32);
     parts.push(blade);
   }
 
   if (size === "Heavy" || size === "Titan") {
-    const backPlate = new THREE.BoxGeometry(bodyR * 1.55, bodyH * 0.68, bodyR * 0.18);
+    const backPlate = facetedBoxGeometry(bodyR * 1.55, bodyH * 0.68, bodyR * 0.18, L * 67, 0.1);
     backPlate.translate(0, L * 0.16 + bodyH * 0.54, -bodyR * 0.62);
     parts.push(backPlate);
   }
@@ -1251,8 +1512,11 @@ export class GameRenderer {
   private enemyTerritoryTexture: THREE.CanvasTexture | null = null;
   private territoryOutline: THREE.LineSegments | null = null;
   private enemyTerritoryOutline: THREE.LineSegments | null = null;
+  /** Passable low “curb” meshes along territory link corridors (player / enemy). */
+  private territoryLinkDecorPlayer: THREE.Group | null = null;
+  private territoryLinkDecorEnemy: THREE.Group | null = null;
   /** Bumps when only territory *visual* style changes (fill texture, opacities); not derived from sim sources. */
-  private static readonly TERRITORY_OVERLAY_STYLE = "v5";
+  private static readonly TERRITORY_OVERLAY_STYLE = "v6";
   private territoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private enemyTerritoryKey = `${GameRenderer.TERRITORY_OVERLAY_STYLE}|`;
   private heroGroup: THREE.Group | null = null;
@@ -1329,11 +1593,15 @@ export class GameRenderer {
   private readonly camGroundRight = new THREE.Vector3();
   private readonly fx: FxHost;
   private lastSiegeTick = -1;
+  /** Parabolic artillery visuals keyed by `CombatProjectile.id`. */
+  private readonly artilleryTravelerById = new Map<number, THREE.Group>();
+  private matchSfx: MatchSfx | null = null;
   private currentState: GameState | null = null;
   /** Loaded match equirect; disposed in `dispose()`. */
   private matchSkyboxTexture: THREE.Texture | null = null;
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
+  private needsPostGlbRender = false;
   private worldPlaneHalf = 0;
   private worldIsSphere = false;
   /** Includes terrain params so procedural shells rebuild when authoring changes. */
@@ -1421,22 +1689,34 @@ export class GameRenderer {
     const t = this.controls.target;
     const visualUnit = unit ? this.unitVisualPos.get(unit.id) : null;
     const visualHero = !unit && this.cameraFollowHero ? this.heroVisualPos : null;
-    const tanX = visualUnit?.x ?? visualHero?.x ?? followed.x;
-    const tanZ = visualUnit?.y ?? visualHero?.y ?? followed.z;
-    const pivotLift = unit ? Math.max(1.0, unitMeshLinearSize(unit.sizeClass) * 0.8) : CAMERA_HERO_PIVOT_Y;
+    let pivotX = visualUnit?.x ?? visualHero?.x ?? followed.x;
+    let pivotZ = visualUnit?.y ?? visualHero?.y ?? followed.z;
+    if (!unit && this.cameraFollowHero && !isSphereWorld(state.map)) {
+      const keep = findKeep(state);
+      if (keep) {
+        const kdx = keep.x - pivotX;
+        const kdz = keep.z - pivotZ;
+        if (kdx * kdx + kdz * kdz < 50 * 50) {
+          const w = 0.52;
+          pivotX = pivotX * (1 - w) + keep.x * w;
+          pivotZ = pivotZ * (1 - w) + keep.z * w;
+        }
+      }
+    }
+    const pivotLift = unit ? Math.max(1.0, unitMeshLinearSize(unit.sizeClass)) : CAMERA_HERO_PIVOT_Y;
     const alpha = 1 - Math.exp(-CAMERA_HERO_FOLLOW_LAMBDA * dt);
     let dx: number;
     let dy: number;
     let dz: number;
     if (isSphereWorld(state.map)) {
-      const f = worldFootXYZ(state.map, { x: tanX, z: tanZ }, pivotLift);
+      const f = worldFootXYZ(state.map, { x: pivotX, z: pivotZ }, pivotLift);
       dx = (f.x - t.x) * alpha;
       dy = (f.y - t.y) * alpha;
       dz = (f.z - t.z) * alpha;
     } else {
-      dx = (tanX - t.x) * alpha;
+      dx = (pivotX - t.x) * alpha;
       dy = (pivotLift - t.y) * alpha;
-      dz = (tanZ - t.z) * alpha;
+      dz = (pivotZ - t.z) * alpha;
     }
     if (dx * dx + dy * dy + dz * dz < 1e-14) return;
     t.x += dx;
@@ -1510,6 +1790,8 @@ export class GameRenderer {
     this.root.add(this.decor, this.markers, this.entities);
     this.scene.add(this.root);
 
+    prefetchMatchCriticalGlbs();
+
     if (MATCH_SKYBOX_ENABLED && controlProfile.mode !== "mobile") void this._loadMatchSkybox();
 
     this.fx = createFxHost(this.scene);
@@ -1556,11 +1838,52 @@ export class GameRenderer {
     } catch {
       this.groundingDebugEnabled = false;
     }
+
+    setStructureTowerAttachListener((parent) => {
+      if (this.rendererDisposed) return;
+      this.onStructureTowerGlbReady(parent as THREE.Group);
+    });
+  }
+
+  /** Tower GLBs decode off-thread; push textures + visibility on the next paint (F12 used to “fix” this). */
+  private onStructureTowerGlbReady(g: THREE.Group): void {
+    setStructureFallbackVisible(g, false);
+    const glb = g.userData["glbRoot"] as THREE.Object3D | undefined;
+    if (glb) {
+      glb.visible = true;
+      glb.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh || !mesh.material) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const mat of mats) {
+          mat.needsUpdate = true;
+          if ("map" in mat && mat.map) mat.map.needsUpdate = true;
+        }
+      });
+    }
+    this.needsPostGlbRender = true;
   }
 
   /** Drop all cast FX (lightning, rings, etc.) — call on rematch so bolts never linger. */
   clearCastFx(): void {
+    for (const [, g] of this.artilleryTravelerById) {
+      try {
+        this.fx.group.remove(g);
+      } catch {
+        /* ignore */
+      }
+      disposeArtilleryTravelerGroup(g);
+    }
+    this.artilleryTravelerById.clear();
     clearFx(this.fx);
+  }
+
+  attachMatchSfx(sfx: MatchSfx | null): void {
+    this.matchSfx = sfx;
+  }
+
+  resumeMatchAudioFromGesture(): void {
+    this.matchSfx?.resumeFromGesture();
   }
 
   getMatchSkyboxPlacement(): MatchSkyboxPlacement {
@@ -1585,6 +1908,7 @@ export class GameRenderer {
 
   dispose(): void {
     this.rendererDisposed = true;
+    setStructureTowerAttachListener(null);
     this.heroLocomotionPrev = { x: 0, z: 0, valid: false };
     this.enemyHeroLocomotionPrev = { x: 0, z: 0, valid: false };
     this.heroVisualPos = null;
@@ -1597,7 +1921,7 @@ export class GameRenderer {
     this.scene.backgroundRotation.set(0, 0, 0);
     this.scene.backgroundBlurriness = 0;
     this.scene.backgroundIntensity = 1;
-    clearFx(this.fx);
+    this.clearCastFx();
     this.controls.dispose();
     this.disposeTerritoryTeam("player");
     this.disposeTerritoryTeam("enemy");
@@ -1945,6 +2269,21 @@ export class GameRenderer {
     const targetY = CAMERA_HERO_PIVOT_Y;
     const back = Math.max(18, Math.min(34, half * 0.09));
     const height = Math.max(26, Math.min(46, half * 0.13));
+    const keep = findKeep(state);
+    if (keep) {
+      /** Behind the Wizard Keep, looking past it toward the hero and the fight (HQ stays in frame). */
+      const tgt = new THREE.Vector3(
+        h.x + dx * Math.min(72, half * 0.16),
+        targetY,
+        h.z + dz * Math.min(72, half * 0.16),
+      );
+      const pos = new THREE.Vector3(
+        keep.x - dx * back * 1.12,
+        targetY + height * 1.08,
+        keep.z - dz * back * 1.12,
+      );
+      return { pos, tgt };
+    }
     const tgt = new THREE.Vector3(h.x, targetY, h.z);
     const pos = new THREE.Vector3(h.x - dx * back, targetY + height, h.z - dz * back);
     return { pos, tgt };
@@ -2320,6 +2659,7 @@ export class GameRenderer {
     this.syncCoreOrbs(state);
     this.syncPortals(state);
     this.consumeCastEvents(state);
+    this.syncArtilleryTravelers(state);
     if (this.groundingDebugEnabled && typeof window !== "undefined") {
       this.refreshGroundingRaycastTargets();
       (window as unknown as { __battleLogsGrounding?: unknown }).__battleLogsGrounding = {
@@ -2364,6 +2704,15 @@ export class GameRenderer {
   private consumeCastEvents(state: GameState): void {
     const q = state.fxQueue;
     if (q.length > 0) {
+      const sfxCast = this.matchSfx
+        ? q.map((e) => ({
+            kind: e.kind,
+            strikeVariant: e.strikeVariant,
+            element: e.element,
+            secondaryElement: e.secondaryElement,
+            shape: e.shape,
+          }))
+        : null;
       for (const fxEvt of q) {
         const boltFrom =
           fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
@@ -2381,6 +2730,7 @@ export class GameRenderer {
           reach: fxEvt.reach,
           width: fxEvt.width,
           visualSeed: fxEvt.visualSeed,
+          summonStrike: fxEvt.summonStrike,
         });
         if (fxEvt.kind === "hero_strike") {
           this.heroLungeTimer = 0.32;
@@ -2391,18 +2741,53 @@ export class GameRenderer {
         }
       }
       q.length = 0;
+      if (sfxCast && this.matchSfx) this.matchSfx.playCastFxBatch(sfxCast);
     }
     const siege = state.lastSiegeHit;
     if (siege && siege.tick !== this.lastSiegeTick) {
       spawnSiegeTell(this.fx, { x: siege.x, z: siege.z });
       this.lastSiegeTick = siege.tick;
+      this.matchSfx?.playSiegeTell();
     }
     const marks = state.combatHitMarks;
     if (marks.length > 0) {
+      this.matchSfx?.playCombatHits(marks);
       for (const m of marks) {
         spawnCombatHitMark(this.fx, m);
       }
       marks.length = 0;
+    }
+  }
+
+  private syncArtilleryTravelers(state: GameState): void {
+    const foot = structureObstacleFootprints(state);
+    const seen = new Set<number>();
+    for (const p of state.combatProjectiles) {
+      seen.add(p.id);
+      let g = this.artilleryTravelerById.get(p.id);
+      if (!g) {
+        g = createArtilleryTravelerGroup(this.fx);
+        this.fx.group.add(g);
+        this.artilleryTravelerById.set(p.id, g);
+      }
+      const boost = segmentHitsMapObstacles(
+        state.map,
+        { x: p.fromX, z: p.fromZ },
+        { x: p.toX, z: p.toZ },
+        COMBAT_LOS_SEGMENT_AGENT_R,
+        foot,
+      );
+      syncArtilleryTravelerPose(this.fx, g, p, state.tick, boost);
+    }
+    for (const [id, g] of this.artilleryTravelerById) {
+      if (seen.has(id)) continue;
+      try {
+        this.fx.group.remove(g);
+      } catch {
+        /* ignore */
+      }
+      disposeArtilleryTravelerGroup(g);
+      this.artilleryTravelerById.delete(id);
     }
   }
 
@@ -3744,13 +4129,19 @@ export class GameRenderer {
         this.entities.add(g);
         this.structureMeshes.set(st.id, g);
         if (this.useGlb) {
-          setStructureFallbackVisible(g, false);
           const ph = g.userData["bodyMesh"] as THREE.Mesh | undefined;
           if (ph) void requestGlbForTower(st.catalogId, ph);
         }
       }
       const g = obj as THREE.Group;
-      if (this.useGlb) setStructureFallbackVisible(g, false);
+      const gUd = g.userData as Record<string, unknown>;
+      if (this.useGlb) {
+        const ph = gUd["bodyMesh"] as THREE.Mesh | undefined;
+        if (ph && !structureGlbAttached(g) && !gUd["glbPending"]) {
+          void requestGlbForTower(st.catalogId, ph);
+        }
+        setStructureFallbackVisible(g, !structureGlbAttached(g));
+      }
       const map = state.map;
       const stTan = { x: st.x, z: st.z };
       const analyticalLift = isSphereWorld(map) ? -STRUCTURE_SPHERE_GROUNDING_SEED_INSET : 0;
@@ -4318,9 +4709,10 @@ export class GameRenderer {
         mat.needsUpdate = true;
         return mat;
       };
-      const blockMat = (tag: string, shade = 1): THREE.ShaderMaterial => makeDecorRockMaterial(preset, tag, shade);
+      const blockMat = (tag: string, shade = 1, tk?: MapTerrainKind): THREE.ShaderMaterial =>
+        makeDecorRockMaterial(preset, tag, shade, tk);
       const accentMat: THREE.Material = d.blocksMovement
-        ? blockMat("block_accent", 1.08)
+        ? blockMat("block_accent", 1.08, d.terrainKind)
         : decorate(
             new THREE.MeshStandardMaterial({
               color: hsl(baseColor, 0.08),
@@ -4330,7 +4722,7 @@ export class GameRenderer {
             "detail_accent",
           );
       const shadowMat: THREE.Material = d.blocksMovement
-        ? blockMat("block_shadow", 0.72)
+        ? blockMat("block_shadow", 0.72, d.terrainKind)
         : decorate(
             new THREE.MeshStandardMaterial({
               color: hsl(baseColor, -0.16),
@@ -4369,9 +4761,9 @@ export class GameRenderer {
       if (d.kind === "box") {
         const xz = MAP_DECOR_BLOCK_BOX_XZ;
         mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(d.w * xz, d.h, d.d * xz),
+          facetedBoxGeometry(d.w * xz, d.h, d.d * xz, d.x * 3.1 + d.z * 5.7, d.blocksMovement ? 0.09 : 0.13),
           d.blocksMovement
-            ? blockMat("box_block")
+            ? blockMat("box_block", 1, d.terrainKind)
             : decorate(
                 new THREE.MeshStandardMaterial({
                   color: baseColor,
@@ -4383,16 +4775,19 @@ export class GameRenderer {
         );
         mesh.position.set(d.x, d.h / 2, d.z);
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
-        const cap = new THREE.Mesh(new THREE.BoxGeometry(d.w * xz * 0.82, Math.min(0.34, d.h * 0.08), d.d * xz * 0.82), accentMat);
+        const cap = new THREE.Mesh(
+          facetedBoxGeometry(d.w * xz * 0.82, Math.min(0.34, d.h * 0.08), d.d * xz * 0.82, d.x + d.z + 11, 0.16),
+          accentMat,
+        );
         cap.position.y = d.h * 0.5 + Math.min(0.18, d.h * 0.04);
         const baseFootX = d.blocksMovement ? d.w * xz * 0.99 : d.w * 1.06;
         const baseFootZ = d.blocksMovement ? d.d * xz * 0.99 : d.d * 1.06;
-        const base = new THREE.Mesh(new THREE.BoxGeometry(baseFootX, Math.min(0.28, d.h * 0.08), baseFootZ), shadowMat);
+        const base = new THREE.Mesh(facetedBoxGeometry(baseFootX, Math.min(0.28, d.h * 0.08), baseFootZ, d.x - d.z + 13, 0.14), shadowMat);
         base.position.y = -d.h * 0.5 + Math.min(0.14, d.h * 0.04);
         mesh.add(cap, base);
         if (d.blocksMovement) {
           const railW = Math.min(0.26, Math.max(0.08, Math.min(d.w, d.d) * 0.08));
-          const railA = new THREE.Mesh(new THREE.BoxGeometry(d.w * xz * 0.9, railW, railW), accentMat);
+          const railA = new THREE.Mesh(facetedBoxGeometry(d.w * xz * 0.9, railW, railW, d.x + 17, 0.18), accentMat);
           const railB = railA.clone();
           const rz = d.d * xz * 0.5;
           railA.position.set(0, d.h * 0.18, rz);
@@ -4407,38 +4802,34 @@ export class GameRenderer {
           const group = new THREE.Group();
           group.position.set(d.x, 0, d.z);
           const pond = new THREE.Mesh(
-            new THREE.CylinderGeometry(r * MAP_DECOR_BLOCK_BOX_XZ, r * MAP_DECOR_BLOCK_BOX_XZ, Math.max(0.2, h * 0.75), 44, 1),
-            new THREE.MeshPhysicalMaterial({
-              color: 0x1c5f78,
-              transparent: true,
-              opacity: 0.9,
-              roughness: 0.14,
-              metalness: 0.05,
-              transmission: 0.38,
-              thickness: 0.5,
-              envMapIntensity: 0.75,
-            }),
+            facetedFrustumGeometry(r * MAP_DECOR_BLOCK_BOX_XZ * 1.04, r * MAP_DECOR_BLOCK_BOX_XZ, Math.max(0.2, h * 0.75), 18, d.x + d.z + 19),
+            makeWaterSurfaceMaterial(0x1c5f78),
           );
           pond.position.y = Math.max(0.11, h * 0.32);
+          const shore = new THREE.Mesh(
+            facetedFrustumGeometry(r * MAP_DECOR_BLOCK_BOX_XZ * 1.16, r * MAP_DECOR_BLOCK_BOX_XZ * 1.12, 0.22, 18, d.x - d.z + 23),
+            blockMat("lake_shore", 0.88, tk),
+          );
+          shore.position.y = 0.04;
           const rim = new THREE.Mesh(
-            new THREE.TorusGeometry(r * 1.05, Math.max(0.12, r * 0.052), 8, 48),
-            blockMat("lake_rim", 0.94),
+            facetedRingGeometry(r * MAP_DECOR_BLOCK_BOX_XZ * 1.05, Math.max(0.12, r * 0.052), 18, d.x + 29),
+            blockMat("lake_rim", 0.94, tk),
           );
           rim.rotation.x = Math.PI / 2;
           rim.position.y = Math.max(0.06, h * 0.26);
-          group.add(pond, rim);
+          group.add(shore, pond, rim);
           mesh = group;
         } else if (tk === "rock_spire") {
           const group = new THREE.Group();
           group.position.set(d.x, 0, d.z);
           const trunk = new THREE.Mesh(
-            new THREE.CylinderGeometry(r * 0.44, r * 0.66, h * 0.68, 11),
-            blockMat("rock_trunk", 1),
+            facetedFrustumGeometry(r * 0.66, r * 0.44, h * 0.68, 9, d.x + d.z + 31),
+            blockMat("rock_trunk", 1, tk),
           );
           trunk.position.y = h * 0.34;
           const crown = new THREE.Mesh(
-            new THREE.DodecahedronGeometry(Math.max(0.55, r * 0.78), 0),
-            blockMat("rock_crown", 1.06),
+            facetedShardGeometry(Math.max(0.55, r * 0.78), Math.max(0.8, r * 1.35), 8, d.x - d.z + 37),
+            blockMat("rock_crown", 1.06, tk),
           );
           crown.position.y = h * 0.68 + r * 0.38;
           group.add(trunk, crown);
@@ -4449,23 +4840,23 @@ export class GameRenderer {
           group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
 
           const hoverY = Math.max(0.72, h * 0.55);
-          const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.36, r * 0.92), 0), crystalMat);
+          const main = new THREE.Mesh(facetedShardGeometry(Math.max(0.36, r * 0.92), Math.max(0.8, h * 0.95), 7, d.x + 41), crystalMat);
           main.position.y = hoverY;
           main.scale.set(0.92, Math.max(1.25, h / Math.max(0.6, r) * 0.34), 0.92);
           main.rotation.set(0.18, Math.PI / 4, -0.1);
 
-          const core = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.18, r * 0.38), 0), crystalCoreMat);
+          const core = new THREE.Mesh(facetedShardGeometry(Math.max(0.18, r * 0.38), Math.max(0.4, h * 0.55), 6, d.z + 43), crystalCoreMat);
           core.position.y = hoverY + Math.max(0.04, h * 0.03);
           core.rotation.set(-0.08, Math.PI / 5, 0.16);
 
-          const ring = new THREE.Mesh(new THREE.TorusGeometry(r * 1.18, Math.max(0.025, r * 0.045), 6, 34), crystalBaseMat);
+          const ring = new THREE.Mesh(facetedRingGeometry(r * 1.18, Math.max(0.025, r * 0.045), 16, d.x + d.z + 47), crystalBaseMat);
           ring.rotation.x = Math.PI / 2;
           ring.position.y = Math.max(0.16, h * 0.16);
 
           const shardCount = 4;
           for (let i = 0; i < shardCount; i++) {
             const a = (i / shardCount) * Math.PI * 2 + Math.PI / 4;
-            const shard = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.13, r * 0.24), 0), i % 2 === 0 ? crystalMat : crystalCoreMat);
+            const shard = new THREE.Mesh(facetedShardGeometry(Math.max(0.13, r * 0.24), Math.max(0.3, r * 0.55), 5, d.x + d.z + 53 + i), i % 2 === 0 ? crystalMat : crystalCoreMat);
             shard.position.set(Math.cos(a) * r * 0.82, hoverY * 0.82 + (i % 2) * 0.12, Math.sin(a) * r * 0.82);
             shard.scale.set(0.55, 1.05, 0.55);
             shard.rotation.set(0.2, -a, 0.35);
@@ -4479,9 +4870,9 @@ export class GameRenderer {
         const r = d.radius;
         const cy = d.y ?? r;
         mesh = new THREE.Mesh(
-          new THREE.SphereGeometry(r, 20, 16),
+          facetedShardGeometry(r, r * 1.9, 10, d.x + d.z + 59),
           d.blocksMovement
-            ? blockMat("sphere_block")
+            ? blockMat("sphere_block", 1, d.terrainKind)
             : decorate(
                 new THREE.MeshStandardMaterial({
                   color: color ?? 0x5a6270,
@@ -4492,14 +4883,14 @@ export class GameRenderer {
               ),
         );
         mesh.position.set(d.x, cy, d.z);
-        const chip = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 0.28, 0), accentMat);
+        const chip = new THREE.Mesh(facetedShardGeometry(r * 0.28, r * 0.46, 5, d.x - d.z + 61), accentMat);
         chip.position.set(r * 0.18, r * 0.4, -r * 0.24);
         mesh.add(chip);
       } else if (d.kind === "cone") {
         const r = d.radius;
         const h = d.h;
         if (d.terrainKind === "hill") {
-          mesh = new THREE.Mesh(new THREE.ConeGeometry(r, h, 13), blockMat("hill_cone", 1.02));
+          mesh = new THREE.Mesh(facetedFrustumGeometry(r * 0.9, r * 0.08, h, 11, d.x + d.z + 67, 1.12, 0.92), blockMat("hill_cone", 1.02, d.terrainKind));
           mesh.position.set(d.x, h * 0.5, d.z);
           mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
         } else {
@@ -4508,23 +4899,23 @@ export class GameRenderer {
           group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
 
           const hoverY = Math.max(0.65, h * 0.5);
-          const main = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.34, r * 0.88), 0), crystalMat);
+          const main = new THREE.Mesh(facetedShardGeometry(Math.max(0.34, r * 0.88), Math.max(0.72, h * 0.88), 7, d.x + 71), crystalMat);
           main.position.y = hoverY;
           main.scale.set(0.78, Math.max(1.2, h / Math.max(0.6, r) * 0.3), 0.78);
           main.rotation.set(-0.12, Math.PI / 4, 0.22);
 
-          const lower = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.2, r * 0.45), 0), crystalCoreMat);
+          const lower = new THREE.Mesh(facetedShardGeometry(Math.max(0.2, r * 0.45), Math.max(0.42, h * 0.48), 6, d.z + 73), crystalCoreMat);
           lower.position.y = Math.max(0.28, h * 0.26);
           lower.scale.set(0.65, 0.95, 0.65);
           lower.rotation.set(0.2, -Math.PI / 6, -0.2);
 
-          const halo = new THREE.Mesh(new THREE.TorusGeometry(r * 0.95, Math.max(0.024, r * 0.04), 6, 32), crystalBaseMat);
+          const halo = new THREE.Mesh(facetedRingGeometry(r * 0.95, Math.max(0.024, r * 0.04), 15, d.x + d.z + 79), crystalBaseMat);
           halo.rotation.x = Math.PI / 2;
           halo.position.y = Math.max(0.18, h * 0.18);
 
           for (let i = 0; i < 3; i++) {
             const a = (i / 3) * Math.PI * 2;
-            const chip = new THREE.Mesh(new THREE.OctahedronGeometry(Math.max(0.12, r * 0.22), 0), crystalMat);
+            const chip = new THREE.Mesh(facetedShardGeometry(Math.max(0.12, r * 0.22), Math.max(0.26, r * 0.52), 5, d.x + d.z + 83 + i), crystalMat);
             chip.position.set(Math.cos(a) * r * 0.7, hoverY * 0.76, Math.sin(a) * r * 0.7);
             chip.scale.set(0.48, 0.9, 0.48);
             chip.rotation.set(0.3, -a, -0.18);
@@ -4536,9 +4927,9 @@ export class GameRenderer {
         }
       } else if (d.kind === "torus") {
         mesh = new THREE.Mesh(
-          new THREE.TorusGeometry(d.radius, d.tube, 14, 40),
+          facetedRingGeometry(d.radius, d.tube, 18, d.x + d.z + 89),
           d.blocksMovement
-            ? blockMat("torus_block")
+            ? blockMat("torus_block", 1, d.terrainKind)
             : decorate(
                 new THREE.MeshStandardMaterial({
                   color: color ?? 0x3d4555,
@@ -4551,9 +4942,120 @@ export class GameRenderer {
         mesh.rotation.x = -Math.PI / 2;
         mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
         mesh.position.set(d.x, d.tube * 0.5 + 0.02, d.z);
-        const core = new THREE.Mesh(new THREE.CylinderGeometry(d.radius * 0.36, d.radius * 0.42, d.tube * 0.75, 18), shadowMat);
+        const core = new THREE.Mesh(facetedFrustumGeometry(d.radius * 0.42, d.radius * 0.36, d.tube * 0.75, 12, d.x - d.z + 91), shadowMat);
         core.position.y = -d.tube * 0.12;
         mesh.add(core);
+      } else if (d.kind === "water_basin") {
+        const group = new THREE.Group();
+        group.position.set(d.x, 0, d.z);
+        group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const h = d.h ?? 0.38;
+        const rx = d.radiusX * MAP_DECOR_BLOCK_BOX_XZ;
+        const rz = d.radiusZ * MAP_DECOR_BLOCK_BOX_XZ;
+        const waterCol = color ?? 0x1c5f78;
+        const shore = new THREE.Mesh(
+          facetedFrustumGeometry(1.06, 1, 0.28, 18, d.x + d.z + 97),
+          blockMat("water_shore", 0.9, "lake"),
+        );
+        shore.scale.set(rx * 1.14, 1, rz * 1.14);
+        shore.position.y = 0.05;
+        const pond = new THREE.Mesh(facetedFrustumGeometry(1.03, 1, Math.max(0.22, h * 0.8), 18, d.x - d.z + 101), makeWaterSurfaceMaterial(waterCol));
+        pond.scale.set(rx, 1, rz);
+        pond.position.y = Math.max(0.12, h * 0.34);
+        group.add(shore, pond);
+        const padCount = Math.min(5, Math.max(2, Math.floor((rx + rz) / 14)));
+        for (let i = 0; i < padCount; i++) {
+          const a = (i / padCount) * Math.PI * 2 + 0.4;
+          const pad = new THREE.Mesh(
+            facetedFrustumGeometry(0.55 + (i % 2) * 0.25, 0.5 + (i % 2) * 0.22, 0.035, 7, d.x + i),
+            blockMat("water_pad", 1.02, "foliage"),
+          );
+          pad.position.set(Math.cos(a) * rx * 0.55, 0.14, Math.sin(a) * rz * 0.5);
+          group.add(pad);
+        }
+        mesh = group;
+      } else if (d.kind === "bridge") {
+        const group = new THREE.Group();
+        group.position.set(d.x, 0, d.z);
+        group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const deckH = d.h ?? 3.2;
+        const xz = MAP_DECOR_BLOCK_BOX_XZ;
+        const w = d.width * xz;
+        const span = d.span * xz;
+        const deck = new THREE.Mesh(
+          facetedBoxGeometry(w, 0.48, span, d.x + d.z + 107, 0.14),
+          blockMat("bridge_deck", 1, "bridge"),
+        );
+        deck.position.y = deckH + 0.35;
+        const railH = 1.1;
+        const railL = new THREE.Mesh(facetedBoxGeometry(0.22, railH, span * 0.98, d.x + 109, 0.18), blockMat("bridge_rail", 1.04, "timber"));
+        const railR = railL.clone();
+        railL.position.set(-w * 0.46, deckH + railH * 0.45, 0);
+        railR.position.set(w * 0.46, deckH + railH * 0.45, 0);
+        const postCount = Math.max(3, Math.floor(span / 14));
+        for (let i = 0; i < postCount; i++) {
+          const t = postCount <= 1 ? 0 : (i / (postCount - 1) - 0.5) * span;
+          for (const side of [-1, 1]) {
+            const post = new THREE.Mesh(facetedFrustumGeometry(0.34, 0.28, deckH * 0.92, 7, d.x + d.z + i + side), blockMat("bridge_post", 0.92, "timber"));
+            post.position.set(side * w * 0.44, deckH * 0.46, t);
+            group.add(post);
+          }
+        }
+        group.add(deck, railL, railR);
+        mesh = group;
+      } else if (d.kind === "foliage") {
+        const group = new THREE.Group();
+        group.position.set(d.x, 0, d.z);
+        group.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
+        const r = d.radius;
+        const style = d.style ?? "bush";
+        const leaf = blockMat(`foliage_${style}`, 1, "foliage");
+        const trunk = blockMat(`foliage_trunk_${style}`, 0.88, "timber");
+        if (style === "tree" || style === "pine") {
+          const trunkMesh = new THREE.Mesh(facetedFrustumGeometry(r * 0.18, r * 0.12, r * 1.1, 7, d.x + d.z + 113), trunk);
+          trunkMesh.position.y = r * 0.55;
+          group.add(trunkMesh);
+          if (style === "pine") {
+            for (let tier = 0; tier < 3; tier++) {
+              const cone = new THREE.Mesh(
+                facetedFrustumGeometry(r * (0.95 - tier * 0.18), r * (0.18 - tier * 0.03), r * 0.55, 8, d.x + d.z + 117 + tier),
+                leaf,
+              );
+              cone.position.y = r * (0.65 + tier * 0.42);
+              group.add(cone);
+            }
+          } else {
+            const crown = new THREE.Mesh(facetedShardGeometry(r * 0.72, r * 1.15, 8, d.x + d.z + 121), leaf);
+            crown.position.y = r * 1.15;
+            group.add(crown);
+            const crown2 = new THREE.Mesh(facetedShardGeometry(r * 0.48, r * 0.75, 7, d.x - d.z + 127), leaf);
+            crown2.position.set(r * 0.35, r * 1.35, 0);
+            group.add(crown2);
+          }
+        } else if (style === "palm") {
+          const trunkMesh = new THREE.Mesh(facetedFrustumGeometry(r * 0.14, r * 0.09, r * 1.35, 7, d.x + d.z + 131), trunk);
+          trunkMesh.position.y = r * 0.68;
+          group.add(trunkMesh);
+          for (let i = 0; i < 5; i++) {
+            const frond = new THREE.Mesh(facetedShardGeometry(r * 0.22, r * 0.9, 5, d.x + d.z + 137 + i), leaf);
+            frond.position.y = r * 1.32;
+            frond.rotation.z = ((i - 2) * Math.PI) / 6;
+            frond.rotation.x = 0.55;
+            group.add(frond);
+          }
+        } else {
+          const blobs = style === "scrub" ? 2 : 3 + Math.floor(r * 0.35);
+          for (let i = 0; i < blobs; i++) {
+            const b = new THREE.Mesh(
+              facetedShardGeometry(r * (0.35 + (i % 3) * 0.08), r * (0.7 + (i % 2) * 0.12), 7, d.x + d.z + 149 + i),
+              leaf,
+            );
+            b.position.set((i - 1) * r * 0.28, r * (0.28 + (i % 2) * 0.12), (i % 2) * r * 0.2);
+            b.scale.y = style === "scrub" ? 0.65 : 0.85;
+            group.add(b);
+          }
+        }
+        mesh = group;
       }
       if (!mesh) continue;
       mesh.traverse((obj) => {
@@ -4727,8 +5229,8 @@ export class GameRenderer {
 
   private syncTerritory(state: GameState): void {
     /** Higher fill + rim stroke + outline: territory must read on all maps without guessing. */
-    this.syncTerritoryTeam("player", territorySources(state), 0x5fd8ff, 0.46);
-    this.syncTerritoryTeam("enemy", enemyTerritorySources(state), 0xff665d, 0.3);
+    this.syncTerritoryTeam("player", state.map, territorySources(state), 0x5fd8ff, 0.46);
+    this.syncTerritoryTeam("enemy", state.map, enemyTerritorySources(state), 0xff665d, 0.3);
   }
 
   private territorySourceKey(sources: { x: number; z: number }[]): string {
@@ -4739,6 +5241,7 @@ export class GameRenderer {
 
   private syncTerritoryTeam(
     team: "player" | "enemy",
+    map: MapData,
     sources: { x: number; z: number }[],
     color: number,
     opacity: number,
@@ -4753,7 +5256,8 @@ export class GameRenderer {
     if (sources.length === 0) return;
 
     const half = Math.max(this.worldPlaneHalf, TERRITORY_RADIUS * 2);
-    const texture = this.createTerritoryTexture(sources, half);
+    const links = territoryLinksForSources(map, sources);
+    const texture = this.createTerritoryTexture(map, sources, half, links);
     /** Hug the floor so grazing angles don't clip before vertical obstacle geometry in the depth buffer. */
     const fieldY = team === "player" ? 0.038 : 0.036;
     const field = new THREE.Mesh(
@@ -4779,14 +5283,15 @@ export class GameRenderer {
     field.renderOrder = -6;
 
     this.territoryGroup.add(field);
-    const outline = this.createTerritoryOutline(
-      sources,
-      color,
-      team === "player" ? 0.95 : 0.8,
-      fieldY + 0.002,
-    );
+    const outline = this.createTerritoryOutline(sources, links, color, team === "player" ? 0.95 : 0.8, fieldY + 0.002);
     if (outline) this.territoryGroup.add(outline);
 
+    const linkDecor = this.buildTerritoryLinkDecor(links, color, fieldY + 0.01, team === "player" ? 0.42 : 0.34);
+    if (linkDecor) {
+      this.territoryGroup.add(linkDecor);
+      if (team === "player") this.territoryLinkDecorPlayer = linkDecor;
+      else this.territoryLinkDecorEnemy = linkDecor;
+    }
     if (team === "player") {
       this.territoryField = field;
       this.territoryTexture = texture;
@@ -4802,6 +5307,7 @@ export class GameRenderer {
     const field = team === "player" ? this.territoryField : this.enemyTerritoryField;
     const texture = team === "player" ? this.territoryTexture : this.enemyTerritoryTexture;
     const outline = team === "player" ? this.territoryOutline : this.enemyTerritoryOutline;
+    const linkDecor = team === "player" ? this.territoryLinkDecorPlayer : this.territoryLinkDecorEnemy;
     if (field) {
       this.territoryGroup.remove(field);
       field.geometry.dispose();
@@ -4813,18 +5319,71 @@ export class GameRenderer {
       outline.geometry.dispose();
       (outline.material as THREE.Material).dispose();
     }
+    if (linkDecor) {
+      this.territoryGroup.remove(linkDecor);
+      linkDecor.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          (o.material as THREE.Material).dispose();
+        }
+      });
+    }
     if (team === "player") {
       this.territoryField = null;
       this.territoryTexture = null;
       this.territoryOutline = null;
+      this.territoryLinkDecorPlayer = null;
     } else {
       this.enemyTerritoryField = null;
       this.enemyTerritoryTexture = null;
       this.enemyTerritoryOutline = null;
+      this.territoryLinkDecorEnemy = null;
     }
   }
 
-  private createTerritoryTexture(sources: { x: number; z: number }[], half: number): THREE.CanvasTexture {
+  private buildTerritoryLinkDecor(
+    links: readonly TerritoryLink[],
+    color: number,
+    yBase: number,
+    opacity: number,
+  ): THREE.Group | null {
+    if (links.length === 0) return null;
+    const root = new THREE.Group();
+    const matBase = {
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    };
+    for (const L of links) {
+      const ax = L.a.x;
+      const az = L.a.z;
+      const bx = L.b.x;
+      const bz = L.b.z;
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-6) continue;
+      const w = Math.min(4.2, L.rCap * 2 + 0.6);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(len, 0.36, w), new THREE.MeshBasicMaterial(matBase));
+      mesh.position.set((ax + bx) * 0.5, yBase + 0.18, (az + bz) * 0.5);
+      mesh.rotation.y = Math.atan2(dz, dx);
+      mesh.renderOrder = -5;
+      root.add(mesh);
+    }
+    return root.children.length > 0 ? root : null;
+  }
+
+  private createTerritoryTexture(
+    map: MapData,
+    sources: { x: number; z: number }[],
+    half: number,
+    links: readonly TerritoryLink[],
+  ): THREE.CanvasTexture {
     /** Higher res so the union edge stays tight to `TERRITORY_RADIUS` in world space (512 was visibly soft vs outline). */
     const size = 1024;
     const canvas = document.createElement("canvas");
@@ -4833,7 +5392,6 @@ export class GameRenderer {
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, size, size);
     const scale = size / (half * 2);
-    const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
     const smoothstep = (edge0: number, edge1: number, x: number): number => {
       const t = Math.max(0, Math.min(1, (x - edge0) / Math.max(0.0001, edge1 - edge0)));
       return t * t * (3 - 2 * t);
@@ -4844,18 +5402,27 @@ export class GameRenderer {
       const wz = half - y / scale;
       for (let x = 0; x < size; x++) {
         const wx = x / scale - half;
+        const pos: Vec2 = { x: wx, z: wz };
+        if (!inConnectedTerritory(map, pos, sources)) continue;
+
         let nearestD2 = Infinity;
         for (const p of sources) {
-          const dx = wx - p.x;
-          const dz = wz - p.z;
-          const d2 = dx * dx + dz * dz;
+          const d2 = chordDist2SqWorld(map, pos, p);
           if (d2 < nearestD2) nearestD2 = d2;
         }
-        if (nearestD2 > r2) continue;
-
         const nearestD = Math.sqrt(nearestD2);
-        const coreT = 1 - smoothstep(0, TERRITORY_RADIUS * 0.42, nearestD);
-        const edgeT = smoothstep(TERRITORY_RADIUS * 0.74, TERRITORY_RADIUS, nearestD);
+        const depth = territoryInteriorDepth(map, pos, sources, links);
+
+        let coreT: number;
+        let edgeT: number;
+        if (nearestD < TERRITORY_RADIUS) {
+          coreT = 1 - smoothstep(0, TERRITORY_RADIUS * 0.42, nearestD);
+          edgeT = smoothstep(TERRITORY_RADIUS * 0.74, TERRITORY_RADIUS, nearestD);
+        } else {
+          coreT = smoothstep(0, TERRITORY_RADIUS * 0.38, depth);
+          edgeT = smoothstep(0, TERRITORY_RADIUS * 0.22, depth);
+        }
+
         const ripple = 0.5 + 0.5 * Math.sin(wx * 0.34 + wz * 0.22) * Math.sin(wx * 0.11 - wz * 0.28);
         const alpha = Math.round(255 * Math.min(1, 0.2 + coreT * 0.34 + edgeT * 0.46 + ripple * 0.06));
         const i = (y * size + x) * 4;
@@ -4878,6 +5445,7 @@ export class GameRenderer {
 
   private createTerritoryOutline(
     sources: { x: number; z: number }[],
+    links: readonly TerritoryLink[],
     color: number,
     opacity: number,
     /** Match the fill plane height (outline was at y=0.16, which parallax-skewed vs the disk on the floor). */
@@ -4910,6 +5478,9 @@ export class GameRenderer {
         positions.push(p.x + Math.cos(a0) * r, lineY, p.z + Math.sin(a0) * r);
         positions.push(p.x + Math.cos(a1) * r, lineY, p.z + Math.sin(a1) * r);
       }
+    }
+    for (const L of links) {
+      appendTerritoryStadiumOutlinePositions(positions, L.a.x, L.a.z, L.b.x, L.b.z, L.rCap, lineY, 10, 10);
     }
     if (positions.length === 0) return null;
     const geo = new THREE.BufferGeometry();
@@ -6505,7 +7076,14 @@ export class GameRenderer {
     this.tickHitPulses(dt);
     this.orientHpBars();
     stepFx(this.fx, dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.needsPostGlbRender) {
+      this.needsPostGlbRender = false;
+      void this.renderer.compileAsync(this.scene, this.camera).finally(() => {
+        this.renderer.render(this.scene, this.camera);
+      });
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     this.heroLungeTimer = Math.max(0, this.heroLungeTimer - dt);
   }
 }

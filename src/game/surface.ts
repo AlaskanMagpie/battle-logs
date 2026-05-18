@@ -2,6 +2,7 @@
  * Spherical planet surface using tangent-plane coordinates from the north pole (+Y).
  * Positions match existing Vec2 {x,z}: arc-length offsets in the horizontal plane through the pole.
  */
+import { clampPlaneArena, sphereTangentCapRadius } from "./arenaFootprint";
 import { sphereTerrainHeightAtUnit, sphereTerrainEnabled } from "./sphereTerrain";
 import type { MapData, Vec2 } from "./types";
 
@@ -92,18 +93,19 @@ export function chordDist2SqWorld(map: MapData | undefined | null, a: Vec2, b: V
 
 export function clampOrderXZ(map: MapData, p: Vec2): Vec2 {
   if (!isSphereWorld(map)) {
-    const h = map.world.halfExtents;
-    return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
+    const H = map.world.halfExtents;
+    const foot = clampPlaneArena(map, p);
+    return { x: Math.max(-H, Math.min(H, foot.x)), z: Math.max(-H, Math.min(H, foot.z)) };
   }
   return clampWorldArena(map, p);
 }
 
-/** Clamp radial distance from pole in tangent plane to halfExtents (matches legacy square bound as circular cap). */
+/** Clamp radial distance from pole in tangent plane (sphere: optional circular footprint cap). */
 export function clampWorldArena(map: MapData, p: Vec2): Vec2 {
-  const half = map.world.halfExtents;
+  const cap = isSphereWorld(map) ? sphereTangentCapRadius(map) : map.world.halfExtents;
   const len = Math.hypot(p.x, p.z);
-  if (len <= half || len < 1e-12) return { x: p.x, z: p.z };
-  const s = half / len;
+  if (len <= cap || len < 1e-12) return { x: p.x, z: p.z };
+  const s = cap / len;
   return { x: p.x * s, z: p.z * s };
 }
 
@@ -140,9 +142,9 @@ export function stepGreatCircleToward(map: MapData, from: Vec2, to: Vec2, stepWo
     const dx = to.x - from.x;
     const dz = to.z - from.z;
     const len = Math.hypot(dx, dz) || 1;
-    if (len <= stepWorld) return { x: to.x, z: to.z };
+    if (len <= stepWorld) return clampOrderXZ(map, { x: to.x, z: to.z });
     const f = stepWorld / len;
-    return { x: from.x + dx * f, z: from.z + dz * f };
+    return clampOrderXZ(map, { x: from.x + dx * f, z: from.z + dz * f });
   }
   const R = sphereRadiusOf(map);
   const u0 = unitFromTangentAtPole(from.x, from.z, R);
@@ -168,10 +170,10 @@ export function stepDirectionXZ(map: MapData, pos: Vec2, dirXZx: number, dirXZz:
     if (len < 1e-12) return pos;
     const nx = dirXZx / len;
     const nz = dirXZz / len;
-    return {
+    return clampOrderXZ(map, {
       x: pos.x + nx * stepWorld,
       z: pos.z + nz * stepWorld,
-    };
+    });
   }
   const R = sphereRadiusOf(map);
   const n = unitFromTangentAtPole(pos.x, pos.z, R);

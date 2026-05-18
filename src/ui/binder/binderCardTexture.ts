@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { getCatalogEntry } from "../../game/catalog";
 import { productionBatchSizeForClass } from "../../game/sim/systems/helpers";
-import type { CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
+import type { CatalogEntry, CommandCatalogEntry, StructureCatalogEntry } from "../../game/types";
 import { isCommandEntry, isStructureEntry } from "../../game/types";
 import { catalogPreviewTypeHue } from "../doctrineCard";
 import {
@@ -9,6 +9,7 @@ import {
   drawCardArtOverlayOnCanvasRect,
   isCardOverlayFieldVisible,
   overlayVisibilityStampForCatalog,
+  type CardArtContainRect,
 } from "../cardArtOverlay";
 import { CARD_ART_CACHE_BUSTER } from "../cardArtManifest";
 import { getCardPreviewDataUrl, configureImageCrossOriginForSrc } from "../cardGlbPreview";
@@ -16,11 +17,40 @@ import { binderPanelPixelSize } from "./CardBinderEngine";
 import { composeCardIntoBinderSleeve } from "./binderSleeveComposite";
 import { drawSpellBinderHero } from "./binderSpellHeroCanvas";
 
-const cache = new Map<string, Promise<THREE.CanvasTexture>>();
+type BinderPanelTexture = THREE.CanvasTexture;
+
+const cache = new Map<string, Promise<BinderPanelTexture>>();
 /** GLB hero snapshot per structure id (reused for animated spell repaints). */
 const structureHeroImageByCatalogId = new Map<string, HTMLImageElement>();
-/** Catalog ids whose `/assets/cards/*` art fills the whole binder panel (no generated stats strip). */
-const manifestFullCardArtCatalogIds = new Set<string>();
+
+function comparableCardArtUrl(url: string): string {
+  try {
+    const u = new URL(url, globalThis.location?.origin ?? "https://example.com");
+    u.searchParams.delete("cb");
+    u.searchParams.delete("lab");
+    return `${u.origin}${u.pathname}${u.search}`;
+  } catch {
+    return url.split("?")[0] ?? url;
+  }
+}
+
+function evictBinderTexturesForCatalogId(catalogId: string): void {
+  const prefix = `${catalogId}@`;
+  for (const key of [...cache.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    const p = cache.get(key);
+    cache.delete(key);
+    if (!p) continue;
+    void p.then((tex) => {
+      tex.userData[SPELL_TEX_USERDATA_DEAD] = true;
+      const rafId = tex.userData[SPELL_TEX_USERDATA_RAF] as number | undefined;
+      if (typeof rafId === "number") cancelAnimationFrame(rafId);
+      delete tex.userData[SPELL_TEX_USERDATA_RAF];
+      delete tex.userData[SPELL_TEX_USERDATA_DEAD];
+      tex.dispose();
+    });
+  }
+}
 
 function binderTextureCacheKey(catalogId: string): string {
   const { w, h } = binderPanelPixelSize();
@@ -62,21 +92,6 @@ function drawImageCover(
   const sx = (iw - sw) / 2;
   const sy = (ih - sh) / 2;
   ctx.drawImage(img, sx, sy, sw, sh, x, y, cw, ch);
-}
-
-/** Match hand / asset-lab `object-fit: contain` — letterbox inside box (same stat coordinate space as DOM overlay). */
-function drawImageContain(
-  ctx: CanvasRenderingContext2D,
-  img: CanvasImageSource,
-  boxX: number,
-  boxY: number,
-  boxW: number,
-  boxH: number,
-): void {
-  const { iw, ih } = intrinsicSize(img);
-  if (iw < 1 || ih < 1) return;
-  const r = containCardArtRect(boxX, boxY, boxW, boxH, iw, ih);
-  ctx.drawImage(img, 0, 0, iw, ih, r.x, r.y, r.w, r.h);
 }
 
 function authoredSpellGlowPalette(e: CommandCatalogEntry, hue: number): { core: string; rim: string; hot: string } {
@@ -166,98 +181,22 @@ function drawAuthoredSpellBinderMotion(
   ctx.restore();
 }
 
-async function loadRasterImage(src: string): Promise<HTMLImageElement> {
-  const img = new Image();
-  configureImageCrossOriginForSrc(img, src);
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error("card art load failed"));
-    img.src = src;
-  });
-  return img;
-}
-
-function isSameOriginSvgAsset(src: string): boolean {
-  if (!/\.svg(?:[?#]|$)/i.test(src)) return false;
-  try {
-    const resolved = new URL(src, globalThis.location?.href);
-    return resolved.origin === globalThis.location?.origin;
-  } catch {
-    return false;
-  }
-}
-
-function svgWithExplicitIntrinsicSize(raw: string): string {
-  const m = raw.match(/<svg\b([^>]*)>/i);
-  if (!m) return raw;
-  const attrs = m[1] ?? "";
-  if (/\swidth\s*=/.test(attrs) && /\sheight\s*=/.test(attrs)) return raw;
-  const vb = attrs.match(/\sviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
-  const w = vb?.[1] ?? "512";
-  const h = vb?.[2] ?? "768";
-  const widthAttr = /\swidth\s*=/.test(attrs) ? "" : ` width="${w}"`;
-  const heightAttr = /\sheight\s*=/.test(attrs) ? "" : ` height="${h}"`;
-  const parAttr = /\spreserveAspectRatio\s*=/.test(attrs) ? "" : ` preserveAspectRatio="xMidYMid meet"`;
-  return raw.replace(/<svg\b([^>]*)>/i, `<svg$1${widthAttr}${heightAttr}${parAttr}>`);
-}
-
-function svgWithoutTextNodes(raw: string): string {
-  return raw
-    .replace(/<text\b[\s\S]*?<\/text>/gi, "")
-    .replace(/<text\b[^/>]*\/>/gi, "")
-    .replace(/<tspan\b[\s\S]*?<\/tspan>/gi, "")
-    .replace(/<tspan\b[^/>]*\/>/gi, "");
-}
-
-async function loadImage(src: string): Promise<HTMLImageElement> {
-  if (!isSameOriginSvgAsset(src)) return loadRasterImage(src);
-  const res = await fetch(src, { cache: "force-cache" });
-  if (!res.ok) throw new Error("card svg load failed");
-  const svg = svgWithoutTextNodes(svgWithExplicitIntrinsicSize(await res.text()));
-  const blobUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-  try {
-    return await loadRasterImage(blobUrl);
-  } finally {
-    URL.revokeObjectURL(blobUrl);
-  }
-}
-
-const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
-const SPELL_TEX_USERDATA_DEAD = "binderSpellDead";
-
 /**
- * Full panel paint. Manifest full-bleed cards already include their print text/art.
+ * Procedural panel when hero art is missing or not yet decoded (no `drawCardArtOverlayOnCanvasRect`).
+ * Any decoded bitmap (HTTP or `data:` GLB snapshot) uses the unified contain path in `paintBinderPanelOntoCanvas`.
  */
-function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HTMLCanvasElement {
-  const { w, h } = binderPanelPixelSize();
-  const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext("2d");
-  if (!ctx) return c;
-
-  const e = getCatalogEntry(catalogId);
-  if (!e) {
-    ctx.fillStyle = "#111318";
-    ctx.fillRect(0, 0, w, h);
-    return c;
-  }
-
-  const hue = catalogPreviewTypeHue(e);
-  const mappedImg = structureHeroImageByCatalogId.get(catalogId);
-  if (mappedImg && manifestFullCardArtCatalogIds.has(catalogId)) {
-    ctx.fillStyle = "#080b11";
-    ctx.fillRect(0, 0, w, h);
-    const artRect = containCardArtRect(0, 0, w, h, mappedImg.naturalWidth, mappedImg.naturalHeight);
-    ctx.drawImage(mappedImg, 0, 0, mappedImg.naturalWidth, mappedImg.naturalHeight, artRect.x, artRect.y, artRect.w, artRect.h);
-    if (isCommandEntry(e)) drawAuthoredSpellBinderMotion(ctx, e as CommandCatalogEntry, w, h, hue, spellTimeSec);
-    drawCardArtOverlayOnCanvasRect(ctx, catalogId, artRect.x, artRect.y, artRect.w, artRect.h);
-    return c;
-  }
-
+function paintBinderLegacyPanelLayout(
+  ctx: CanvasRenderingContext2D,
+  catalogId: string,
+  e: CatalogEntry,
+  mappedImg: HTMLImageElement | undefined,
+  w: number,
+  h: number,
+  hue: number,
+  spellTimeSec: number,
+): void {
   const pad = Math.max(6, Math.round(w * 0.032));
   // Match `.tcg--slot-preview .slot-card-art`: flex fills almost all of the shell above title/subtitle.
-  // At 48% the spell AoE canvas sat in a much shorter band than the hand, so rings read “too high”.
   const heroH = Math.round(h * 0.65);
 
   const bg = ctx.createLinearGradient(0, 0, 0, h);
@@ -374,30 +313,136 @@ function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HT
   }
   if (foot.length > line.length) line += "…";
   ctx.fillText(line, pad, y);
+}
 
+async function loadRasterImage(src: string): Promise<HTMLImageElement> {
+  const img = new Image();
+  configureImageCrossOriginForSrc(img, src);
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("card art load failed"));
+    img.src = src;
+  });
+  return img;
+}
+
+function isSameOriginSvgAsset(src: string): boolean {
+  if (!/\.svg(?:[?#]|$)/i.test(src)) return false;
+  try {
+    const resolved = new URL(src, globalThis.location?.href);
+    return resolved.origin === globalThis.location?.origin;
+  } catch {
+    return false;
+  }
+}
+
+function svgWithExplicitIntrinsicSize(raw: string): string {
+  const m = raw.match(/<svg\b([^>]*)>/i);
+  if (!m) return raw;
+  const attrs = m[1] ?? "";
+  if (/\swidth\s*=/.test(attrs) && /\sheight\s*=/.test(attrs)) return raw;
+  const vb = attrs.match(/\sviewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([\d.]+)\s+([\d.]+)\s*["']/i);
+  const w = vb?.[1] ?? "512";
+  const h = vb?.[2] ?? "768";
+  const widthAttr = /\swidth\s*=/.test(attrs) ? "" : ` width="${w}"`;
+  const heightAttr = /\sheight\s*=/.test(attrs) ? "" : ` height="${h}"`;
+  const parAttr = /\spreserveAspectRatio\s*=/.test(attrs) ? "" : ` preserveAspectRatio="xMidYMid meet"`;
+  return raw.replace(/<svg\b([^>]*)>/i, `<svg$1${widthAttr}${heightAttr}${parAttr}>`);
+}
+
+function svgWithoutTextNodes(raw: string): string {
+  return raw
+    .replace(/<text\b[\s\S]*?<\/text>/gi, "")
+    .replace(/<text\b[^/>]*\/>/gi, "")
+    .replace(/<tspan\b[\s\S]*?<\/tspan>/gi, "")
+    .replace(/<tspan\b[^/>]*\/>/gi, "");
+}
+
+async function loadImage(src: string): Promise<HTMLImageElement> {
+  if (!isSameOriginSvgAsset(src)) return loadRasterImage(src);
+  const res = await fetch(src, { cache: "force-cache" });
+  if (!res.ok) throw new Error("card svg load failed");
+  const svg = svgWithoutTextNodes(svgWithExplicitIntrinsicSize(await res.text()));
+  const blobUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    return await loadRasterImage(blobUrl);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
+const SPELL_TEX_USERDATA_RAF = "binderSpellRafId";
+const SPELL_TEX_USERDATA_DEAD = "binderSpellDead";
+
+/**
+ * Full panel paint: decoded hero (HTTP or `data:`) uses the same contain + overlay path as HUD slots;
+ * otherwise procedural legacy layout (no overlay canvas draw).
+ */
+function paintBinderPanelOntoCanvas(catalogId: string, spellTimeSec: number): HTMLCanvasElement {
+  const { w, h } = binderPanelPixelSize();
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext("2d");
+  if (!ctx) return c;
+
+  const e = getCatalogEntry(catalogId);
+  if (!e) {
+    ctx.fillStyle = "#111318";
+    ctx.fillRect(0, 0, w, h);
+    return c;
+  }
+
+  const hue = catalogPreviewTypeHue(e);
+  const mappedImg = structureHeroImageByCatalogId.get(catalogId);
+  const decodedHero =
+    Boolean(mappedImg?.complete && mappedImg.naturalWidth > 0 && mappedImg.naturalHeight > 0);
+  if (mappedImg && decodedHero) {
+    ctx.fillStyle = "#080b11";
+    ctx.fillRect(0, 0, w, h);
+    const artRect = containCardArtRect(0, 0, w, h, mappedImg.naturalWidth, mappedImg.naturalHeight);
+    ctx.drawImage(mappedImg, 0, 0, mappedImg.naturalWidth, mappedImg.naturalHeight, artRect.x, artRect.y, artRect.w, artRect.h);
+    if (isCommandEntry(e)) drawAuthoredSpellBinderMotion(ctx, e as CommandCatalogEntry, w, h, hue, spellTimeSec);
+    drawCardArtOverlayOnCanvasRect(ctx, catalogId, artRect.x, artRect.y, artRect.w, artRect.h);
+    return c;
+  }
+
+  paintBinderLegacyPanelLayout(ctx, catalogId, e, mappedImg, w, h, hue, spellTimeSec);
   return c;
 }
 
 async function ensureCardHeroLoaded(catalogId: string): Promise<void> {
   const e = getCatalogEntry(catalogId);
   if (!e) return;
-  if (structureHeroImageByCatalogId.has(catalogId)) return;
+
+  let previewUrl: string | null = null;
   try {
-    const previewUrl = await getCardPreviewDataUrl(catalogId);
-    if (!previewUrl) {
-      manifestFullCardArtCatalogIds.delete(catalogId);
-      return;
-    }
+    previewUrl = await getCardPreviewDataUrl(catalogId);
+  } catch {
+    previewUrl = null;
+  }
+
+  const prev = structureHeroImageByCatalogId.get(catalogId);
+  if (prev && previewUrl) {
+    const okDims = prev.complete && prev.naturalWidth > 0 && prev.naturalHeight > 0;
+    const same = okDims && comparableCardArtUrl(prev.currentSrc || prev.src) === comparableCardArtUrl(previewUrl);
+    if (same) return;
+  }
+
+  if (prev) {
+    structureHeroImageByCatalogId.delete(catalogId);
+    evictBinderTexturesForCatalogId(catalogId);
+  }
+
+  if (!previewUrl) {
+    return;
+  }
+
+  try {
     const img = await loadImage(previewUrl);
     structureHeroImageByCatalogId.set(catalogId, img);
-    /** Full-bleed panel uses manifest PNG URLs; data URLs are GLB snapshots (hero inset path only). */
-    if (previewUrl.startsWith("data:")) {
-      manifestFullCardArtCatalogIds.delete(catalogId);
-    } else {
-      manifestFullCardArtCatalogIds.add(catalogId);
-    }
   } catch {
-    manifestFullCardArtCatalogIds.delete(catalogId);
+    /* leave missing — procedural panel */
   }
 }
 
@@ -447,7 +492,7 @@ function wrapSpellTextureDispose(tex: THREE.CanvasTexture): void {
   };
 }
 
-async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
+async function rasterizeCatalogId(catalogId: string): Promise<BinderPanelTexture> {
   const cvs = await paintBinderPanelCanvas(catalogId);
   const composed = composeCardIntoBinderSleeve(cvs);
   const tex = new THREE.CanvasTexture(composed);
@@ -466,7 +511,7 @@ async function rasterizeCatalogId(catalogId: string): Promise<THREE.CanvasTextur
 }
 
 /** Cached panel texture for one catalog id (binder pixel size). */
-export function getBinderTextureForCatalogId(catalogId: string): Promise<THREE.CanvasTexture> {
+export function getBinderTextureForCatalogId(catalogId: string): Promise<BinderPanelTexture> {
   if (!getCatalogEntry(catalogId)) {
     return Promise.reject(new Error(`Unknown catalog id: ${catalogId}`));
   }
@@ -499,5 +544,14 @@ export function disposeBinderTextureCache(): void {
   }
   cache.clear();
   structureHeroImageByCatalogId.clear();
-  manifestFullCardArtCatalogIds.clear();
+}
+
+/** Same `containCardArtRect` inputs as HUD slot + DOM overlay fit (tests + tooling). */
+export function binderDecodedHeroArtRect(
+  panelW: number,
+  panelH: number,
+  intrinsicW: number,
+  intrinsicH: number,
+): CardArtContainRect {
+  return containCardArtRect(0, 0, panelW, panelH, intrinsicW, intrinsicH);
 }

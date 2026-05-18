@@ -902,7 +902,7 @@ function emitSummonFx(s: GameState, catalogId: string, pos: Vec2): void {
   const v = sigs.includes("Vanguard") ? 1 : 0;
   const b = sigs.includes("Bastion") ? 1 : 0;
   const r = sigs.includes("Reclaim") ? 1 : 0;
-  emitFx(s, "lightning", pos);
+  pushFx(s, { kind: "lightning", x: pos.x, z: pos.z, summonStrike: true });
   if (v >= b && v >= r) emitFx(s, "spark_burst", pos);
   else if (b >= r) emitFx(s, "ground_crack", pos);
   else emitFx(s, "reclaim_pulse", pos);

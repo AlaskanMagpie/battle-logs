@@ -1,25 +1,9 @@
-import { CATALOG } from "./catalog";
+import { validBinderCodexIds } from "./binderCodexIds";
 import { DOCTRINE_SLOT_COUNT } from "./constants";
 import { normalizeDoctrineSlotsForMatch } from "./state";
 
-/**
- * Same binder codex allow-list as `DoctrineBinderPicker` — structures shown in the codex + commands.
- */
-const FULL_ART_STRUCTURE_CARD_IDS = [
-  "outpost",
-  "watchtower",
-  "bastion_keep",
-  "verdant_citadel",
-  "emberroot_bastion",
-  "aionroot_observatory",
-  "frostroot_keep",
-  "wooden_aerie",
-  "hollowmarket_stump",
-  "townwatch_keep",
-] as const;
-const COMMAND_CARD_IDS = CATALOG.filter((c) => c.kind === "command").map((c) => c.id);
-/** Quick match / binder codex: full-art structure cards in the codex + command spells only (no legacy catalog towers). */
-const DOCTRINE_BINDER_GRID_IDS = new Set<string>([...FULL_ART_STRUCTURE_CARD_IDS, ...COMMAND_CARD_IDS]);
+/** Same binder codex allow-list as `DoctrineBinderPicker` (manifest-driven extras included). */
+const DOCTRINE_BINDER_GRID_IDS = validBinderCodexIds;
 
 /** Same minimum filled slots as prematch **Start match** / Quickmatch fallback. */
 export const QUICK_MATCH_MIN_FILLED = 4;
@@ -101,12 +85,12 @@ export function fillDoctrineSlotsWithDuplicatePicks(slots: (string | null)[]): (
 }
 
 /**
- * `?quickMatch=1` entry: use saved doctrine when it passes the binder viability bar; otherwise the preset row.
- * Sparse hands are expanded with duplicate picks so all ten slots are filled when possible.
+ * `?quickMatch=1` entry: use saved doctrine when it passes the binder viability bar (same row as the player set —
+ * no duplicate-fill into empty slots). Otherwise build from the preset row and fill to ten for a clean jump-in.
  */
 export function doctrineSlotsForUrlQuickMatch(storedSlots: (string | null)[]): (string | null)[] {
   const user = normalizedUserHandOrNull(storedSlots);
-  if (user) return fillDoctrineSlotsWithDuplicatePicks(user);
+  if (user) return user;
   const preset = normalizeDoctrineSlotsForMatch([...QUICK_MATCH_DOCTRINE_SLOTS]);
   return fillDoctrineSlotsWithDuplicatePicks(preset);
 }
