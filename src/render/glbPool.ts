@@ -989,6 +989,47 @@ function applyGlbTeamTint(root: THREE.Object3D, team: TeamId): void {
   });
 }
 
+
+/** One tinted material set per GLB file + team (shared across unit instances). */
+const sharedTeamMaterialCache = new Map<string, THREE.Material[]>();
+
+function collectMeshMaterials(root: THREE.Object3D): THREE.Material[] {
+  const mats: THREE.Material[] = [];
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.material) return;
+    const arr = Array.isArray(m.material) ? m.material : [m.material];
+    for (const mat of arr) mats.push(mat);
+  });
+  return mats;
+}
+
+function getSharedTeamMaterials(file: string, team: TeamId, template: GltfTemplate): THREE.Material[] {
+  const key = `${file}:${team}`;
+  const hit = sharedTeamMaterialCache.get(key);
+  if (hit) return hit;
+  const tempRoot = template.root.clone(true);
+  cloneInstanceMaterials(tempRoot);
+  applyGlbTeamTint(tempRoot, team);
+  const mats = collectMeshMaterials(tempRoot);
+  sharedTeamMaterialCache.set(key, mats);
+  return mats;
+}
+
+function assignSharedTeamMaterials(inst: THREE.Object3D, file: string, team: TeamId, template: GltfTemplate): void {
+  const shared = getSharedTeamMaterials(file, team, template);
+  let idx = 0;
+  inst.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.material) return;
+    if (Array.isArray(m.material)) {
+      m.material = m.material.map(() => shared[idx++]!);
+    } else {
+      m.material = shared[idx++]!;
+    }
+  });
+}
+
 function cloneInstanceMaterials(root: THREE.Object3D): void {
   root.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -1111,7 +1152,8 @@ async function attachGlbByFile(
     const deathTemplatePromise = deathFile ? roleTemplateFor(deathFile) : null;
 
     const inst = cloneSkeleton(template.root);
-    cloneInstanceMaterials(inst);
+    if (opts?.teamTint) assignSharedTeamMaterials(inst, file, opts.teamTint, template);
+    else cloneInstanceMaterials(inst);
     setShadowRecursive(inst, true, true);
 
     inst.traverse((o) => {
@@ -1236,8 +1278,6 @@ async function attachGlbByFile(
       }
     }
     normalizeGlbInstance(inst, targetMaxExtent, extentBasis);
-
-    if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
 
     const hideKey = opts?.hideSilhouetteUserDataKey;
     if (hideKey) {

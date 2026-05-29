@@ -541,6 +541,7 @@ export function movement(s: GameState): void {
     integrateKnockback(s, u, stepScale, structureObstacles);
   }
   advanceFormationMarches(s, stepScale);
+  const enemyUnitBuckets = s.units.length >= 48 ? buildCombatUnitBuckets(s) : undefined;
 
   const anyEnemyCampAwake =
     s.map.enemyCamps.length === 0 || s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);

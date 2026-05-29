@@ -15,15 +15,16 @@ import { productionBatchSizeForClass, unitStatsForCatalog } from "./helpers";
 /** Slightly wider ring than +/-1 so units clear the tower footprint / GLB hull. */
 const SPAWN_JITTER = 3.5;
 
-function pushSpawnedUnitFromStructureDef(
+/** One squad entity per production batch (multi-body HP pool). Returns body count for UI/stats. */
+function pushSpawnedSquadFromStructureDef(
   s: GameState,
   def: StructureCatalogEntry,
   center: { x: number; z: number },
   structureId: number | null,
   team: "player" | "enemy",
-  batchIndex: number,
-  batchTotal: number,
-): void {
+  squadSize: number,
+): number {
+  if (squadSize <= 0) return 0;
   const stStats = unitStatsForCatalog(def.producedSizeClass);
   const antiClasses =
     def.producedAntiClasses && def.producedAntiClasses.length > 0
@@ -31,20 +32,21 @@ function pushSpawnedUnitFromStructureDef(
       : def.producedAntiClass
         ? [def.producedAntiClass]
         : undefined;
-  const spread = Math.max(1, batchTotal);
   const baseAngle = rand(s) * Math.PI * 2;
-  const angle = baseAngle + (batchIndex / spread) * Math.PI * 2 + (rand(s) - 0.5) * 0.32;
-  const radius = SPAWN_JITTER * (0.52 + rand(s) * 0.35);
+  const angle = baseAngle + (rand(s) - 0.5) * 0.32;
+  const radius = SPAWN_JITTER * (0.52 + rand(s) * 0.48);
+  const isSquad = squadSize > 1;
+  const singleHp = stStats.maxHp;
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
     structureId,
     x: center.x + Math.cos(angle) * radius,
     z: center.z + Math.sin(angle) * radius,
-    hp: stStats.maxHp,
-    maxHp: stStats.maxHp,
+    hp: singleHp * squadSize,
+    maxHp: singleHp * squadSize,
     sizeClass: def.producedSizeClass,
-    pop: stStats.pop,
+    pop: stStats.pop * squadSize,
     speedPerSec: stStats.speedPerSec,
     range: stStats.range,
     dmgPerTick: team === "enemy" ? stStats.dmgPerTick * enemyDamageScalar(s.map) : stStats.dmgPerTick,
@@ -60,9 +62,17 @@ function pushSpawnedUnitFromStructureDef(
     producerCatalogId: def.id,
     vxImpulse: 0,
     vzImpulse: 0,
+    ...(isSquad
+      ? {
+          squadCount: squadSize,
+          squadMaxCount: squadSize,
+          singleMaxHp: singleHp,
+        }
+      : {}),
   };
   s.units.push(u);
-  if (team === "player") s.stats.unitsProduced += 1;
+  if (team === "player") s.stats.unitsProduced += squadSize;
+  return squadSize;
 }
 
 export function availableProductionSlots(_s: GameState, st: StructureRuntime): number {
@@ -71,16 +81,15 @@ export function availableProductionSlots(_s: GameState, st: StructureRuntime): n
   return productionBatchSizeForClass(def.producedSizeClass);
 }
 
-function pushSpawnedUnitBody(
+function pushSpawnedSquadBody(
   s: GameState,
   st: StructureRuntime,
   team: "player" | "enemy",
-  batchIndex: number,
-  batchTotal: number,
-): void {
+  squadSize: number,
+): number {
   const def = getCatalogEntry(st.catalogId);
-  if (!def || !isStructureEntry(def)) return;
-  pushSpawnedUnitFromStructureDef(s, def, { x: st.x, z: st.z }, st.id, team, batchIndex, batchTotal);
+  if (!def || !isStructureEntry(def)) return 0;
+  return pushSpawnedSquadFromStructureDef(s, def, { x: st.x, z: st.z }, st.id, team, squadSize);
 }
 
 /**
@@ -96,28 +105,29 @@ export function spawnEnemyBatchFromStructureCatalogId(
   if (!def || !isStructureEntry(def)) return 0;
   const n = productionBatchSizeForClass(def.producedSizeClass);
   if (n <= 0) return 0;
-  for (let i = 0; i < n; i++) {
-    pushSpawnedUnitFromStructureDef(s, def, pos, null, "enemy", i, n);
-  }
-  s.stats.enemyUnitsSpawned += n;
-  return n;
+  const bodies = pushSpawnedSquadFromStructureDef(s, def, pos, null, "enemy", n);
+  s.stats.enemyUnitsSpawned += bodies;
+  return bodies;
 }
 
-function pushSpawnedBatch(s: GameState, st: StructureRuntime, team: "player" | "enemy", count: number): void {
-  for (let i = 0; i < count; i++) pushSpawnedUnitBody(s, st, team, i, count);
+function pushSpawnedBatch(s: GameState, st: StructureRuntime, team: "player" | "enemy", count: number): number {
+  return pushSpawnedSquadBody(s, st, team, count);
 }
 
 export function spawnPlayerUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  if (n > 0) pushSpawnedBatch(s, st, "player", n);
-  return n;
+  if (n > 0) return pushSpawnedBatch(s, st, "player", n);
+  return 0;
 }
 
 export function spawnEnemyUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  if (n > 0) pushSpawnedBatch(s, st, "enemy", n);
-  if (n > 0) s.stats.enemyUnitsSpawned += n;
-  return n;
+  if (n > 0) {
+    const bodies = pushSpawnedBatch(s, st, "enemy", n);
+    if (bodies > 0) s.stats.enemyUnitsSpawned += bodies;
+    return bodies;
+  }
+  return 0;
 }
 
 function productionTicksForStructure(s: GameState, st: StructureRuntime): number {

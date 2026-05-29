@@ -162,6 +162,24 @@ describe("doctrine card playability", () => {
   });
 });
 
+
+describe("swarm scale (squad entities)", () => {
+  it("keeps sim entity count at one squad per production batch", () => {
+    const s = createInitialState(tinyMap, []);
+    const st = structure("watchtower", 900);
+    s.structures.push(st);
+    for (let i = 0; i < 75; i++) {
+      st.productionTicksRemaining = 1;
+      production(s);
+    }
+    const squads = s.units.filter((u) => u.structureId === st.id);
+    expect(squads.length).toBe(75);
+    expect(squads.every((u) => u.squadMaxCount === 4)).toBe(true);
+    const bodyEquivalent = squads.reduce((n, u) => n + (u.squadMaxCount ?? 1), 0);
+    expect(bodyEquivalent).toBe(300);
+  });
+});
+
 describe("batch production", () => {
   it.each([
     ["watchtower", "Swarm", 4, PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS],
@@ -169,7 +187,7 @@ describe("batch production", () => {
     ["outpost", "Line", 3, PRODUCED_UNIT_LANTERNBOUND_LINE],
     ["bastion_keep", "Heavy", 2, PRODUCED_UNIT_AMBER_GEODE_MONKS],
     ["verdant_citadel", "Titan", 1, undefined],
-  ] as const)("spawns literal %s bodies", (catalogId, sizeClass, expected, producedUnitId) => {
+  ] as const)("spawns one squad per %s batch (%s bodies)", (catalogId, sizeClass, expected, producedUnitId) => {
     const s = createInitialState(tinyMap, []);
     const st = structure(catalogId, 100);
     const stats = unitStatsForCatalog(sizeClass);
@@ -179,11 +197,21 @@ describe("batch production", () => {
     production(s);
 
     const spawned = s.units.slice(before).filter((u) => u.team === "player" && u.structureId === st.id);
-    expect(spawned).toHaveLength(expected);
-    expect(spawned.every((u) => u.sizeClass === sizeClass)).toBe(true);
-    expect(spawned.every((u) => u.squadMaxCount === undefined && u.singleMaxHp === undefined)).toBe(true);
-    expect(spawned.every((u) => u.maxHp === stats.maxHp && u.pop === stats.pop)).toBe(true);
-    expect(spawned.every((u) => u.producedUnitId === producedUnitId)).toBe(true);
+    expect(spawned).toHaveLength(1);
+    const squad = spawned[0]!;
+    expect(squad.sizeClass).toBe(sizeClass);
+    expect(squad.producedUnitId).toBe(producedUnitId);
+    if (expected > 1) {
+      expect(squad.squadMaxCount).toBe(expected);
+      expect(squad.squadCount).toBe(expected);
+      expect(squad.singleMaxHp).toBe(stats.maxHp);
+      expect(squad.maxHp).toBe(stats.maxHp * expected);
+      expect(squad.pop).toBe(stats.pop * expected);
+    } else {
+      expect(squad.squadMaxCount).toBeUndefined();
+      expect(squad.maxHp).toBe(stats.maxHp);
+      expect(squad.pop).toBe(stats.pop);
+    }
   });
 
   it("ignores old local pop caps and always emits the full batch", () => {
@@ -195,7 +223,7 @@ describe("batch production", () => {
     expect(availableProductionSlots(s, st)).toBe(4);
     production(s);
 
-    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(20);
+    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(17);
     expect(st.productionTicksRemaining).toBeGreaterThan(1);
   });
 
@@ -209,8 +237,8 @@ describe("batch production", () => {
     production(s);
 
     const spawned = s.units.filter((u) => u.structureId === st.id);
-    expect(spawned).toHaveLength(18);
-    expect(spawned.filter((u) => u.squadMaxCount === undefined)).toHaveLength(18);
+    expect(spawned).toHaveLength(15);
+    expect(spawned.filter((u) => u.squadMaxCount === undefined)).toHaveLength(14);
     expect(st.productionTicksRemaining).toBeGreaterThan(1);
   });
 
@@ -229,8 +257,9 @@ describe("batch production", () => {
 
     expect(st.complete).toBe(true);
     const spawned = s.units.filter((u) => u.structureId === st.id);
-    expect(spawned).toHaveLength(4);
-    expect(spawned.every((u) => u.sizeClass === "Swarm")).toBe(true);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]!.sizeClass).toBe("Swarm");
+    expect(spawned[0]!.squadMaxCount).toBe(4);
     expect(st.productionTicksRemaining).toBe(Math.round(def.productionSeconds * TICK_HZ));
   });
 
@@ -244,8 +273,9 @@ describe("batch production", () => {
     production(s);
 
     const spawned = s.units.filter((u) => u.team === "enemy" && u.structureId === st.id);
-    expect(spawned).toHaveLength(4);
-    expect(spawned.every((u) => u.dmgPerTick === unitStatsForCatalog("Swarm").dmgPerTick * enemyDamageScalar(s.map))).toBe(true);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]!.squadMaxCount).toBe(4);
+    expect(spawned[0]!.dmgPerTick).toBe(unitStatsForCatalog("Swarm").dmgPerTick * enemyDamageScalar(s.map));
     expect(st.productionTicksRemaining).toBe(Math.round((def.productionSeconds * TICK_HZ) / enemyProductionSpeedScalar(s)));
   });
 
@@ -258,17 +288,17 @@ describe("batch production", () => {
     production(s);
 
     const first = s.units.filter((u) => u.structureId === keep.id);
-    expect(first).toHaveLength(4);
-    expect(first.every((u) => u.maxHp === unitStatsForCatalog("Swarm").maxHp)).toBe(true);
+    expect(first).toHaveLength(1);
+    expect(first[0]!.maxHp).toBe(unitStatsForCatalog("Swarm").maxHp * 4);
     expect(keep.productionTicksRemaining).toBe(Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
 
     keep.productionTicksRemaining = 1;
     production(s);
-    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(8);
+    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(2);
 
     keep.productionTicksRemaining = 1;
     production(s);
-    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(12);
+    expect(s.units.filter((u) => u.structureId === keep.id)).toHaveLength(3);
     expect(keep.productionTicksRemaining).toBe(Math.round(KEEP_SWARM_PERIOD_SEC * TICK_HZ));
   });
 
@@ -279,7 +309,8 @@ describe("batch production", () => {
 
     production(s);
 
-    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(4);
+    expect(s.units.filter((u) => u.structureId === st.id)).toHaveLength(1);
+    expect(s.units.find((u) => u.structureId === st.id)?.squadMaxCount).toBe(4);
     expect(s.combatHitMarks).toHaveLength(0);
     expect(s.fxQueue).toHaveLength(0);
   });

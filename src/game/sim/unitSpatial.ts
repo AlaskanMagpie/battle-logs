@@ -1,5 +1,6 @@
 import { COMBAT_SPATIAL_CELL } from "../constants";
-import type { GameState, UnitRuntime } from "../state";
+import type { GameState, StructureRuntime, UnitRuntime } from "../state";
+import type { Vec2 } from "../types";
 import { dist2 } from "./systems/helpers";
 
 function cellKey(x: number, z: number, cell: number): string {
@@ -76,4 +77,63 @@ export function unitsNearXZ(
     }
   }
   return out;
+}
+
+export type StructureTeamBuckets = {
+  player: Map<string, StructureRuntime[]>;
+  enemy: Map<string, StructureRuntime[]>;
+};
+
+export function buildStructureTeamBuckets(
+  s: GameState,
+  cell: number = COMBAT_SPATIAL_CELL,
+): StructureTeamBuckets {
+  const player = new Map<string, StructureRuntime[]>();
+  const enemy = new Map<string, StructureRuntime[]>();
+  for (const st of s.structures) {
+    if (st.hp <= 0) continue;
+    const map = st.team === "player" ? player : enemy;
+    const k = cellKey(st.x, st.z, cell);
+    const arr = map.get(k);
+    if (arr) arr.push(st);
+    else map.set(k, [st]);
+  }
+  return { player, enemy };
+}
+
+export function nearestStructureInBuckets(
+  from: Vec2,
+  buckets: Map<string, StructureRuntime[]>,
+  maxD2: number,
+  cell: number = COMBAT_SPATIAL_CELL,
+): StructureRuntime | null {
+  let best: StructureRuntime | null = null;
+  let bestD = maxD2;
+  const gx = Math.floor(from.x / cell);
+  const gz = Math.floor(from.z / cell);
+  const reachCells = Math.max(1, Math.ceil(Math.sqrt(maxD2) / cell));
+  for (let ox = -reachCells; ox <= reachCells; ox++) {
+    for (let oz = -reachCells; oz <= reachCells; oz++) {
+      const list = buckets.get(`${gx + ox},${gz + oz}`);
+      if (!list) continue;
+      for (const st of list) {
+        const d = dist2(from, st);
+        if (d <= bestD) {
+          bestD = d;
+          best = st;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+export function nearestEnemyUnitInBuckets(
+  from: Vec2,
+  buckets: Map<string, UnitRuntime[]>,
+  maxD2: number,
+  cell: number = COMBAT_SPATIAL_CELL,
+): UnitRuntime | null {
+  const proxy = { x: from.x, z: from.z, team: "player" as const, hp: 1, id: -1 } as UnitRuntime;
+  return nearestFoeInBuckets(proxy, "enemy", maxD2, buckets, cell);
 }

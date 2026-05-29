@@ -29,7 +29,13 @@ import {
 } from "../../state";
 import type { UnitSizeClass, Vec2 } from "../../types";
 import { dist2, TRAMPLE } from "./helpers";
-import { buildCombatUnitBuckets, nearestFoeInBuckets, unitsNearXZ } from "../unitSpatial";
+import {
+  buildCombatUnitBuckets,
+  buildStructureTeamBuckets,
+  nearestFoeInBuckets,
+  nearestStructureInBuckets,
+  unitsNearXZ,
+} from "../unitSpatial";
 
 const IMPULSE_MASS: Record<UnitSizeClass, number> = {
   Swarm: 0.85,
@@ -167,6 +173,7 @@ export function combat(s: GameState): void {
   tickAttackCooldowns(s.units);
   const markAttackers = new Set<number>();
   const buckets = buildCombatUnitBuckets(s, cell);
+  const structureBuckets = buildStructureTeamBuckets(s, cell);
   const markMax = combatMarkBudget(s.units.length);
 
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
@@ -203,16 +210,7 @@ export function combat(s: GameState): void {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     const ur2 = u.range * u.range;
-    let best: StructureRuntime | null = null;
-    let bestD = ur2;
-    for (const st of s.structures) {
-      if (st.team !== "player") continue;
-      const d = dist2(u, st);
-      if (d <= bestD) {
-        bestD = d;
-        best = st;
-      }
-    }
+    const best = nearestStructureInBuckets(u, structureBuckets.player, ur2, cell);
     if (best) {
       let incoming = attackDamageFromPerTick(u, u.dmgPerTick) * ENEMY_UNIT_STRUCTURE_DAMAGE_MULT;
       incoming *= tacticsFieldOutgoingDamageMult(s, "enemy", u.x, u.z);
@@ -287,22 +285,20 @@ export function combat(s: GameState): void {
       }
     }
     if (attacked) continue;
-    for (const st of s.structures) {
-      if (st.team !== "enemy") continue;
-      if (dist2(u, st) <= u.range * u.range) {
-        const raw =
-          attackDamageFromPerTick(u, u.dmgPerTick) *
-          PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
-          buildingDmgMult *
-          tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
-          tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
-        st.hp -= raw;
-        recordDamageDealtBy(s, "player", raw);
-        if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
-        commitAttack(s, u);
-        pushAttackMark(s, u, st, markMax, markAttackers);
-        break;
-      }
+    const ur2 = u.range * u.range;
+    const st = nearestStructureInBuckets(u, structureBuckets.enemy, ur2, cell);
+    if (st) {
+      const raw =
+        attackDamageFromPerTick(u, u.dmgPerTick) *
+        PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *
+        buildingDmgMult *
+        tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *
+        tacticsFieldIncomingDamageMult(s, "enemy", st.x, st.z);
+      st.hp -= raw;
+      recordDamageDealtBy(s, "player", raw);
+      if (isSiege) s.lastSiegeHit = { x: st.x, z: st.z, tick: s.tick };
+      commitAttack(s, u);
+      pushAttackMark(s, u, st, markMax, markAttackers);
     }
   }
 

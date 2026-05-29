@@ -906,6 +906,69 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
   return g;
 }
 
+
+function squadCrowdRingOffsets(maxCount: number, radius: number): { x: number; z: number }[] {
+  const slots: { x: number; z: number }[] = [];
+  for (let i = 0; i < maxCount; i++) {
+    const a = (i / maxCount) * Math.PI * 2;
+    slots.push({ x: Math.cos(a) * radius, z: Math.sin(a) * radius });
+  }
+  return slots;
+}
+
+function buildSquadCrowdDot(team: "player" | "enemy", size: UnitSizeClass): THREE.Mesh {
+  const L = unitMeshLinearSize(size);
+  const geom = new THREE.SphereGeometry(L * 0.14, 6, 5);
+  const color = team === "player" ? 0x7ec8ff : 0xff8888;
+  const mesh = new THREE.Mesh(geom, matFor(color, 0.55, 0.2));
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.userData["isSquadCrowd"] = true;
+  return mesh;
+}
+
+function disposeSquadCrowdMeshes(g: THREE.Group): void {
+  const meshes = g.userData["squadCrowdMeshes"] as THREE.Mesh[] | undefined;
+  if (!meshes) return;
+  for (const m of meshes) {
+    g.remove(m);
+    m.geometry.dispose();
+  }
+  delete g.userData["squadCrowdMeshes"];
+}
+
+function syncSquadCrowdBodies(
+  g: THREE.Group,
+  u: { team: "player" | "enemy"; sizeClass: UnitSizeClass; squadMaxCount?: number; squadCount?: number },
+  liveCount: number,
+): void {
+  const maxCount = Math.max(1, u.squadMaxCount ?? u.squadCount ?? 1);
+  if (maxCount <= 1) {
+    disposeSquadCrowdMeshes(g);
+    return;
+  }
+  const extraBodies = maxCount - 1;
+  let meshes = g.userData["squadCrowdMeshes"] as THREE.Mesh[] | undefined;
+  if (!meshes || meshes.length !== extraBodies) {
+    disposeSquadCrowdMeshes(g);
+    meshes = [];
+    for (let i = 0; i < extraBodies; i++) {
+      const dot = buildSquadCrowdDot(u.team, u.sizeClass);
+      g.add(dot);
+      meshes.push(dot);
+    }
+    g.userData["squadCrowdMeshes"] = meshes;
+  }
+  const radius = unitMeshLinearSize(u.sizeClass) * 0.22;
+  const slots = squadCrowdRingOffsets(maxCount, radius);
+  const y = unitMeshLinearSize(u.sizeClass) * 0.12;
+  for (let i = 0; i < meshes.length; i++) {
+    const slot = slots[i + 1] ?? slots[0]!;
+    meshes[i]!.position.set(slot.x, y, slot.z);
+    meshes[i]!.visible = i + 1 < liveCount;
+  }
+}
+
 export class GameRenderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -4111,6 +4174,7 @@ export class GameRenderer {
     }
     for (const [id, obj] of this.unitMeshes) {
       if (!alive.has(id)) {
+        if (obj instanceof THREE.Group) disposeSquadCrowdMeshes(obj);
         this.startUnitDeathVisual(obj);
         this.unitMeshes.delete(id);
         this.unitCountLabels.delete(id);
@@ -4235,6 +4299,7 @@ export class GameRenderer {
       label.sprite.position.set(0, h + 0.72, 0);
       const liveCount = liveSquadCount(u);
       const maxCount = Math.max(1, u.squadMaxCount ?? u.squadCount ?? 1);
+      syncSquadCrowdBodies(g, u, liveCount);
       const countText = maxCount > 1 ? `x${liveCount}` : "";
       drawLabel(label, countText, u.team === "player" ? "#7ec8ff" : "#ff8888");
       label.sprite.visible = maxCount > 1;
@@ -4345,8 +4410,8 @@ export class GameRenderer {
       const c = candidates[i]!;
       spent += c.tri;
       const distancePop = mobile
-        ? unitCount > 42 && c.distSq > 118 * 118 && c.keepBoost < 50000
-        : unitCount > 260 && c.distSq > 145 * 145 && c.keepBoost < 50000;
+        ? unitCount > (c.isSquadSwarm ? 28 : 42) && c.distSq > 118 * 118 && c.keepBoost < 50000
+        : unitCount > (c.isSquadSwarm ? 180 : 260) && c.distSq > 145 * 145 && c.keepBoost < 50000;
       const budgetPop = spent > triBudget && c.keepBoost < 50000;
       const countPop = mobile && visibleGlbs >= mobileGlbBudget && c.keepBoost < 50000;
       const shouldPlaceholder = distancePop || budgetPop || countPop;
