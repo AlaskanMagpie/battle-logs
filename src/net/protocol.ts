@@ -3,7 +3,7 @@ import type { GamePhase } from "../game/types";
 
 export const MULTIPLAYER_PROTOCOL_VERSION = 1;
 
-export type MatchMode = "ai" | "matchmake" | "matchmake_strict" | "pvp" | "fallback_ai";
+export type MatchMode = "ai" | "matchmake" | "matchmake_strict" | "pvp" | "fallback_ai" | "pve_survival";
 export type MatchSeat = "player" | "enemy";
 export type QueueState = "idle" | "searching" | "matched" | "starting" | "fallback_ai" | "cancelled" | "error";
 
@@ -92,6 +92,9 @@ export interface MatchLaunchOptions {
 
 export function normalizeMatchMode(raw: string | null | undefined): MatchMode {
   const value = raw?.trim().toLowerCase();
+  if (value === "survival" || value === "pve" || value === "horde" || value === "hoard" || value === "pve_survival") {
+    return "pve_survival";
+  }
   if (value === "human" || value === "wait" || value === "strict" || value === "matchmake_strict") return "matchmake_strict";
   if (value === "matchmake" || value === "pvp") return "matchmake";
   if (value === "fallback_ai") return "fallback_ai";

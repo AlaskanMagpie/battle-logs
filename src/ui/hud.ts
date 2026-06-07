@@ -218,7 +218,35 @@ function enemyCount(state: GameState): number {
   return state.units.filter((u) => u.team === "enemy" && u.hp > 0).length;
 }
 
+function survivalRampPercent(state: GameState): number {
+  const rampTicks = Math.max(1, state.survival?.rampDurationTicks ?? MATCH_DURATION_TICKS);
+  return Math.max(0, Math.min(100, Math.round((state.tick / rampTicks) * 100)));
+}
+
+function survivalNextWaveSeconds(state: GameState): number | null {
+  if (state.scenario !== "survival" || !state.survival || state.phase !== "playing") return null;
+  return Math.max(0, Math.ceil((state.survival.nextSpawnTick - state.tick) / TICK_HZ));
+}
+
 function computeObjective(state: GameState): string {
+  if (state.scenario === "survival") {
+    const claimedNodes = claimedTapCount(state);
+    const enemyN = enemyCount(state);
+    const totalNodes = state.taps.length;
+    const playerStructs = state.structures.filter((s) => s.team === "player");
+    const playerTowers = playerStructs.filter((s) => {
+      const e = getCatalogEntry(s.catalogId);
+      return e && isStructureEntry(e) && s.catalogId !== "wizard_keep";
+    });
+    const nextWave = survivalNextWaveSeconds(state);
+    if (claimedNodes === 0) return "Survival: claim the nearest Mana node, then build a ring of defenses around the central Keep.";
+    if (playerTowers.length === 0) return "Survival: place your first tower in blue territory before the horde reaches the core.";
+    if (enemyN > 0) return `Survival: ${enemyN} hostiles are on the field. Hold the Keep and preserve units for the next wave.`;
+    if (claimedNodes < totalNodes) {
+      return `Survival: expand to more nodes (${claimedNodes}/${totalNodes}) before the next wave${nextWave === null ? "" : ` in ${nextWave}s`}.`;
+    }
+    return `Survival: all nodes held. Reinforce, replace losses, and endure the ramp${nextWave === null ? "" : ` (${nextWave}s to next wave)`}.`;
+  }
   const claimedNodes = claimedTapCount(state);
   const playerStructs = state.structures.filter((s) => s.team === "player");
   const playerTowers = playerStructs.filter((s) => {
@@ -753,15 +781,42 @@ export function updateHud(state: GameState): void {
     }
   }
   if (phaseTimer && phaseDmgP && phaseDmgE) {
-    const dp = Math.round(state.stats.damageDealtPlayer);
-    const de = Math.round(state.stats.damageDealtEnemy);
-    phaseDmgP.textContent = String(dp);
-    phaseDmgE.textContent = String(de);
-    if (state.phase === "playing") {
-      const sec = Math.max(0, (MATCH_DURATION_TICKS - state.tick) / TICK_HZ);
-      phaseTimer.textContent = `${sec.toFixed(0)}s`;
+    const timeKicker = document.querySelector<HTMLElement>(".hud-phase__row--time .hud-phase__kicker");
+    const statKicker = document.querySelector<HTMLElement>(".hud-phase__row--damage .hud-phase__kicker");
+    const statRow = document.querySelector<HTMLElement>(".hud-phase__row--damage");
+    if (state.scenario === "survival") {
+      const rampTicks = Math.max(1, state.survival?.rampDurationTicks ?? MATCH_DURATION_TICKS);
+      const rampLabel = formatMatchDurationFromTicks(rampTicks);
+      phaseDmgP.textContent = String(state.stats.enemyKills);
+      phaseDmgE.textContent = String(enemyCount(state));
+      if (timeKicker) timeKicker.textContent = "Survived";
+      if (statKicker) statKicker.textContent = "Kills / Hostiles";
+      if (statRow) {
+        const nextWave = survivalNextWaveSeconds(state);
+        statRow.title = `Survival kills and current live hostiles. Ramp is ${survivalRampPercent(state)}%${nextWave === null ? "" : `; next wave in ${nextWave}s`}.`;
+      }
+      if (state.phase === "playing") {
+        phaseTimer.textContent = `${formatMatchDurationFromTicks(state.tick)} / ${rampLabel}`;
+      } else {
+        phaseTimer.textContent = formatMatchDurationFromTicks(state.tick);
+      }
     } else {
-      phaseTimer.textContent = state.phase;
+      const dp = Math.round(state.stats.damageDealtPlayer);
+      const de = Math.round(state.stats.damageDealtEnemy);
+      phaseDmgP.textContent = String(dp);
+      phaseDmgE.textContent = String(de);
+      if (timeKicker) timeKicker.textContent = "Time Left";
+      if (statKicker) statKicker.textContent = "Damage You / Foe";
+      if (statRow) {
+        statRow.title =
+          "Total hit-point damage in this match: first number = damage you dealt to the enemy, second = damage they dealt to you. Used to break ties if the match timer runs out.";
+      }
+      if (state.phase === "playing") {
+        const sec = Math.max(0, (MATCH_DURATION_TICKS - state.tick) / TICK_HZ);
+        phaseTimer.textContent = `${sec.toFixed(0)}s`;
+      } else {
+        phaseTimer.textContent = state.phase;
+      }
     }
   }
   if (captain) {
@@ -908,7 +963,7 @@ export function updateHud(state: GameState): void {
       end.hidden = false;
       end.classList.toggle("hud-endgame--win", won);
       end.classList.toggle("hud-endgame--lose", !won);
-      endTitle.textContent = won ? "Victory" : "Defeat";
+      endTitle.textContent = state.scenario === "survival" ? "Survival ended" : won ? "Victory" : "Defeat";
       endArt.src = won ? "/assets/hud/end-victory.png" : "/assets/hud/end-defeat.png";
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
@@ -928,7 +983,9 @@ export function updateHud(state: GameState): void {
       setEndStat(
         "score",
         scoreMatchResult(state),
-        "Post-match score: win bonus + enemy kills×14 + claimed nodes×180 + doctrine buildings placed×55 − your unit losses×5 − one point per sim minute. Same value as best local when this run is stored.",
+        state.scenario === "survival"
+          ? "Survival score: seconds survived×4 + enemy kills×18 + claimed nodes×140 + doctrine buildings placed×35 - unit losses×6."
+          : "Post-match score: win bonus + enemy kills×14 + claimed nodes×180 + doctrine buildings placed×55 − your unit losses×5 − one point per sim minute. Same value as best local when this run is stored.",
       );
       setEndStat("best", best ? best.score : "—", "Highest post-match score stored in this browser (last 10 runs).");
       setEndStat(

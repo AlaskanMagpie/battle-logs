@@ -1,4 +1,4 @@
-import { MATCH_DURATION_TICKS } from "../../constants";
+import { MATCH_DURATION_TICKS, TICK_HZ } from "../../constants";
 import { findKeep, type GameState } from "../../state";
 
 /**
@@ -10,7 +10,10 @@ export function loseCheck(s: GameState): void {
   const keep = findKeep(s);
   if (!keep) {
     s.phase = "lose";
-    s.matchEndDetail = "You lost: your Wizard Keep (base) was destroyed.";
+    s.matchEndDetail =
+      s.scenario === "survival"
+        ? `Survival ended: your Wizard Keep fell after ${Math.floor(s.tick / TICK_HZ)} seconds.`
+        : "You lost: your Wizard Keep (base) was destroyed.";
     s.lastMessage = s.matchEndDetail;
   }
 }
@@ -39,12 +42,14 @@ export function resolveMatchTimeLimit(s: GameState): void {
 
 /** Call when `s.tick >= MATCH_DURATION_TICKS` to end the match by score. */
 export function timeLimitCheck(s: GameState): void {
+  if (s.scenario === "survival") return;
   if (s.phase !== "playing" || s.tick < MATCH_DURATION_TICKS) return;
   resolveMatchTimeLimit(s);
 }
 
 export function winCheck(s: GameState): void {
   if (s.phase !== "playing") return;
+  if (s.scenario === "survival") return;
   if (s.enemyHero.hp <= 0) {
     s.phase = "win";
     s.matchEndDetail = "You won: the enemy Wizard was defeated.";

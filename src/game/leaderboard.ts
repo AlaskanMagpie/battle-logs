@@ -18,6 +18,14 @@ export interface LocalLeaderboardEntry {
 }
 
 export function scoreMatchResult(s: GameState): number {
+  if (s.scenario === "survival") {
+    const nodesClaimed = s.taps.filter((t) => t.active && t.ownerTeam === "player").length;
+    const secondsSurvived = Math.floor(s.tick / TICK_HZ);
+    return Math.max(
+      0,
+      secondsSurvived * 4 + s.stats.enemyKills * 18 + nodesClaimed * 140 + s.stats.structuresBuilt * 35 - s.stats.unitsLost * 6,
+    );
+  }
   const victory = s.phase === "win" ? 2500 : 0;
   const nodesClaimed = s.taps.filter((t) => t.active && t.ownerTeam === "player").length;
   /** One penalty per full sim minute of match time (`tick` is sim steps at `TICK_HZ`, not wall seconds). */

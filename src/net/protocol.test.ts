@@ -9,6 +9,10 @@ describe("multiplayer protocol helpers", () => {
   it("normalizes opponent mode URL params", () => {
     expect(normalizeMatchMode("matchmake")).toBe("matchmake");
     expect(normalizeMatchMode("pvp")).toBe("matchmake");
+    expect(normalizeMatchMode("survival")).toBe("pve_survival");
+    expect(normalizeMatchMode("pve")).toBe("pve_survival");
+    expect(normalizeMatchMode("horde")).toBe("pve_survival");
+    expect(normalizeMatchMode("hoard")).toBe("pve_survival");
     expect(normalizeMatchMode("human")).toBe("matchmake_strict");
     expect(normalizeMatchMode("wait")).toBe("matchmake_strict");
     expect(normalizeMatchMode("fallback_ai")).toBe("fallback_ai");

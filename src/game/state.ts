@@ -19,6 +19,8 @@ import {
   KEEP_MAX_HP,
   KEEP_SWARM_PERIOD_SEC,
   PLAYER_STARTING_FLUX,
+  SURVIVAL_FIRST_WAVE_DELAY_SEC,
+  SURVIVAL_RAMP_DURATION_TICKS,
   TAP_ANCHOR_MAX_HP,
   TAP_GENERATION_MIN_SEP,
   TAP_NODES_PER_SIDE,
@@ -430,8 +432,19 @@ export interface PortalRuntime {
   pendingRedirectUrl: string | null;
 }
 
+export type GameScenario = "standard" | "survival";
+
+export interface SurvivalRuntime {
+  rampDurationTicks: number;
+  nextSpawnTick: number;
+  waveIndex: number;
+  maxIntensityReachedTick?: number;
+}
+
 export interface GameState {
   map: MapData;
+  scenario: GameScenario;
+  survival?: SurvivalRuntime;
   tick: number;
   phase: GamePhase;
   flux: number;
@@ -871,8 +884,9 @@ export function generateProceduralTaps(map: MapData, rngScratch: { v: number }):
 }
 
 /** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
-function pickReadableTapSlots(slots: TapSlotDef[], halfExtents: number): TapSlotDef[] {
+function pickReadableTapSlots(slots: TapSlotDef[], halfExtents: number, useAllSlots = false): TapSlotDef[] {
   const perSide = TAP_NODES_PER_SIDE;
+  if (useAllSlots) return slots;
   if (slots.length <= perSide * 2) return slots;
 
   const targets = [
@@ -976,7 +990,16 @@ export function effectiveGlobalPopCap(s: GameState): number {
   return Math.min(GLOBAL_POP_CAP_MAX, GLOBAL_POP_CAP + s.globalPopCapBonus);
 }
 
-export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
+export interface CreateInitialStateOptions {
+  scenario?: GameScenario;
+}
+
+export function createInitialState(
+  map: MapData,
+  doctrineSlots?: (string | null)[],
+  options: CreateInitialStateOptions = {},
+): GameState {
+  const scenario = options.scenario ?? "standard";
   const rawIn = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
   const rawSlots =
     rawIn.length >= DOCTRINE_SLOT_COUNT
@@ -987,9 +1010,10 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   const globalPopCapBonus = doctrineMatchGlobalPopCapBonus(slots);
 
   const rngScratch = { v: 0xc0ffee01 >>> 0 };
+  const useAllAuthorTapSlots = scenario === "survival" || map.useAllAuthorTapSlots === true;
   const taps: TapRuntime[] =
     map.useAuthorTapSlots && map.tapSlots.length > 0
-      ? pickReadableTapSlots(map.tapSlots, map.world.halfExtents).map((ts) => ({
+      ? pickReadableTapSlots(map.tapSlots, map.world.halfExtents, useAllAuthorTapSlots).map((ts) => ({
           defId: ts.id,
           x: ts.x,
           z: ts.z,
@@ -1077,6 +1101,15 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
 
   const state: GameState = {
     map: mapResolved,
+    scenario,
+    survival:
+      scenario === "survival"
+        ? {
+            rampDurationTicks: SURVIVAL_RAMP_DURATION_TICKS,
+            nextSpawnTick: Math.max(1, Math.round(SURVIVAL_FIRST_WAVE_DELAY_SEC * TICK_HZ)),
+            waveIndex: 0,
+          }
+        : undefined,
     tick: 0,
     phase: "playing",
     flux: trailerHeroModeStartingFlux(PLAYER_STARTING_FLUX),
@@ -1109,8 +1142,11 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     globalRallyActive: false,
     globalRallyX: 0,
     globalRallyZ: 0,
-    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, false])),
-    lastMessage: "Battle on — claim nodes, summon towers, break the enemy.",
+    enemyCampAwake: Object.fromEntries(mapResolved.enemyCamps.map((c) => [c.id, scenario === "survival"])),
+    lastMessage:
+      scenario === "survival"
+        ? "Survival: build the central base, claim every node you can hold, and endure the horde."
+        : "Battle on — claim nodes, summon towers, break the enemy.",
     matchEndDetail: null,
     rngState: rngScratch.v >>> 0,
     stats: {
