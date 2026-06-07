@@ -81,4 +81,21 @@ describe("survival horde director", () => {
     expect(earlySpawned).toBeGreaterThan(0);
     expect(lateSpawned).toBeGreaterThan(earlySpawned);
   });
+
+  it("records wave telemetry and marks every tenth wave as a surge", () => {
+    const s = createInitialState(survivalMap, [], { scenario: "survival" });
+    s.tick = SURVIVAL_RAMP_DURATION_TICKS;
+    s.survival!.nextSpawnTick = s.tick;
+    s.survival!.waveIndex = 9;
+
+    survivalHordeDirector(s);
+
+    expect(s.survival!.waveIndex).toBe(10);
+    expect(s.survival!.lastWave?.surge).toBe(true);
+    expect(s.survival!.lastWave?.hostilesSpawned).toBeGreaterThan(0);
+    expect(s.survival!.lastWave?.buildingsSpawned).toBeGreaterThan(0);
+    expect(s.survival!.totalHostilesSpawned).toBe(s.stats.enemyUnitsSpawned);
+    expect(s.survival!.hostileBuildingsSpawned).toBe(s.survival!.lastWave?.buildingsSpawned);
+    expect(s.survival!.peakHostilesAlive).toBeGreaterThanOrEqual(s.survival!.lastWave!.hostilesSpawned);
+  });
 });

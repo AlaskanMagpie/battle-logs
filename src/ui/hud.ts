@@ -228,6 +228,15 @@ function survivalNextWaveSeconds(state: GameState): number | null {
   return Math.max(0, Math.ceil((state.survival.nextSpawnTick - state.tick) / TICK_HZ));
 }
 
+function survivalWaveSummary(state: GameState): string {
+  if (state.scenario !== "survival" || !state.survival) return "";
+  const nextWave = survivalNextWaveSeconds(state);
+  const last = state.survival.lastWave;
+  const surge = last?.surge ? " surge" : "";
+  const next = nextWave === null ? "" : ` next ${nextWave}s`;
+  return `wave ${state.survival.waveIndex}${surge}${next} · peak ${state.survival.peakHostilesAlive}`;
+}
+
 function computeObjective(state: GameState): string {
   if (state.scenario === "survival") {
     const claimedNodes = claimedTapCount(state);
@@ -885,13 +894,20 @@ export function updateHud(state: GameState): void {
     const coreLine = campCoreSummary(state);
     const n = enemyCount(state);
     const nEsc = escapeHudHtml(String(n));
+    const survivalLine = survivalWaveSummary(state);
+    const survivalBlock =
+      survivalLine.length > 0
+        ? `<div class="hud-readout__camps" role="status"><span class="hud-readout__camps-lbl">Survival</span><span class="hud-readout__camps-val">${escapeHudHtml(
+            survivalLine,
+          )}</span></div>`
+        : "";
     const coreBlock =
       coreLine.length > 0
         ? `<div class="hud-readout__camps" role="status"><span class="hud-readout__camps-lbl">Camp cores</span><span class="hud-readout__camps-val">${escapeHudHtml(
             coreLine,
           )}</span></div>`
         : "";
-    readout.innerHTML = `${hudStatusIcon("hostiles")}<div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${coreBlock}</div>`;
+    readout.innerHTML = `${hudStatusIcon("hostiles")}<div class="hud-readout__body"><div class="hud-readout__hostiles"><div class="hud-readout__hostiles-lbl">Hostiles</div><div class="hud-readout__hostiles-val" id="hud-readout-hostile-n">${nEsc}</div></div>${survivalBlock}${coreBlock}</div>`;
   }
 
   const objWrap = document.querySelector<HTMLElement>("#hud-objective");
@@ -968,6 +984,10 @@ export function updateHud(state: GameState): void {
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
       const timeSec = simSecondsFromMatchTick(state.tick);
+      const setEndLabel = (id: string, value: string): void => {
+        const el = document.querySelector<HTMLElement>(`.hud-endgame-stat--${id} dt`);
+        if (el) el.textContent = value;
+      };
       const setEndStat = (id: string, value: string | number, title?: string): void => {
         const el = document.querySelector<HTMLElement>(`#hud-endgame-stat-${id}`);
         if (!el) return;
@@ -997,12 +1017,25 @@ export function updateHud(state: GameState): void {
       setEndStat("units-produced", st.unitsProduced, "Player units spawned from your production (swarm/line/… batches count each unit).");
       setEndStat("units-lost", st.unitsLost, "Your troop casualties (squad sizes count).");
       setEndStat("enemy-kills", st.enemyKills, "Enemy units and troops eliminated (squad sizes count).");
-      setEndStat("commands-cast", st.commandsCast, "Command doctrine cards cast (spells, not building placements).");
-      setEndStat(
-        "salvage-recovered",
-        Math.round(st.salvageRecovered),
-        "Salvage that entered your salvage pool: refunds when your non-Keep buildings were lost, and salvage from command effects that add to the pool.",
-      );
+      if (state.scenario === "survival") {
+        setEndLabel("commands-cast", "Waves");
+        setEndLabel("salvage-recovered", "Peak hostiles");
+        setEndStat("commands-cast", state.survival?.waveIndex ?? 0, "Survival waves spawned before the Keep fell.");
+        setEndStat(
+          "salvage-recovered",
+          state.survival?.peakHostilesAlive ?? 0,
+          "Highest number of live hostile units observed in this survival run.",
+        );
+      } else {
+        setEndLabel("commands-cast", "Commands cast");
+        setEndLabel("salvage-recovered", "Salvage recovered");
+        setEndStat("commands-cast", st.commandsCast, "Command doctrine cards cast (spells, not building placements).");
+        setEndStat(
+          "salvage-recovered",
+          Math.round(st.salvageRecovered),
+          "Salvage that entered your salvage pool: refunds when your non-Keep buildings were lost, and salvage from command effects that add to the pool.",
+        );
+      }
       if (endReason) {
         const how = (state.matchEndDetail ?? state.lastMessage).trim();
         endReason.textContent = how;

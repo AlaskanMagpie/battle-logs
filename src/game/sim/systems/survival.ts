@@ -145,26 +145,40 @@ function spawnSurvivalBuilding(s: GameState, pos: Vec2, intensity: number): bool
   return true;
 }
 
-function spawnSurvivalArmies(s: GameState, anchors: readonly EnemyCampDef[], intensity: number): number {
+function empowerRecentlySpawnedUnits(s: GameState, fromIndex: number, intensity: number, surge: boolean): void {
+  if (!surge) return;
+  const hpMult = 1.35 + intensity * 0.35;
+  const dmgMult = 1.14 + intensity * 0.2;
+  for (let i = fromIndex; i < s.units.length; i++) {
+    const u = s.units[i];
+    if (!u || u.team !== "enemy" || u.hp <= 0) continue;
+    u.maxHp = Math.max(1, Math.round(u.maxHp * hpMult));
+    u.hp = u.maxHp;
+    u.dmgPerTick *= dmgMult;
+  }
+}
+
+function spawnSurvivalArmies(s: GameState, anchors: readonly EnemyCampDef[], intensity: number, surge: boolean): number {
   let spawned = 0;
   const alive = livingEnemyUnitCount(s);
   let room = Math.max(0, SURVIVAL_ENEMY_GLOBAL_CAP - alive);
   if (room <= 0) return 0;
 
   const wave = s.survival?.waveIndex ?? 0;
-  const batchesPerAnchor = 1 + Math.floor(intensity * 3.2) + Math.floor(Math.min(3, wave / 24));
+  const batchesPerAnchor = 1 + Math.floor(intensity * 3.2) + Math.floor(Math.min(3, wave / 24)) + (surge ? 1 : 0);
   for (const anchor of anchors) {
     const batchTotal = Math.max(1, batchesPerAnchor + (rand(s) < intensity * 0.45 ? 1 : 0));
     for (let i = 0; i < batchTotal && room > 0; i++) {
       const before = s.units.length;
-      const catalogId = pickUnitCatalogId(s, intensity);
+      const catalogId = surge && i === 0 && intensity > 0.52 ? "verdant_citadel" : pickUnitCatalogId(s, intensity);
       const pos = jitteredAnchorPoint(s, anchor.origin, 18 + intensity * 24);
       const n = spawnEnemyBatchFromStructureCatalogId(s, catalogId, pos);
       if (n <= 0) continue;
+      empowerRecentlySpawnedUnits(s, before, intensity, surge);
       spawned += n;
       room -= n;
       if (s.units.length > before) {
-        pushFx(s, { kind: "death_flash", x: pos.x, z: pos.z, impactRadius: 6 + intensity * 8 });
+        pushFx(s, { kind: surge ? "combat_boom" : "death_flash", x: pos.x, z: pos.z, impactRadius: 6 + intensity * 8 });
       }
     }
   }
@@ -186,15 +200,19 @@ export function survivalHordeDirector(s: GameState): void {
   }
 
   s.survival.waveIndex += 1;
-  const anchorCount = Math.min(campAnchors(s).length, 1 + Math.floor(intensity * 3) + (s.survival.waveIndex % 7 === 0 ? 1 : 0));
+  const surge = s.survival.waveIndex % 10 === 0 || (intensity >= 1 && s.survival.waveIndex % 6 === 0);
+  const anchorCount = Math.min(
+    campAnchors(s).length,
+    1 + Math.floor(intensity * 3) + (s.survival.waveIndex % 7 === 0 ? 1 : 0) + (surge ? 1 : 0),
+  );
   const anchors = shuffledAnchors(s, anchorCount);
-  const spawned = spawnSurvivalArmies(s, anchors, intensity);
+  const spawned = spawnSurvivalArmies(s, anchors, intensity, surge);
 
   let buildings = 0;
   const buildingChance = intensity < 0.22 ? 0.08 : 0.18 + intensity * 0.48;
-  if (rand(s) < buildingChance || s.survival.waveIndex % 6 === 0) {
+  if (rand(s) < buildingChance || s.survival.waveIndex % 6 === 0 || surge) {
     const buildingAnchors = anchors.length > 0 ? anchors : shuffledAnchors(s, 1);
-    const attempts = 1 + (intensity > 0.66 ? 1 : 0) + (intensity > 0.92 && s.survival.waveIndex % 3 === 0 ? 1 : 0);
+    const attempts = 1 + (intensity > 0.66 ? 1 : 0) + (intensity > 0.92 && s.survival.waveIndex % 3 === 0 ? 1 : 0) + (surge ? 1 : 0);
     for (let i = 0; i < attempts; i++) {
       const anchor = buildingAnchors[i % buildingAnchors.length];
       if (!anchor) continue;
@@ -203,13 +221,27 @@ export function survivalHordeDirector(s: GameState): void {
     }
   }
 
+  s.survival.totalHostilesSpawned += spawned;
+  s.survival.hostileBuildingsSpawned += buildings;
+  s.survival.peakHostilesAlive = Math.max(s.survival.peakHostilesAlive, livingEnemyUnitCount(s));
+  s.survival.lastWave = {
+    tick: s.tick,
+    waveIndex: s.survival.waveIndex,
+    hostilesSpawned: spawned,
+    buildingsSpawned: buildings,
+    anchorCount,
+    intensity,
+    surge,
+  };
+
   if (spawned > 0 || buildings > 0) {
     const rampPct = Math.round(intensity * 100);
+    const prefix = surge ? `Survival surge ${s.survival.waveIndex}` : `Survival wave ${s.survival.waveIndex}`;
     s.lastMessage =
       buildings > 0
-        ? `Survival wave ${s.survival.waveIndex}: ${spawned} hostiles and ${buildings} hostile building${buildings === 1 ? "" : "s"} flashed in (${rampPct}% ramp).`
-        : `Survival wave ${s.survival.waveIndex}: ${spawned} hostiles flashed in (${rampPct}% ramp).`;
+        ? `${prefix}: ${spawned} hostiles and ${buildings} hostile building${buildings === 1 ? "" : "s"} flashed in (${rampPct}% ramp).`
+        : `${prefix}: ${spawned} hostiles flashed in (${rampPct}% ramp).`;
   }
 
-  s.survival.nextSpawnTick = s.tick + nextWaveIntervalTicks(intensity);
+  s.survival.nextSpawnTick = s.tick + Math.max(TICK_HZ * 4, Math.round(nextWaveIntervalTicks(intensity) * (surge ? 1.45 : 1)));
 }

@@ -434,10 +434,24 @@ export interface PortalRuntime {
 
 export type GameScenario = "standard" | "survival";
 
+export interface SurvivalWaveRuntime {
+  tick: number;
+  waveIndex: number;
+  hostilesSpawned: number;
+  buildingsSpawned: number;
+  anchorCount: number;
+  intensity: number;
+  surge: boolean;
+}
+
 export interface SurvivalRuntime {
   rampDurationTicks: number;
   nextSpawnTick: number;
   waveIndex: number;
+  totalHostilesSpawned: number;
+  hostileBuildingsSpawned: number;
+  peakHostilesAlive: number;
+  lastWave?: SurvivalWaveRuntime;
   maxIntensityReachedTick?: number;
 }
 
@@ -1108,6 +1122,9 @@ export function createInitialState(
             rampDurationTicks: SURVIVAL_RAMP_DURATION_TICKS,
             nextSpawnTick: Math.max(1, Math.round(SURVIVAL_FIRST_WAVE_DELAY_SEC * TICK_HZ)),
             waveIndex: 0,
+            totalHostilesSpawned: 0,
+            hostileBuildingsSpawned: 0,
+            peakHostilesAlive: 0,
           }
         : undefined,
     tick: 0,

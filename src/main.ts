@@ -877,6 +877,18 @@ function runMatch(
           },
         controlProfile: CONTROL_PROFILE.mode,
         captainMode: state.heroCaptainEnabled,
+        survival:
+          state.scenario === "survival" && state.survival
+            ? {
+                wave: state.survival.waveIndex,
+                nextSpawnTick: state.survival.nextSpawnTick,
+                rampPct: Math.round((state.tick / Math.max(1, state.survival.rampDurationTicks)) * 100),
+                totalHostilesSpawned: state.survival.totalHostilesSpawned,
+                hostileBuildingsSpawned: state.survival.hostileBuildingsSpawned,
+                peakHostilesAlive: state.survival.peakHostilesAlive,
+                lastWave: state.survival.lastWave ?? null,
+              }
+            : null,
         selectedUnitIds: state.selectedUnitIds,
         taps: state.taps.map((t) => ({
           id: t.defId,
