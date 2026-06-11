@@ -11,7 +11,10 @@
  *   node scripts/optimize-glb.mjs --dir public/assets/units --overwrite
  *
  * Env:
- *   GLTF_TEXTURE_SIZE=2048   max texture dimension (default 2048)
+ *   GLTF_TEXTURE_SIZE=2048      max texture dimension (default 2048)
+ *   GLTF_SIMPLIFY_ERROR=0.001   simplification error tolerance (gltf-transform default 0.0001);
+ *                               raise for dense AI-generated meshes
+ *   GLTF_SIMPLIFY_RATIO=0.5     target ratio (0-1) of vertices to keep
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -57,6 +60,10 @@ function runOptimize(inputPath, outputPath) {
     "--texture-size",
     String(textureSize),
   ];
+  // AI-generated meshes (TRELLIS.2, Meshy) can be very dense; raise the error
+  // tolerance or set a target vertex ratio to decimate them during optimization.
+  if (process.env.GLTF_SIMPLIFY_ERROR) args.push("--simplify-error", String(process.env.GLTF_SIMPLIFY_ERROR));
+  if (process.env.GLTF_SIMPLIFY_RATIO) args.push("--simplify-ratio", String(process.env.GLTF_SIMPLIFY_RATIO));
   const r = spawnSync(bin, args, {
     cwd: repoRoot,
     stdio: "inherit",

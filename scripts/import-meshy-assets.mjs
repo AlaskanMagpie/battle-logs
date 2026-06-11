@@ -83,6 +83,8 @@ function optimizeToTemp(srcPath) {
       "webp",
       "--texture-size",
       String(textureSize),
+      ...(process.env.GLTF_SIMPLIFY_ERROR ? ["--simplify-error", String(process.env.GLTF_SIMPLIFY_ERROR)] : []),
+      ...(process.env.GLTF_SIMPLIFY_RATIO ? ["--simplify-ratio", String(process.env.GLTF_SIMPLIFY_RATIO)] : []),
     ],
     { cwd: repoRoot, stdio: "inherit", shell: process.platform === "win32" },
   );
@@ -129,7 +131,10 @@ if (sync.status !== 0) process.exit(sync.status ?? 1);
 
 const fixScript = path.join(__dirname, "fix-ext-texture-webp.mjs");
 if (fs.existsSync(fixScript)) {
-  const fix = spawnSync(process.execPath, [fixScript, unitsDir], { cwd: repoRoot, stdio: "inherit" });
+  // Only repair the files this run imported; a full-directory pass would rewrite
+  // pre-existing GLBs in place (use `npm run assets:fix-texture-webp` for that).
+  const importedPaths = copied.map((c) => path.join(unitsDir, c.destName));
+  const fix = spawnSync(process.execPath, [fixScript, ...importedPaths], { cwd: repoRoot, stdio: "inherit" });
   if (fix.status !== 0 && fix.status != null) {
     console.warn(
       `[import-meshy] fix-ext-texture-webp exited with code ${fix.status} (GLBs may still need manual repair)`,

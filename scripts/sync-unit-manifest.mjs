@@ -25,6 +25,27 @@ const files = fs
   .filter((f) => f.endsWith(".glb"))
   .sort();
 
+// A checkout without `git lfs install && git lfs pull` leaves pointer stubs in place
+// of real GLBs; inspecting those would silently gut every animation profile in the
+// manifest. Refuse to write anything in that state.
+const lfsStubs = files.filter((f) => {
+  const fd = fs.openSync(path.join(unitsDir, f), "r");
+  try {
+    const head = Buffer.alloc(24);
+    const n = fs.readSync(fd, head, 0, head.length, 0);
+    return head.subarray(0, n).toString("utf8").startsWith("version https://git-lfs");
+  } finally {
+    fs.closeSync(fd);
+  }
+});
+if (lfsStubs.length) {
+  console.error(
+    `[sync-unit-manifest] ${lfsStubs.length} GLB(s) are Git LFS pointer stubs, not real models ` +
+      `(e.g. ${lfsStubs[0]}). Run: git lfs install && git lfs pull — then retry. Manifest NOT written.`,
+  );
+  process.exit(1);
+}
+
 const roleTokens = new Set([
   "360",
   "attack",

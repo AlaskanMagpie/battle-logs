@@ -21,14 +21,35 @@ was run through `npm run assets:import-meshy:optimize` end-to-end:
 Delete the probe (plus its `manifest.json` entries via `npm run assets:sync-manifest`)
 once real TRELLIS.2 assets land.
 
-## How to generate assets
+## How to generate assets (free, no GPU, no paid services)
 
-This needs a browser or GPU (the official weights are `microsoft/TRELLIS.2-4B`):
+Generation uses the free official HuggingFace Space; everything else runs in-repo.
 
-1. Easiest: the official HuggingFace Space — https://huggingface.co/spaces/microsoft/TRELLIS.2 —
-   upload an image, download the GLB.
-2. Hosted APIs (fal.ai / Replicate-style wrappers) as they pick up TRELLIS.2.
-3. ComfyUI with the community TRELLIS.2 nodes on a ≥16GB-VRAM GPU.
+1. Scripted (preferred):
+
+   ```bash
+   npm run assets:trellis -- concept.png rootfort_building
+   npm run assets:import-meshy:optimize
+   ```
+
+   `scripts/trellis-generate.mjs` uploads the image to the Space, downloads the
+   GLB into `incoming/<name>/model.glb`, and enforces the `_building` naming rule.
+   Optional `HF_TOKEN` env raises free-tier queue priority. Space APIs drift; if
+   the call fails the script prints the live endpoint list — adjust
+   `ENDPOINT_CANDIDATES` at the top of the script to match (or use
+   `--list-api` to inspect first).
+
+2. Manual fallback: open https://huggingface.co/spaces/microsoft/TRELLIS.2 in a
+   browser, upload the image, download the GLB, and drop it into
+   `incoming/<name>_building/model.glb` yourself.
+
+For dense outputs, decimate during import with the simplify env vars, e.g.:
+
+```bash
+GLTF_SIMPLIFY_ERROR=0.001 npm run assets:import-meshy:optimize
+# or target a vertex budget directly:
+GLTF_SIMPLIFY_RATIO=0.5 npm run assets:import-meshy:optimize
+```
 
 Input images: ~1024px+, a single subject on a clean or transparent background, 3/4 view.
 Match the diorama art direction — each structure is a *place*: a fort grown into roots,
@@ -58,10 +79,10 @@ Then:
 npm run assets:import-meshy:optimize
 ```
 
-Note: the chained `fix-ext-texture-webp` step may rewrite some pre-existing tower GLBs
-in place; if you only want to commit the new assets, revert those with
-`git checkout -- public/assets/units` (keeping the new `trellis_*` files) and rerun
-`npm run assets:sync-manifest`.
+The importer's chained `fix-ext-texture-webp` step only touches the files imported in
+that run; for a deliberate full-directory repair use `npm run assets:fix-texture-webp`.
+The manifest sync also refuses to run when GLBs are Git LFS pointer stubs (fresh clone
+without `git lfs pull`) instead of silently wiping animation profiles.
 
 ## Reviewing
 
