@@ -36,6 +36,7 @@
     "starbound_arcanist_hero.glb",
     "town levy tower.glb",
     "trade tower.glb",
+    "trellis_pilot_probe_building.glb",
     "verdant_citadel_titan_base.glb",
     "verdant_gatekeeper_reference_running.glb",
     "verdant_gatekeeper_reference_walking.glb",
@@ -758,6 +759,13 @@
     },
     {
       "file": "trade tower.glb",
+      "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
+      "skinnedMeshes": 0,
+      "bones": 0,
+      "animations": []
+    },
+    {
+      "file": "trellis_pilot_probe_building.glb",
       "error": "THREE.GLTFLoader: No DRACOLoader instance provided.",
       "skinnedMeshes": 0,
       "bones": 0,

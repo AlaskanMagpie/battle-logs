@@ -16,3 +16,7 @@ incoming/frost_heavy_death/Meshy_AI_model.glb
 ```
 
 Everything in this folder except this file is gitignored so large drops do not get committed by mistake.
+
+TRELLIS.2 drops (static structures/props) work the same way — see
+`docs/trellis2-static-asset-pilot.md` for naming rules (files must end in
+`_building`) and the evaluation checklist.

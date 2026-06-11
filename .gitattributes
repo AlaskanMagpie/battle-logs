@@ -1,1 +1,4 @@
 public/assets/units/*.glb filter=lfs diff=lfs merge=lfs -text
+# Pipeline probe (3.6KB): kept out of LFS so it can be pushed from environments
+# where the lfs.github.com verify endpoint is unreachable. Real assets stay on LFS.
+public/assets/units/trellis_pilot_probe_building.glb -filter -diff -merge -text
