@@ -869,22 +869,22 @@ async function loadGltfTemplate(url: string): Promise<GltfTemplate> {
   const done = cache.get(url);
   if (done) return done;
 
-  let p = templateLoadPromises.get(url);
-  if (!p) {
-    p = loader
-      .loadAsync(url)
-      .then((gltf: GLTF) => {
-        const template = { root: gltf.scene, animations: gltf.animations ?? [], triangleCount: triangleCount(gltf.scene) };
-        cache.set(url, template);
-        templateLoadPromises.delete(url);
-        return template;
-      })
-      .catch((err) => {
-        templateLoadPromises.delete(url);
-        throw err;
-      });
-    templateLoadPromises.set(url, p);
-  }
+  const existing = templateLoadPromises.get(url);
+  if (existing) return existing;
+
+  const p: Promise<GltfTemplate> = loader
+    .loadAsync(url)
+    .then((gltf: GLTF) => {
+      const template = { root: gltf.scene, animations: gltf.animations ?? [], triangleCount: triangleCount(gltf.scene) };
+      cache.set(url, template);
+      templateLoadPromises.delete(url);
+      return template;
+    })
+    .catch((err: unknown) => {
+      templateLoadPromises.delete(url);
+      throw err;
+    });
+  templateLoadPromises.set(url, p);
   return p;
 }
 

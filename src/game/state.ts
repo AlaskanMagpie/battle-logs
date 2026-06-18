@@ -1067,11 +1067,11 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
   resolveCircleAgainstMapObstacles(mapResolved, enemyHero, HERO_MAP_OBSTACLE_RADIUS);
 
   const portalExit = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x + 13),
+    x: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.x + 13)),
     z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z - 12)),
   };
   const portalReturn = {
-    x: Math.max(-mapResolved.world.halfExtents + 12, playerKeepAnchor.x - 11),
+    x: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.x - 11)),
     z: Math.max(-mapResolved.world.halfExtents + 12, Math.min(mapResolved.world.halfExtents - 12, playerKeepAnchor.z + 11)),
   };
 
