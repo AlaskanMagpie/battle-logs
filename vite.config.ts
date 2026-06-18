@@ -2,14 +2,14 @@ import { readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { defineConfig, loadEnv, type ConfigEnv, type Plugin } from "vite";
 
 /** Keep in sync with `DEFAULT_CARD_OVERLAY_WRITE_KEY` in `src/ui/cardArtOverlay.ts`. */
 const CARD_OVERLAY_WRITE_KEY_FALLBACK = "9889";
 const CARD_OVERLAY_FIELD_CENTER_PAD_X = 50;
 const CARD_OVERLAY_FIELD_CENTER_PAD_Y = 75;
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode }: ConfigEnv) => {
   const env = loadEnv(mode, process.cwd(), "");
   const rawOverlayKey = env.CARD_OVERLAY_WRITE_KEY;
   /** Empty string in `.env` disables checks; unset uses `CARD_OVERLAY_WRITE_KEY_FALLBACK` below. */
