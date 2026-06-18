@@ -186,6 +186,7 @@ try {
             maxMs: Number(summary.maxFrameMs.toFixed(3)),
             longFrames: summary.longFrames,
           },
+          renderInfo: summary.info ?? null,
         },
         null,
         2,

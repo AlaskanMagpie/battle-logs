@@ -1019,6 +1019,16 @@ export class GameRenderer {
   private visualSyncDt = 1 / 60;
   private mobileFrameAvgSec = 1 / 60;
   private mobileQualityLastAdjustMs = 0;
+  /**
+   * Decaying-minimum estimate of the display's refresh period (seconds). Pins to
+   * the fastest (refresh-limited) frames and only drifts upward slowly, so a
+   * 120Hz panel resolves toward ~8.33ms while a 60Hz panel stays ~16.67ms. Init
+   * assumes 60Hz so a GPU-bound device that never reaches its refresh keeps the
+   * historical ~60fps comfort band.
+   */
+  private mobileRefreshPeriodSec = 1 / 60;
+  /** First tuneMobileRenderQuality timestamp, for the startup grace window. */
+  private mobileQualityStartMs = 0;
   private mobileLodLastBudgetMs = 0;
   private mobileLodLastUnitCount = -1;
   private mobileHpBarFrame = 0;
@@ -1772,17 +1782,62 @@ export class GameRenderer {
 
   private useGlb = false;
 
+  /** Snap the live refresh estimate to a standard rate for a stable target budget (sec). */
+  private mobileFrameBudgetSec(): number {
+    const refreshFps = 1 / this.mobileRefreshPeriodSec;
+    if (refreshFps >= 108) return 1 / 120;
+    if (refreshFps >= 80) return 1 / 90;
+    if (refreshFps >= 50) return 1 / 60;
+    return 1 / 30;
+  }
+
   private tuneMobileRenderQuality(dt: number, nowMs: number): void {
     if (this.controlProfile.mode !== "mobile") return;
+
+    // Track the display refresh ceiling (decaying minimum): drop instantly to a
+    // faster frame, drift up slowly otherwise.
+    const clampedDt = Math.max(dt, 1 / 144);
+    if (clampedDt < this.mobileRefreshPeriodSec) this.mobileRefreshPeriodSec = clampedDt;
+    else this.mobileRefreshPeriodSec = Math.min(1 / 30, this.mobileRefreshPeriodSec * 1.0004);
+
     this.mobileFrameAvgSec += (dt - this.mobileFrameAvgSec) * 0.06;
+
+    // Startup grace: let first-load/asset frames settle before touching pixel
+    // ratio, so transient load spikes don't trigger setPixelRatio/setSize churn.
+    if (this.mobileQualityStartMs === 0) this.mobileQualityStartMs = nowMs;
+    if (nowMs - this.mobileQualityStartMs < 1200) return;
     if (nowMs - this.mobileQualityLastAdjustMs < 900) return;
     this.mobileQualityLastAdjustMs = nowMs;
+
+    // Comfort band relative to the detected refresh budget. At 60Hz this
+    // reproduces the historical 1/48 (reduce) and 1/62 (raise) thresholds; on a
+    // 120Hz panel it drives quality toward the 8.33ms budget.
+    const budget = this.mobileFrameBudgetSec();
+    const reduceThreshold = budget * 1.25;
+    const raiseThreshold = budget * 0.967;
+
     const current = this.renderer.getPixelRatio();
     const targetMax = Math.min(window.devicePixelRatio || 1, this.controlProfile.maxPixelRatio);
     let next = current;
-    if (this.mobileFrameAvgSec > 1 / 48) next = Math.max(0.62, current - 0.06);
-    else if (this.mobileFrameAvgSec < 1 / 62) next = Math.min(targetMax, current + 0.035);
-    if (Math.abs(next - current) >= 0.015) this.renderer.setPixelRatio(next);
+    if (this.mobileFrameAvgSec > reduceThreshold) {
+      // Step grows with how far over budget we are, so convergence needs fewer
+      // buffer reallocs (each setPixelRatio→setSize is a startup hitch source).
+      const over = this.mobileFrameAvgSec / reduceThreshold - 1;
+      const step = Math.min(0.18, 0.05 + over * 0.5);
+      next = Math.max(0.62, current - step);
+    } else if (this.mobileFrameAvgSec < raiseThreshold) {
+      next = Math.min(targetMax, current + 0.03);
+    }
+    if (Math.abs(next - current) >= 0.02) this.renderer.setPixelRatio(next);
+  }
+
+  /** On-device quality readout for the perf overlay / `window.__perf` validation. */
+  getMobileQualityInfo(): { pixelRatio: number; estRefreshFps: number; targetBudgetMs: number } {
+    return {
+      pixelRatio: Number(this.renderer.getPixelRatio().toFixed(3)),
+      estRefreshFps: Math.round(1 / this.mobileRefreshPeriodSec),
+      targetBudgetMs: Number((this.mobileFrameBudgetSec() * 1000).toFixed(3)),
+    };
   }
 
   private consumeCastEvents(state: GameState): void {
