@@ -19,9 +19,10 @@ export function economy(s: GameState): void {
   const perTap = TAP_FLUX_PER_SEC / TICK_HZ;
   for (const t of s.taps) {
     if (!t.active) continue;
+    if (!t.ownerTeam) continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
     if (t.yieldRemaining <= 0) continue;
-    const owner: TeamId = t.ownerTeam ?? "player";
+    const owner: TeamId = t.ownerTeam;
     const yMul = tapYieldMultForOwner(s, owner, t);
     const take = Math.min(t.yieldRemaining, perTap * yMul);
     if (owner === "enemy") s.enemyFlux += take * enemyEconomyScalar(s);
