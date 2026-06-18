@@ -1833,8 +1833,8 @@ export function DoctrineBinderPicker({
                 </aside>
               ) : null}
             </div>
-            <div className="binder-picker-vibejam-insert binder-picker-vibejam-insert--floated">
-              {prematchReturnHref ? (
+            {prematchReturnHref ? (
+              <div className="binder-picker-vibejam-insert binder-picker-vibejam-insert--floated">
                 <a
                   className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
                   href={prematchReturnHref}
@@ -1844,21 +1844,8 @@ export function DoctrineBinderPicker({
                 >
                   ← Return
                 </a>
-              ) : null}
-              <a
-                className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                href={portalContext.enteredViaPortal ? prematchVibeJamHref : "https://vibej.am/"}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={
-                  portalContext.enteredViaPortal
-                    ? "Exit to Vibe Jam with continuity params"
-                    : "Vibe Jam 2026"
-                }
-              >
-                🎮 Vibe Jam 2026
-              </a>
-            </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

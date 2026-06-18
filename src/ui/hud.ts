@@ -619,16 +619,6 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
         </div>
       </div>
     </footer>
-    <a
-      class="hud-vibejam-link"
-      href="https://vibej.am/"
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Vibe Jam 2026"
-      aria-label="Vibe Jam 2026"
-    >
-      🎮 Vibe Jam 2026
-    </a>
   `;
 
   const doctrineTrack = root.querySelector("#doctrine-track") as HTMLDivElement;
