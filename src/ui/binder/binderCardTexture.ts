@@ -64,20 +64,7 @@ function drawImageCover(
   ctx.drawImage(img, sx, sy, sw, sh, x, y, cw, ch);
 }
 
-/** Match hand / asset-lab `object-fit: contain` — letterbox inside box (same stat coordinate space as DOM overlay). */
-function drawImageContain(
-  ctx: CanvasRenderingContext2D,
-  img: CanvasImageSource,
-  boxX: number,
-  boxY: number,
-  boxW: number,
-  boxH: number,
-): void {
-  const { iw, ih } = intrinsicSize(img);
-  if (iw < 1 || ih < 1) return;
-  const r = containCardArtRect(boxX, boxY, boxW, boxH, iw, ih);
-  ctx.drawImage(img, 0, 0, iw, ih, r.x, r.y, r.w, r.h);
-}
+
 
 function authoredSpellGlowPalette(e: CommandCatalogEntry, hue: number): { core: string; rim: string; hot: string } {
   switch (e.effect.type) {
