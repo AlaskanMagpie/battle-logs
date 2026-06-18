@@ -52,6 +52,7 @@ const seconds = Number(argValue("--seconds", "6"));
 const external = process.argv.includes("--external");
 const profileCpu = process.argv.includes("--profile");
 const settleSeconds = Number(argValue("--settle", "0.75"));
+const warmupMs = Number(argValue("--warmup", "8000"));
 
 /**
  * Aggregate a V8 CPU profile into self-time-per-function and print the top
@@ -143,7 +144,7 @@ try {
     // advances the sim from wall-clock on its own, so once populated we let it
     // free-run and sample without further synchronous advanceTime calls (those
     // would starve rAF and pollute the inter-frame timing).
-    await page.evaluate(() => window.advanceTime?.(8000));
+    await page.evaluate((ms) => window.advanceTime?.(ms), warmupMs);
     // Let the adaptive quality governor converge before sampling steady state.
     await page.waitForTimeout(Math.max(750, settleSeconds * 1000));
     await page.evaluate(() => window.__perf.reset());

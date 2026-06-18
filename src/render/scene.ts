@@ -1832,11 +1832,23 @@ export class GameRenderer {
   }
 
   /** On-device quality readout for the perf overlay / `window.__perf` validation. */
-  getMobileQualityInfo(): { pixelRatio: number; estRefreshFps: number; targetBudgetMs: number } {
+  getMobileQualityInfo(): {
+    pixelRatio: number;
+    estRefreshFps: number;
+    targetBudgetMs: number;
+    drawCalls: number;
+    triangles: number;
+    programs: number;
+  } {
+    const render = this.renderer.info.render;
     return {
       pixelRatio: Number(this.renderer.getPixelRatio().toFixed(3)),
       estRefreshFps: Math.round(1 / this.mobileRefreshPeriodSec),
       targetBudgetMs: Number((this.mobileFrameBudgetSec() * 1000).toFixed(3)),
+      // GPU-bound signal: draw calls / triangles for the most recent frame.
+      drawCalls: render.calls,
+      triangles: render.triangles,
+      programs: this.renderer.info.programs?.length ?? 0,
     };
   }
 
