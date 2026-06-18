@@ -792,7 +792,7 @@ export function updateHud(state: GameState): void {
     let label = "";
     if (state.pendingPlacementCatalogId) {
       const e = getCatalogEntry(state.pendingPlacementCatalogId);
-    if (e) label = `Selected: ${e.name} — Esc cancels`;
+      if (e) label = `Selected: ${e.name} — Esc cancels`;
     } else if (state.teleportClickPending) {
       label = "Teleport armed - click your half";
     } else if (state.rallyClickPending) {

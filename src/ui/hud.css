@@ -929,7 +929,7 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
 }
 .hud-endgame-actions {
   position: absolute;
-  z-index: 4;
+  z-index: 6;
   left: 0;
   right: 0;
   top: 84.15%;
