@@ -1010,6 +1010,7 @@ function runMatch(
     let rafId = 0;
     /** Frame-time instrument exposed on `window.__perf` (120fps budget). */
     const frameProfiler = installFrameProfiler();
+    frameProfiler.setInfoProvider(() => renderer.getMobileQualityInfo());
     let leaderboardRecordedPhase: GameState["phase"] | null = null;
     const recordCompletedMatch = (completed: GameState): void => {
       recordLocalLeaderboardResult(completed, portalContext.params.username);

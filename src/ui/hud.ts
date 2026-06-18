@@ -28,6 +28,23 @@ import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
 
 const HAND_ACTIVE_LIFT = 5;
+
+/**
+ * Cache the reduced-motion MediaQueryList. `window.matchMedia(...)` is a
+ * comparatively expensive call and the hand-layout path queried it on every HUD
+ * update; reading `.matches` on a cached query is cheap and still live, so the
+ * preference is honored without the per-update cost.
+ */
+let reducedMotionQuery: MediaQueryList | null | undefined;
+function prefersReducedMotion(): boolean {
+  if (reducedMotionQuery === undefined) {
+    reducedMotionQuery =
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null;
+  }
+  return reducedMotionQuery?.matches ?? false;
+}
 const FIRST_MATCH_STRATEGY_TOAST_KEY = "signalWarsFirstMatchStrategyToastShown.v1";
 
 function escapeHudHtml(s: string): string {
@@ -1062,7 +1079,7 @@ export function updateHud(state: GameState): void {
     if (!b.classList.contains("slot--hand-collapsed")) visibleIdx.push(si);
   });
 
-  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+  const reducedMotion = prefersReducedMotion();
 
   let peelLeftIdx: number | null = null;
   let peelRightIdx: number | null = null;

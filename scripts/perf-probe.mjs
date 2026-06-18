@@ -50,6 +50,35 @@ const port = Number(argValue("--port", "2231"));
 const baseUrl = argValue("--url", `http://localhost:${port}`);
 const seconds = Number(argValue("--seconds", "6"));
 const external = process.argv.includes("--external");
+const profileCpu = process.argv.includes("--profile");
+const settleSeconds = Number(argValue("--settle", "0.75"));
+const warmupMs = Number(argValue("--warmup", "8000"));
+
+/**
+ * Aggregate a V8 CPU profile into self-time-per-function and print the top
+ * offenders. `samples` indexes into `nodes`; `timeDeltas[i]` (microseconds) is
+ * the time attributed to the node hit by `samples[i]`.
+ */
+function printCpuProfile(profile) {
+  const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+  const selfUsById = new Map();
+  for (let i = 0; i < profile.samples.length; i += 1) {
+    const id = profile.samples[i];
+    const dt = profile.timeDeltas[i] ?? 0;
+    selfUsById.set(id, (selfUsById.get(id) ?? 0) + Math.max(0, dt));
+  }
+  const byFn = new Map();
+  for (const [id, us] of selfUsById) {
+    const n = byId.get(id);
+    if (!n) continue;
+    const f = n.callFrame;
+    const name = `${f.functionName || "(anonymous)"} ${String(f.url).split("/").pop()}:${f.lineNumber + 1}`;
+    byFn.set(name, (byFn.get(name) ?? 0) + us);
+  }
+  const top = [...byFn.entries()].sort((a, b) => b[1] - a[1]).slice(0, 18);
+  console.log("=== top self-time functions (ms) ===");
+  for (const [name, us] of top) console.log(`${(us / 1000).toFixed(1).padStart(8)}  ${name}`);
+}
 
 async function waitForServer(url, timeoutMs = 30_000) {
   const start = Date.now();
@@ -115,10 +144,26 @@ try {
     // advances the sim from wall-clock on its own, so once populated we let it
     // free-run and sample without further synchronous advanceTime calls (those
     // would starve rAF and pollute the inter-frame timing).
-    await page.evaluate(() => window.advanceTime?.(8000));
-    await page.waitForTimeout(750);
+    await page.evaluate((ms) => window.advanceTime?.(ms), warmupMs);
+    // Let the adaptive quality governor converge before sampling steady state.
+    await page.waitForTimeout(Math.max(750, settleSeconds * 1000));
     await page.evaluate(() => window.__perf.reset());
+
+    // Optional CPU profile to pinpoint spike sources (self time per function).
+    let cdp = null;
+    if (profileCpu) {
+      cdp = await page.context().newCDPSession(page);
+      await cdp.send("Profiler.enable");
+      await cdp.send("Profiler.setSamplingInterval", { interval: 80 });
+      await cdp.send("Profiler.start");
+    }
+
     await page.waitForTimeout(Math.max(1000, seconds * 1000));
+
+    if (cdp) {
+      const { profile } = await cdp.send("Profiler.stop");
+      printCpuProfile(profile);
+    }
 
     const summary = await page.evaluate(() => window.__perf.summary());
     const fatal = pageErrors.filter((m) => !/WebGL|SwiftShader|shader|GL_|GROUP_MARKER/i.test(m));
@@ -142,6 +187,7 @@ try {
             maxMs: Number(summary.maxFrameMs.toFixed(3)),
             longFrames: summary.longFrames,
           },
+          renderInfo: summary.info ?? null,
         },
         null,
         2,

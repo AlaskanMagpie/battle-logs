@@ -57,13 +57,18 @@ export function createFxHost(scene: THREE.Scene): FxHost {
 export function stepFx(host: FxHost, dt: number): void {
   const now = performance.now();
   const maxWallMs = FX_ABSOLUTE_MAX_LIFETIME_SEC * 1000;
-  const keep: ActiveFx[] = [];
-  for (const fx of host.active) {
+  // Compact survivors in place rather than allocating a fresh `keep` array every
+  // frame — this runs on every render frame, so the per-frame array was steady
+  // GC pressure. Survivors are written back to the front; order is preserved.
+  const active = host.active;
+  let w = 0;
+  for (let r = 0; r < active.length; r++) {
+    const fx = active[r]!;
     fx.age += dt;
     fx.update(fx.age, dt);
     const wallMs = now - fx.createdAtMs;
     if (fx.age < fx.life && wallMs < maxWallMs) {
-      keep.push(fx);
+      active[w++] = fx;
     } else {
       fx.node.visible = false;
       try {
@@ -78,7 +83,7 @@ export function stepFx(host: FxHost, dt: number): void {
       }
     }
   }
-  host.active = keep;
+  active.length = w;
 }
 
 /** Remove every active FX (e.g. rematch) so nothing lingers in the scene graph. */

@@ -39,6 +39,8 @@ export interface FrameStats {
   maxCpuMs: number;
   /** True when CPU work comfortably fits the frame budget with a tight tail. */
   cpuWithinBudget: boolean;
+  /** Optional renderer-supplied gauges (e.g. live pixel ratio / detected refresh). */
+  info?: Record<string, number>;
 }
 
 const CAP = 4096;
@@ -89,10 +91,16 @@ export class FrameProfiler {
   private readonly cpu = new Ring();
   private lastFrameMs = 0;
   private cpuStart = 0;
+  private infoProvider: (() => Record<string, number>) | null = null;
   budgetMs: number;
 
   constructor(budgetMs: number = 1000 / 120) {
     this.budgetMs = budgetMs;
+  }
+
+  /** Register a callback supplying live renderer gauges to include in summaries. */
+  setInfoProvider(fn: () => Record<string, number>): void {
+    this.infoProvider = fn;
   }
 
   /** Call once at the very top of every animation frame. */
@@ -137,6 +145,7 @@ export class FrameProfiler {
       p99CpuMs,
       maxCpuMs: cp.length ? cp[cp.length - 1] : 0,
       cpuWithinBudget: cp.length > 0 && p99CpuMs <= this.budgetMs,
+      info: this.infoProvider ? this.infoProvider() : undefined,
     };
   }
 }

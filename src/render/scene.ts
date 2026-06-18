@@ -1019,6 +1019,16 @@ export class GameRenderer {
   private visualSyncDt = 1 / 60;
   private mobileFrameAvgSec = 1 / 60;
   private mobileQualityLastAdjustMs = 0;
+  /**
+   * Decaying-minimum estimate of the display's refresh period (seconds). Pins to
+   * the fastest (refresh-limited) frames and only drifts upward slowly, so a
+   * 120Hz panel resolves toward ~8.33ms while a 60Hz panel stays ~16.67ms. Init
+   * assumes 60Hz so a GPU-bound device that never reaches its refresh keeps the
+   * historical ~60fps comfort band.
+   */
+  private mobileRefreshPeriodSec = 1 / 60;
+  /** First tuneMobileRenderQuality timestamp, for the startup grace window. */
+  private mobileQualityStartMs = 0;
   private mobileLodLastBudgetMs = 0;
   private mobileLodLastUnitCount = -1;
   private mobileHpBarFrame = 0;
@@ -1772,17 +1782,74 @@ export class GameRenderer {
 
   private useGlb = false;
 
+  /** Snap the live refresh estimate to a standard rate for a stable target budget (sec). */
+  private mobileFrameBudgetSec(): number {
+    const refreshFps = 1 / this.mobileRefreshPeriodSec;
+    if (refreshFps >= 108) return 1 / 120;
+    if (refreshFps >= 80) return 1 / 90;
+    if (refreshFps >= 50) return 1 / 60;
+    return 1 / 30;
+  }
+
   private tuneMobileRenderQuality(dt: number, nowMs: number): void {
     if (this.controlProfile.mode !== "mobile") return;
+
+    // Track the display refresh ceiling (decaying minimum): drop instantly to a
+    // faster frame, drift up slowly otherwise.
+    const clampedDt = Math.max(dt, 1 / 144);
+    if (clampedDt < this.mobileRefreshPeriodSec) this.mobileRefreshPeriodSec = clampedDt;
+    else this.mobileRefreshPeriodSec = Math.min(1 / 30, this.mobileRefreshPeriodSec * 1.0004);
+
     this.mobileFrameAvgSec += (dt - this.mobileFrameAvgSec) * 0.06;
+
+    // Startup grace: let first-load/asset frames settle before touching pixel
+    // ratio, so transient load spikes don't trigger setPixelRatio/setSize churn.
+    if (this.mobileQualityStartMs === 0) this.mobileQualityStartMs = nowMs;
+    if (nowMs - this.mobileQualityStartMs < 1200) return;
     if (nowMs - this.mobileQualityLastAdjustMs < 900) return;
     this.mobileQualityLastAdjustMs = nowMs;
+
+    // Comfort band relative to the detected refresh budget. At 60Hz this
+    // reproduces the historical 1/48 (reduce) and 1/62 (raise) thresholds; on a
+    // 120Hz panel it drives quality toward the 8.33ms budget.
+    const budget = this.mobileFrameBudgetSec();
+    const reduceThreshold = budget * 1.25;
+    const raiseThreshold = budget * 0.967;
+
     const current = this.renderer.getPixelRatio();
     const targetMax = Math.min(window.devicePixelRatio || 1, this.controlProfile.maxPixelRatio);
     let next = current;
-    if (this.mobileFrameAvgSec > 1 / 48) next = Math.max(0.62, current - 0.06);
-    else if (this.mobileFrameAvgSec < 1 / 62) next = Math.min(targetMax, current + 0.035);
-    if (Math.abs(next - current) >= 0.015) this.renderer.setPixelRatio(next);
+    if (this.mobileFrameAvgSec > reduceThreshold) {
+      // Step grows with how far over budget we are, so convergence needs fewer
+      // buffer reallocs (each setPixelRatio→setSize is a startup hitch source).
+      const over = this.mobileFrameAvgSec / reduceThreshold - 1;
+      const step = Math.min(0.18, 0.05 + over * 0.5);
+      next = Math.max(0.62, current - step);
+    } else if (this.mobileFrameAvgSec < raiseThreshold) {
+      next = Math.min(targetMax, current + 0.03);
+    }
+    if (Math.abs(next - current) >= 0.02) this.renderer.setPixelRatio(next);
+  }
+
+  /** On-device quality readout for the perf overlay / `window.__perf` validation. */
+  getMobileQualityInfo(): {
+    pixelRatio: number;
+    estRefreshFps: number;
+    targetBudgetMs: number;
+    drawCalls: number;
+    triangles: number;
+    programs: number;
+  } {
+    const render = this.renderer.info.render;
+    return {
+      pixelRatio: Number(this.renderer.getPixelRatio().toFixed(3)),
+      estRefreshFps: Math.round(1 / this.mobileRefreshPeriodSec),
+      targetBudgetMs: Number((this.mobileFrameBudgetSec() * 1000).toFixed(3)),
+      // GPU-bound signal: draw calls / triangles for the most recent frame.
+      drawCalls: render.calls,
+      triangles: render.triangles,
+      programs: this.renderer.info.programs?.length ?? 0,
+    };
   }
 
   private consumeCastEvents(state: GameState): void {
@@ -3726,7 +3793,10 @@ export class GameRenderer {
 
   private createTerritoryTexture(sources: { x: number; z: number }[], half: number): THREE.CanvasTexture {
     /** Higher res so the union edge stays tight to `TERRITORY_RADIUS` in world space (512 was visibly soft vs outline). */
-    const size = 1024;
+    // Mobile caps DPR (0.85) on small screens, so a lighter texel density for
+    // this translucent floor glow is imperceptible under the separate crisp
+    // outline mesh — and it quarters the CPU bake cost of a territory change.
+    const size = this.controlProfile.mode === "mobile" ? 512 : 1024;
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
@@ -3739,10 +3809,30 @@ export class GameRenderer {
       return t * t * (3 - 2 * t);
     };
 
+    // Only rasterize the union bounding box of the source discs. Every pixel
+    // outside it is necessarily beyond TERRITORY_RADIUS of all sources, so it
+    // stays fully transparent — identical to a full-canvas scan, but skips the
+    // empty margin that dominates the 1024^2 loop and caused multi-100ms stalls
+    // on territory changes. wx = x/scale - half; wz = half - y/scale.
+    let minWx = Infinity;
+    let maxWx = -Infinity;
+    let minWz = Infinity;
+    let maxWz = -Infinity;
+    for (const p of sources) {
+      if (p.x - TERRITORY_RADIUS < minWx) minWx = p.x - TERRITORY_RADIUS;
+      if (p.x + TERRITORY_RADIUS > maxWx) maxWx = p.x + TERRITORY_RADIUS;
+      if (p.z - TERRITORY_RADIUS < minWz) minWz = p.z - TERRITORY_RADIUS;
+      if (p.z + TERRITORY_RADIUS > maxWz) maxWz = p.z + TERRITORY_RADIUS;
+    }
+    const px0 = Math.max(0, Math.floor((minWx + half) * scale));
+    const px1 = Math.min(size, Math.ceil((maxWx + half) * scale));
+    const py0 = Math.max(0, Math.floor((half - maxWz) * scale));
+    const py1 = Math.min(size, Math.ceil((half - minWz) * scale));
+
     const img = ctx.createImageData(size, size);
-    for (let y = 0; y < size; y++) {
+    for (let y = py0; y < py1; y++) {
       const wz = half - y / scale;
-      for (let x = 0; x < size; x++) {
+      for (let x = px0; x < px1; x++) {
         const wx = x / scale - half;
         let nearestD2 = Infinity;
         for (const p of sources) {
@@ -4487,6 +4577,19 @@ export class GameRenderer {
   private syncUnitSpellStatusVisuals(root: THREE.Group, u: GameState["units"][number]): void {
     const ud = root.userData as Record<string, unknown>;
     const statuses = u.spellStatuses ?? [];
+    // Common case (no active statuses): skip the signature map/sort/join entirely
+    // — that was a per-unit, per-frame array/string allocation for every plain
+    // unit. Just drop any lingering fx and return.
+    if (statuses.length === 0) {
+      const old = ud["unitSpellStatusFx"] as THREE.Group | undefined;
+      if (old) {
+        root.remove(old);
+        this.disposeObject(old);
+        delete ud["unitSpellStatusFx"];
+        delete ud["unitSpellStatusFxSig"];
+      }
+      return;
+    }
     const signature = statuses
       .map((st) => `${st.kind}:${Math.round(st.strength * 100)}`)
       .sort()
@@ -4499,7 +4602,6 @@ export class GameRenderer {
       delete ud["unitSpellStatusFx"];
       delete ud["unitSpellStatusFxSig"];
     }
-    if (statuses.length === 0) return;
     const height = (ud["unitHeight"] as number | undefined) ?? unitMeshLinearSize(u.sizeClass);
     const radius = Math.max(0.42, unitMeshLinearSize(u.sizeClass) * 0.28);
     const group = new THREE.Group();
@@ -4605,24 +4707,27 @@ export class GameRenderer {
   }
 
   private applyUnitMotionPose(root: THREE.Object3D, yOffset: number, pitch: number, roll: number): void {
-    const targets = [
-      root.userData["glbRoot"] as THREE.Object3D | undefined,
-      root.userData["bodyMesh"] as THREE.Object3D | undefined,
-    ].filter((x): x is THREE.Object3D => !!x);
-    for (const target of targets) {
-      const ud = target.userData as Record<string, unknown>;
-      if (ud["unitMotionBaseY"] === undefined) {
-        ud["unitMotionBaseY"] = target.position.y;
-        ud["unitMotionBaseRotX"] = target.rotation.x;
-        ud["unitMotionBaseRotZ"] = target.rotation.z;
-      }
-      const baseY = ud["unitMotionBaseY"] as number;
-      const baseRotX = ud["unitMotionBaseRotX"] as number;
-      const baseRotZ = ud["unitMotionBaseRotZ"] as number;
-      target.position.y = baseY + yOffset;
-      target.rotation.x = baseRotX + pitch;
-      target.rotation.z = baseRotZ + roll;
+    // Per-unit, per-frame: avoid allocating an array+filter each call (was steady
+    // GC pressure at scale). Pose the same two optional targets in place.
+    const glbRoot = root.userData["glbRoot"] as THREE.Object3D | undefined;
+    if (glbRoot) this.poseUnitMotionTarget(glbRoot, yOffset, pitch, roll);
+    const bodyMesh = root.userData["bodyMesh"] as THREE.Object3D | undefined;
+    if (bodyMesh) this.poseUnitMotionTarget(bodyMesh, yOffset, pitch, roll);
+  }
+
+  private poseUnitMotionTarget(target: THREE.Object3D, yOffset: number, pitch: number, roll: number): void {
+    const ud = target.userData as Record<string, unknown>;
+    if (ud["unitMotionBaseY"] === undefined) {
+      ud["unitMotionBaseY"] = target.position.y;
+      ud["unitMotionBaseRotX"] = target.rotation.x;
+      ud["unitMotionBaseRotZ"] = target.rotation.z;
     }
+    const baseY = ud["unitMotionBaseY"] as number;
+    const baseRotX = ud["unitMotionBaseRotX"] as number;
+    const baseRotZ = ud["unitMotionBaseRotZ"] as number;
+    target.position.y = baseY + yOffset;
+    target.rotation.x = baseRotX + pitch;
+    target.rotation.z = baseRotZ + roll;
   }
 
   private orientHpBars(): void {
