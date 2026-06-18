@@ -3726,7 +3726,10 @@ export class GameRenderer {
 
   private createTerritoryTexture(sources: { x: number; z: number }[], half: number): THREE.CanvasTexture {
     /** Higher res so the union edge stays tight to `TERRITORY_RADIUS` in world space (512 was visibly soft vs outline). */
-    const size = 1024;
+    // Mobile caps DPR (0.85) on small screens, so a lighter texel density for
+    // this translucent floor glow is imperceptible under the separate crisp
+    // outline mesh — and it quarters the CPU bake cost of a territory change.
+    const size = this.controlProfile.mode === "mobile" ? 512 : 1024;
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
@@ -3739,10 +3742,30 @@ export class GameRenderer {
       return t * t * (3 - 2 * t);
     };
 
+    // Only rasterize the union bounding box of the source discs. Every pixel
+    // outside it is necessarily beyond TERRITORY_RADIUS of all sources, so it
+    // stays fully transparent — identical to a full-canvas scan, but skips the
+    // empty margin that dominates the 1024^2 loop and caused multi-100ms stalls
+    // on territory changes. wx = x/scale - half; wz = half - y/scale.
+    let minWx = Infinity;
+    let maxWx = -Infinity;
+    let minWz = Infinity;
+    let maxWz = -Infinity;
+    for (const p of sources) {
+      if (p.x - TERRITORY_RADIUS < minWx) minWx = p.x - TERRITORY_RADIUS;
+      if (p.x + TERRITORY_RADIUS > maxWx) maxWx = p.x + TERRITORY_RADIUS;
+      if (p.z - TERRITORY_RADIUS < minWz) minWz = p.z - TERRITORY_RADIUS;
+      if (p.z + TERRITORY_RADIUS > maxWz) maxWz = p.z + TERRITORY_RADIUS;
+    }
+    const px0 = Math.max(0, Math.floor((minWx + half) * scale));
+    const px1 = Math.min(size, Math.ceil((maxWx + half) * scale));
+    const py0 = Math.max(0, Math.floor((half - maxWz) * scale));
+    const py1 = Math.min(size, Math.ceil((half - minWz) * scale));
+
     const img = ctx.createImageData(size, size);
-    for (let y = 0; y < size; y++) {
+    for (let y = py0; y < py1; y++) {
       const wz = half - y / scale;
-      for (let x = 0; x < size; x++) {
+      for (let x = px0; x < px1; x++) {
         const wx = x / scale - half;
         let nearestD2 = Infinity;
         for (const p of sources) {
