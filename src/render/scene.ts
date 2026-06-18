@@ -532,6 +532,16 @@ function bipedUnitColor(size: UnitSizeClass, signal: SignalType | undefined, tea
   return basis.getHex();
 }
 
+/**
+ * Constant structure-plinth emissive endpoints. Hoisted to module scope so the
+ * per-frame `syncStructures` distance tint copies/lerps from these instead of
+ * allocating four fresh `THREE.Color` objects per structure every frame.
+ */
+const PLINTH_EMISSIVE_BASE_PLAYER = new THREE.Color(0x0a2844);
+const PLINTH_EMISSIVE_BASE_ENEMY = new THREE.Color(0x440808);
+const PLINTH_EMISSIVE_PEAK_PLAYER = new THREE.Color(0x55aaff);
+const PLINTH_EMISSIVE_PEAK_ENEMY = new THREE.Color(0xff5555);
+
 /** Single merged fallback/LOD token: abstract game piece, not a mannequin. */
 function buildBipedMergedGeometry(size: UnitSizeClass, L: number): THREE.BufferGeometry {
   const b = bipedBulkScale(size);
@@ -1015,6 +1025,17 @@ export class GameRenderer {
   /** Scratch: camera-relative WASD on the XZ plane (world up). */
   private readonly camGroundFwd = new THREE.Vector3();
   private readonly camGroundRight = new THREE.Vector3();
+  /**
+   * Reusable liveness-scan sets and tint color. The per-frame `sync()` prunes
+   * dead render objects by building an "alive id" set each frame; allocating a
+   * fresh Set (+ intermediate `.map()` array) every frame at 120fps is steady
+   * GC churn that shows up as random hitches. These scratch members are cleared
+   * and refilled in place instead. Each consumer fully uses its set within one
+   * synchronous sync sub-step, so a single shared instance per key type is safe.
+   */
+  private readonly scratchAliveNum = new Set<number>();
+  private readonly scratchAliveStr = new Set<string>();
+  private readonly scratchTintColor = new THREE.Color();
   private readonly fx: FxHost;
   private lastSiegeTick = -1;
   private currentState: GameState | null = null;
@@ -2237,7 +2258,8 @@ export class GameRenderer {
 
         let manaTex = this.manaNodeTextures!.neutral;
         let decalOpacity = 0.74;
-        const spinRgb = new THREE.Color(0xffffff);
+        const spinRgb = this.scratchTintColor;
+        spinRgb.setHex(0xffffff);
 
         if (contested) {
           manaTex = this.manaNodeTextures!.neutral;
@@ -2510,7 +2532,9 @@ export class GameRenderer {
 
     // Only enemy relays (Dark Fortresses) render as markers now — the player's
     // Keep is just a structure and renders through syncStructures().
-    const aliveRelayIds = new Set(state.enemyRelays.map((er) => `e:${er.defId}`));
+    const aliveRelayIds = this.scratchAliveStr;
+    aliveRelayIds.clear();
+    for (const er of state.enemyRelays) aliveRelayIds.add(`e:${er.defId}`);
     for (const [id, m] of this.relayMeshes) {
       if (!aliveRelayIds.has(id)) {
         this.markers.remove(m);
@@ -2539,9 +2563,8 @@ export class GameRenderer {
       const built = er.hp > 0;
       if (built) {
         const silenced = er.silencedUntilTick > state.tick;
-        const base = new THREE.Color(0xff5c5c);
-        if (silenced) base.multiplyScalar(0.45);
-        mat.color.copy(base);
+        mat.color.set(0xff5c5c);
+        if (silenced) mat.color.multiplyScalar(0.45);
       } else {
         mat.color.set(0x444444);
       }
@@ -2597,7 +2620,12 @@ export class GameRenderer {
   }
 
   private syncCampZones(state: GameState): void {
-    const alive = new Set(state.map.enemyCamps.map((c) => c.id));
+    // Enemy-camp ids are strings; reuse the shared string scratch set. This runs
+    // fully before syncMarkers refills the same set for relay liveness, so the
+    // single shared instance is safe.
+    const alive = this.scratchAliveStr;
+    alive.clear();
+    for (const c of state.map.enemyCamps) alive.add(c.id);
     for (const [id, ring] of this.campAggroRings) {
       if (!alive.has(id)) {
         this.markers.remove(ring);
@@ -2765,7 +2793,9 @@ export class GameRenderer {
   }
 
   private syncStructures(state: GameState): void {
-    const alive = new Set(state.structures.map((s) => s.id));
+    const alive = this.scratchAliveNum;
+    alive.clear();
+    for (const s of state.structures) alive.add(s.id);
     for (const [id, obj] of this.structureMeshes) {
       if (!alive.has(id)) {
         this.entities.remove(obj);
@@ -2826,8 +2856,8 @@ export class GameRenderer {
         const dist = Math.sqrt(dx * dx + dz * dz);
         const t = Math.min(1, Math.max(0, (dist - 38) / 220));
         const mat = plinthMesh.material as THREE.MeshStandardMaterial;
-        const base = st.team === "player" ? new THREE.Color(0x0a2844) : new THREE.Color(0x440808);
-        const peak = st.team === "player" ? new THREE.Color(0x55aaff) : new THREE.Color(0xff5555);
+        const base = st.team === "player" ? PLINTH_EMISSIVE_BASE_PLAYER : PLINTH_EMISSIVE_BASE_ENEMY;
+        const peak = st.team === "player" ? PLINTH_EMISSIVE_PEAK_PLAYER : PLINTH_EMISSIVE_PEAK_ENEMY;
         mat.emissive.copy(base).lerp(peak, t);
         mat.emissiveIntensity = 0.35 + t * 0.95;
       }
@@ -2835,7 +2865,9 @@ export class GameRenderer {
   }
 
   private syncHoldCubes(state: GameState): void {
-    const alive = new Set(state.structures.map((s) => s.id));
+    const alive = this.scratchAliveNum;
+    alive.clear();
+    for (const s of state.structures) alive.add(s.id);
     for (const [id, cube] of this.holdCubes) {
       if (!alive.has(id)) {
         this.markers.remove(cube);
@@ -4102,7 +4134,9 @@ export class GameRenderer {
   }
 
   private syncUnits(state: GameState): void {
-    const alive = new Set(state.units.map((u) => u.id));
+    const alive = this.scratchAliveNum;
+    alive.clear();
+    for (const u of state.units) alive.add(u.id);
     const attackTargets = new Map<number, Vec2>();
     for (const mark of state.combatHitMarks) {
       if (mark.attackerId === undefined) continue;

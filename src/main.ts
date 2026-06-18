@@ -28,6 +28,7 @@ import { computeFormationSlots, formationKindLabel } from "./game/sim/systems/fo
 import { advanceTick } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
 import { GameRenderer } from "./render/scene";
+import { installFrameProfiler } from "./dev/frameProfiler";
 import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
 import { tcgCardSlotHtml } from "./ui/doctrineCard";
 import { loadDoctrineSlots } from "./ui/doctrineStorage";
@@ -1007,6 +1008,8 @@ function runMatch(
     let lastHudTick = -1;
     let lastHudPhase: GameState["phase"] | null = null;
     let rafId = 0;
+    /** Frame-time instrument exposed on `window.__perf` (120fps budget). */
+    const frameProfiler = installFrameProfiler();
     let leaderboardRecordedPhase: GameState["phase"] | null = null;
     const recordCompletedMatch = (completed: GameState): void => {
       recordLocalLeaderboardResult(completed, portalContext.params.username);
@@ -1040,6 +1043,7 @@ function runMatch(
     };
 
     const tick = (now: number): void => {
+      frameProfiler.frameStart(now);
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       acc += dt;
@@ -1083,8 +1087,10 @@ function runMatch(
         renderer.setPlacementGhost(null, false);
       }
 
+      frameProfiler.cpuBegin(performance.now());
       renderer.sync(state, USE_GLB);
       renderer.render();
+      frameProfiler.cpuEnd(performance.now());
       markFirstInteractiveOnce(state);
       if (state.phase !== "playing" && leaderboardRecordedPhase !== state.phase) {
         recordCompletedMatch(state);
