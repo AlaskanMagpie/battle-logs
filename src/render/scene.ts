@@ -4695,24 +4695,27 @@ export class GameRenderer {
   }
 
   private applyUnitMotionPose(root: THREE.Object3D, yOffset: number, pitch: number, roll: number): void {
-    const targets = [
-      root.userData["glbRoot"] as THREE.Object3D | undefined,
-      root.userData["bodyMesh"] as THREE.Object3D | undefined,
-    ].filter((x): x is THREE.Object3D => !!x);
-    for (const target of targets) {
-      const ud = target.userData as Record<string, unknown>;
-      if (ud["unitMotionBaseY"] === undefined) {
-        ud["unitMotionBaseY"] = target.position.y;
-        ud["unitMotionBaseRotX"] = target.rotation.x;
-        ud["unitMotionBaseRotZ"] = target.rotation.z;
-      }
-      const baseY = ud["unitMotionBaseY"] as number;
-      const baseRotX = ud["unitMotionBaseRotX"] as number;
-      const baseRotZ = ud["unitMotionBaseRotZ"] as number;
-      target.position.y = baseY + yOffset;
-      target.rotation.x = baseRotX + pitch;
-      target.rotation.z = baseRotZ + roll;
+    // Per-unit, per-frame: avoid allocating an array+filter each call (was steady
+    // GC pressure at scale). Pose the same two optional targets in place.
+    const glbRoot = root.userData["glbRoot"] as THREE.Object3D | undefined;
+    if (glbRoot) this.poseUnitMotionTarget(glbRoot, yOffset, pitch, roll);
+    const bodyMesh = root.userData["bodyMesh"] as THREE.Object3D | undefined;
+    if (bodyMesh) this.poseUnitMotionTarget(bodyMesh, yOffset, pitch, roll);
+  }
+
+  private poseUnitMotionTarget(target: THREE.Object3D, yOffset: number, pitch: number, roll: number): void {
+    const ud = target.userData as Record<string, unknown>;
+    if (ud["unitMotionBaseY"] === undefined) {
+      ud["unitMotionBaseY"] = target.position.y;
+      ud["unitMotionBaseRotX"] = target.rotation.x;
+      ud["unitMotionBaseRotZ"] = target.rotation.z;
     }
+    const baseY = ud["unitMotionBaseY"] as number;
+    const baseRotX = ud["unitMotionBaseRotX"] as number;
+    const baseRotZ = ud["unitMotionBaseRotZ"] as number;
+    target.position.y = baseY + yOffset;
+    target.rotation.x = baseRotX + pitch;
+    target.rotation.z = baseRotZ + roll;
   }
 
   private orientHpBars(): void {
