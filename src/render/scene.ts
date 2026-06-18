@@ -4577,6 +4577,19 @@ export class GameRenderer {
   private syncUnitSpellStatusVisuals(root: THREE.Group, u: GameState["units"][number]): void {
     const ud = root.userData as Record<string, unknown>;
     const statuses = u.spellStatuses ?? [];
+    // Common case (no active statuses): skip the signature map/sort/join entirely
+    // — that was a per-unit, per-frame array/string allocation for every plain
+    // unit. Just drop any lingering fx and return.
+    if (statuses.length === 0) {
+      const old = ud["unitSpellStatusFx"] as THREE.Group | undefined;
+      if (old) {
+        root.remove(old);
+        this.disposeObject(old);
+        delete ud["unitSpellStatusFx"];
+        delete ud["unitSpellStatusFxSig"];
+      }
+      return;
+    }
     const signature = statuses
       .map((st) => `${st.kind}:${Math.round(st.strength * 100)}`)
       .sort()
@@ -4589,7 +4602,6 @@ export class GameRenderer {
       delete ud["unitSpellStatusFx"];
       delete ud["unitSpellStatusFxSig"];
     }
-    if (statuses.length === 0) return;
     const height = (ud["unitHeight"] as number | undefined) ?? unitMeshLinearSize(u.sizeClass);
     const radius = Math.max(0.42, unitMeshLinearSize(u.sizeClass) * 0.28);
     const group = new THREE.Group();
