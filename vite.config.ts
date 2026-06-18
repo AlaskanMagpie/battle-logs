@@ -28,15 +28,15 @@ export default defineConfig(({ mode }: ConfigEnv) => {
           mapEditor: "map-editor.html",
           assetLab: "asset-lab.html",
         },
-      output: {
-        manualChunks(id) {
-          if (id.includes("node_modules/three/examples")) return "three-extras";
-          if (id.includes("node_modules/three")) return "three-core";
-          if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "react";
+        output: {
+          manualChunks(id) {
+            if (id.includes("node_modules/three/examples")) return "three-extras";
+            if (id.includes("node_modules/three")) return "three-core";
+            if (id.includes("node_modules/react") || id.includes("node_modules/react-dom")) return "react";
+          },
         },
       },
     },
-  },
   server: {
     /** Local-only dev (see `npm run dev:lan` for 0.0.0.0 / phone on Wi‑Fi). */
     host: "localhost",
