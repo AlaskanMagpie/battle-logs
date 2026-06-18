@@ -7,11 +7,7 @@ import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
 import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
 import { fillDoctrineSlotsWithDuplicatePicks, QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
-import {
-  buildReturnPortalUrlForPrematch,
-  buildVibeJamExitUrlForPrematch,
-  type PortalContext,
-} from "../../game/portal";
+import { type PortalContext } from "../../game/portal";
 import {
   AI_LADDER_OPPONENTS,
   AI_LADDER_WINS_TO_UNLOCK,
@@ -359,23 +355,11 @@ function buildShuffledBinderPanelIds(baseIds: readonly string[]): string[] {
 export function DoctrineBinderPicker({
   onStart,
   onReady,
-  portalContext = { enteredViaPortal: false, params: {}, ref: null },
 }: {
   onStart: (slots: (string | null)[], mapUrl: string, mode?: MatchMode, launchOptions?: PrematchLaunchOptions) => void;
   onReady?: () => void;
   portalContext?: PortalContext;
 }): ReactElement {
-  const prematchVibeJamHref = useMemo(
-    () =>
-      typeof window !== "undefined"
-        ? buildVibeJamExitUrlForPrematch(portalContext, window.location.href)
-        : "https://vibej.am/portal/2026",
-    [portalContext],
-  );
-  const prematchReturnHref = useMemo(
-    () => (typeof window !== "undefined" ? buildReturnPortalUrlForPrematch(portalContext, window.location.href) : null),
-    [portalContext],
-  );
   const controlProfile = useMemo(() => getControlProfile(), []);
   const layoutCalibrateAllowed = useMemo(isBinderLayoutCalibrateMode, []);
   const [roomLayoutTunerOpen, setRoomLayoutTunerOpen] = useState(isBinderLayoutCalibrateMode);
@@ -437,9 +421,6 @@ export function DoctrineBinderPicker({
   const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
   const [dragOverHandZone, setDragOverHandZone] = useState(false);
   const [portalTransitioning, setPortalTransitioning] = useState(false);
-  const [portalExitConfirmOpen, setPortalExitConfirmOpen] = useState(false);
-  /** 2 → 1 while dialog open; auto-assign Vibe Jam URL when reaching 0. */
-  const [portalExitSecondsLeft, setPortalExitSecondsLeft] = useState<number | null>(null);
   const [quickfillConfirmOpen, setQuickfillConfirmOpen] = useState(false);
   const [quickplayCoachmarkOpen, setQuickplayCoachmarkOpen] = useState(
     () => initialPicker.isFirstRun === true && !onboardingHintsDisabledByUrl() && !quickplayCoachmarkDismissed(),
@@ -1108,37 +1089,6 @@ export function DoctrineBinderPicker({
     };
   }, [loading]);
 
-  const dismissPortalExitConfirm = useCallback(() => {
-    setPortalExitConfirmOpen(false);
-    setPortalExitSecondsLeft(null);
-  }, []);
-
-  const confirmVibeJamExit = useCallback(() => {
-    setPortalExitConfirmOpen(true);
-    setPortalExitSecondsLeft(2);
-  }, []);
-
-  const goToVibeJam = useCallback(() => {
-    window.location.assign(prematchVibeJamHref);
-  }, [prematchVibeJamHref]);
-
-  useEffect(() => {
-    if (!portalExitConfirmOpen || portalExitSecondsLeft === null) return;
-    if (portalExitSecondsLeft <= 0) return;
-
-    const id = window.setTimeout(() => {
-      setPortalExitSecondsLeft((s) => {
-        if (s === null || s <= 1) {
-          goToVibeJam();
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-
-    return () => window.clearTimeout(id);
-  }, [portalExitConfirmOpen, portalExitSecondsLeft, goToVibeJam]);
-
   const beginTouchCameraGesture = useCallback((canvas: HTMLCanvasElement): boolean => {
     const eng = engineRef.current;
     if (!eng) return false;
@@ -1204,13 +1154,6 @@ export function DoctrineBinderPicker({
         return;
       }
     }
-    const portalAction = e.button === 0 ? eng.pickVibePortalAction(e.clientX, e.clientY, rect) : null;
-    if (portalAction === "enter") {
-      e.preventDefault();
-      e.stopPropagation();
-      confirmVibeJamExit();
-      return;
-    }
     if (!loading) {
       const idxPre = eng.pickAt(e.clientX, e.clientY, rect);
       if (idxPre !== null && idxPre >= 0) {
@@ -1236,7 +1179,7 @@ export function DoctrineBinderPicker({
       }
     }
     eng.pD(e.nativeEvent, rect);
-  }, [beginTouchCameraGesture, confirmVibeJamExit, loading]);
+  }, [beginTouchCameraGesture, loading]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType !== "mouse") {
@@ -1833,19 +1776,6 @@ export function DoctrineBinderPicker({
                 </aside>
               ) : null}
             </div>
-            {prematchReturnHref ? (
-              <div className="binder-picker-vibejam-insert binder-picker-vibejam-insert--floated">
-                <a
-                  className="binder-picker-vibejam-link binder-picker-vibejam-link--insert"
-                  href={prematchReturnHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Return to the page that linked you here (portal continuity)"
-                >
-                  ← Return
-                </a>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -1861,54 +1791,6 @@ export function DoctrineBinderPicker({
             className="binder-picker-codex-ghost__inner"
             dangerouslySetInnerHTML={{ __html: tcgCardSlotHtml(codexDrag.catalogId, "picker") }}
           />
-        </div>
-      ) : null}
-
-      {portalExitConfirmOpen ? (
-        <div
-          className="binder-portal-exit-toast"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="binder-portal-exit-title"
-          aria-describedby="binder-portal-exit-body"
-          onClick={dismissPortalExitConfirm}
-        >
-          <div className="binder-portal-exit-toast__title" id="binder-portal-exit-title">
-            Visit the next Vibe Jam game?
-          </div>
-          <p id="binder-portal-exit-body">
-            Thanks for playing Doctrine. Hope you had fun here, and have fun at the next game.
-          </p>
-          {portalExitSecondsLeft != null && portalExitSecondsLeft > 0 ? (
-            <p
-              id="binder-portal-exit-countdown"
-              className="binder-portal-exit-toast__countdown"
-              aria-live="polite"
-            >
-              Continuing in {portalExitSecondsLeft}…
-            </p>
-          ) : null}
-          <div className="binder-portal-exit-toast__actions">
-            <button
-              type="button"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                goToVibeJam();
-              }}
-            >
-              Continue to next game
-            </button>
-            <button
-              type="button"
-              className="binder-portal-exit-toast__secondary"
-              onClick={(ev) => {
-                ev.stopPropagation();
-                dismissPortalExitConfirm();
-              }}
-            >
-              Stay here
-            </button>
-          </div>
         </div>
       ) : null}
 
