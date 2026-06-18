@@ -338,33 +338,6 @@ function makeEmptyTexture(): THREE.CanvasTexture {
   return t;
 }
 
-function makePortalTextPanel(text: string, width: number, height: number): THREE.Mesh {
-  const c = document.createElement("canvas");
-  c.width = 512;
-  c.height = 128;
-  const g = c.getContext("2d")!;
-  g.clearRect(0, 0, c.width, c.height);
-  g.font = "900 46px system-ui, Segoe UI, sans-serif";
-  g.textAlign = "center";
-  g.textBaseline = "middle";
-  g.fillStyle = "rgba(220, 250, 255, 0.98)";
-  g.shadowColor = "rgba(0, 20, 48, 0.95)";
-  g.shadowBlur = 16;
-  g.fillText(text, c.width / 2, c.height / 2);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshBasicMaterial({
-    map: tex,
-    transparent: true,
-    depthWrite: false,
-    depthTest: true,
-    toneMapped: false,
-  });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), mat);
-  mesh.renderOrder = 26;
-  return mesh;
-}
-
 /** Shared leather look for shell + hinged front cover (Phase B). */
 function createProceduralLeatherTexture(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
@@ -660,8 +633,7 @@ export class CardBinderEngine {
         side: THREE.DoubleSide,
       }),
     );
-    disc.name = "vibe_jam_portal_enter_disc";
-    disc.userData.vibePortalAction = "enter" satisfies VibePortalAction;
+    disc.name = "match_portal_disc";
     disc.renderOrder = 20;
     this.vibePortalGroup.add(disc);
     this.portalPulseMeshes.push(disc);
@@ -679,18 +651,13 @@ export class CardBinderEngine {
           side: THREE.DoubleSide,
         }),
       );
-      ring.name = `vibe_jam_portal_enter_ring_${i}`;
-      ring.userData.vibePortalAction = "enter" satisfies VibePortalAction;
+      ring.name = `match_portal_ring_${i}`;
       ring.userData.portalRingIndex = i + 10;
       ring.renderOrder = 21 + i;
       this.vibePortalGroup.add(ring);
       this.portalPulseMeshes.push(ring);
     }
 
-    const enter = makePortalTextPanel("NEXT GAME", 1.25, 0.25);
-    enter.position.set(0, 0.08, 0.035);
-    enter.userData.vibePortalAction = "enter" satisfies VibePortalAction;
-    this.vibePortalGroup.add(enter);
     this._applyVibePortalTransform();
   }
 
