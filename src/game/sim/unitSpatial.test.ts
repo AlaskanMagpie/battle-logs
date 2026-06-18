@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
+import type { MapData } from "../types";
 import type { GameState, UnitRuntime } from "../state";
 import { buildCombatUnitBuckets, nearestFoeInBuckets } from "./unitSpatial";
 import { unitStatsForCatalog } from "./systems/helpers";
+
+const testPlaneMap: MapData = {
+  version: 2,
+  world: { halfExtents: 500, groundY: 0 },
+  tapSlots: [],
+  playerRelaySlots: [],
+  enemyRelaySlots: [],
+  playerStart: { x: 0, z: 0 },
+  enemyCamps: [],
+};
 
 function unit(id: number, team: "player" | "enemy", x: number, z: number): UnitRuntime {
   return {
@@ -30,8 +41,8 @@ describe("combat spatial lookup", () => {
     const state = { units: [attacker, target] } as GameState;
     const buckets = buildCombatUnitBuckets(state, 6);
 
-    expect(nearestFoeInBuckets(attacker, "enemy", 18 * 18, buckets, 6)).toBe(target);
-    expect(nearestFoeInBuckets(attacker, "enemy", 12 * 12, buckets, 6)).toBeNull();
+    expect(nearestFoeInBuckets(attacker, "enemy", 18 * 18, buckets, 6, testPlaneMap)).toBe(target);
+    expect(nearestFoeInBuckets(attacker, "enemy", 12 * 12, buckets, 6, testPlaneMap)).toBeNull();
   });
 });
 

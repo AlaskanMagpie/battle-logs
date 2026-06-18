@@ -1,4 +1,5 @@
 import type { PlayerIntent } from "../intents";
+import type { MatchSeat } from "../../net/protocol";
 import { pruneUnitSpellStatuses, tickHeroTeleportCooldown, type GameState } from "../state";
 import { movement, wakeCamps } from "./systems/ai";
 import { auras } from "./systems/auras";
@@ -7,18 +8,19 @@ import { cleanupDead } from "./systems/deaths";
 import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/economy";
 import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
-import { applyPlayerIntents } from "./systems/intents";
+import { applyPlayerIntents, applySeatIntents } from "./systems/intents";
 import { portals } from "./systems/portals";
 import { buildProgress, production } from "./systems/production";
 import { maybeEnemyReinforcements } from "./systems/waves";
 import { loseCheck, timeLimitCheck, winCheck } from "./systems/winlose";
 import { respawnDeadHeroAtKeep } from "./systems/hero";
 
-export { applyPlayerIntents } from "./systems/intents";
+export { applyPlayerIntents, applySeatIntents } from "./systems/intents";
 
-/** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
-export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
-  if (s.phase === "win" || s.phase === "lose") return;
+export type PvpSeatIntentBundle = { seat: MatchSeat; intents: PlayerIntent[] };
+
+function runTickSimulation(s: GameState, applyIntents: () => void): void {
+  if (s.phase === "win" || s.phase === "lose" || s.phase === "draw") return;
   timeLimitCheck(s);
   if (s.phase !== "playing") return;
   if (s.tacticsFieldZones.length > 0) {
@@ -27,7 +29,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   pruneUnitSpellStatuses(s);
   tickDoctrineCooldowns(s);
   tickHeroTeleportCooldown(s);
-  applyPlayerIntents(s, intents);
+  applyIntents();
   economy(s);
   salvageTrickle(s);
   buildProgress(s);
@@ -45,4 +47,19 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   loseCheck(s);
   winCheck(s);
   s.tick += 1;
+}
+
+/** Single fixed-step tick. Call at TICK_HZ with accumulated player intents. */
+export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
+  runTickSimulation(s, () => {
+    applyPlayerIntents(s, intents);
+  });
+}
+
+/** PvP: apply both seats' intents in deterministic seat order (`player` then `enemy`) before sim. */
+export function advanceTickPvp(s: GameState, bundles: PvpSeatIntentBundle[]): void {
+  const ordered = [...bundles].sort((a, b) => (a.seat === "player" ? 0 : 1) - (b.seat === "player" ? 0 : 1));
+  runTickSimulation(s, () => {
+    for (const b of ordered) applySeatIntents(s, b.seat, b.intents);
+  });
 }

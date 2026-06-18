@@ -91,7 +91,7 @@ body {
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
-/* Canvas first in paint order within its layer; HUD root stacks above so chrome/dock stay visible + clickable. */
+/* Canvas paints first; `#hud-root` follows in DOM + higher z-index so HTML chrome stays above WebGL on all compositors. */
 #game {
   position: fixed;
   inset: 0;
@@ -109,7 +109,7 @@ body {
 #hud-root {
   position: fixed;
   inset: 0;
-  z-index: 5;
+  z-index: 100;
   pointer-events: none;
   overflow: hidden;
 }
@@ -848,6 +848,11 @@ details.hud-dock__help-drawer[open] .hud-help-grid {
   text-shadow:
     0 1px 2px rgba(0, 0, 0, 0.95),
     0 0 12px rgba(255, 104, 76, 0.2);
+}
+.hud-endgame--draw .hud-endgame-reason {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 0 12px rgba(230, 210, 140, 0.28);
 }
 .hud-endgame-stats {
   position: absolute;

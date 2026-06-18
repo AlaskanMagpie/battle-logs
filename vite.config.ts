@@ -38,15 +38,18 @@ export default defineConfig(({ mode }) => {
     },
   },
   server: {
-    /** Local-only dev (see `npm run dev:lan` for 0.0.0.0 / phone on Wi‑Fi). */
-    host: "localhost",
+    /**
+     * IPv4 loopback avoids Windows resolving `localhost` to IPv6 (::1) while Node listens on IPv4-only,
+     * which looks like “nothing loads” in the browser.
+     */
+    host: "127.0.0.1",
     port: 2222,
     /** Always 2222 — no silent bump to 2223/2224 (README + Playwright assume this URL). */
     strictPort: true,
     fs: { strict: false },
   },
   preview: {
-    host: "localhost",
+    host: "127.0.0.1",
     port: 2222,
     strictPort: true,
   },

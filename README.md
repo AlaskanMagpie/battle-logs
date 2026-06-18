@@ -17,9 +17,9 @@ npm install
 npm run localhost
 ```
 
-Open **`http://localhost:2222/`** — Vite is configured with `strictPort: true`, so the dev server always uses 2222 or exits with “port in use” (no silent 2223/2224).
+Open **`http://127.0.0.1:2222/`** (preferred on Windows). **`http://localhost:2222/`** also works when your OS resolves it to IPv4. Vite uses `strictPort: true`, so the dev server uses 2222 or exits with “port in use”.
 
-`npm run localhost` is the safe local reset path: it closes old listeners on 2222/2223/2224, clears Vite's transform cache, then starts a fresh strict 2222 server. Use `npm run dev` only when you know no stale server is already running.
+`npm run localhost` kills stale listeners on 2222/2223/2224, clears Vite’s cache, starts strict **127.0.0.1:2222**, and **`--open`** launches your browser. Use `npm run dev` when you already have a clean port.
 
 ### Multiplayer (local)
 
@@ -30,7 +30,7 @@ Human queue modes need a **Colyseus** server in addition to the Vite app.
 
 Optional: add **`VITE_COLYSEUS_URL`** in `.env.local` if you use a non-default host or port (see `.env.example`).
 
-**Production:** set `VITE_COLYSEUS_URL` at **build** time to a public Colyseus endpoint. If the game is served over **HTTPS**, the URL must use **TLS** (for example **`wss://`** or **`https://`** to a host that terminates WebSocket upgrades correctly). Deploy the Node process under [`server/src/index.ts`](server/src/index.ts) separately from static Vite output; the frontend build does not start Colyseus for you.
+**Production / preview (e.g. Vercel):** set `VITE_COLYSEUS_URL` at **build** time for **Preview** and **Production** (the dev default only applies to `vite` dev, not `vite build`). Point it at a public Colyseus endpoint. If the game is served over **HTTPS**, the URL must use **TLS** (for example **`wss://`** or **`https://`** to a host that terminates WebSocket upgrades correctly). Deploy the Node process under [`server/src/index.ts`](server/src/index.ts) separately from static Vite output; the frontend build does not start Colyseus for you.
 
 ## Controls (Phase 1)
 

@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { computeFormationSlots, nextFormationKind } from "./formationLayout";
-import type { UnitFormationKind, UnitSizeClass } from "../../types";
+import type { MapData, UnitFormationKind, UnitSizeClass } from "../../types";
+
+const testMap: MapData = {
+  version: 2,
+  world: { halfExtents: 80, groundY: 0 },
+  tapSlots: [],
+  playerRelaySlots: [],
+  enemyRelaySlots: [],
+  playerStart: { x: 0, z: 0 },
+  enemyCamps: [],
+};
 
 function u(id: number, sizeClass: UnitSizeClass, range = 12, x = -20, z = 0) {
   return { id, sizeClass, range, x, z };
@@ -21,9 +31,9 @@ function minPairDistance(slots: { x: number; z: number }[]): number {
 describe("formation layout", () => {
   it.each(["line", "wedge", "arc"] as UnitFormationKind[])("creates stable non-overlapping %s slots", (kind) => {
     const slots = computeFormationSlots(
+      testMap,
       [u(4, "Swarm"), u(2, "Line", 16), u(8, "Heavy", 10), u(6, "Swarm", 14), u(7, "Titan", 20)],
       { from: { x: 0, z: -10 }, to: { x: 0, z: 10 }, kind },
-      80,
     );
 
     expect(slots.map((s) => s.id)).toEqual([8, 4, 6, 2, 7]);

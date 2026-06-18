@@ -3,7 +3,7 @@ import type { GameState } from "./state";
 import type { MapData } from "./types";
 
 const CHECKSUM_INTERVAL_TICKS = 30;
-const REPLAY_VERSION = 1;
+const REPLAY_VERSION = 2;
 
 export interface ReplayTickIntents {
   tick: number;
@@ -59,7 +59,7 @@ function quant(v: number): number {
 export function stateChecksum(s: GameState): number {
   let h = 0x811c9dc5 | 0;
   h = mix(h, s.tick);
-  h = mix(h, s.phase === "playing" ? 1 : s.phase === "win" ? 2 : 3);
+  h = mix(h, s.phase === "playing" ? 1 : s.phase === "win" ? 2 : s.phase === "draw" ? 4 : 3);
   h = mix(h, quant(s.flux));
   h = mix(h, quant(s.salvage));
   h = mix(h, quant(s.enemyFlux));

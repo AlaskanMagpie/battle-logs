@@ -1,6 +1,7 @@
 import { COMBAT_SPATIAL_CELL } from "../constants";
+import type { MapData } from "../types";
 import type { GameState, UnitRuntime } from "../state";
-import { dist2 } from "./systems/helpers";
+import { gameDist2 } from "./systems/helpers";
 
 function cellKey(x: number, z: number, cell: number): string {
   return `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
@@ -29,6 +30,7 @@ export function nearestFoeInBuckets(
   maxD2: number,
   buckets: Map<string, UnitRuntime[]>,
   cell: number = COMBAT_SPATIAL_CELL,
+  map: MapData,
 ): UnitRuntime | null {
   let best: UnitRuntime | null = null;
   let bestD = maxD2;
@@ -41,7 +43,7 @@ export function nearestFoeInBuckets(
       if (!list) continue;
       for (const o of list) {
         if (o === from || o.team !== foeTeam || o.hp <= 0) continue;
-        const d = dist2(from, o);
+        const d = gameDist2(map, from, o);
         if (d <= bestD) {
           bestD = d;
           best = o;

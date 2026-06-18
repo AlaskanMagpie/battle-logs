@@ -20,7 +20,6 @@ import {
   KEEP_SWARM_PERIOD_SEC,
   PLAYER_STARTING_FLUX,
   TAP_ANCHOR_MAX_HP,
-  TAP_GENERATION_MIN_SEP,
   TAP_NODES_PER_SIDE,
   TERRITORY_RADIUS,
   TICK_HZ,
@@ -31,7 +30,7 @@ import {
 } from "./constants";
 import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
 import { TRAILER_HERO_MODE, trailerHeroModeStartingFlux } from "../dev/heroMode";
-import { unitStatsForCatalog } from "./sim/systems/helpers";
+import { gameDist2, unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
   CatalogEntry,
@@ -39,6 +38,7 @@ import type {
   MapData,
   ProducedUnitId,
   SignalType,
+  SpellFxColorTint,
   SpellFxElement,
   SpellFxShape,
   TeamId,
@@ -50,6 +50,7 @@ import type {
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
+import { prepareMatchMapForRuntime, scatterArenaTapSlots } from "./mapArenaLayout";
 import { structureObstacleFootprints } from "./structureObstacles";
 
 export type CastFxKind =
@@ -91,6 +92,11 @@ export interface CombatHitMark {
   trait?: UnitTrait;
   /** Reach bucket for layered zap / cone / boom reads in the renderer. */
   rangeBand?: AttackRangeBand;
+  /** Breath weapon splash radius (world units); renderer draws target ripple when set. */
+  aoeRadius?: number;
+  /** Splash centroid override; defaults to primary hit `(tx,tz)`. */
+  splashPx?: number;
+  splashPz?: number;
 }
 
 /** Wizard melee burst palette (both heroes). */
@@ -123,6 +129,8 @@ export interface CastFxEvent {
   element?: SpellFxElement;
   secondaryElement?: SpellFxElement;
   shape?: SpellFxShape;
+  /** Optional runtime tint override for spell/liquid visuals. */
+  colorTint?: SpellFxColorTint;
   /** Optional spell reach/width in world units. Falls back to impact radius / origin distance. */
   reach?: number;
   width?: number;
@@ -504,25 +512,28 @@ export interface GameState {
   enemyFlux: number;
   /** Enemy auto-build: last placed catalog id (soft diversity so AI does not spam one tower). */
   enemyAiLastBuildCatalogId: string | null;
+  /**
+   * When true, the rival Wizard is human-driven (PvP): autonomous enemy-hero claim/build pathing is off;
+   * WASD / intents move and channel the enemy hero like the blue Wizard.
+   */
+  enemyHumanControlled: boolean;
   /** Active Fortify-style fields (tick-based expiry). */
   tacticsFieldZones: TacticsFieldZone[];
   /** Portal continuity flag + legacy ring positions; exit/return URLs stay empty during matches (binder UI only). */
   portal: PortalRuntime;
 }
 
-/** Seeded xorshift32 PRNG on state. Returns [0, 1). */
-function inTacticsFieldAt(zf: TacticsFieldZone, x: number, z: number, tick: number): boolean {
+/** Fortify-style control zones at (x,z). */
+function inTacticsFieldAt(map: MapData, zf: TacticsFieldZone, x: number, z: number, tick: number): boolean {
   if (zf.untilTick <= tick) return false;
-  const dx = x - zf.x;
-  const dz = z - zf.z;
-  return dx * dx + dz * dz <= zf.radius * zf.radius;
+  return gameDist2(map, { x, z }, { x: zf.x, z: zf.z }) <= zf.radius * zf.radius;
 }
 
 /** Movement speed multiplier from active tactics fields at (x,z). */
 export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allySpeedMult;
     else m *= zf.enemySpeedMult;
   }
@@ -572,7 +583,7 @@ export function unitSpellStatusSpeedMult(u: UnitRuntime): number {
 export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyDamageMult;
     else m *= zf.enemyDamageMult;
   }
@@ -583,7 +594,7 @@ export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: nu
 export function tacticsFieldIncomingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (!inTacticsFieldAt(s.map, zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyIncomingDamageMult;
     else m *= zf.enemyIncomingDamageMult;
   }
@@ -603,12 +614,6 @@ export function rand(s: GameState): number {
 export function randU32(s: GameState): number {
   rand(s);
   return s.rngState >>> 0;
-}
-
-function dist2(a: Vec2, b: Vec2): number {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return dx * dx + dz * dz;
 }
 
 /** Claimed Taps drive the wizard's tier progression (replaces Relay tier). */
@@ -806,68 +811,9 @@ export function normalizeDoctrineSlotsForMatch(slots: (string | null)[]): (strin
 
 /** Spawn the Wizard Keep at the player HQ anchor — complete immediately, no build time,
  *  no flux cost. This is the permanent base that anchors the wizard. */
-/** Random Mana node layout: TAP_NODES_PER_SIDE on x<0, same on x>0; ignores map.json tapSlots. */
+/** Random Mana nodes across the full arena (spacing + obstacle/camp/HQ avoidance). */
 export function generateProceduralTaps(map: MapData, rngScratch: { v: number }): TapRuntime[] {
-  function rnd(): number {
-    let x = rngScratch.v | 0;
-    x ^= x << 13;
-    x ^= x >>> 17;
-    x ^= x << 5;
-    rngScratch.v = x >>> 0;
-    return (rngScratch.v & 0xffffffff) / 0x100000000;
-  }
-  const half = map.world.halfExtents;
-  const margin = Math.min(140, Math.max(44, half * 0.2));
-  const minSep2 = TAP_GENERATION_MIN_SEP * TAP_GENERATION_MIN_SEP;
-  const sx = map.playerStart?.x ?? 0;
-  const sz = map.playerStart?.z ?? 0;
-  const placed: { x: number; z: number }[] = [];
-  const edgePad = Math.max(18, half * 0.04);
-  const keepClear = Math.max(36, half * 0.11);
-  const keepClear2 = keepClear * keepClear;
-
-  function okPos(x: number, z: number, playerSide: boolean): boolean {
-    if (Math.abs(x) > half - edgePad || Math.abs(z) > half - edgePad) return false;
-    if (playerSide) {
-      if (x > -margin) return false;
-    } else if (x < margin) {
-      return false;
-    }
-    const kd2 = keepClear2;
-    if ((x - sx) * (x - sx) + (z - sz) * (z - sz) < kd2) return false;
-    for (const p of placed) {
-      const dx = p.x - x;
-      const dz = p.z - z;
-      if (dx * dx + dz * dz < minSep2) return false;
-    }
-    return true;
-  }
-
-  const taps: TapRuntime[] = [];
-  let id = 0;
-  for (const playerSide of [true, false]) {
-    let n = 0;
-    let attempts = 0;
-    while (n < TAP_NODES_PER_SIDE && attempts < 1200) {
-      attempts++;
-      const x = playerSide
-        ? -margin - rnd() * Math.max(16, half - margin * 2)
-        : margin + rnd() * Math.max(16, half - margin * 2);
-      const z = (rnd() * 2 - 1) * (half - margin - edgePad);
-      if (!okPos(x, z, playerSide)) continue;
-      placed.push({ x, z });
-      taps.push({
-        defId: `tap_gen_${id++}`,
-        x,
-        z,
-        active: false,
-        yieldRemaining: 0,
-        ownerTeam: undefined,
-      });
-      n++;
-    }
-  }
-  return taps;
+  return scatterArenaTapSlots(map, rngScratch);
 }
 
 /** Runtime map with procedural tap slots for types that expect `map.tapSlots`. */
@@ -976,7 +922,8 @@ export function effectiveGlobalPopCap(s: GameState): number {
   return Math.min(GLOBAL_POP_CAP_MAX, GLOBAL_POP_CAP + s.globalPopCapBonus);
 }
 
-export function createInitialState(map: MapData, doctrineSlots?: (string | null)[]): GameState {
+export function createInitialState(mapInput: MapData, doctrineSlots?: (string | null)[]): GameState {
+  const map = prepareMatchMapForRuntime(mapInput);
   const rawIn = doctrineSlots ?? [...DEFAULT_DOCTRINE_SLOTS];
   const rawSlots =
     rawIn.length >= DOCTRINE_SLOT_COUNT
@@ -1132,6 +1079,7 @@ export function createInitialState(map: MapData, doctrineSlots?: (string | null)
     hero,
     enemyHero,
     enemyAiLastBuildCatalogId: null,
+    enemyHumanControlled: false,
     tacticsFieldZones: [],
     portal: {
       enteredViaPortal: false,
@@ -1217,11 +1165,11 @@ export function nearestEnemyAggroBlocked(s: GameState, pos: Vec2): boolean {
     const r = camp.aggroRadius;
     for (const u of s.units) {
       if (u.team !== "enemy") continue;
-      if (dist2(pos, u) < r * r) return true;
+      if (gameDist2(s.map, pos, u) < r * r) return true;
     }
     for (const er of s.enemyRelays) {
       if (er.hp <= 0) continue;
-      if (dist2(pos, er) < r * r) return true;
+      if (gameDist2(s.map, pos, er) < r * r) return true;
     }
   }
   return false;
@@ -1232,10 +1180,10 @@ export function nearFriendlyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   const keep = findKeep(s);
-  if (keep && dist2(pos, keep) <= r2) return true;
+  if (keep && gameDist2(s.map, pos, keep) <= r2) return true;
   return false;
 }
 
@@ -1244,15 +1192,15 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
   const r2 = INFRA_PLACE_RADIUS * INFRA_PLACE_RADIUS;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    if (dist2(pos, er) <= r2) return true;
+    if (gameDist2(s.map, pos, er) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "enemy" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }
@@ -1261,10 +1209,10 @@ export function nearEnemyInfra(s: GameState, pos: Vec2): boolean {
 export function inPlayerTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
   const keep = findKeep(s);
-  if (keep && dist2(pos, keep) <= r2) return true;
+  if (keep && gameDist2(s.map, pos, keep) <= r2) return true;
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "player" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   return false;
 }
@@ -1274,15 +1222,15 @@ export function inEnemyTerritory(s: GameState, pos: Vec2): boolean {
   const r2 = TERRITORY_RADIUS * TERRITORY_RADIUS;
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    if (dist2(pos, er) <= r2) return true;
+    if (gameDist2(s.map, pos, er) <= r2) return true;
   }
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(pos, t) <= r2) return true;
+    if (gameDist2(s.map, pos, t) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "enemy" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }
@@ -1335,7 +1283,7 @@ export function nearSafeDeployAura(s: GameState, pos: Vec2): boolean {
     if (!def || !isStructureEntry(def) || !def.aura) continue;
     if (def.aura.kind !== "safe_deploy_radius") continue;
     const r = def.aura.radius;
-    if (dist2(pos, st) <= r * r) return true;
+    if (gameDist2(s.map, pos, st) <= r * r) return true;
   }
   return false;
 }
@@ -1346,11 +1294,11 @@ export function nearFriendlyForward(s: GameState, pos: Vec2): boolean {
   const r2 = FORWARD_PLACE_RADIUS * FORWARD_PLACE_RADIUS;
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
-    if (dist2(pos, u) <= r2) return true;
+    if (gameDist2(s.map, pos, u) <= r2) return true;
   }
   for (const st of s.structures) {
     if (st.team !== "player" || !st.complete) continue;
-    if (dist2(pos, st) <= r2) return true;
+    if (gameDist2(s.map, pos, st) <= r2) return true;
   }
   return false;
 }
@@ -1388,6 +1336,7 @@ export function doctrineCardPlayability(
   catalogId: string | null,
   pos: Vec2 | null,
   slotIndex: number,
+  actingTeam: TeamId = "player",
 ): DoctrinePlayability {
   if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) {
     return blocked("invalid", "Invalid doctrine slot.", "Invalid");
@@ -1411,17 +1360,30 @@ export function doctrineCardPlayability(
     return blocked("invalid", "Command cards are disabled.", "Disabled");
   }
 
-  const missingMana = Math.max(0, Math.ceil(entry.fluxCost - s.flux));
+  const manaPool = actingTeam === "player" ? s.flux : s.enemyFlux;
+  const missingMana = Math.max(0, Math.ceil(entry.fluxCost - manaPool));
   if (!TRAILER_HERO_MODE && missingMana > 0) {
-    return blocked("mana", `Need ${missingMana} more Mana (${entry.fluxCost} total; have ${Math.floor(s.flux)}).`, `Need ${missingMana}`, {
-      missingMana,
-    });
+    const label = actingTeam === "player" ? "Mana" : "rival Mana";
+    return blocked(
+      "mana",
+      `Need ${missingMana} more ${label} (${entry.fluxCost} total; have ${Math.floor(manaPool)}).`,
+      `Need ${missingMana}`,
+      {
+        missingMana,
+      },
+    );
   }
 
   if (isStructureEntry(entry) && pos) {
-    if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
-    if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
-      return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+    if (actingTeam === "player") {
+      if (nearestEnemyAggroBlocked(s, pos)) return blocked("enemy", "Too close to enemy — can't summon here.", "Enemy close");
+      if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
+        return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
+      }
+    } else {
+      if (!inEnemyTerritory(s, pos) && !nearEnemyInfra(s, pos)) {
+        return blocked("territory", "Outside rival territory — claim nodes on your side to expand.", "Need territory");
+      }
     }
     if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
       return blocked("terrain", "Blocked by terrain — try another spot.", "Blocked");

@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "mapId": "sphere_planet",
+  "worldGeometry": "sphere",
+  "world": {
+    "halfExtents": 610,
+    "groundY": 0,
+    "sphereRadius": 200,
+    "sphereTerrain": {
+      "amplitude": 15,
+      "seed": 722,
+      "octaves": 5,
+      "macroScale": 1.15
+    }
+  },
+  "useAuthorTapSlots": false,
+  "visual": {
+    "groundPreset": "ember_wastes",
+    "fogHex": 1421142,
+    "fogNear": 90,
+    "fogFar": 420,
+    "skyHex": 6185050,
+    "sunHex": 16777212
+  },
+  "tapSlots": [],
+  "playerRelaySlots": [],
+  "enemyRelaySlots": [],
+  "playerStart": { "x": -95, "z": 0 },
+  "enemyStart": { "x": 95, "z": 0 },
+  "enemyCamps": []
+}

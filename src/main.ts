@@ -21,11 +21,14 @@ import {
   createInitialState,
   doctrineCardPlayability,
   pushFx,
+  randU32,
   type GameState,
+  type UnitRuntime,
 } from "./game/state";
 import { clearGameLog, logGame } from "./game/gameLog";
 import { computeFormationSlots, formationKindLabel } from "./game/sim/systems/formationLayout";
-import { advanceTick } from "./game/sim/tick";
+import { unitStatsForCatalog } from "./game/sim/systems/helpers";
+import { advanceTick, advanceTickPvp, type PvpSeatIntentBundle } from "./game/sim/tick";
 import { configureGamePortals, parsePortalContext, type PortalContext } from "./game/portal";
 import { GameRenderer } from "./render/scene";
 import { installFrameProfiler } from "./dev/frameProfiler";
@@ -53,6 +56,7 @@ import {
   type MapDifficulty,
   type SpellFxElement,
   type SpellFxShape,
+  type UnitSizeClass,
   type Vec2,
 } from "./game/types";
 import { applyControlProfileToDocument, getControlProfile } from "./controlProfile";
@@ -64,6 +68,7 @@ import {
   makeClientMatchId,
   normalizeMatchMode,
   type MatchLaunchOptions,
+  type MatchSeat,
 } from "./net/protocol";
 import {
   isAiLadderProgressEligible,
@@ -480,7 +485,7 @@ function wireDoctrineDragToMap(
       }
       const playable = doctrineCardPlayability(st, session.catalogId, hit, session.slotIndex);
       const valid = playable.reason === null;
-      renderer.setPlacementGhost(hit, valid);
+      renderer.setPlacementGhost(hit, valid, session.catalogId);
       updateDragReason(
         ev.clientX,
         ev.clientY,
@@ -790,8 +795,13 @@ function runMatch(
       state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
     }
     if (resolvedLaunch.mode === "pvp") {
-      state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}). Server-authoritative sync is active for room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
-    } else if (resolvedLaunch.mode === "fallback_ai") {
+      state.enemyHumanControlled = true;
+      renderer.setLocalSeat((resolvedLaunch.seat ?? "player") as MatchSeat);
+      state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}) — lockstep PvP. Room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
+    } else {
+      renderer.setLocalSeat("player");
+    }
+    if (resolvedLaunch.mode === "fallback_ai") {
       state.lastMessage = "No human opponent found quickly — AI rival engaged.";
     }
     let onlineSession: OnlineMatchSession | null = null;
@@ -840,6 +850,10 @@ function runMatch(
         x: number,
         z: number,
         opts?: { fromX?: number; fromZ?: number; radius?: number; reach?: number; width?: number },
+      ) => string | null;
+      __signalWarsStressUnits?: (
+        count: number,
+        opts?: { team?: "player" | "enemy" | "both"; sizeClass?: UnitSizeClass | "mixed"; statusPreview?: boolean },
       ) => string | null;
     };
     testWindow.render_game_to_text = () =>
@@ -949,6 +963,64 @@ function runMatch(
       updateHud(state);
       return testWindow.render_game_to_text?.() ?? null;
     };
+    const stressClassForIndex = (idx: number, requested: UnitSizeClass | "mixed"): UnitSizeClass => {
+      if (requested !== "mixed") return requested;
+      const cycle: UnitSizeClass[] = ["Swarm", "Swarm", "Swarm", "Swarm", "Line", "Line", "Line", "Heavy", "Heavy", "Titan"];
+      return cycle[idx % cycle.length]!;
+    };
+    const spawnStressUnits = (
+      count: number,
+      opts?: { team?: "player" | "enemy" | "both"; sizeClass?: UnitSizeClass | "mixed"; statusPreview?: boolean },
+    ): string | null => {
+      if (state.phase !== "playing") return null;
+      const n = Math.max(0, Math.min(8000, Math.floor(count)));
+      const teamMode = opts?.team ?? "both";
+      const requestedClass = opts?.sizeClass ?? "mixed";
+      const statusPreview = opts?.statusPreview ?? new URLSearchParams(window.location.search).get("crowdStatusPreview") !== "0";
+      const before = state.units.length;
+      const cols = Math.max(8, Math.ceil(Math.sqrt(n / (teamMode === "both" ? 2 : 1))));
+      const spacing = 2.35;
+      const statusKinds = ["burning", "frozen", "rooted", "chilled", "winded"] as const;
+
+      for (let i = 0; i < n; i++) {
+        const team: "player" | "enemy" =
+          teamMode === "both" ? (i % 2 === 0 ? "player" : "enemy") : teamMode;
+        const localIdx = teamMode === "both" ? Math.floor(i / 2) : i;
+        const row = Math.floor(localIdx / cols);
+        const col = localIdx % cols;
+        const side = team === "player" ? -1 : 1;
+        const sizeClass = stressClassForIndex(i, requestedClass);
+        const st = unitStatsForCatalog(sizeClass);
+        const u: UnitRuntime = {
+          id: state.nextId.unit++,
+          team,
+          structureId: null,
+          x: side * (18 + row * 0.38) + (Math.random() - 0.5) * 0.4,
+          z: (col - cols * 0.5) * spacing + row * 0.42 + (Math.random() - 0.5) * 0.4,
+          hp: st.maxHp,
+          maxHp: st.maxHp,
+          sizeClass,
+          pop: st.pop,
+          speedPerSec: st.speedPerSec,
+          range: st.range,
+          dmgPerTick: st.dmgPerTick,
+          visualSeed: randU32(state),
+          signal: sizeClass === "Heavy" || sizeClass === "Titan" ? "Bastion" : sizeClass === "Line" ? "Vanguard" : "Reclaim",
+          vxImpulse: 0,
+          vzImpulse: 0,
+        };
+        if (statusPreview && i % 3 === 0) {
+          u.spellStatuses = [{
+            kind: statusKinds[i % statusKinds.length]!,
+            untilTick: state.tick + 60 * TICK_HZ,
+            strength: 0.45 + ((i * 17) % 45) / 100,
+          }];
+        }
+        state.units.push(u);
+      }
+      state.lastMessage = `Crowd stress preview: spawned ${state.units.length - before} units (${state.units.length} total).`;
+      return syncDebugFrame();
+    };
     testWindow.__signalWarsDebugCastSlot = (slotIndex: number, x: number, z: number): string | null => {
       if (state.phase !== "playing") return null;
       if (slotIndex < 0 || slotIndex >= DOCTRINE_SLOT_COUNT) return null;
@@ -983,6 +1055,20 @@ function runMatch(
       });
       return syncDebugFrame();
     };
+    testWindow.__signalWarsStressUnits = spawnStressUnits;
+
+    const stressParams = new URLSearchParams(window.location.search);
+    const urlStressUnits = Number(stressParams.get("stressUnits") ?? stressParams.get("crowdStress") ?? "0");
+    if (Number.isFinite(urlStressUnits) && urlStressUnits > 0) {
+      const rawClass = stressParams.get("stressClass") ?? "mixed";
+      const sizeClass: UnitSizeClass | "mixed" =
+        rawClass === "Swarm" || rawClass === "Line" || rawClass === "Heavy" || rawClass === "Titan"
+          ? rawClass
+          : "mixed";
+      const rawTeam = stressParams.get("stressTeam");
+      const team = rawTeam === "player" || rawTeam === "enemy" || rawTeam === "both" ? rawTeam : "both";
+      spawnStressUnits(urlStressUnits, { team, sizeClass });
+    }
 
     const keysHeld = { w: false, a: false, s: false, d: false };
     const onKeyDown = (ev: KeyboardEvent): void => {
@@ -1061,9 +1147,28 @@ function runMatch(
           const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
           first = false;
           const tickBefore = state.tick;
-          if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
-          advanceTick(state, chunk);
-          captureReplayTick(replay, tickBefore, chunk, state);
+          if (resolvedLaunch.mode === "pvp" && onlineSession) {
+            onlineSession.sendIntents(tickBefore, chunk);
+            const localSeat = (resolvedLaunch.seat ?? "player") as MatchSeat;
+            if (!onlineSession.intentLedger.hasPartnerIntents(tickBefore, localSeat)) break;
+            const partnerChunk = onlineSession.intentLedger.takePartnerIntents(tickBefore, localSeat) ?? [];
+            const bundles: PvpSeatIntentBundle[] =
+              localSeat === "player"
+                ? [
+                    { seat: "player", intents: chunk },
+                    { seat: "enemy", intents: partnerChunk },
+                  ]
+                : [
+                    { seat: "player", intents: partnerChunk },
+                    { seat: "enemy", intents: chunk },
+                  ];
+            advanceTickPvp(state, bundles);
+            captureReplayTick(replay, tickBefore, chunk, state);
+          } else {
+            if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
+            advanceTick(state, chunk);
+            captureReplayTick(replay, tickBefore, chunk, state);
+          }
           if (state.portal.pendingRedirectUrl) {
             window.location.assign(state.portal.pendingRedirectUrl);
             return;
@@ -1130,6 +1235,13 @@ function runMatch(
         state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
       } else if (resolvedLaunch.mode === "fallback_ai") {
         state.lastMessage = `AI takeover: tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+      }
+      if (resolvedLaunch.mode === "pvp") {
+        state.enemyHumanControlled = true;
+        renderer.setLocalSeat((resolvedLaunch.seat ?? "player") as MatchSeat);
+      } else {
+        state.enemyHumanControlled = false;
+        renderer.setLocalSeat("player");
       }
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
@@ -1299,6 +1411,7 @@ function runMatch(
     const selectedFormationSlots = (from: { x: number; z: number }, to: { x: number; z: number }, wide: boolean) => {
       const selected = state.units.filter((u) => state.selectedUnitIds.includes(u.id) && u.team === "player" && u.hp > 0);
       return computeFormationSlots(
+        state.map,
         selected.map((u) => ({
           id: u.id,
           x: u.x,
@@ -1308,7 +1421,6 @@ function runMatch(
           flying: u.flying,
         })),
         { from, to, kind: state.formationPreset, depthScale: wide ? 1.75 : 1 },
-        state.map.world.halfExtents,
       );
     };
 
@@ -1782,7 +1894,7 @@ function runMatch(
       }
       renderer.setCommandGhost(null, null, false);
       const valid = canPlaceStructureHere(state, pending, hit, slot) === null;
-      renderer.setPlacementGhost(hit, valid);
+      renderer.setPlacementGhost(hit, valid, pending);
     }, { signal });
 
     canvas.addEventListener("pointerleave", () => {

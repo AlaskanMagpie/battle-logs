@@ -25,6 +25,7 @@ export const MAP_REGISTRY: readonly { id: string; label: string; url: string }[]
   { id: "forgewarden", label: "Forgewarden Crucible", url: "/maps/forgewarden.json" },
   { id: "glacierline", label: "Glacierline Expanse", url: "/maps/glacierline.json" },
   { id: "mesa_badlands", label: "Mesa Badlands", url: "/maps/mesa_badlands.json" },
+  { id: "sphere_planet", label: "Sphere Planet (demo)", url: "/maps/sphere_planet.json" },
 ] as const;
 
 export const DEFAULT_MAP_URL = "/map.json";

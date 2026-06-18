@@ -1,5 +1,6 @@
 import { UNIT_FORMATION_SPACING } from "../../constants";
-import type { UnitFormationKind, UnitSizeClass, Vec2 } from "../../types";
+import type { MapData, UnitFormationKind, UnitSizeClass, Vec2 } from "../../types";
+import { isSphereWorld } from "../../surface";
 import { unitSeparationRadiusXZ } from "./helpers";
 
 export interface FormationLayoutUnit {
@@ -93,7 +94,7 @@ function basis(units: FormationLayoutUnit[], spec: FormationLayoutSpec): {
   return { cx, cz, lx, lz, bx, bz, len };
 }
 
-function clampToMap(p: Vec2, halfExtents: number): Vec2 {
+function clampToMapPlane(p: Vec2, halfExtents: number): Vec2 {
   const pad = 2;
   return {
     x: clamp(p.x, -halfExtents + pad, halfExtents - pad),
@@ -101,11 +102,18 @@ function clampToMap(p: Vec2, halfExtents: number): Vec2 {
   };
 }
 
-export function computeFormationSlots(
-  units: FormationLayoutUnit[],
-  spec: FormationLayoutSpec,
-  halfExtents: number,
-): FormationSlot[] {
+/** Radial bound in pole tangent chart (matches spherical arena clamp). */
+function clampToMapSphere(p: Vec2, halfExtents: number): Vec2 {
+  const pad = 2;
+  const maxR = Math.max(4, halfExtents - pad);
+  const len = Math.hypot(p.x, p.z);
+  if (len <= maxR || len < 1e-12) return p;
+  const s = maxR / len;
+  return { x: p.x * s, z: p.z * s };
+}
+
+export function computeFormationSlots(map: MapData, units: FormationLayoutUnit[], spec: FormationLayoutSpec): FormationSlot[] {
+  const halfExtents = map.world.halfExtents;
   if (units.length === 0) return [];
   const ordered = orderedUnits(units);
   const { cx, cz, lx, lz, bx, bz, len } = basis(ordered, spec);
@@ -142,13 +150,11 @@ export function computeFormationSlots(
       }
     }
 
-    const p = clampToMap(
-      {
-        x: cx + lx * lateral + bx * back,
-        z: cz + lz * lateral + bz * back,
-      },
-      halfExtents,
-    );
+    const raw = {
+      x: cx + lx * lateral + bx * back,
+      z: cz + lz * lateral + bz * back,
+    };
+    const p = isSphereWorld(map) ? clampToMapSphere(raw, halfExtents) : clampToMapPlane(raw, halfExtents);
     out.push({ id: u.id, x: p.x, z: p.z });
   }
 

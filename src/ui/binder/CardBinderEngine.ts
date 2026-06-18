@@ -1726,11 +1726,8 @@ export class CardBinderEngine {
     this.portalTransitionDirection = direction;
     this.portalTransitionDuration = durationMs;
     this.portalTransitionUntil = performance.now() + durationMs;
-    if (direction === "out") {
-      this.openingTarget = 0.78;
-    } else {
-      this.openingTarget = 1;
-    }
+    // Stay fully open so "out" never re-shows the hinged front cover during Start Match.
+    this.openingTarget = 1;
     return new Promise((resolve) => {
       window.setTimeout(resolve, durationMs);
     });

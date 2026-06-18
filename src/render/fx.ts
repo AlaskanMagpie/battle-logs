@@ -10,9 +10,18 @@ import {
   SPELL_FX_ELEMENTS,
   type AttackRangeBand,
   type ElementalFxRequiredShape,
+  type MapData,
+  type SpellFxColorTint,
   type SpellFxElement,
   type SpellFxShape,
 } from "../game/types";
+import {
+  buildConeBasis,
+  projectOntoTangentPlane,
+  quatAlignYToNormal,
+  resolveFxFoot,
+  tangentForwardWorld,
+} from "./fxGrounding";
 
 export type CastFxSpawnOpts = {
   from?: { x: number; z: number };
@@ -22,6 +31,7 @@ export type CastFxSpawnOpts = {
   element?: SpellFxElement;
   secondaryElement?: SpellFxElement;
   shape?: SpellFxShape;
+  colorTint?: SpellFxColorTint;
   reach?: number;
   width?: number;
   visualSeed?: number;
@@ -35,6 +45,17 @@ export type CastFxSpawnOpts = {
 export interface FxHost {
   group: THREE.Group;
   active: ActiveFx[];
+  /** Match map; drives analytic plane/sphere feet when set. */
+  map: MapData | null;
+  /** Fewer particles / coarser rings on phones. */
+  mobileLod: boolean;
+  /** Optional terrain mesh snap (same ray path as unit footing). */
+  sampleSurface?: (
+    tan: { x: number; z: number },
+    analyticalYLift: number,
+    outPos: THREE.Vector3,
+    outNorm: THREE.Vector3,
+  ) => boolean;
 }
 
 interface ActiveFx {
@@ -51,7 +72,111 @@ export function createFxHost(scene: THREE.Scene): FxHost {
   const group = new THREE.Group();
   group.name = "fx";
   scene.add(group);
-  return { group, active: [] };
+  return { group, active: [], map: null, mobileLod: false };
+}
+
+function fxRingSegments(host: FxHost, n: number): number {
+  if (!host.mobileLod) return n;
+  return Math.max(12, Math.round(n * 0.68));
+}
+
+function fxParticleBudget(host: FxHost, n: number): number {
+  if (!host.mobileLod) return n;
+  return Math.max(4, Math.round(n * 0.52));
+}
+
+const _gFoot = new THREE.Vector3();
+const _gNorm = new THREE.Vector3();
+const _gFwd = new THREE.Vector3();
+const _gMat = new THREE.Matrix4();
+const _gSf = new THREE.Vector3();
+const _gSr = new THREE.Vector3();
+const _gQuat = new THREE.Quaternion();
+
+/** Scratch for surface-conformed lightning / arc polylines */
+const _boltFoot = new THREE.Vector3();
+const _boltNorm = new THREE.Vector3();
+const _boltPathHoriz = new THREE.Vector3();
+const _boltPathOnSurf = new THREE.Vector3();
+const _boltSideDir = new THREE.Vector3();
+const _boltScratch = new THREE.Vector3();
+const _boltOut = new THREE.Vector3();
+
+function applyGroundedDiscPose(
+  group: THREE.Group,
+  host: FxHost,
+  tan: { x: number; z: number },
+  yBias: number,
+  preferSnap: boolean,
+): void {
+  resolveFxFoot(host, tan, yBias, preferSnap, _gFoot, _gNorm);
+  quatAlignYToNormal(_gQuat, _gNorm);
+  group.position.copy(_gFoot);
+  group.quaternion.copy(_gQuat);
+}
+
+/** Terrain snap when not on mobile LOD — canonical grounded root for disc/cone-style FX. */
+function groundFxRoot(group: THREE.Group, host: FxHost, pos: { x: number; z: number }, yBias: number): void {
+  applyGroundedDiscPose(group, host, pos, yBias, !host.mobileLod);
+}
+
+/**
+ * Fixed surface frame: foot at `footTan`, local +Z toward `forwardToTan` from `forwardFromTan`.
+ * Returns `inner` for children and animated scale; `anchor.matrix` stays fixed (`matrixAutoUpdate` false).
+ */
+function createSurfaceCorridorAnchor(
+  host: FxHost,
+  footTan: { x: number; z: number },
+  yBias: number,
+  forwardFromTan: { x: number; z: number },
+  forwardToTan: { x: number; z: number },
+): { anchor: THREE.Group; inner: THREE.Group } {
+  const anchor = new THREE.Group();
+  tangentForwardWorld(_gFwd, host.map, forwardFromTan, forwardToTan);
+  resolveFxFoot(host, footTan, yBias, true, _gFoot, _gNorm);
+  buildConeBasis(_gFoot, _gFwd, _gNorm, _gMat, _gSf, _gSr);
+  anchor.matrixAutoUpdate = false;
+  anchor.matrix.copy(_gMat);
+  const inner = new THREE.Group();
+  anchor.add(inner);
+  return { anchor, inner };
+}
+
+/** Expanding ripple at splash centroid for AoE breath hits. */
+function spawnSplashRipple(
+  host: FxHost,
+  tan: { x: number; z: number },
+  aoeR: number,
+  pal: { core: number; rim: number },
+  visualSeed: number,
+): void {
+  const life = 0.42;
+  const group = new THREE.Group();
+  applyGroundedDiscPose(group, host, tan, 0.06, true);
+  const ringSeg = fxRingSegments(host, 46);
+  const seed = visualSeed;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.36, ringSeg), fxMat(pal.rim, 0.74));
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  const inner = new THREE.Mesh(new THREE.RingGeometry(0.04, 0.14, ringSeg), fxMat(pal.core, 0.55));
+  inner.rotation.x = -Math.PI / 2;
+  inner.position.y = 0.02;
+  group.add(inner);
+  const burst = new THREE.Mesh(new THREE.CircleGeometry(0.55, Math.max(16, Math.round(ringSeg * 0.5))), fxMat(pal.core, 0.22));
+  burst.rotation.x = -Math.PI / 2;
+  burst.position.y = 0.015;
+  group.add(burst);
+  const burstJitter = 0.85 + rnd(seed, 3) * 0.2;
+  spawn(host, group, life, (t) => {
+    const p = Math.min(1, t / life);
+    const wave = 1 + p * Math.max(2.2, aoeR * 0.85);
+    ring.scale.setScalar(wave);
+    inner.scale.setScalar(wave * 1.08);
+    burst.scale.setScalar(wave * 1.15 * burstJitter);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.74 * (1 - p);
+    (inner.material as THREE.MeshBasicMaterial).opacity = 0.55 * (1 - p * 0.92);
+    (burst.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
+  });
 }
 
 export function stepFx(host: FxHost, dt: number): void {
@@ -270,6 +395,17 @@ interface ElementalPalette {
   shadow: number;
 }
 
+function applySpellColorTint(base: ElementalPalette, tint?: SpellFxColorTint): ElementalPalette {
+  if (!tint) return base;
+  return {
+    core: tint.core ?? base.core,
+    hot: tint.hot ?? base.hot,
+    rim: tint.rim ?? base.rim,
+    trail: tint.trail ?? base.trail,
+    shadow: tint.shadow ?? base.shadow,
+  };
+}
+
 type ElementalFxContract = {
   /** Required gameplay silhouettes every element must render: line, cone, ranged AOE, centered AOE, surprise. */
   requiredShapes: readonly ElementalFxRequiredShape[];
@@ -353,7 +489,7 @@ function elementalSeed(pos: { x: number; z: number }, opts?: CastFxSpawnOpts): n
 function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
   const element = opts?.element ?? "arcane";
   const shape = opts?.shape ?? "impact";
-  const pal = spellPalette(element);
+  const pal = applySpellColorTint(spellPalette(element), opts?.colorTint);
   if (shape === "surprise") return spawnElementalSurprise(host, pos, opts, pal, element);
   switch (shape) {
     case "bolt":
@@ -446,22 +582,14 @@ function spawnElementalBolt(
   if (from) {
     primaryGeo.setAttribute(
       "position",
-      new THREE.BufferAttribute(heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, segs, jitter, seed), 3),
+      new THREE.BufferAttribute(heroStrikeBoltPoints(host, from.x, from.z, pos.x, pos.z, segs, jitter, seed), 3),
     );
   } else {
-    const pts: number[] = [];
     const skyY = Math.max(18, opts?.impactRadius ? opts.impactRadius * 1.6 : 22);
-    for (let i = 0; i <= segs; i++) {
-      const t = i / segs;
-      const fall = 1 - t;
-      const amp = Math.sin(t * Math.PI) * jitter;
-      pts.push(
-        pos.x + (rnd(seed, i) - 0.5) * amp,
-        0.25 + skyY * fall,
-        pos.z + (rnd(seed, i + 29) - 0.5) * amp,
-      );
-    }
-    primaryGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    primaryGeo.setAttribute(
+      "position",
+      new THREE.BufferAttribute(elementalBoltSkyStrikePoints(host, pos, segs, jitter, seed, skyY), 3),
+    );
   }
 
   const primaryMat = lineMat(pal.core, 0.96);
@@ -476,38 +604,46 @@ function spawnElementalBolt(
       forkGeo.setAttribute(
         "position",
         new THREE.BufferAttribute(
-          heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, Math.max(5, segs - 2), jitter * 0.72, seed + 11 + k),
+          heroStrikeBoltPoints(
+            host,
+            from.x,
+            from.z,
+            pos.x,
+            pos.z,
+            Math.max(5, segs - 2),
+            jitter * 0.72,
+            seed + 11 + k,
+          ),
           3,
         ),
       );
     } else {
-      const pts: number[] = [];
       const len = 4.5 + rnd(seed, k + 90) * 3.5;
       const ang = rnd(seed, k + 100) * Math.PI * 2;
-      for (let i = 0; i <= 4; i++) {
-        const t = i / 4;
-        pts.push(
-          pos.x + Math.cos(ang) * len * t + (rnd(seed, i + k * 13) - 0.5) * 0.35,
-          0.4 + (1 - t) * (4 + k * 0.7),
-          pos.z + Math.sin(ang) * len * t + (rnd(seed, i + k * 19) - 0.5) * 0.35,
-        );
-      }
-      forkGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      const tx = pos.x + Math.cos(ang) * len;
+      const tz = pos.z + Math.sin(ang) * len;
+      forkGeo.setAttribute(
+        "position",
+        new THREE.BufferAttribute(heroStrikeBoltPoints(host, pos.x, pos.z, tx, tz, 4, jitter * 0.55, seed + 11 + k), 3),
+      );
     }
     const fork = new THREE.Line(forkGeo, lineMat(k % 2 === 0 ? pal.hot : pal.trail, 0.6));
     forks.push(fork);
     root.add(fork);
   }
 
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.78, 34), fxMat(pal.rim, 0.78));
+  const impactGround = new THREE.Group();
+  groundFxRoot(impactGround, host, pos, 0);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.78, fxRingSegments(host, 34)), fxMat(pal.rim, 0.78));
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(pos.x, 0.1, pos.z);
-  root.add(ring);
+  ring.position.y = 0.1;
+  impactGround.add(ring);
 
-  const flash = new THREE.Mesh(new THREE.CircleGeometry(1.35, 28), fxMat(pal.core, 0.58));
+  const flash = new THREE.Mesh(new THREE.CircleGeometry(1.35, fxRingSegments(host, 28)), fxMat(pal.core, 0.58));
   flash.rotation.x = -Math.PI / 2;
-  flash.position.set(pos.x, 0.11, pos.z);
-  root.add(flash);
+  flash.position.y = 0.11;
+  impactGround.add(flash);
+  root.add(impactGround);
 
   spawn(host, root, life, (t) => {
     const p = Math.min(1, t / life);
@@ -557,7 +693,16 @@ function spawnElementalChainLightning(
     geo.setAttribute(
       "position",
       new THREE.BufferAttribute(
-        heroStrikeBoltPoints(ax, az, bx, bz, Math.max(5, Math.min(18, Math.round(d * 0.75))), Math.max(0.35, d * 0.08 * jitterMul), seed + idx * 19),
+        heroStrikeBoltPoints(
+          host,
+          ax,
+          az,
+          bx,
+          bz,
+          Math.max(5, Math.min(18, Math.round(d * 0.75))),
+          Math.max(0.35, d * 0.08 * jitterMul),
+          seed + idx * 19,
+        ),
         3,
       ),
     );
@@ -578,14 +723,17 @@ function spawnElementalChainLightning(
     makeBolt(bx, bz, bx + Math.cos(a) * len, bz + Math.sin(a) * len, i % 2 === 0 ? pal.hot : pal.trail, 0.46, 1.2, i + 3);
   }
 
-  const impact = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.82, 46), fxMat(pal.core, 0.88));
+  const impactGround = new THREE.Group();
+  groundFxRoot(impactGround, host, pos, 0);
+  const impact = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.82, fxRingSegments(host, 46)), fxMat(pal.core, 0.88));
   impact.rotation.x = -Math.PI / 2;
-  impact.position.set(pos.x, 0.12, pos.z);
-  root.add(impact);
-  const corona = new THREE.Mesh(new THREE.CircleGeometry(1.1, 34), fxMat(pal.hot, 0.42));
+  impact.position.y = 0.12;
+  impactGround.add(impact);
+  const corona = new THREE.Mesh(new THREE.CircleGeometry(1.1, fxRingSegments(host, 34)), fxMat(pal.hot, 0.42));
   corona.rotation.x = -Math.PI / 2;
-  corona.position.set(pos.x, 0.1, pos.z);
-  root.add(corona);
+  corona.position.y = 0.1;
+  impactGround.add(corona);
+  root.add(impactGround);
 
   spawn(host, root, life, (t) => {
     const p = Math.min(1, t / life);
@@ -621,13 +769,12 @@ function spawnElementalLine(
   const width = Math.max(0.45, opts?.width ?? opts?.impactRadius ?? (focused ? 1.7 : 5.5));
   const halfW = width * 0.5;
   const life = focused ? 0.42 : 0.68;
-  const group = new THREE.Group();
   const ux = dx / (dist || 1);
   const uz = dz / (dist || 1);
   const ex = from.x + ux * L;
   const ez = from.z + uz * L;
-  group.position.set((from.x + ex) * 0.5, 0.12, (from.z + ez) * 0.5);
-  group.rotation.y = Math.atan2(ux, uz);
+  const midTan = { x: (from.x + ex) * 0.5, z: (from.z + ez) * 0.5 };
+  const { anchor, inner: group } = createSurfaceCorridorAnchor(host, midTan, 0.12, from, end);
 
   const core = new THREE.Mesh(
     new THREE.BoxGeometry(focused ? Math.max(0.24, halfW * 0.58) : halfW * 2, focused ? 0.3 : 0.18, L),
@@ -679,7 +826,7 @@ function spawnElementalLine(
     group.add(mesh);
   }
 
-  spawn(host, group, life, (t, dt) => {
+  spawn(host, anchor, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const pulse = 1 + Math.sin(p * Math.PI) * (focused ? 0.08 : 0.12);
     group.scale.set(pulse, 1, 1 + Math.sin(p * Math.PI) * 0.03);
@@ -713,13 +860,12 @@ function spawnElementalWaterLine(
   const L = Math.max(1, opts?.reach ?? dist);
   const width = Math.max(1.2, opts?.width ?? opts?.impactRadius ?? 5.5);
   const life = 0.9;
-  const group = new THREE.Group();
   const ux = dx / (dist || 1);
   const uz = dz / (dist || 1);
   const ex = from.x + ux * L;
   const ez = from.z + uz * L;
-  group.position.set((from.x + ex) * 0.5, 0.12, (from.z + ez) * 0.5);
-  group.rotation.y = Math.atan2(ux, uz);
+  const midTan = { x: (from.x + ex) * 0.5, z: (from.z + ez) * 0.5 };
+  const { anchor, inner: group } = createSurfaceCorridorAnchor(host, midTan, 0.12, from, end);
 
   const wash = new THREE.Mesh(new THREE.BoxGeometry(width, 0.08, L), fxMat(pal.rim, focused ? 0.14 : 0.18));
   wash.position.y = 0.02;
@@ -754,7 +900,7 @@ function spawnElementalWaterLine(
     group.add(mesh);
   }
 
-  spawn(host, group, life, (t, dt) => {
+  spawn(host, anchor, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const crest = Math.sin(p * Math.PI);
     wash.scale.set(1 + crest * 0.08, 1, 1);
@@ -785,7 +931,7 @@ function spawnElementalWaterSpiral(
   const radius = Math.max(3.5, opts?.impactRadius ?? 8);
   const life = 1.05;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
   const ribbons: { line: THREE.Line; mat: THREE.LineBasicMaterial; phase: number }[] = [];
   for (let r = 0; r < 4; r++) {
     const pts: number[] = [];
@@ -834,13 +980,13 @@ function spawnElementalCone(
   const width = Math.max(1, opts?.width ?? opts?.impactRadius ?? reach * 0.55);
   const halfAngle = Math.max(0.16, Math.min(0.72, Math.atan2(width * 0.5, reach)));
   const life = 0.54;
-  const group = new THREE.Group();
-  group.position.set(from.x, 0.1, from.z);
-  group.rotation.y = Math.atan2(dx, dz);
+  const fromTan = { x: from.x, z: from.z };
+  const toTan = { x: pos.x, z: pos.z };
+  const { anchor, inner: group } = createSurfaceCorridorAnchor(host, fromTan, 0.1, fromTan, toTan);
 
   const outer = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.12, 22), fxMat(pal.rim, 0.07));
-  const inner = new THREE.Mesh(createGroundConeGeometry(halfAngle * 0.55, reach * 0.95, 0.14, 18), fxMat(pal.hot, 0.09));
-  group.add(outer, inner);
+  const coneInner = new THREE.Mesh(createGroundConeGeometry(halfAngle * 0.55, reach * 0.95, 0.14, 18), fxMat(pal.hot, 0.09));
+  group.add(outer, coneInner);
 
   const lip = new THREE.Mesh(
     new THREE.RingGeometry(reach * 0.82, reach * 0.98, 28, 1, -halfAngle, halfAngle * 2),
@@ -850,12 +996,12 @@ function spawnElementalCone(
   lip.position.y = 0.16;
   group.add(lip);
 
-  spawn(host, group, life, (t) => {
+  spawn(host, anchor, life, (t) => {
     const p = Math.min(1, t / life);
     const surge = 0.88 + Math.sin(p * Math.PI) * 0.22;
     group.scale.set(1 + p * 0.08, 1, surge);
     (outer.material as THREE.MeshBasicMaterial).opacity = 0.07 * (1 - p);
-    (inner.material as THREE.MeshBasicMaterial).opacity = 0.09 * (1 - p * 0.9);
+    (coneInner.material as THREE.MeshBasicMaterial).opacity = 0.09 * (1 - p * 0.9);
     (lip.material as THREE.MeshBasicMaterial).opacity = 0.2 * (1 - p);
   });
 }
@@ -874,9 +1020,9 @@ function spawnElementalAirCone(
   const reach = Math.max(3, opts?.reach ?? dist);
   const width = Math.max(2, opts?.width ?? opts?.impactRadius ?? reach * 0.62);
   const life = 0.72;
-  const group = new THREE.Group();
-  group.position.set(from.x, 0.16, from.z);
-  group.rotation.y = Math.atan2(dx, dz);
+  const fromTan = { x: from.x, z: from.z };
+  const toTan = { x: pos.x, z: pos.z };
+  const { anchor, inner: group } = createSurfaceCorridorAnchor(host, fromTan, 0.16, fromTan, toTan);
   const halfAngle = Math.max(0.18, Math.min(0.78, Math.atan2(width * 0.5, reach)));
   const veil = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.08, 24), fxMat(pal.hot, 0.06));
   group.add(veil);
@@ -910,7 +1056,7 @@ function spawnElementalAirCone(
     group.add(ring);
   }
 
-  spawn(host, group, life, (t) => {
+  spawn(host, anchor, life, (t) => {
     const p = Math.min(1, t / life);
     const fade = 1 - p;
     (veil.material as THREE.MeshBasicMaterial).opacity = 0.06 * fade;
@@ -939,7 +1085,7 @@ function spawnElementalField(
   const radius = Math.max(3, opts?.impactRadius ?? 10);
   const life = 0.92;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0, pos.z);
+  groundFxRoot(group, host, pos, 0);
   const shell = new THREE.Mesh(
     new THREE.IcosahedronGeometry(1.1, 1),
     new THREE.MeshBasicMaterial({
@@ -997,14 +1143,17 @@ function spawnElementalMeteor(
   meteor.position.set(sx, sy, sz);
   root.add(meteor);
 
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.8, 52), fxMat(pal.hot, 0.82));
+  const impactGround = new THREE.Group();
+  groundFxRoot(impactGround, host, pos, 0);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.8, fxRingSegments(host, 52)), fxMat(pal.hot, 0.82));
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(pos.x, 0.12, pos.z);
-  root.add(ring);
-  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, 34), fxMat(pal.shadow, 0.24, false));
+  ring.position.y = 0.12;
+  impactGround.add(ring);
+  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, fxRingSegments(host, 34)), fxMat(pal.shadow, 0.24, false));
   scorch.rotation.x = -Math.PI / 2;
-  scorch.position.set(pos.x, 0.02, pos.z);
-  root.add(scorch);
+  scorch.position.y = 0.02;
+  impactGround.add(scorch);
+  root.add(impactGround);
 
   spawn(host, root, life, (t) => {
     const p = Math.min(1, t / life);
@@ -1059,25 +1208,27 @@ function spawnElementalFireMeteor(
     root.add(trail, mesh);
   }
 
-  const blast = new THREE.Mesh(new THREE.RingGeometry(0.42, 1.05, 64), fxMat(pal.hot, 0.9));
+  const groundBurst = new THREE.Group();
+  groundFxRoot(groundBurst, host, pos, 0);
+  const blast = new THREE.Mesh(new THREE.RingGeometry(0.42, 1.05, fxRingSegments(host, 64)), fxMat(pal.hot, 0.9));
   blast.rotation.x = -Math.PI / 2;
-  blast.position.set(pos.x, 0.13, pos.z);
-  root.add(blast);
-  const heat = new THREE.Mesh(new THREE.CircleGeometry(1, 48), fxMat(pal.rim, 0.28));
+  blast.position.y = 0.13;
+  groundBurst.add(blast);
+  const heat = new THREE.Mesh(new THREE.CircleGeometry(1, fxRingSegments(host, 48)), fxMat(pal.rim, 0.28));
   heat.rotation.x = -Math.PI / 2;
-  heat.position.set(pos.x, 0.08, pos.z);
-  root.add(heat);
-  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, 42), fxMat(pal.shadow, 0.34, false));
+  heat.position.y = 0.08;
+  groundBurst.add(heat);
+  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, fxRingSegments(host, 42)), fxMat(pal.shadow, 0.34, false));
   scorch.rotation.x = -Math.PI / 2;
-  scorch.position.set(pos.x, 0.025, pos.z);
-  root.add(scorch);
+  scorch.position.y = 0.025;
+  groundBurst.add(scorch);
 
   const smoke: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number; delay: number }[] = [];
-  const smokeCount = Math.min(16, Math.max(8, Math.round(radius * 0.8)));
+  const smokeCount = fxParticleBudget(host, Math.min(16, Math.max(8, Math.round(radius * 0.8))));
   for (let i = 0; i < smokeCount; i++) {
     const mat = makeSoftSmokeMat(0.22);
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.42 + rnd(seed, i + 70) * 0.35, 7, 5), mat);
-    mesh.position.set(pos.x, 0.28, pos.z);
+    mesh.position.set((rnd(seed, i + 80) - 0.5) * 1.6, 0.28, (rnd(seed, i + 81) - 0.5) * 1.6);
     const a = rnd(seed, i + 80) * Math.PI * 2;
     const sp = 1.8 + rnd(seed, i + 90) * 3.2;
     smoke.push({
@@ -1088,8 +1239,10 @@ function spawnElementalFireMeteor(
       vy: 1.0 + rnd(seed, i + 100) * 1.7,
       delay: 0.22 + rnd(seed, i + 110) * 0.18,
     });
-    root.add(mesh);
+    groundBurst.add(mesh);
   }
+
+  root.add(groundBurst);
 
   spawn(host, root, life, (t, dt) => {
     const p = Math.min(1, t / life);
@@ -1136,8 +1289,11 @@ function spawnElementalAoe(
   const radius = Math.max(1.6, opts?.impactRadius ?? (compact ? 4.5 : 9));
   const life = compact ? 0.58 : 0.86;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.1, pos.z);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.62, compact ? 32 : 52), fxMat(pal.rim, compact ? 0.78 : 0.68));
+  groundFxRoot(group, host, pos, 0.1);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.22, 0.62, fxRingSegments(host, compact ? 32 : 52)),
+    fxMat(pal.rim, compact ? 0.78 : 0.68),
+  );
   ring.rotation.x = -Math.PI / 2;
   group.add(ring);
   const core = new THREE.Mesh(new THREE.CircleGeometry(0.58, 32), fxMat(pal.core, compact ? 0.42 : 0.34));
@@ -1146,7 +1302,10 @@ function spawnElementalAoe(
   group.add(core);
   const seed = elementalSeed(pos, opts);
   const particles: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
-  const count = compact ? 8 : Math.min(28, Math.max(12, Math.round(radius * 1.35)));
+  const count = fxParticleBudget(
+    host,
+    compact ? 8 : Math.min(28, Math.max(12, Math.round(radius * 1.35))),
+  );
   for (let i = 0; i < count; i++) {
     const mat = fxMat(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.trail, compact ? 0.72 : 0.82);
     const geom =
@@ -1193,7 +1352,7 @@ function spawnElementalGeodeImpact(
   const radius = Math.max(2.4, opts?.impactRadius ?? (compact ? 4.2 : 8.5));
   const life = compact ? 0.78 : 1.02;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.05, pos.z);
+  groundFxRoot(group, host, pos, 0.05);
   const seed = elementalSeed(pos, opts);
 
   const crack = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.92, 52), fxMat(pal.shadow, 0.5, false));
@@ -1267,7 +1426,7 @@ function spawnElementalLavaPool(
   const radius = Math.max(2.5, opts?.impactRadius ?? (compact ? 4.5 : 9));
   const life = compact ? 0.9 : 1.18;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.055, pos.z);
+  groundFxRoot(group, host, pos, 0.055);
   const seed = elementalSeed(pos, opts);
   const pool = new THREE.Mesh(new THREE.CircleGeometry(1, 46), fxMat(pal.hot, 0.3));
   pool.rotation.x = -Math.PI / 2;
@@ -1327,7 +1486,7 @@ function spawnElementalLavaGeyser(
   const radius = Math.max(4, opts?.impactRadius ?? 8);
   const life = 1.15;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.08, pos.z);
+  groundFxRoot(group, host, pos, 0.08);
   const seed = elementalSeed(pos, opts);
   const vent = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.9, 58), fxMat(pal.rim, 0.82));
   vent.rotation.x = -Math.PI / 2;
@@ -1381,7 +1540,7 @@ function spawnElementalSnowBurst(
   const radius = Math.max(2.2, opts?.impactRadius ?? (compact ? 4.5 : 9));
   const life = compact ? 0.92 : 1.18;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.08, pos.z);
+  groundFxRoot(group, host, pos, 0.08);
   const seed = elementalSeed(pos, opts);
   const frost = new THREE.Mesh(new THREE.CircleGeometry(1, 52), fxMat(pal.hot, 0.18, false));
   frost.rotation.x = -Math.PI / 2;
@@ -1437,7 +1596,7 @@ function spawnElementalSnowBlizzard(
   const radius = Math.max(4, opts?.impactRadius ?? 8);
   const life = 1.2;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
   const seed = elementalSeed(pos, opts);
   const veil = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.72, radius * 0.28, radius * 0.75, 36, 1, true), fxMat(pal.hot, 0.11));
   veil.position.y = radius * 0.36;
@@ -1481,7 +1640,7 @@ function spawnElementalAirBurst(
   const radius = Math.max(2.4, opts?.impactRadius ?? (compact ? 4.4 : 8.5));
   const life = compact ? 0.72 : 0.96;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
   const rings: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; phase: number }[] = [];
   for (let i = 0; i < 5; i++) {
     const mat = fxMat(i % 2 === 0 ? pal.core : pal.hot, 0.36);
@@ -1534,7 +1693,7 @@ function spawnElementalArcaneRift(
   const radius = Math.max(4, opts?.impactRadius ?? 8);
   const life = 1.05;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
   const portal = new THREE.Mesh(new THREE.TorusGeometry(radius * 0.22, 0.055, 5, 52), fxMat(pal.rim, 0.82));
   portal.rotation.x = Math.PI / 2;
   group.add(portal);
@@ -1570,7 +1729,7 @@ function spawnElementalReclaimBloom(
   const radius = Math.max(4, opts?.impactRadius ?? 8);
   const life = 1.05;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.08, pos.z);
+  groundFxRoot(group, host, pos, 0.08);
   const seed = elementalSeed(pos, opts);
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.7, 54), fxMat(pal.hot, 0.68));
   ring.rotation.x = -Math.PI / 2;
@@ -1608,7 +1767,7 @@ function spawnElementalShieldBastion(
   const radius = Math.max(4, opts?.impactRadius ?? 8);
   const life = 1.12;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.04, pos.z);
+  groundFxRoot(group, host, pos, 0.04);
   const shell = new THREE.Mesh(
     new THREE.IcosahedronGeometry(radius * 0.28, 2),
     new THREE.MeshBasicMaterial({ color: pal.hot, wireframe: true, transparent: true, opacity: 0.72, depthWrite: false, blending: THREE.AdditiveBlending }),
@@ -1650,9 +1809,15 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
   const pal = elementalCombatPalette(m);
   const seed = m.visualSeed;
   const group = new THREE.Group();
-  group.position.set(m.ax, 0.07, m.az);
-  group.rotation.y = Math.atan2(dx, dz);
+  const fromTan = { x: m.ax, z: m.az };
+  const toTan = { x: m.tx, z: m.tz };
+  tangentForwardWorld(_gFwd, host.map, fromTan, toTan);
+  resolveFxFoot(host, fromTan, 0.07, true, _gFoot, _gNorm);
+  buildConeBasis(_gFoot, _gFwd, _gNorm, _gMat, _gSf, _gSr);
+  group.matrixAutoUpdate = false;
+  group.matrix.copy(_gMat);
 
+  const ringSeg = fxRingSegments(host, 40);
   const ringCount = m.wide ? 7 : 5;
   const rings: { mesh: THREE.Mesh; z: number; mat: THREE.MeshBasicMaterial }[] = [];
   for (let i = 0; i < ringCount; i++) {
@@ -1660,7 +1825,7 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
     const z = reach * t * 0.94 + 0.38;
     const outer = 0.48 + t * 1.62 + (m.wide ? 0.62 : 0.38) + rnd(seed, i + 11) * 0.2;
     const inner = outer * 0.74;
-    const geo = new THREE.RingGeometry(inner, outer, 40);
+    const geo = new THREE.RingGeometry(inner, outer, ringSeg);
     const mat = new THREE.MeshBasicMaterial({
       color: i % 2 === 0 ? pal.core : pal.glow,
       side: THREE.DoubleSide,
@@ -1677,7 +1842,7 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
   }
 
   const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
-  const nSpark = m.wide ? 14 : 10;
+  const nSpark = fxParticleBudget(host, m.wide ? 14 : 10);
   for (let i = 0; i < nSpark; i++) {
     const u = rnd(seed, i + 90);
     const v = rnd(seed, i + 190);
@@ -1766,12 +1931,17 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
       break;
   }
   const halfAngle = (m.wide ? 0.34 : 0.15) * Math.PI * classAngle;
-  const seg = Math.max(8, Math.round((m.wide ? 16 : 12) * Math.min(1.1, classAngle)));
+  const seg = fxRingSegments(host, Math.max(8, Math.round((m.wide ? 16 : 12) * Math.min(1.1, classAngle))));
   const life = 0.42 * classLife;
   const pal = elementalCombatPalette(m);
   const group = new THREE.Group();
-  group.position.set(m.ax, 0.08, m.az);
-  group.rotation.y = Math.atan2(dx, dz);
+  const fromTan = { x: m.ax, z: m.az };
+  const toTan = { x: m.tx, z: m.tz };
+  tangentForwardWorld(_gFwd, host.map, fromTan, toTan);
+  resolveFxFoot(host, fromTan, 0.08, true, _gFoot, _gNorm);
+  buildConeBasis(_gFoot, _gFwd, _gNorm, _gMat, _gSf, _gSr);
+  group.matrixAutoUpdate = false;
+  group.matrix.copy(_gMat);
 
   const mkCone = (scale: number, op: number, hueShift: number): THREE.Mesh => {
     const g = createGroundConeGeometry(halfAngle * scale, reach * (0.85 + (1 - scale) * 0.25), 0.12, seg);
@@ -1837,7 +2007,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
     }
   } else if (m.sizeClass === "Heavy") {
     const slam = new THREE.Mesh(
-      new THREE.RingGeometry(reach * 0.2, reach * 0.36, 12),
+      new THREE.RingGeometry(reach * 0.2, reach * 0.36, fxRingSegments(host, 12)),
       new THREE.MeshBasicMaterial({
         color: pal.rim,
         side: THREE.DoubleSide,
@@ -1944,7 +2114,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   group.add(rim);
 
   const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
-  const nSpark = Math.max(2, Math.round((m.wide ? 6 : 3) * classSpark));
+  const nSpark = fxParticleBudget(host, Math.max(2, Math.round((m.wide ? 6 : 3) * classSpark)));
   for (let i = 0; i < nSpark; i++) {
     const u = rnd(m.visualSeed, i + 3);
     const v = rnd(m.visualSeed, i + 19);
@@ -2003,6 +2173,15 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
       s.mat.opacity = 0.62 * (1 - p);
     }
   });
+  if (m.aoeRadius != null && m.aoeRadius > 0) {
+    spawnSplashRipple(
+      host,
+      { x: m.splashPx ?? m.tx, z: m.splashPz ?? m.tz },
+      m.aoeRadius,
+      { core: pal.core, rim: pal.rim },
+      m.visualSeed,
+    );
+  }
 }
 
 /** Compact unit/structure death cue: visible silhouette pop without the cost of a full spell burst. */
@@ -2010,7 +2189,7 @@ function spawnDeathFlash(host: FxHost, pos: { x: number; z: number }, impactRadi
   const life = 0.38;
   const pal = boomPalette(band);
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
 
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.18, 0.36, 18),
@@ -2050,8 +2229,12 @@ function spawnDeathFlash(host: FxHost, pos: { x: number; z: number }, impactRadi
   });
 }
 
-/** Jagged polyline in world space (XZ + arc height) for arcane bolt. */
+/**
+ * Jagged polyline along a chord from A→B: each vertex snaps to terrain/shell via `resolveFxFoot`,
+ * arc lift and jitter are applied in the local surface frame (not flat world Y).
+ */
 function heroStrikeBoltPoints(
+  host: FxHost,
   ax: number,
   az: number,
   bx: number,
@@ -2060,24 +2243,85 @@ function heroStrikeBoltPoints(
   jitter: number,
   seed: number,
 ): Float32Array {
+  const preferSnap = !host.mobileLod;
   const px = bz - az;
   const pz = -(bx - ax);
   const plen = Math.hypot(px, pz) || 1;
-  const nx = px / plen;
-  const nz = pz / plen;
+  const nxFlat = px / plen;
+  const nzFlat = pz / plen;
   const rnd = (i: number) => {
     const u = Math.sin(seed * 12.9898 + i * 78.233 + ax * 0.1 + bz * 0.07) * 43758.5453;
     return (u - Math.floor(u)) * 2 - 1;
   };
+  const hx = bx - ax;
+  const hz = bz - az;
   const arr = new Float32Array((segments + 1) * 3);
   let o = 0;
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
+    const tanX = ax + hx * t;
+    const tanZ = az + hz * t;
+    resolveFxFoot(host, { x: tanX, z: tanZ }, 0.06, preferSnap, _boltFoot, _boltNorm);
     const arc = Math.sin(t * Math.PI);
+    const arcLift = 0.29 + arc * 3.2;
     const j = i > 0 && i < segments ? rnd(i) * jitter : 0;
-    arr[o++] = ax + (bx - ax) * t + nx * j;
-    arr[o++] = 0.35 + arc * 3.2;
-    arr[o++] = az + (bz - az) * t + nz * j;
+    _boltPathHoriz.set(hx, 0, hz);
+    projectOntoTangentPlane(_boltPathOnSurf, _boltPathHoriz, _boltNorm, _boltScratch);
+    if (_boltPathOnSurf.lengthSq() < 1e-10) {
+      _boltSideDir.set(nxFlat, 0, nzFlat);
+    } else {
+      _boltPathOnSurf.normalize();
+      _boltSideDir.crossVectors(_boltNorm, _boltPathOnSurf);
+      if (_boltSideDir.lengthSq() < 1e-12) _boltSideDir.set(nxFlat, 0, nzFlat);
+      else _boltSideDir.normalize();
+    }
+    _boltOut.copy(_boltFoot);
+    _boltOut.addScaledVector(_boltNorm, arcLift);
+    if (j !== 0) _boltOut.addScaledVector(_boltSideDir, j);
+    arr[o++] = _boltOut.x;
+    arr[o++] = _boltOut.y;
+    arr[o++] = _boltOut.z;
+  }
+  return arr;
+}
+
+/** Vertical “sky strike” bolt: samples foot at impact, lifts vertices along local outward normal. */
+function elementalBoltSkyStrikePoints(
+  host: FxHost,
+  pos: { x: number; z: number },
+  segments: number,
+  jitter: number,
+  seed: number,
+  skyY: number,
+): Float32Array {
+  const preferSnap = !host.mobileLod;
+  const rnd = (i: number) => {
+    const u = Math.sin(seed * 12.9898 + i * 78.233 + pos.x * 0.1 + pos.z * 0.07) * 43758.5453;
+    return (u - Math.floor(u)) * 2 - 1;
+  };
+  resolveFxFoot(host, pos, 0.06, preferSnap, _boltFoot, _boltNorm);
+  _boltPathHoriz.set(1, 0, 0);
+  projectOntoTangentPlane(_boltPathOnSurf, _boltPathHoriz, _boltNorm, _boltScratch);
+  if (_boltPathOnSurf.lengthSq() < 1e-10) {
+    _boltPathHoriz.set(0, 0, 1);
+    projectOntoTangentPlane(_boltPathOnSurf, _boltPathHoriz, _boltNorm, _boltScratch);
+  }
+  _boltPathOnSurf.normalize();
+  _boltSideDir.crossVectors(_boltNorm, _boltPathOnSurf).normalize();
+
+  const arr = new Float32Array((segments + 1) * 3);
+  let o = 0;
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const fall = 1 - t;
+    const amp = Math.sin(t * Math.PI) * jitter;
+    const j = rnd(i) * amp;
+    _boltOut.copy(_boltFoot);
+    _boltOut.addScaledVector(_boltNorm, 0.25 + skyY * fall);
+    _boltOut.addScaledVector(_boltSideDir, j);
+    arr[o++] = _boltOut.x;
+    arr[o++] = _boltOut.y;
+    arr[o++] = _boltOut.z;
   }
   return arr;
 }
@@ -2141,9 +2385,9 @@ function spawnHeroStrike(
   const pal = heroStrikeElementalPalette(strikeVariant, visualSeed);
   const root = new THREE.Group();
   const ringWrap = new THREE.Group();
-  ringWrap.position.set(pos.x, 0.15, pos.z);
+  groundFxRoot(ringWrap, host, pos, 0.15);
   const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.35, 1.35, 36),
+    new THREE.RingGeometry(0.35, 1.35, fxRingSegments(host, 36)),
     new THREE.MeshBasicMaterial({
       color: pal.core,
       side: THREE.DoubleSide,
@@ -2205,7 +2449,7 @@ function spawnHeroStrike(
     const segs = Math.max(6, Math.min(16, Math.round(dist * 1.25)));
     const jitter = Math.min(1.6, 0.28 + dist * 0.09);
     const seed = (ax + pos.z) * 0.413 + dist * 0.17;
-    const positions = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter, seed);
+    const positions = heroStrikeBoltPoints(host, ax, az, pos.x, pos.z, segs, jitter, seed);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     boltMat = new THREE.LineBasicMaterial({
@@ -2217,7 +2461,7 @@ function spawnHeroStrike(
     });
     root.add(new THREE.Line(geo, boltMat));
     const forkGeo = new THREE.BufferGeometry();
-    const forkPos = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.82, seed + 19.1);
+    const forkPos = heroStrikeBoltPoints(host, ax, az, pos.x, pos.z, segs, jitter * 0.82, seed + 19.1);
     forkGeo.setAttribute("position", new THREE.BufferAttribute(forkPos, 3));
     forkMat = new THREE.LineBasicMaterial({
       color: pal.fork,
@@ -2245,7 +2489,7 @@ function spawnHeroStrike(
 function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11): void {
   const life = 0.95;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
 
   /** Fixed band; scale each frame — avoids dispose+rebuild every step (GPU stalls). */
   const ringGeo = new THREE.RingGeometry(0.1, 0.6, 48);
@@ -2379,7 +2623,7 @@ function spawnCombatBoom(
   const life = 0.55;
   const pal = boomPalette(band);
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.1, pos.z);
+  groundFxRoot(group, host, pos, 0.1);
 
   const disc = new THREE.Mesh(
     new THREE.RingGeometry(0.15, 0.45, 40, 1),
@@ -2441,7 +2685,7 @@ function spawnCombatBoom(
 function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 16): void {
   const life = 1.05;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.2, pos.z);
+  groundFxRoot(group, host, pos, 0.2);
 
   const rings: { mesh: THREE.Mesh; speed: number }[] = [];
   for (let i = 0; i < 3; i++) {
@@ -2513,7 +2757,7 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 16):
 function spawnFortify(host: FxHost, pos: { x: number; z: number }, radius = 18): void {
   const life = 0.72;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0, pos.z);
+  groundFxRoot(group, host, pos, 0);
   const geo = new THREE.IcosahedronGeometry(1.25, 1);
   const mat = new THREE.MeshBasicMaterial({
     color: 0x6ae1ff,
@@ -2557,6 +2801,8 @@ function spawnFortify(host: FxHost, pos: { x: number; z: number }, radius = 18):
 function spawnMuster(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.45;
   const h = 7;
+  const anchor = new THREE.Group();
+  applyGroundedDiscPose(anchor, host, pos, 0, !host.mobileLod);
   const geo = new THREE.CylinderGeometry(0.2, 0.7, h, 20, 1, true);
   const mat = new THREE.MeshBasicMaterial({
     color: 0xffd968,
@@ -2566,9 +2812,10 @@ function spawnMuster(host: FxHost, pos: { x: number; z: number }): void {
     depthWrite: false,
   });
   const beam = new THREE.Mesh(geo, mat);
-  beam.position.set(pos.x, h / 2, pos.z);
+  beam.position.y = h / 2;
+  anchor.add(beam);
 
-  spawn(host, beam, life, (t) => {
+  spawn(host, anchor, life, (t) => {
     const p = Math.min(1, t / life);
     beam.scale.set(1 + p * 0.8, 1, 1 + p * 0.8);
     (beam.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - p);
@@ -2589,11 +2836,10 @@ function spawnLineCleave(
   if (L < 0.5) return;
   const halfW = Math.max(0.6, (corridorWidth ?? 7) * 0.5);
   const life = 0.62;
-  const group = new THREE.Group();
   const cx = (from.x + end.x) * 0.5;
   const cz = (from.z + end.z) * 0.5;
-  group.position.set(cx, 0.12, cz);
-  group.rotation.y = Math.atan2(dx, dz);
+  const midTan = { x: cx, z: cz };
+  const { anchor, inner: group } = createSurfaceCorridorAnchor(host, midTan, 0.12, from, end);
 
   const coreMat = new THREE.MeshBasicMaterial({
     color: 0xb8ffd4,
@@ -2618,7 +2864,7 @@ function spawnLineCleave(
   rim.position.y = 0.03;
   group.add(rim);
 
-  spawn(host, group, life, (t) => {
+  spawn(host, anchor, life, (t) => {
     const p = Math.min(1, t / life);
     const pulse = 1 + 0.12 * Math.sin(p * Math.PI);
     group.scale.set(pulse, 1 + 0.25 * Math.sin(p * Math.PI * 2), pulse);
@@ -2631,7 +2877,7 @@ function spawnLineCleave(
 function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.9;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.12, pos.z);
+  groundFxRoot(group, host, pos, 0.12);
 
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.3, 0.8, 48),
@@ -2687,7 +2933,7 @@ function spawnClaim(host: FxHost, pos: { x: number; z: number }): void {
 function spawnSparkBurst(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.42;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.05, pos.z);
+  groundFxRoot(group, host, pos, 0.05);
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.25, 0.48, 22),
     new THREE.MeshBasicMaterial({
@@ -2711,7 +2957,7 @@ function spawnSparkBurst(host: FxHost, pos: { x: number; z: number }): void {
 function spawnGroundCrack(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.48;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.04, pos.z);
+  groundFxRoot(group, host, pos, 0.04);
   const crack = new THREE.Mesh(
     new THREE.RingGeometry(0.25, 3.35, 40, 1, 0, Math.PI * 1.72),
     new THREE.MeshBasicMaterial({
@@ -2734,7 +2980,7 @@ function spawnGroundCrack(host: FxHost, pos: { x: number; z: number }): void {
 function spawnReclaimPulse(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.48;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0.06, pos.z);
+  groundFxRoot(group, host, pos, 0.06);
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.4, 0.62, 24),
     new THREE.MeshBasicMaterial({
@@ -2764,7 +3010,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
   /** Short bolt read; wall-clock cap in `spawn` / `stepFx` enforces FX_ABSOLUTE_MAX_LIFETIME_SEC. */
   const life = 0.42;
   const group = new THREE.Group();
-  group.position.set(pos.x, 0, pos.z);
+  groundFxRoot(group, host, pos, 0);
 
   const skyY = 34;
   const segments = 10;
@@ -2913,7 +3159,9 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
 /** B10 siege tell — a small orange ring at an enemy building that was just shredded. */
 export function spawnSiegeTell(host: FxHost, pos: { x: number; z: number }): void {
   const life = 0.35;
-  const geo = new THREE.RingGeometry(0.4, 0.7, 24);
+  const wrap = new THREE.Group();
+  groundFxRoot(wrap, host, pos, 0);
+  const geo = new THREE.RingGeometry(0.4, 0.7, fxRingSegments(host, 24));
   const mat = new THREE.MeshBasicMaterial({
     color: 0xff9040,
     side: THREE.DoubleSide,
@@ -2923,9 +3171,10 @@ export function spawnSiegeTell(host: FxHost, pos: { x: number; z: number }): voi
   });
   const ring = new THREE.Mesh(geo, mat);
   ring.rotation.x = -Math.PI / 2;
-  ring.position.set(pos.x, 0.18, pos.z);
+  ring.position.y = 0.18;
+  wrap.add(ring);
 
-  spawn(host, ring, life, (t) => {
+  spawn(host, wrap, life, (t) => {
     const p = Math.min(1, t / life);
     const rOuter = 0.7 + p * 1.2;
     ring.scale.setScalar(rOuter / 0.7);

@@ -10,6 +10,7 @@ import {
   type UnitRuntime,
 } from "../../state";
 import { isStructureEntry, type StructureCatalogEntry } from "../../types";
+import { ringPointOnSphere } from "../../surface";
 import { productionBatchSizeForClass, unitStatsForCatalog } from "./helpers";
 
 /** Slightly wider ring than +/-1 so units clear the tower footprint / GLB hull. */
@@ -35,12 +36,13 @@ function pushSpawnedUnitFromStructureDef(
   const baseAngle = rand(s) * Math.PI * 2;
   const angle = baseAngle + (batchIndex / spread) * Math.PI * 2 + (rand(s) - 0.5) * 0.32;
   const radius = SPAWN_JITTER * (0.52 + rand(s) * 0.35);
+  const p = ringPointOnSphere(s.map, center, angle, radius);
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
     structureId,
-    x: center.x + Math.cos(angle) * radius,
-    z: center.z + Math.sin(angle) * radius,
+    x: p.x,
+    z: p.z,
     hp: stStats.maxHp,
     maxHp: stStats.maxHp,
     sizeClass: def.producedSizeClass,

@@ -11,21 +11,27 @@ import {
   SHATTER_TARGET_RADIUS,
   SMART_RADIAL_IDLE_RADIUS,
   SPELL_KNOCKBACK_SPEED,
+  SPELL_AOE_KNOCKBACK,
   TAP_UNIT_ORDER_SNAP_RADIUS,
   TICK_HZ,
 } from "../../constants";
 import { logGame } from "../../gameLog";
 import { trailerHeroModeCooldownTicks, trailerHeroModeSpend } from "../../../dev/heroMode";
+import { enemyBuildSpeedScalar, enemyProductionSpeedScalar } from "../../difficulty";
 import type { PlayerIntent } from "../../intents";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "../../mapObstacles";
 import {
+  canPlaceEnemyStructureAt,
   canPlaceStructureHere,
   classifyAttackRangeBand,
   doctrineCardPlayability,
+  findKeep,
   heroTeleportCooldownSeconds,
   HERO_SELECTION_ID,
   liveSquadCount,
   nearFriendlyInfra,
+  inEnemyTerritory,
+  nearEnemyInfra,
   nearFriendlyForward,
   nearSafeDeployAura,
   applyUnitSpellStatus,
@@ -42,10 +48,12 @@ import {
 import { structureObstacleFootprints } from "../../structureObstacles";
 import type { CommandCatalogEntry, Vec2 } from "../../types";
 import { isCommandEntry, isStructureEntry } from "../../types";
+import { clampOrderXZ } from "../../surface";
 import { applyAttackImpulse } from "./combat";
 import { computeFormationSlots, formationKindLabel, nextFormationKind } from "./formationLayout";
-import { findNeutralTapIndexNearHero, setHeroMovePath } from "./hero";
-import { dist2, unitSeparationRadiusXZ } from "./helpers";
+import { findNeutralTapIndexNearEnemyHero, findNeutralTapIndexNearHero, setEnemyHeroMovePath, setHeroMovePath } from "./hero";
+import type { MatchSeat } from "../../../net/protocol";
+import { gameDist2, unitSeparationRadiusXZ } from "./helpers";
 import { claimChannelSecForTap } from "./homeDistance";
 
 const ALT_HOLD_PICK_RADIUS = 6;
@@ -65,7 +73,7 @@ function applyRadialSpellStatus(
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     if (teams === "enemy" && u.team !== "enemy") continue;
-    if (dist2(u, center) > r2) continue;
+    if (gameDist2(s.map, u, center) > r2) continue;
     applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
   }
 }
@@ -93,7 +101,7 @@ function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includ
   for (const u of s.units) {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (out.has(u.id)) continue;
-    if (dist2(u, pos) > r2) continue;
+    if (gameDist2(s.map, u, pos) > r2) continue;
     if (u.order && u.order.mode !== "stay") continue;
     out.add(u.id);
   }
@@ -103,9 +111,9 @@ function commandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includ
 function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
   s.heroCaptainLastManualTick = s.tick;
   s.teleportClickPending = false;
-  const half = s.map.world.halfExtents;
-  const x = Math.max(-half, Math.min(half, pos.x));
-  const z = Math.max(-half, Math.min(half, pos.z));
+  const clamped = clampOrderXZ(s.map, pos);
+  const x = clamped.x;
+  const z = clamped.z;
   const h = s.hero;
   if (h.claimChannelTarget !== null) {
     h.claimChannelTarget = null;
@@ -136,7 +144,7 @@ function tapIndexNearForCaptureOrder(s: GameState, pos: Vec2): number | null {
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
     if (t.active && t.ownerTeam === "player") continue;
-    const d = dist2(pos, t);
+    const d = gameDist2(s.map, pos, t);
     if (d <= bestD) {
       bestD = d;
       best = i;
@@ -232,6 +240,7 @@ function orderPlayerUnitsFormation(
   }
 
   const slots = computeFormationSlots(
+    s.map,
     units.map((u) => ({
       id: u.id,
       x: u.x,
@@ -241,7 +250,6 @@ function orderPlayerUnitsFormation(
       flying: u.flying,
     })),
     { from, to, kind: formationKind, depthScale },
-    s.map.world.halfExtents,
   );
   const byId = new Map(slots.map((slot) => [slot.id, slot]));
   const resolvedSlots: { u: UnitRuntime; target: Vec2 }[] = [];
@@ -348,7 +356,7 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   const dx = dest.x - s.hero.x;
   const dz = dest.z - s.hero.z;
   const r2 = HERO_TELEPORT_UNIT_RADIUS * HERO_TELEPORT_UNIT_RADIUS;
-  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && dist2(u, s.hero) <= r2);
+  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && gameDist2(s.map, u, s.hero) <= r2);
   s.hero.x = dest.x;
   s.hero.z = dest.z;
   s.hero.targetX = null;
@@ -370,6 +378,405 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   logGame("move", `Teleport -> (${s.hero.x.toFixed(1)}, ${s.hero.z.toFixed(1)})`, s.tick);
 }
 
+function canTeleportEnemyHeroTo(s: GameState, pos: Vec2): string | null {
+  if (s.heroTeleportCooldownTicks > 0) {
+    return `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
+  }
+  if (pos.x < 0) return "Teleport can only target your half of the map.";
+  if (circleOverlapsMapObstacles(s.map, pos, HERO_TELEPORT_DEST_RADIUS, structureObstacleFootprints(s))) {
+    return "Teleport destination is blocked.";
+  }
+  return null;
+}
+
+function tryEnemyHeroTeleport(s: GameState, pos: Vec2): void {
+  const half = s.map.world.halfExtents;
+  const dest = {
+    x: Math.max(0, Math.min(half, pos.x)),
+    z: Math.max(-half, Math.min(half, pos.z)),
+  };
+  const err = canTeleportEnemyHeroTo(s, dest);
+  if (err) {
+    s.lastMessage = err;
+    return;
+  }
+  const h = s.enemyHero;
+  const from = { x: h.x, z: h.z };
+  const dx = dest.x - h.x;
+  const dz = dest.z - h.z;
+  const r2 = HERO_TELEPORT_UNIT_RADIUS * HERO_TELEPORT_UNIT_RADIUS;
+  const carried = s.units.filter((u) => u.team === "enemy" && u.hp > 0 && gameDist2(s.map, u, h) <= r2);
+  h.x = dest.x;
+  h.z = dest.z;
+  h.targetX = null;
+  h.targetZ = null;
+  h.moveWaypoints.length = 0;
+  h.claimChannelTarget = null;
+  h.claimChannelTicksRemaining = 0;
+  resolveCircleAgainstMapObstacles(s.map, h, HERO_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s));
+  for (const u of carried) {
+    u.x += dx;
+    u.z += dz;
+    u.x = Math.max(-half, Math.min(half, u.x));
+    u.z = Math.max(-half, Math.min(half, u.z));
+  }
+  resetHeroTeleportCooldown(s);
+  s.teleportClickPending = false;
+  pushFx(s, { kind: "lightning", x: h.x, z: h.z, fromX: from.x, fromZ: from.z });
+  s.lastMessage = `Rival Wizard teleported (${carried.length} troops carried).`;
+  logGame("move", `Enemy teleport -> (${h.x.toFixed(1)}, ${h.z.toFixed(1)})`, s.tick);
+}
+
+function commandEnemyHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
+  s.heroCaptainLastManualTick = s.tick;
+  s.teleportClickPending = false;
+  const clamped = clampOrderXZ(s.map, pos);
+  const x = clamped.x;
+  const z = clamped.z;
+  const h = s.enemyHero;
+  if (h.claimChannelTarget !== null) {
+    h.claimChannelTarget = null;
+    h.claimChannelTicksRemaining = 0;
+  }
+  if (shiftKey) {
+    if (h.targetX !== null && h.targetZ !== null) {
+      if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
+        s.lastMessage = `Waypoint queue full (max ${HERO_MOVE_WAYPOINT_CAP}).`;
+      } else {
+        h.moveWaypoints.push({ x, z });
+        logGame("move", `Rival move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+      }
+    } else {
+      setEnemyHeroMovePath(s, { x, z });
+      logGame("move", `Rival move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+    }
+  } else {
+    setEnemyHeroMovePath(s, { x, z });
+    logGame("move", `Rival move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
+  }
+}
+
+function enemyCommandUnitIdsForContext(s: GameState, ids: number[], pos: Vec2, includeNearbyIdle: boolean): number[] {
+  const out = new Set(ids.filter((id) => id !== HERO_SELECTION_ID));
+  if (!includeNearbyIdle) return [...out];
+  const r2 = SMART_RADIAL_IDLE_RADIUS * SMART_RADIAL_IDLE_RADIUS;
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (out.has(u.id)) continue;
+    if (gameDist2(s.map, u, pos) > r2) continue;
+    if (u.order && u.order.mode !== "stay") continue;
+    out.add(u.id);
+  }
+  return [...out];
+}
+
+function tapIndexNearForCaptureOrderEnemy(s: GameState, pos: Vec2): number | null {
+  const r2 = TAP_UNIT_ORDER_SNAP_RADIUS * TAP_UNIT_ORDER_SNAP_RADIUS;
+  let best: number | null = null;
+  let bestD = r2;
+  for (let i = 0; i < s.taps.length; i++) {
+    const t = s.taps[i]!;
+    if (t.active && t.ownerTeam === "enemy") continue;
+    const d = gameDist2(s.map, pos, t);
+    if (d <= bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+function orderEnemyUnits(
+  s: GameState,
+  ids: number[],
+  pos: Vec2,
+  mode: UnitOrderMode,
+  queue = false,
+  includeNearbyIdle = false,
+): void {
+  const chosen = ids.length ? ids : s.selectedUnitIds;
+  const commandIds = enemyCommandUnitIdsForContext(s, chosen, pos, includeNearbyIdle);
+  const captureTapIdx = !queue && mode !== "stay" ? tapIndexNearForCaptureOrderEnemy(s, pos) : null;
+  let n = 0;
+  for (const id of commandIds) {
+    const u = s.units.find((x) => x.id === id && x.team === "enemy" && x.hp > 0);
+    if (!u) continue;
+    n++;
+    if (mode === "stay") {
+      u.order = { mode: "stay", x: u.x, z: u.z, waypoints: [], queued: [] };
+      continue;
+    }
+    const jx = ((id * 17) % 9) - 4;
+    const jz = ((id * 11) % 9) - 4;
+    const tap = captureTapIdx !== null ? s.taps[captureTapIdx]! : null;
+    const target = tap
+      ? { x: tap.x + jx * 0.45, z: tap.z + jz * 0.45 }
+      : { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9 };
+    if (queue && u.order) {
+      u.order.queued.push(target);
+    } else {
+      u.order =
+        captureTapIdx !== null
+          ? { mode, x: target.x, z: target.z, waypoints: [], queued: [], captureTapIndex: captureTapIdx }
+          : { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+    }
+  }
+  if (n > 0) {
+    s.globalRallyActive = false;
+    s.lastMessage = `${n} rival unit${n === 1 ? "" : "s"} ordered.`;
+  }
+}
+
+function orderEnemyUnitsFormation(
+  s: GameState,
+  ids: number[],
+  from: Vec2,
+  to: Vec2,
+  mode: Exclude<UnitOrderMode, "stay">,
+  queue = false,
+  includeNearbyIdle = false,
+  formationKind = s.formationPreset,
+  depthScale = 1,
+): void {
+  const chosen = ids.length ? ids : s.selectedUnitIds;
+  const commandIds = enemyCommandUnitIdsForContext(s, chosen, to, includeNearbyIdle);
+  const units = commandIds
+    .map((id) => s.units.find((x) => x.id === id && x.team === "enemy" && x.hp > 0))
+    .filter((u): u is UnitRuntime => !!u);
+  if (units.length === 0) {
+    if (chosen.includes(HERO_SELECTION_ID)) return;
+    s.lastMessage = includeNearbyIdle ? "No selected or nearby idle rival units." : "No rival units selected.";
+    return;
+  }
+
+  const slots = computeFormationSlots(
+    s.map,
+    units.map((u) => ({
+      id: u.id,
+      x: u.x,
+      z: u.z,
+      sizeClass: u.sizeClass,
+      range: u.range,
+      flying: u.flying,
+    })),
+    { from, to, kind: formationKind, depthScale },
+  );
+  const byId = new Map(slots.map((slot) => [slot.id, slot]));
+  const resolvedSlots: { u: UnitRuntime; target: Vec2 }[] = [];
+  for (const u of units) {
+    const raw = byId.get(u.id) ?? to;
+    const target = { x: raw.x, z: raw.z };
+    resolveCircleAgainstMapObstacles(
+      s.map,
+      target,
+      unitSeparationRadiusXZ(u.sizeClass, u.flying),
+      structureObstacleFootprints(s),
+    );
+    resolvedSlots.push({ u, target });
+  }
+
+  const queuedSlots = resolvedSlots.filter(({ u }) => queue && u.order);
+  const activeSlots = resolvedSlots.filter(({ u }) => !(queue && u.order));
+  if (activeSlots.length > 0) {
+    const groupId = s.nextId.formation++;
+    const anchor = activeSlots.reduce(
+      (acc, { u }) => {
+        acc.x += u.x;
+        acc.z += u.z;
+        return acc;
+      },
+      { x: 0, z: 0 },
+    );
+    anchor.x /= activeSlots.length;
+    anchor.z /= activeSlots.length;
+    const goal = activeSlots.reduce(
+      (acc, { target }) => {
+        acc.x += target.x;
+        acc.z += target.z;
+        return acc;
+      },
+      { x: 0, z: 0 },
+    );
+    goal.x /= activeSlots.length;
+    goal.z /= activeSlots.length;
+    const avgSpeed =
+      activeSlots.reduce((sum, { u }) => sum + u.speedPerSec, 0) / Math.max(1, activeSlots.length);
+
+    s.formationMarches.push({
+      id: groupId,
+      issuedTick: s.tick,
+      anchorX: anchor.x,
+      anchorZ: anchor.z,
+      goalX: goal.x,
+      goalZ: goal.z,
+      speedPerSec: avgSpeed * FORMATION_MARCH_SPEED_MULT,
+      memberIds: activeSlots.map(({ u }) => u.id),
+    });
+
+    for (const { u, target } of activeSlots) {
+      const ox = target.x - goal.x;
+      const oz = target.z - goal.z;
+      u.order = {
+        mode,
+        x: anchor.x + ox,
+        z: anchor.z + oz,
+        waypoints: [],
+        queued: [],
+        formationGroupId: groupId,
+        formationOffsetX: ox,
+        formationOffsetZ: oz,
+      };
+    }
+  }
+
+  for (const { u, target } of queuedSlots) {
+    setUnitOrderTarget(u, target, mode, true);
+  }
+
+  s.globalRallyActive = false;
+  s.lastMessage = `${units.length} rival unit${units.length === 1 ? "" : "s"} formation move.`;
+}
+
+function pickEnemyStructure(s: GameState, pos: Vec2): number | null {
+  let best: number | null = null;
+  let bestD = Infinity;
+  const maxD2 = PICK_STRUCTURE * PICK_STRUCTURE;
+  for (const st of s.structures) {
+    if (st.team !== "enemy") continue;
+    const d = gameDist2(s.map, pos, st);
+    if (d <= maxD2 && d < bestD) {
+      bestD = d;
+      best = st.id;
+    }
+  }
+  return best;
+}
+
+function tryPlaceEnemyHumanStructure(s: GameState, catalogId: string, pos: Vec2, doctrineSlotIndex: number): void {
+  const play = doctrineCardPlayability(s, catalogId, pos, doctrineSlotIndex, "enemy");
+  if (play.reason) {
+    s.lastMessage = play.reason;
+    return;
+  }
+  const err = canPlaceEnemyStructureAt(s, catalogId, pos);
+  if (err) {
+    s.lastMessage = err;
+    return;
+  }
+  const def = getCatalogEntry(catalogId);
+  if (!def || !isStructureEntry(def)) {
+    s.lastMessage = "Invalid structure.";
+    return;
+  }
+  s.enemyFlux -= trailerHeroModeSpend(def.fluxCost);
+  const placementForward = !nearEnemyInfra(s, pos) && inEnemyTerritory(s, pos);
+  const buildTicks = Math.max(1, Math.round((def.buildSeconds * TICK_HZ) / enemyBuildSpeedScalar(s)));
+  const hpMult = placementForward ? FORWARD_STRUCTURE_HP_MULT : 1;
+  const hp0 = Math.max(1, Math.round(def.maxHp * hpMult));
+  const keep = findKeep(s);
+  const towardX = keep ? keep.x : -s.map.world.halfExtents * 0.55;
+  const towardZ = keep ? keep.z : 0;
+  let rdx = towardX - pos.x;
+  let rdz = towardZ - pos.z;
+  const rlen = Math.hypot(rdx, rdz) || 1;
+  rdx /= rlen;
+  rdz /= rlen;
+  const rallyLead = 16;
+  const st: StructureRuntime = {
+    id: s.nextId.structure++,
+    team: "enemy",
+    catalogId,
+    x: pos.x,
+    z: pos.z,
+    hp: hp0,
+    maxHp: hp0,
+    buildTicksRemaining: buildTicks,
+    buildTotalTicks: buildTicks,
+    complete: false,
+    productionTicksRemaining: Math.round((def.productionSeconds * TICK_HZ) / enemyProductionSpeedScalar(s)),
+    doctrineSlotIndex,
+    rallyX: pos.x + rdx * rallyLead,
+    rallyZ: pos.z + rdz * rallyLead,
+    placementForward,
+    damageReductionUntilTick: 0,
+    productionSilenceUntilTick: 0,
+    holdOrders: false,
+    localPopCapBonus: 0,
+  };
+  s.structures.push(st);
+  s.stats.structuresBuilt += 1;
+  emitSummonFx(s, catalogId, pos);
+  if (def.chargeCooldownSeconds > 0) {
+    s.doctrineCooldownTicks[doctrineSlotIndex] = trailerHeroModeCooldownTicks(
+      Math.round(def.chargeCooldownSeconds * TICK_HZ),
+    );
+  }
+  s.pendingPlacementCatalogId = null;
+  s.selectedDoctrineIndex = null;
+  s.lastMessage = `${def.name} drops on the rival side.`;
+}
+
+function handleEnemyWorldClick(
+  s: GameState,
+  pos: Vec2,
+  _shiftKey: boolean,
+  altKey: boolean,
+  pickedUnitId?: number | null,
+): void {
+  if (s.phase !== "playing") return;
+  if (altKey) {
+    const stIdExact = pickEnemyStructure(s, pos);
+    const stExact = stIdExact !== null ? s.structures.find((x) => x.id === stIdExact) : null;
+    if (stExact && stExact.team === "enemy") {
+      stExact.holdOrders = !stExact.holdOrders;
+      s.lastMessage = stExact.holdOrders ? "Rival tower: Hold." : "Rival tower: Rally.";
+    } else {
+      s.lastMessage = "Alt+click a rival structure to toggle Hold.";
+    }
+    return;
+  }
+
+  const pending = s.pendingPlacementCatalogId;
+  const slotIdx = s.selectedDoctrineIndex;
+  if (pending && slotIdx !== null) {
+    const entry = getCatalogEntry(pending);
+    if (entry && isCommandEntry(entry)) {
+      if (DOCTRINE_COMMANDS_ENABLED) {
+        s.lastMessage = "Rival command spells are not enabled in PvP yet — pick a structure card.";
+      }
+      return;
+    }
+    if (entry && isStructureEntry(entry)) {
+      tryPlaceEnemyHumanStructure(s, pending, pos, slotIdx);
+      return;
+    }
+  }
+
+  if (s.rallyClickPending) {
+    s.rallyClickPending = false;
+    s.lastMessage = "Rally ping is for the blue army — use move orders on rival troops.";
+    return;
+  }
+
+  if (s.teleportClickPending) {
+    tryEnemyHeroTeleport(s, pos);
+    return;
+  }
+
+  if (pickedUnitId != null) {
+    const u = s.units.find((x) => x.id === pickedUnitId);
+    if (u && u.hp > 0) {
+      if (u.team === "enemy") {
+        s.selectedUnitId = s.selectedUnitId === u.id ? null : u.id;
+        s.selectedStructureId = null;
+        s.lastMessage = s.selectedUnitId ? `Rival troop selected.` : "Rival troop deselected.";
+        return;
+      }
+      s.selectedUnitId = null;
+    }
+  }
+}
+
 function damageEnemyUnitFromCommand(s: GameState, u: UnitRuntime | undefined, amountPerBody: number): boolean {
   if (!u || u.team !== "enemy" || u.hp <= 0) return false;
   const dealt = amountPerBody * liveSquadCount(u);
@@ -384,7 +791,7 @@ function pickPlayerStructure(s: GameState, pos: Vec2): number | null {
   const maxD2 = PICK_STRUCTURE * PICK_STRUCTURE;
   for (const st of s.structures) {
     if (st.team !== "player") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d <= maxD2 && d < bestD) {
       bestD = d;
       best = st.id;
@@ -558,6 +965,29 @@ function corridorKnockNormal(
   return { nx, nz };
 }
 
+function applyRadialImpulseToEnemyUnits(
+  s: GameState,
+  center: Vec2,
+  radius: number,
+  maxSpeed: number,
+  minSpeed = 0,
+): number {
+  const r = Math.max(0.001, radius);
+  const r2 = r * r;
+  let affected = 0;
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    const d2 = gameDist2(s.map, u, center);
+    if (d2 > r2) continue;
+    const d = Math.sqrt(d2);
+    const t = 1 - Math.max(0, Math.min(1, d / r));
+    const v = minSpeed + (maxSpeed - minSpeed) * t;
+    applyAttackImpulse(u, center, v);
+    affected++;
+  }
+  return affected;
+}
+
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   if (!DOCTRINE_COMMANDS_ENABLED) return;
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
@@ -636,6 +1066,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         element: "water",
         secondaryElement: "reclaim",
         shape: "line",
+        colorTint: { core: 0xe9ffef, hot: 0x86ffd5, rim: 0x3acb8f, trail: 0xb8ffe8, shadow: 0x113828 },
         reach: L,
         width: hw * 2,
         impactRadius: hw * 2,
@@ -649,7 +1080,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       const r2 = r * r;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
-        if (dist2(u, pos) > r2) continue;
+        if (gameDist2(s.map, u, pos) > r2) continue;
         damageEnemyUnitFromCommand(s, u, fx.damage);
         applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED * 1.28);
         applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
@@ -657,7 +1088,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       for (const er of s.enemyRelays) {
         if (er.hp <= 0) continue;
-        if (dist2(er, pos) <= r2) {
+        if (gameDist2(s.map, er, pos) <= r2) {
           const dd = fx.damage * 0.5;
           er.hp -= dd;
           recordDamageDealtBy(s, "player", dd);
@@ -665,6 +1096,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       applyRadialSpellStatus(s, pos, fx.radius, "winded", 2.3, 0.54);
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius * 1.08, SPELL_KNOCKBACK_SPEED * 1.36, SPELL_AOE_KNOCKBACK);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
@@ -674,6 +1106,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         z: pos.z,
         element: "fire",
         shape: "meteor",
+        colorTint: { core: 0xfff2c2, hot: 0xff7d2d, rim: 0xff3b16, trail: 0xffcf71, shadow: 0x4a190f },
         impactRadius: r,
         visualSeed: s.tick,
       });
@@ -683,6 +1116,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         z: pos.z,
         element: "fire",
         shape: "aoe",
+        colorTint: { core: 0xffe4a8, hot: 0xff5b1f, rim: 0xff2400, trail: 0xffad4f, shadow: 0x64170d },
         impactRadius: r,
         visualSeed: s.tick + 31,
       });
@@ -710,6 +1144,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
       });
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius, SPELL_AOE_KNOCKBACK * 0.95);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
@@ -720,6 +1155,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         element: "shield",
         secondaryElement: "air",
         shape: "field",
+        colorTint: { core: 0xdffcff, hot: 0x88ebff, rim: 0x6a92ff, trail: 0xffefad, shadow: 0x14345f },
         impactRadius: fx.radius,
         visualSeed: s.tick,
       });
@@ -750,7 +1186,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (er.hp <= 0) continue;
           const k = `r:${i}`;
           if (used.has(k)) continue;
-          const d = dist2(er, { x: ox, z: oz });
+          const d = gameDist2(s.map, er, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -762,7 +1198,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (st.team !== "enemy") continue;
           const k = `s:${st.id}`;
           if (used.has(k)) continue;
-          const d = dist2(st, { x: ox, z: oz });
+          const d = gameDist2(s.map, st, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -774,7 +1210,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           if (u.team !== "enemy" || u.hp <= 0) continue;
           const k = `u:${u.id}`;
           if (used.has(k)) continue;
-          const d = dist2(u, { x: ox, z: oz });
+          const d = gameDist2(s.map, u, { x: ox, z: oz });
           if (d <= bestD) {
             bestD = d;
             bestKey = k;
@@ -795,6 +1231,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           fromZ: oz,
           element: "lightning",
           shape: "chain",
+          colorTint: { core: 0xf8ffff, hot: 0xb9efff, rim: 0x5ebeff, trail: 0xe2fbff, shadow: 0x19427b },
           impactRadius: hop === 0 ? fx.castRadius * 0.42 : fx.chainRange * 0.22,
           visualSeed: s.tick + hop * 37,
         });
@@ -816,7 +1253,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           er.silencedUntilTick = Math.max(er.silencedUntilTick, silenceTick);
           for (const st of s.structures) {
             if (st.team !== "enemy") continue;
-            if (dist2(st, { x: er.x, z: er.z }) <= silenceR2) {
+            if (gameDist2(s.map, st, { x: er.x, z: er.z }) <= silenceR2) {
               st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick, silenceTick);
             }
           }
@@ -841,6 +1278,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           hop % 2 === 0 ? "frozen" : "chilled",
           hop === 0 ? 1.45 : 0.95,
           hop === 0 ? 0.86 : 0.62,
+        );
+        applyRadialImpulseToEnemyUnits(
+          s,
+          { x: bx, z: bz },
+          hop === 0 ? fx.castRadius * 0.36 : fx.chainRange * 0.2,
+          hop === 0 ? SPELL_KNOCKBACK_SPEED * 0.98 : SPELL_AOE_KNOCKBACK * 1.08,
+          SPELL_AOE_KNOCKBACK * 0.35,
         );
         hits++;
         ox = bx;
@@ -874,7 +1318,7 @@ function nearestPlayerStructureWithin(
   let bestD = radius * radius;
   for (const st of s.structures) {
     if (st.team !== "player") continue;
-    const d = dist2(pos, st);
+    const d = gameDist2(s.map, pos, st);
     if (d <= bestD) {
       bestD = d;
       best = st;
@@ -1169,4 +1613,174 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       /* No setup phase — match begins in playing. Intent kept for replay compat. */
     }
   }
+}
+
+/** Apply intents for the rival seat (red Wizard + enemy units) in PvP. */
+export function applyEnemySeatIntents(s: GameState, intents: PlayerIntent[]): void {
+  for (const it of intents) {
+    if (it.type === "select_doctrine_slot") {
+      if (it.index < 0 || it.index >= DOCTRINE_SLOT_COUNT) continue;
+      const id = s.doctrineSlotCatalogIds[it.index] ?? null;
+      if (!id) {
+        s.lastMessage = "Empty doctrine slot.";
+        continue;
+      }
+      const e = getCatalogEntry(id);
+      if (!DOCTRINE_COMMANDS_ENABLED && e && isCommandEntry(e)) {
+        s.lastMessage = "Command spells are disabled.";
+        continue;
+      }
+      s.selectedDoctrineIndex = it.index;
+      s.pendingPlacementCatalogId = id;
+      s.selectedStructureId = null;
+      s.selectedUnitId = null;
+      s.rallyClickPending = false;
+      s.teleportClickPending = false;
+      s.lastMessage = e ? `Rival card: ${e.name}.` : `Rival card: ${id}`;
+    } else if (it.type === "begin_rally_click") {
+      if (s.phase !== "playing") continue;
+      s.lastMessage = "Rally ping is for the blue army in online play.";
+    } else if (it.type === "begin_hero_teleport") {
+      if (s.phase !== "playing") continue;
+      if (s.heroTeleportCooldownTicks > 0) {
+        s.lastMessage = `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
+        continue;
+      }
+      s.teleportClickPending = !s.teleportClickPending;
+      if (s.teleportClickPending) {
+        s.rallyClickPending = false;
+        s.pendingPlacementCatalogId = null;
+        s.selectedDoctrineIndex = null;
+      }
+      s.lastMessage = s.teleportClickPending ? "Rival teleport armed." : "Rival teleport cancelled.";
+    } else if (it.type === "hero_teleport") {
+      if (s.phase !== "playing") continue;
+      s.heroCaptainLastManualTick = s.tick;
+      tryEnemyHeroTeleport(s, { x: it.x, z: it.z });
+    } else if (it.type === "clear_placement") {
+      s.pendingPlacementCatalogId = null;
+      s.selectedDoctrineIndex = null;
+      s.rallyClickPending = false;
+      s.teleportClickPending = false;
+      s.lastMessage = "Rival cancelled card selection.";
+    } else if (it.type === "try_click_world") {
+      handleEnemyWorldClick(s, it.pos, it.shiftKey === true, it.altKey === true, it.pickedUnitId);
+    } else if (it.type === "select_units") {
+      const ids = it.unitIds.filter(
+        (id) =>
+          (id === HERO_SELECTION_ID && s.enemyHero.hp > 0) ||
+          s.units.some((u) => u.id === id && u.team === "enemy" && u.hp > 0),
+      );
+      s.selectedUnitIds = ids;
+      s.selectedUnitId = ids.find((id) => id !== HERO_SELECTION_ID) ?? null;
+      s.selectedStructureId = null;
+      if (ids.length > 0) {
+        const heroSel = ids.includes(HERO_SELECTION_ID);
+        const unitCount = ids.filter((id) => id !== HERO_SELECTION_ID).length;
+        s.lastMessage = heroSel
+          ? `Rival Wizard${unitCount > 0 ? ` + ${unitCount}` : ""} selected.`
+          : `${unitCount} rival unit${unitCount === 1 ? "" : "s"} selected.`;
+      }
+    } else if (it.type === "command_selected_units") {
+      if (s.selectedUnitIds.includes(HERO_SELECTION_ID) && it.mode !== "stay") {
+        commandEnemyHeroMove(s, { x: it.x, z: it.z }, it.queue === true);
+      }
+      orderEnemyUnits(s, s.selectedUnitIds, { x: it.x, z: it.z }, it.mode, it.queue === true, it.includeNearbyIdle === true);
+    } else if (it.type === "command_selected_units_formation") {
+      if (s.selectedUnitIds.includes(HERO_SELECTION_ID)) {
+        commandEnemyHeroMove(s, { x: (it.from.x + it.to.x) * 0.5, z: (it.from.z + it.to.z) * 0.5 }, it.queue === true);
+      }
+      orderEnemyUnitsFormation(
+        s,
+        s.selectedUnitIds,
+        it.from,
+        it.to,
+        it.mode,
+        it.queue === true,
+        it.includeNearbyIdle === true,
+        it.formationKind ?? s.formationPreset,
+        it.depthScale ?? 1,
+      );
+    } else if (it.type === "toggle_structure_orders") {
+      const st = s.structures.find((x) => x.id === it.structureId);
+      if (st && st.team === "enemy") {
+        st.holdOrders = !st.holdOrders;
+        s.lastMessage = st.holdOrders ? "Rival tower: Hold." : "Rival tower: Rally.";
+      }
+    } else if (it.type === "set_army_stance" || it.type === "toggle_army_stance") {
+      s.lastMessage = "Army stance controls the blue side — rival units use direct orders.";
+    } else if (it.type === "toggle_hero_captain" || it.type === "set_hero_captain") {
+      s.lastMessage = "Captain mode applies to the blue Wizard only.";
+    } else if (it.type === "set_global_rally") {
+      s.lastMessage = "Global rally is for the blue army.";
+    } else if (it.type === "set_formation_preset") {
+      s.formationPreset = it.formationKind;
+      s.lastMessage = `Rival formation: ${formationKindLabel(s.formationPreset)}.`;
+    } else if (it.type === "toggle_formation_preset") {
+      s.formationPreset = nextFormationKind(s.formationPreset);
+      s.lastMessage = `Rival formation: ${formationKindLabel(s.formationPreset)}.`;
+    } else if (it.type === "hero_move") {
+      if (s.selectedUnitIds.length > 0) continue;
+      commandEnemyHeroMove(s, { x: it.x, z: it.z }, it.shiftKey === true);
+    } else if (it.type === "hero_wasd") {
+      const sx = Math.max(-1, Math.min(1, it.strafe));
+      const sz = Math.max(-1, Math.min(1, it.forward));
+      if (sx !== 0 || sz !== 0) s.heroCaptainLastManualTick = s.tick;
+      const { camFx, camFz, camRx, camRz } = it;
+      const h = s.enemyHero;
+      if (
+        camFx !== undefined &&
+        camFz !== undefined &&
+        camRx !== undefined &&
+        camRz !== undefined &&
+        (sx !== 0 || sz !== 0)
+      ) {
+        let wx = sz * camFx + sx * camRx;
+        let wz = sz * camFz + sx * camRz;
+        const len = Math.hypot(wx, wz);
+        if (len > 1e-6) {
+          wx /= len;
+          wz /= len;
+        } else {
+          wx = 0;
+          wz = 0;
+        }
+        h.wasdStrafe = wx;
+        h.wasdForward = wz;
+      } else {
+        h.wasdStrafe = sx;
+        h.wasdForward = -sz;
+      }
+    } else if (it.type === "hero_cancel_claim") {
+      const h = s.enemyHero;
+      if (h.claimChannelTarget !== null) {
+        h.claimChannelTarget = null;
+        h.claimChannelTicksRemaining = 0;
+        s.lastMessage = "Rival claim cancelled.";
+      }
+    } else if (it.type === "hero_claim") {
+      s.heroCaptainLastManualTick = s.tick;
+      const h = s.enemyHero;
+      h.targetX = null;
+      h.targetZ = null;
+      h.moveWaypoints.length = 0;
+      const idx = findNeutralTapIndexNearEnemyHero(s);
+      if (idx !== null && h.claimChannelTarget === null) {
+        const tap = s.taps[idx];
+        if (tap && !tap.active) {
+          const chSec = claimChannelSecForTap(s, "enemy", tap);
+          h.claimChannelTarget = idx;
+          h.claimChannelTicksRemaining = Math.round(chSec * TICK_HZ);
+          s.lastMessage = `Rival claiming node… ${chSec.toFixed(1)}s.`;
+        }
+      }
+    } else if (it.type === "start_battle") {
+      /* replay compat */
+    }
+  }
+}
+
+export function applySeatIntents(s: GameState, seat: MatchSeat, intents: PlayerIntent[]): void {
+  if (seat === "player") applyPlayerIntents(s, intents);
+  else applyEnemySeatIntents(s, intents);
 }

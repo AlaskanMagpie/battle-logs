@@ -81,10 +81,12 @@ if (!existsSync(bin)) {
   process.exit(1);
 }
 
-console.log("[localhost] Starting fresh Vite on http://localhost:2222/");
-console.log("[localhost] If the browser still looks stale, hard refresh the tab (Ctrl+F5).");
+const origin = "http://127.0.0.1:2222/";
+console.log(`[localhost] Starting Vite on ${origin}`);
+console.log("[localhost] Opening browser (--open). If a tab stays blank, paste the URL above (not “localhost” if Windows IPv6 bites).");
+console.log("[localhost] Stale UI: hard refresh (Ctrl+F5).");
 
-const child = spawn(bin, ["--host", "localhost", "--port", "2222", "--strictPort"], {
+const child = spawn(bin, ["--host", "127.0.0.1", "--port", "2222", "--strictPort", "--open"], {
   cwd: root,
   stdio: "inherit",
   shell: process.platform === "win32",

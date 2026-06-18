@@ -27,7 +27,13 @@ export interface MatchFoundPayload {
   startsAtMs: number;
 }
 
-export type MatchmakingFallbackReason = "timeout" | "server_unavailable" | "cancelled" | "opponent_left" | "invalid_response";
+export type MatchmakingFallbackReason =
+  | "timeout"
+  | "server_unavailable"
+  | "not_configured"
+  | "cancelled"
+  | "opponent_left"
+  | "invalid_response";
 
 export interface MatchmakingFallbackPayload {
   mode: "fallback_ai";
@@ -48,7 +54,7 @@ export interface MatchmakingSearchAbortedPayload {
 /** Patient human-only queue: no AI fallback when online matchmaking does not complete. */
 export interface MatchmakingHumanNotFoundPayload {
   mode: "human_not_found";
-  reason: "timeout" | "server_unavailable" | "invalid_response";
+  reason: "timeout" | "server_unavailable" | "not_configured" | "invalid_response";
   message: string;
 }
 

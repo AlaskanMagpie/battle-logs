@@ -1,6 +1,13 @@
 import { UNIT_MESH_HEAVY, UNIT_MESH_LINE, UNIT_MESH_SWARM, UNIT_MESH_TITAN } from "../../constants";
-import type { UnitSizeClass, Vec2 } from "../../types";
+import type { MapData, UnitSizeClass, Vec2 } from "../../types";
+import { chordDist2SqWorld } from "../../surface";
 
+/** Gameplay distance² — planar XZ or spherical chord² in world units². */
+export function gameDist2(map: MapData, a: Vec2, b: Vec2): number {
+  return chordDist2SqWorld(map, a, b);
+}
+
+/** Planar XZ distance² (formations / local planar helpers only). */
 export function dist2(a: Vec2, b: Vec2): number {
   const dx = a.x - b.x;
   const dz = a.z - b.z;

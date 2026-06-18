@@ -1,6 +1,6 @@
 import type { Room } from "@colyseus/sdk";
 import type { PlayerIntent } from "../game/intents";
-import { MULTIPLAYER_PROTOCOL_VERSION, type NetworkGameSnapshot, type SeatIntentBatch } from "./protocol";
+import { MULTIPLAYER_PROTOCOL_VERSION, type MatchSeat, type NetworkGameSnapshot, type SeatIntentBatch } from "./protocol";
 
 export interface SnapshotBufferStats {
   buffered: number;
@@ -74,8 +74,44 @@ export class SnapshotBuffer {
   }
 }
 
+/** Buffers relayed `intent_batch` messages (partner seat) for lockstep merge by sim tick. */
+export class RemoteIntentLedger {
+  private readonly byTick = new Map<number, Map<MatchSeat, PlayerIntent[]>>();
+
+  ingest(seat: MatchSeat, tick: number, intents: PlayerIntent[]): void {
+    if (!Number.isInteger(tick) || tick < 0) return;
+    let row = this.byTick.get(tick);
+    if (!row) {
+      row = new Map();
+      this.byTick.set(tick, row);
+    }
+    row.set(seat, intents);
+  }
+
+  hasPartnerIntents(tick: number, localSeat: MatchSeat): boolean {
+    const partner: MatchSeat = localSeat === "player" ? "enemy" : "player";
+    return this.byTick.get(tick)?.has(partner) === true;
+  }
+
+  /** Returns partner intents for `tick` and removes that entry (consume-once). */
+  takePartnerIntents(tick: number, localSeat: MatchSeat): PlayerIntent[] | undefined {
+    const partner: MatchSeat = localSeat === "player" ? "enemy" : "player";
+    const row = this.byTick.get(tick);
+    if (!row || !row.has(partner)) return undefined;
+    const intents = row.get(partner)!;
+    row.delete(partner);
+    if (row.size === 0) this.byTick.delete(tick);
+    return intents;
+  }
+
+  clear(): void {
+    this.byTick.clear();
+  }
+}
+
 export interface OnlineMatchSession {
   snapshots: SnapshotBuffer;
+  intentLedger: RemoteIntentLedger;
   sendIntents: (tick: number, intents: PlayerIntent[]) => void;
   stats: () => SnapshotBufferStats;
   dispose: () => void;
@@ -89,9 +125,12 @@ export function attachOnlineMatchRoom(
     onInvalidMessage?: (reason: string) => void;
     onLifecycle?: (event: string, payload: unknown) => void;
     matchId?: string;
+    /** Colyseus relays the opponent's batches here (same message name as outbound sends). */
+    onRemoteSeatIntents?: (payload: { seat: MatchSeat; tick: number; intents: PlayerIntent[] }) => void;
   } = {},
 ): OnlineMatchSession {
   const snapshots = new SnapshotBuffer({ matchId: handlers.matchId });
+  const intentLedger = new RemoteIntentLedger();
   const snapshotHandler = (snapshot: NetworkGameSnapshot): void => {
     if (!snapshots.push(snapshot)) return;
     handlers.onSnapshot?.(snapshot);
@@ -106,14 +145,24 @@ export function attachOnlineMatchRoom(
   const lifecycleHandler = (payload: { event?: string }): void => {
     handlers.onLifecycle?.(payload.event ?? "unknown", payload);
   };
+  const relayedIntentHandler = (msg: { seat?: string; tick?: unknown; intents?: unknown }): void => {
+    if (typeof msg.tick !== "number" || !Number.isInteger(msg.tick) || msg.tick < 0) return;
+    if (!Array.isArray(msg.intents)) return;
+    const seat: MatchSeat = msg.seat === "enemy" ? "enemy" : "player";
+    const intents = msg.intents as PlayerIntent[];
+    intentLedger.ingest(seat, msg.tick, intents);
+    handlers.onRemoteSeatIntents?.({ seat, tick: msg.tick, intents });
+  };
   room.onMessage("snapshot", snapshotHandler);
   room.onMessage("opponent_ai_takeover", takeoverHandler);
   room.onMessage("invalid_message", invalidHandler);
   room.onMessage("room_lifecycle", lifecycleHandler);
+  room.onMessage("intent_batch", relayedIntentHandler);
   return {
     snapshots,
+    intentLedger,
     sendIntents(tick, intents) {
-      if (!Number.isInteger(tick) || tick < 0 || intents.length === 0) return;
+      if (!Number.isInteger(tick) || tick < 0) return;
       const batch: Omit<SeatIntentBatch, "seat"> = { tick, intents: intents.slice(0, 32) };
       room.send("intent_batch", batch);
     },

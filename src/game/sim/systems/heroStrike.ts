@@ -26,7 +26,7 @@ import {
 import type { Vec2 } from "../../types";
 import { applyAttackImpulse } from "./combat";
 import { applyHeroFacingTowardWorld } from "./heroFacing";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 
 export type PlayerHeroStrikeTag =
   | "unit"
@@ -45,7 +45,7 @@ function enemyStructureNearEnemyOwnedTap(s: GameState, st: StructureRuntime): bo
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy") continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
-    if (dist2(st, t) <= r2) return true;
+    if (gameDist2(s.map, st, t) <= r2) return true;
   }
   return false;
 }
@@ -126,7 +126,7 @@ function collectEnemyClusterNear(
   const out: (typeof s.units)[0][] = [];
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
-    if (dist2(u, anchor) <= r2) out.push(u);
+    if (gameDist2(s.map, u, anchor) <= r2) out.push(u);
   }
   return out;
 }
@@ -235,7 +235,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   let bestUd = r2;
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
-    const d = dist2(h, u);
+    const d = gameDist2(s.map, h, u);
     if (d <= bestUd) {
       bestUd = d;
       bestU = u;
@@ -271,7 +271,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   }
 
   const eh = s.enemyHero;
-  if (eh.hp > 0 && dist2(h, eh) <= r2) {
+  if (eh.hp > 0 && gameDist2(s.map, h, eh) <= r2) {
     applyHeroFacingTowardWorld(s, eh.x, eh.z);
     eh.hp -= HERO_ATTACK_DAMAGE;
     recordDamageDealtBy(s, "player", HERO_ATTACK_DAMAGE);
@@ -285,7 +285,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   let bestErd = r2;
   for (const er of s.enemyRelays) {
     if (er.hp <= 0) continue;
-    const d = dist2(h, er);
+    const d = gameDist2(s.map, h, er);
     if (d <= bestErd) {
       bestErd = d;
       bestEr = er;
@@ -306,7 +306,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   let bestStd = r2;
   for (const st of s.structures) {
     if (st.team !== "enemy" || st.hp <= 0) continue;
-    const d = dist2(h, st);
+    const d = gameDist2(s.map, h, st);
     if (d <= bestStd) {
       bestStd = d;
       bestSt = st;
@@ -331,7 +331,7 @@ export function tryPlayerHeroStrike(s: GameState): PlayerHeroStrikeResult {
   for (const t of s.taps) {
     if (!t.active || t.ownerTeam !== "enemy") continue;
     if ((t.anchorHp ?? 0) <= 0) continue;
-    const d = dist2(h, t);
+    const d = gameDist2(s.map, h, t);
     if (d <= bestTapD) {
       bestTapD = d;
       bestTap = t;

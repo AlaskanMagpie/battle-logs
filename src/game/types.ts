@@ -7,7 +7,7 @@ export type UnitFormationKind = "line" | "wedge" | "arc";
 
 export type DoctrineEntryKind = "structure" | "command";
 
-export type GamePhase = "playing" | "win" | "lose";
+export type GamePhase = "playing" | "win" | "lose" | "draw";
 
 export interface Vec2 {
   x: number;
@@ -54,8 +54,11 @@ export interface MapDifficulty {
   enemyProductionSpeedMult?: number;
 }
 
+/** Optional biome read for renderer + tooling; sim still uses `blocksMovement` + shape for collision. */
+export type MapTerrainKind = "lake" | "hill" | "rock_spire" | "mesa_slab";
+
 /** Optional on any decor: when true, ground units / wizards cannot walk through this shape (sim). */
-type MapDecorBlock = { blocksMovement?: boolean };
+type MapDecorBlock = { blocksMovement?: boolean; terrainKind?: MapTerrainKind };
 
 export type MapDecorDef =
   | ({
@@ -74,6 +77,7 @@ export type MapDecorDef =
       z: number;
       radius: number;
       h: number;
+      rotYDeg?: number;
       color?: number;
     } & MapDecorBlock)
   | ({
@@ -123,9 +127,36 @@ export interface MapVisualSettings {
   sunHex?: number;
 }
 
+export type WorldGeometryMode = "plane" | "sphere";
+
+/** Procedural radial hills/valleys on `worldGeometry: "sphere"` when no `terrainGlbUrl` is used. */
+export interface SphereTerrainDef {
+  /** When false, the shell is a smooth sphere. Defaults to enabled on sphere maps. */
+  enabled?: boolean;
+  /** Peak radial displacement in world units. */
+  amplitude?: number;
+  /** Integer seed for reproducible noise. */
+  seed?: number;
+  /** fBM octaves in the range 1–6. */
+  octaves?: number;
+  /** Spatial scale of macro landforms (higher = larger features). */
+  macroScale?: number;
+}
+
+export interface MapWorldDef {
+  halfExtents: number;
+  groundY: number;
+  /** Planet radius (world units). Required when `worldGeometry` is `sphere`. */
+  sphereRadius?: number;
+  /** Optional procedural terrain on the sphere shell. */
+  sphereTerrain?: SphereTerrainDef;
+}
+
 export interface MapData {
   version: number;
-  world: { halfExtents: number; groundY: number };
+  /** Defaults to `plane` when omitted (legacy maps). */
+  worldGeometry?: WorldGeometryMode;
+  world: MapWorldDef;
   tapSlots: TapSlotDef[];
   playerRelaySlots: RelaySlotDef[];
   enemyRelaySlots: RelaySlotDef[];
@@ -206,6 +237,15 @@ export type SpellFxShape =
   | "impact"
   | "burst"
   | "surprise";
+
+/** Optional per-cast palette remap for spell/liquid shader coloring. */
+export interface SpellFxColorTint {
+  core?: number;
+  hot?: number;
+  rim?: number;
+  trail?: number;
+  shadow?: number;
+}
 
 /**
  * Spawn/visual profile for units from this structure (`glbPool` animationProfiles id).

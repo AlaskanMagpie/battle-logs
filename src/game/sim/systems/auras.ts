@@ -3,7 +3,7 @@ import { TICK_HZ } from "../../constants";
 import { recordDamageDealtBy, type GameState, type UnitRuntime } from "../../state";
 import { isStructureEntry } from "../../types";
 import { applyAttackImpulse } from "./combat";
-import { dist2 } from "./helpers";
+import { gameDist2 } from "./helpers";
 
 export function auras(s: GameState): void {
   const perTick = 1 / TICK_HZ;
@@ -18,7 +18,7 @@ export function auras(s: GameState): void {
       const healPerTick = aura.value * perTick;
       for (const other of s.structures) {
         if (other.team !== "player" || other.hp <= 0) continue;
-        if (dist2(st, other) > r2) continue;
+        if (gameDist2(s.map, st, other) > r2) continue;
         other.hp = Math.min(other.maxHp, other.hp + healPerTick);
       }
     } else if (aura.kind === "turret") {
@@ -26,7 +26,7 @@ export function auras(s: GameState): void {
       let bestD = r2;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
-        const d = dist2(st, u);
+        const d = gameDist2(s.map, st, u);
         if (d <= bestD) {
           bestD = d;
           best = u;

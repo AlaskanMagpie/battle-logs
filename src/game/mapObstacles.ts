@@ -1,4 +1,6 @@
+import { MAP_DECOR_BLOCK_BOX_XZ } from "./constants";
 import type { MapData, MapDecorDef, Vec2 } from "./types";
+import { clampWorldArena, isSphereWorld } from "./surface";
 
 const EPS = 0.055;
 const RESOLVE_PASSES = 8;
@@ -22,9 +24,12 @@ function collectFromDecor(decor: MapDecorDef[] | undefined): { discs: DiscObs[];
     const c = Math.cos(th);
     const s = Math.sin(th);
     if (d.kind === "box") {
-      boxes.push({ cx: d.x, cz: d.z, hx: d.w * 0.5, hz: d.d * 0.5, c, s });
+      const xz = MAP_DECOR_BLOCK_BOX_XZ;
+      boxes.push({ cx: d.x, cz: d.z, hx: (d.w * xz) * 0.5, hz: (d.d * xz) * 0.5, c, s });
     } else if (d.kind === "cylinder") {
-      discs.push({ cx: d.x, cz: d.z, r: d.radius });
+      let r = d.radius;
+      if (d.terrainKind === "lake") r *= MAP_DECOR_BLOCK_BOX_XZ;
+      discs.push({ cx: d.x, cz: d.z, r });
     } else if (d.kind === "sphere") {
       discs.push({ cx: d.x, cz: d.z, r: d.radius });
     } else if (d.kind === "cone") {
@@ -234,6 +239,7 @@ function firstBlockingFootprint(
 }
 
 function clampWorld(map: MapData, p: Vec2): Vec2 {
+  if (isSphereWorld(map)) return clampWorldArena(map, p);
   const h = map.world.halfExtents;
   return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
 }

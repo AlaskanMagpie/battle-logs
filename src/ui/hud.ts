@@ -892,7 +892,7 @@ export function updateHud(state: GameState): void {
   if (end && endTitle && endStats && endArt) {
     if (state.phase === "playing") {
       end.hidden = true;
-      end.classList.remove("hud-endgame--win", "hud-endgame--lose");
+      end.classList.remove("hud-endgame--win", "hud-endgame--lose", "hud-endgame--draw");
       endTitle.textContent = "Match over";
       if (endStrategyToast) {
         endStrategyToast.hidden = true;
@@ -905,10 +905,12 @@ export function updateHud(state: GameState): void {
     } else {
       document.getElementById("signal-wars-onboarding")?.remove();
       const won = state.phase === "win";
+      const draw = state.phase === "draw";
       end.hidden = false;
       end.classList.toggle("hud-endgame--win", won);
-      end.classList.toggle("hud-endgame--lose", !won);
-      endTitle.textContent = won ? "Victory" : "Defeat";
+      end.classList.toggle("hud-endgame--lose", !won && !draw);
+      end.classList.toggle("hud-endgame--draw", draw);
+      endTitle.textContent = won ? "Victory" : draw ? "Draw" : "Defeat";
       endArt.src = won ? "/assets/hud/end-victory.png" : "/assets/hud/end-defeat.png";
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
