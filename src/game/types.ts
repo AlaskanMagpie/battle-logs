@@ -74,6 +74,7 @@ export type MapDecorDef =
       z: number;
       radius: number;
       h: number;
+      rotYDeg?: number;
       color?: number;
     } & MapDecorBlock)
   | ({
