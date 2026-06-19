@@ -33,7 +33,9 @@ export function buildRoof(
     cap.position.y = y0;
     out.push(cap);
   } else if (kind === "hip" || kind === "spire") {
-    const h = kind === "spire" ? clamp(span * 1.4, 16, 60) : apexH * (style.tile ? 1.0 : 1.1);
+    // Spires are capped tighter than buildin-s' city defaults so they stay
+    // proportionate on tower-height doctrine structures.
+    const h = kind === "spire" ? clamp(span * 0.9, 10, 30) : apexH * (style.tile ? 1.0 : 1.1);
     const ov = style.tile ? 1.6 : 0.0;
     const pts = ov > 0 ? scalePoly(points, 1 + ov / Math.max(span, 1), C) : points;
     const pos: number[] = [],

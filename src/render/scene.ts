@@ -896,7 +896,11 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
  * tower GLB exists it still swaps in and hides this whole building (additive).
  * Falls back to the simple silhouette if generation throws.
  */
-function buildStructureProcedural(entry: StructureCatalogEntry, team: "player" | "enemy"): THREE.Group {
+function buildStructureProcedural(
+  entry: StructureCatalogEntry,
+  team: "player" | "enemy",
+  detail: "high" | "low",
+): THREE.Group {
   const dims = structureDims(entry);
   let inner: THREE.Group;
   try {
@@ -913,6 +917,8 @@ function buildStructureProcedural(entry: StructureCatalogEntry, team: "player" |
       seed: rb.seed,
       litEmissive: rb.litEmissive,
       emissiveScale: rb.emissiveScale,
+      team,
+      detail,
     });
     // Build-progress animation uses group Y-scale only; keep building meshes
     // solid (no opacity fade) so window InstancedMeshes don't flicker.
@@ -2991,7 +2997,11 @@ export class GameRenderer {
       const structEntry = entry && isStructureEntry(entry) ? entry : null;
       if (!obj) {
         if (!structEntry) continue;
-        const g = buildStructureProcedural(structEntry, st.team);
+        const g = buildStructureProcedural(
+          structEntry,
+          st.team,
+          this.controlProfile.mode === "mobile" ? "low" : "high",
+        );
         obj = g;
         this.entities.add(g);
         this.structureMeshes.set(st.id, g);

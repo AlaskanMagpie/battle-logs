@@ -4,6 +4,7 @@
  * batched into <=3 InstancedMeshes for cheap rendering.
  */
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import {
   bbox,
   edgesOf,
@@ -37,6 +38,18 @@ export interface BuildParams {
   litEmissive?: number;
   /** Neon emissive scale for NoToneMapping renderers (default 1). */
   emissiveScale?: number;
+  /**
+   * Detail level. "low" (mobile) thins windows, drops frame bands, and trims
+   * the heaviest ornaments to cut triangles + per-placement CPU. Default "high".
+   */
+  detail?: "high" | "low";
+  /**
+   * Collapse all non-instanced same-material meshes into one merged mesh each
+   * (windows stay instanced) to cut draw calls dramatically. Default true.
+   */
+  mergeStatics?: boolean;
+  /** Team — enemy structures get a subtle red tint so they read at a glance. */
+  team?: "player" | "enemy";
 }
 
 interface Section {
@@ -54,10 +67,21 @@ interface WinXform {
 export function buildBuilding(p: BuildParams, rng: Rng): THREE.Group {
   const style: Style = STYLES[p.style];
   const mats = makeMaterials(style, p.seed, { litEmissive: p.litEmissive, emissiveScale: p.emissiveScale });
+  if (p.team === "enemy") {
+    // Subtle red bias on opaque surfaces so the enemy team reads at a glance,
+    // without touching glowing windows/neon.
+    const red = new THREE.Color(0x8a2a2a);
+    mats.wall.color.lerp(red, 0.22);
+    mats.roof.color.lerp(red, 0.18);
+    mats.roofDark.color.lerp(red, 0.18);
+    mats.frame.color.lerp(red, 0.16);
+    mats.accent.color.lerp(red, 0.16);
+  }
   const group = new THREE.Group();
   const floors = p.storeys,
     fh = p.fh;
-  const density = p.density ?? 1;
+  const low = p.detail === "low";
+  const density = (p.density ?? 1) * (low ? 0.7 : 1);
   const prepped = prepPoly(FOOT[p.foot](p.width, p.depth));
   const C = prepped.centroid;
   const tiered = p.tiered || style.tier;
@@ -94,7 +118,7 @@ export function buildBuilding(p: BuildParams, rng: Rng): THREE.Group {
     mass.castShadow = true;
     mass.receiveShadow = true;
     group.add(mass);
-    if (style.bands) {
+    if (style.bands && !low) {
       for (let f = sec.f0; f <= sec.f1; f += style.bands === 2 ? 2 : 1) {
         for (const e of edgesOf(pts)) {
           const t = style.bands === 2 ? 0.35 : 0.18;
@@ -184,9 +208,57 @@ export function buildBuilding(p: BuildParams, rng: Rng): THREE.Group {
   const topY = floors * fh;
   const roofKind = !p.roof || p.roof === "auto" ? style.roof_ : p.roof;
   for (const m of buildRoof(roofKind, topPts, C, topY, style, mats, rng)) group.add(m);
-  applyParts(style, group, prepped, topPts, C, topY, floors, fh, mats, rng);
+  applyParts(style, group, prepped, topPts, C, topY, floors, fh, mats, rng, low);
+  if (p.mergeStatics !== false) mergeStaticMeshes(group);
   ud["floors"] = floors;
   return group;
+}
+
+/**
+ * Collapse every non-instanced mesh that shares a material into a single merged
+ * mesh, baking each mesh's local transform into its geometry. Window
+ * InstancedMeshes are left untouched. Cuts a building from ~20-40 draw calls to
+ * a handful. Buildings are untextured (solid colors), so UVs are dropped to let
+ * mixed geometry sources (Box/Cyl/Extrude/triGeo) merge.
+ */
+function mergeStaticMeshes(group: THREE.Group): void {
+  const byMat = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const remove: THREE.Mesh[] = [];
+  for (const child of group.children) {
+    if (child instanceof THREE.InstancedMesh) continue;
+    if (!(child instanceof THREE.Mesh)) continue;
+    const mat = child.material;
+    if (Array.isArray(mat)) continue;
+    child.updateMatrix();
+    let g = child.geometry.clone();
+    g.applyMatrix4(child.matrix);
+    if (g.index) {
+      const ni = g.toNonIndexed();
+      g.dispose();
+      g = ni;
+    }
+    for (const name of Object.keys(g.attributes)) {
+      if (name !== "position" && name !== "normal") g.deleteAttribute(name);
+    }
+    g.morphAttributes = {};
+    let list = byMat.get(mat);
+    if (!list) byMat.set(mat, (list = []));
+    list.push(g);
+    remove.push(child);
+  }
+  for (const m of remove) {
+    group.remove(m);
+    m.geometry.dispose();
+  }
+  for (const [mat, geos] of byMat) {
+    const merged = mergeGeometries(geos, false);
+    for (const g of geos) g.dispose();
+    if (!merged) continue;
+    const mesh = new THREE.Mesh(merged, mat);
+    mesh.castShadow = false;
+    mesh.userData["skipBuildOpacity"] = true;
+    group.add(mesh);
+  }
 }
 
 function applyParts(
@@ -200,6 +272,7 @@ function applyParts(
   fh: number,
   mats: Mats,
   rng: Rng,
+  low: boolean,
 ): void {
   const bb = bbox(prepped.points);
   const span = Math.min(bb.w, bb.d);
@@ -212,14 +285,14 @@ function applyParts(
   };
   const n = style.name;
   if (n === "Modern") {
-    rooftopUnits(group, topPts, C, topY, mats, rng, 2);
+    rooftopUnits(group, topPts, C, topY, mats, rng, low ? 1 : 2);
     if (rng() > 0.5) {
       const a = makeCyl(0.12, 8, mats.metal, 8);
       place(a, C[0] + rng() * 4, topY + 4, C[1] + rng() * 4);
     }
   } else if (n === "Brutalist") {
     for (const e of prepped.edges) {
-      if (rng() < 0.4 && e.len > 8) {
+      if (!low && rng() < 0.4 && e.len > 8) {
         const hh = fh * Math.min(3, floors);
         const mod = makeBox(Math.min(e.len * 0.5, 7), hh, 3, mats.wall);
         const fy = fh * (1 + Math.floor(rng() * Math.max(1, floors - 3)));
@@ -252,10 +325,12 @@ function applyParts(
       mast = makeCyl(0.3, mh, mats.accent, 10);
     place(mast, C[0], cy + mh / 2, C[1]);
   } else if (n === "Gothic") {
-    for (const e of edgesOf(prepped.points)) {
-      if (e.len > 5) {
-        const rib = makeBox(0.7, floors * fh, 0.9, mats.wall);
-        place(rib, e.mx + e.nx * 0.45, floors * fh * 0.5, e.mz + e.nz * 0.45, Math.atan2(e.nx, e.nz));
+    if (!low) {
+      for (const e of edgesOf(prepped.points)) {
+        if (e.len > 5) {
+          const rib = makeBox(0.7, floors * fh, 0.9, mats.wall);
+          place(rib, e.mx + e.nx * 0.45, floors * fh * 0.5, e.mz + e.nz * 0.45, Math.atan2(e.nx, e.nz));
+        }
       }
     }
     for (const v of prepped.points) {
@@ -264,7 +339,7 @@ function applyParts(
     }
   } else if (n === "Neoclassical") {
     const e = prepped.edges[0]!,
-      c = Math.max(4, Math.floor(e.len / 3)),
+      c = low ? Math.max(2, Math.floor(e.len / 6)) : Math.max(4, Math.floor(e.len / 3)),
       colH = fh * Math.min(2, floors);
     const dirx = (e.b[0] - e.a[0]) / e.len,
       dirz = (e.b[1] - e.a[1]) / e.len;
@@ -294,14 +369,16 @@ function applyParts(
       place(cor, ed.mx + ed.nx * 0.3, topY - 0.6, ed.mz + ed.nz * 0.3, Math.atan2(ed.nx, ed.nz));
     }
   } else if (n === "Cyberpunk") {
-    for (let f = 2; f < floors; f += rint(rng, 2, 4)) {
-      const mat = rng() < 0.5 ? mats.neon1 : mats.neon2;
-      if (!mat) continue;
-      for (const e of edgesOf(topPts)) {
-        const strip = makeBox(e.len, 0.18, 0.22, mat);
-        strip.position.set(e.mx + e.nx * 0.12, f * fh, e.mz + e.nz * 0.12);
-        strip.rotation.y = Math.atan2(e.nx, e.nz);
-        group.add(strip);
+    if (!low) {
+      for (let f = 2; f < floors; f += rint(rng, 2, 4)) {
+        const mat = rng() < 0.5 ? mats.neon1 : mats.neon2;
+        if (!mat) continue;
+        for (const e of edgesOf(topPts)) {
+          const strip = makeBox(e.len, 0.18, 0.22, mat);
+          strip.position.set(e.mx + e.nx * 0.12, f * fh, e.mz + e.nz * 0.12);
+          strip.rotation.y = Math.atan2(e.nx, e.nz);
+          group.add(strip);
+        }
       }
     }
     if (mats.neon2) {
@@ -309,7 +386,7 @@ function applyParts(
         vstrip = makeBox(0.2, floors * fh * 0.9, 0.2, mats.neon2);
       place(vstrip, v[0], floors * fh * 0.5, v[1]);
     }
-    rooftopUnits(group, topPts, C, topY, mats, rng, 3);
+    rooftopUnits(group, topPts, C, topY, mats, rng, low ? 1 : 3);
     const mh = clamp(span, 8, 20),
       mast = makeCyl(0.18, mh, mats.metal, 8);
     place(mast, C[0], topY + mh / 2, C[1]);
