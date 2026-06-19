@@ -259,6 +259,16 @@ export interface StructureCatalogEntry {
   matchGlobalPopCapBonus?: number;
   /** Added to this spawner's local pop cap once the structure finishes building. */
   structureLocalPopCapBonus?: number;
+  /**
+   * Procedural building visual overrides (see `render/buildgen`). All optional:
+   * when unset, style/footprint/storeys/seed are derived deterministically from
+   * `id` + `signalTypes`. Style ids are `render/buildgen` `StyleKey`s and
+   * footprint ids are `FootKey`s (kept as strings here to avoid render coupling).
+   */
+  buildStyleId?: string;
+  buildFootprintKey?: string;
+  buildStoreys?: number;
+  buildVariantSeed?: number;
 }
 
 export type CommandEffect =

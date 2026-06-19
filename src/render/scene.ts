@@ -55,6 +55,7 @@ import {
   requestGlbForUnit,
   type GlbExtentBasis,
 } from "./glbPool";
+import { buildProceduralBuilding, buildSkylineBackdrop, resolveStructureBuild } from "./buildgen";
 import {
   createManaNodeGroundBand,
   disposeManaNodeBand,
@@ -887,6 +888,80 @@ function buildStructureSilhouette(entry: StructureCatalogEntry, team: "player" |
   return g;
 }
 
+/**
+ * Procedural building fallback for doctrine structures (ported buildin-s tech).
+ * Replaces the crude silhouette geometry while preserving the same userData
+ * contract (`structureSilhouette` / `bodyMesh` / `plinthMesh` / `dims`) so the
+ * GLB swap, build-progress scaling, and HP-bar placement keep working. When a
+ * tower GLB exists it still swaps in and hides this whole building (additive).
+ * Falls back to the simple silhouette if generation throws.
+ */
+function buildStructureProcedural(entry: StructureCatalogEntry, team: "player" | "enemy"): THREE.Group {
+  const dims = structureDims(entry);
+  let inner: THREE.Group;
+  try {
+    const rb = resolveStructureBuild(entry);
+    const fh = dims.h / rb.storeys;
+    inner = buildProceduralBuilding({
+      style: rb.style,
+      foot: rb.foot,
+      storeys: rb.storeys,
+      width: dims.w,
+      depth: dims.d,
+      fh,
+      roof: "auto",
+      seed: rb.seed,
+      litEmissive: rb.litEmissive,
+      emissiveScale: rb.emissiveScale,
+    });
+    // Build-progress animation uses group Y-scale only; keep building meshes
+    // solid (no opacity fade) so window InstancedMeshes don't flicker.
+    inner.traverse((c) => {
+      if (c instanceof THREE.Mesh) c.userData["skipBuildOpacity"] = true;
+    });
+  } catch (err) {
+    console.warn("[buildgen] procedural structure failed; using silhouette", err);
+    return buildStructureSilhouette(entry, team);
+  }
+
+  const g = new THREE.Group();
+  inner.name = "structure-procedural";
+  g.add(inner);
+  (g.userData as Record<string, unknown>)["structureSilhouette"] = inner;
+
+  // Invisible GLB-swap anchor (hidden once a tower model loads).
+  const color = signalColorHex(dominantSignal(entry) ?? "Vanguard");
+  const phMat = matFor(hsl(color, -0.35).getHex(), 0.92, 0.04);
+  phMat.transparent = true;
+  phMat.opacity = 0.04;
+  const placeholder = new THREE.Mesh(
+    new THREE.BoxGeometry(dims.w * 0.55, dims.h * 0.52, dims.d * 0.55),
+    phMat,
+  );
+  placeholder.position.y = dims.h * 0.32;
+  placeholder.castShadow = false;
+  placeholder.userData["isPlaceholder"] = true;
+  g.add(placeholder);
+  (g.userData as Record<string, unknown>)["bodyMesh"] = placeholder;
+
+  // Team plinth underneath for clarity (same as the silhouette path).
+  const plinth = new THREE.Mesh(
+    new THREE.CylinderGeometry(Math.max(dims.w, dims.d) * 0.65, Math.max(dims.w, dims.d) * 0.7, 0.18, 20),
+    new THREE.MeshStandardMaterial({
+      color: team === "player" ? 0x2a5c8a : 0x8a2a2a,
+      roughness: 0.9,
+      transparent: true,
+      opacity: 0.9,
+    }),
+  );
+  plinth.position.y = 0.09;
+  g.add(plinth);
+  (g.userData as Record<string, unknown>)["plinthMesh"] = plinth;
+
+  (g.userData as Record<string, unknown>)["dims"] = dims;
+  return g;
+}
+
 function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
   const ud = g.userData as Record<string, unknown>;
   const silhouette = ud["structureSilhouette"] as THREE.Object3D | undefined;
@@ -1137,6 +1212,33 @@ export class GameRenderer {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x10131a);
 
+    // Cheap gradient PMREM environment so PBR metal/glass on procedural
+    // structures (and existing GLB towers) read with subtle reflections under
+    // the flat, shadowless match lighting.
+    try {
+      const envCanvas = document.createElement("canvas");
+      envCanvas.width = 16;
+      envCanvas.height = 64;
+      const ectx = envCanvas.getContext("2d");
+      if (ectx) {
+        const grd = ectx.createLinearGradient(0, 0, 0, 64);
+        grd.addColorStop(0, "#3a4a66");
+        grd.addColorStop(0.5, "#20262f");
+        grd.addColorStop(1, "#10131a");
+        ectx.fillStyle = grd;
+        ectx.fillRect(0, 0, 16, 64);
+        const eq = new THREE.CanvasTexture(envCanvas);
+        eq.mapping = THREE.EquirectangularReflectionMapping;
+        const pmrem = new THREE.PMREMGenerator(this.renderer);
+        pmrem.compileEquirectangularShader();
+        this.scene.environment = pmrem.fromEquirectangular(eq).texture;
+        eq.dispose();
+        pmrem.dispose();
+      }
+    } catch {
+      /* environment is optional decoration */
+    }
+
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.5, 2600);
     this.camera.position.set(82, 96, 82);
     this.camera.lookAt(0, 4, 0);
@@ -1180,6 +1282,18 @@ export class GameRenderer {
     this.scene.add(this.root);
 
     if (MATCH_SKYBOX_ENABLED && controlProfile.mode !== "mobile") void this._loadMatchSkybox();
+
+    // Static procedural city ring around the arena for backdrop depth (desktop
+    // only; purely cosmetic, outside the 240×240 play area).
+    if (controlProfile.mode !== "mobile") {
+      try {
+        const skyline = buildSkylineBackdrop({ seed: 0x5c1ea1, innerRadius: 175, rings: 2, perRing: 26 });
+        skyline.position.y = -0.02;
+        this.scene.add(skyline);
+      } catch (e) {
+        console.warn("[buildgen] skyline backdrop failed", e);
+      }
+    }
 
     this.fx = createFxHost(this.scene);
 
@@ -2877,7 +2991,7 @@ export class GameRenderer {
       const structEntry = entry && isStructureEntry(entry) ? entry : null;
       if (!obj) {
         if (!structEntry) continue;
-        const g = buildStructureSilhouette(structEntry, st.team);
+        const g = buildStructureProcedural(structEntry, st.team);
         obj = g;
         this.entities.add(g);
         this.structureMeshes.set(st.id, g);
