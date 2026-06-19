@@ -1132,6 +1132,10 @@ export class GameRenderer {
   private currentState: GameState | null = null;
   /** Loaded match equirect; disposed in `dispose()`. */
   private matchSkyboxTexture: THREE.Texture | null = null;
+  /** PMREM env render target backing `scene.environment`; disposed in `dispose()`. */
+  private envRenderTarget: THREE.WebGLRenderTarget | null = null;
+  /** Cosmetic skyline backdrop (desktop); removed + disposed in `dispose()`. */
+  private skylineGroup: THREE.Group | null = null;
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
@@ -1237,7 +1241,10 @@ export class GameRenderer {
         eq.mapping = THREE.EquirectangularReflectionMapping;
         const pmrem = new THREE.PMREMGenerator(this.renderer);
         pmrem.compileEquirectangularShader();
-        this.scene.environment = pmrem.fromEquirectangular(eq).texture;
+        // Keep the render target so dispose() can free its GPU memory; the
+        // PMREMGenerator's own dispose() does not release this output target.
+        this.envRenderTarget = pmrem.fromEquirectangular(eq);
+        this.scene.environment = this.envRenderTarget.texture;
         eq.dispose();
         pmrem.dispose();
       }
@@ -1296,6 +1303,7 @@ export class GameRenderer {
         const skyline = buildSkylineBackdrop({ seed: 0x5c1ea1, innerRadius: 175, rings: 2, perRing: 26 });
         skyline.position.y = -0.02;
         this.scene.add(skyline);
+        this.skylineGroup = skyline;
       } catch (e) {
         console.warn("[buildgen] skyline backdrop failed", e);
       }
@@ -1376,6 +1384,16 @@ export class GameRenderer {
     if (this.matchSkyboxTexture) {
       this.matchSkyboxTexture.dispose();
       this.matchSkyboxTexture = null;
+    }
+    if (this.skylineGroup) {
+      this.scene.remove(this.skylineGroup);
+      this.disposeObject(this.skylineGroup);
+      this.skylineGroup = null;
+    }
+    if (this.envRenderTarget) {
+      this.scene.environment = null;
+      this.envRenderTarget.dispose();
+      this.envRenderTarget = null;
     }
     this.scene.background = new THREE.Color(0x10131a);
     this.scene.backgroundRotation.set(0, 0, 0);
