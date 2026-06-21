@@ -1168,13 +1168,17 @@ function spawnElementalMeteor(
   const sz = pos.z - 4.2 + (rnd(seed, 2) - 0.5) * 2.5;
   const sy = Math.max(18, radius * 1.45);
 
-  const trailGeo = new THREE.BufferGeometry();
-  trailGeo.setAttribute("position", new THREE.Float32BufferAttribute([sx, sy, sz, pos.x, 0.35, pos.z], 3));
-  const trail = new THREE.Line(trailGeo, lineMat(pal.trail, 0.76));
+  const trailPts = [
+    new THREE.Vector3(sx, sy, sz),
+    new THREE.Vector3((sx + pos.x) * 0.5, sy * 0.4, (sz + pos.z) * 0.5),
+    new THREE.Vector3(pos.x, 0.35, pos.z),
+  ];
+  const trail = volumetricStream(trailPts, 0.16, pal.trail, 0.76, 18, 5);
   root.add(trail);
 
   const meteor = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), fxMat(pal.core, 0.95));
   meteor.position.set(sx, sy, sz);
+  meteor.add(glowSprite(pal.hot, 1.5, 0.85));
   root.add(meteor);
 
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.8, 52), fxMat(pal.hot, 0.82));
@@ -1192,7 +1196,7 @@ function spawnElementalMeteor(
     const ease = fall * fall * (3 - 2 * fall);
     meteor.position.set(sx + (pos.x - sx) * ease, sy * (1 - ease) + 0.45 * ease, sz + (pos.z - sz) * ease);
     (meteor.material as THREE.MeshBasicMaterial).opacity = 0.95 * (1 - Math.max(0, p - 0.72) / 0.28);
-    (trail.material as THREE.LineBasicMaterial).opacity = 0.76 * (1 - p);
+    (trail.material as THREE.MeshBasicMaterial).opacity = 0.76 * (1 - p);
     const hitP = Math.max(0, (t - 0.18) / (life - 0.18));
     ring.scale.setScalar(1 + hitP * (radius / 0.8));
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.82 * (1 - hitP);
@@ -1214,7 +1218,7 @@ function spawnElementalFireMeteor(
   const meteorCount = radius > 12 ? 4 : 3;
   const meteors: {
     mesh: THREE.Mesh;
-    trail: THREE.Line;
+    trail: THREE.Mesh;
     sx: number;
     sy: number;
     sz: number;
@@ -1230,11 +1234,15 @@ function spawnElementalFireMeteor(
     const sx = tx - 7.5 - rnd(seed, i + 20) * 4.5;
     const sz = tz - 5.5 + (rnd(seed, i + 30) - 0.5) * 5;
     const sy = Math.max(20, radius * 1.55) + i * 1.7;
-    const trailGeo = new THREE.BufferGeometry();
-    trailGeo.setAttribute("position", new THREE.Float32BufferAttribute([sx, sy, sz, tx, 0.45, tz], 3));
-    const trail = new THREE.Line(trailGeo, lineMat(i % 2 === 0 ? pal.trail : pal.hot, 0.72));
+    const trailPts = [
+      new THREE.Vector3(sx, sy, sz),
+      new THREE.Vector3((sx + tx) * 0.5, sy * 0.4, (sz + tz) * 0.5),
+      new THREE.Vector3(tx, 0.45, tz),
+    ];
+    const trail = volumetricStream(trailPts, i === 0 ? 0.2 : 0.14, i % 2 === 0 ? pal.trail : pal.hot, 0.72, 18, 5);
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(i === 0 ? 0.72 : 0.46, 9, 7), fxMat(i === 0 ? pal.core : pal.hot, 0.96));
     mesh.position.set(sx, sy, sz);
+    mesh.add(glowSprite(i === 0 ? pal.core : pal.hot, i === 0 ? 1.9 : 1.3, 0.85));
     meteors.push({ mesh, trail, sx, sy, sz, tx, tz, delay: i * 0.075 });
     root.add(trail, mesh);
   }
@@ -1278,7 +1286,7 @@ function spawnElementalFireMeteor(
       const ease = fall * fall * (3 - 2 * fall);
       m.mesh.position.set(m.sx + (m.tx - m.sx) * ease, m.sy * (1 - ease) + 0.45 * ease, m.sz + (m.tz - m.sz) * ease);
       (m.mesh.material as THREE.MeshBasicMaterial).opacity = fall <= 0 ? 0 : 0.96 * (1 - Math.max(0, p - 0.74) / 0.26);
-      (m.trail.material as THREE.LineBasicMaterial).opacity = 0.72 * Math.max(0, 1 - p * 1.1) * Math.min(1, fall * 3);
+      (m.trail.material as THREE.MeshBasicMaterial).opacity = 0.72 * Math.max(0, 1 - p * 1.1) * Math.min(1, fall * 3);
     }
     const hitP = Math.max(0, (t - 0.22) / (life - 0.22));
     blast.scale.setScalar(1 + hitP * (radius / 0.82));
@@ -2786,35 +2794,49 @@ function spawnLineCleave(
   group.position.set(cx, 0.12, cz);
   group.rotation.y = Math.atan2(dx, dz);
 
-  const coreMat = new THREE.MeshBasicMaterial({
-    color: 0xb8ffd4,
-    transparent: true,
-    opacity: 0.52,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-  });
-  const core = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2, 0.22, L), coreMat);
+  // Volumetric blade edge (core tube + soft shell) sweeping the corridor, with a
+  // particle swath bursting along its length — not a flat slab box.
+  const y = 0.45;
+  const bladePts = [
+    new THREE.Vector3(0, y, -L * 0.5),
+    new THREE.Vector3(0, y + 0.15, 0),
+    new THREE.Vector3(0, y, L * 0.5),
+  ];
+  const shell = volumetricStream(bladePts, Math.max(0.5, halfW * 0.7), 0xff66dd, 0, 22, 8);
+  const core = volumetricStream(bladePts, Math.max(0.18, halfW * 0.22), 0xb8ffd4, 0, 22, 6);
+  group.add(shell);
   group.add(core);
+  const shellMat = shell.material as THREE.MeshBasicMaterial;
+  const coreMat = core.material as THREE.MeshBasicMaterial;
 
-  const rimMat = new THREE.MeshBasicMaterial({
-    color: 0xff66dd,
-    transparent: true,
-    opacity: 0.32,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-  });
-  const rim = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2 + 0.55, 0.1, L + 0.35), rimMat);
-  rim.position.y = 0.03;
-  group.add(rim);
+  const seed = (cx + cz) * 0.21 + L * 0.13;
+  const N = Math.min(24, Math.max(10, Math.round(L * 0.6)));
+  const swath = makeVolCloud(N, 0xcfffe4, 0.5, 0);
+  for (let i = 0; i < N; i++) {
+    const z = (rnd(seed, i) - 0.5) * L;
+    const side = rnd(seed, i + 20) < 0.5 ? -1 : 1;
+    setCloudParticle(
+      swath,
+      i,
+      side * halfW * 0.2,
+      y,
+      z,
+      side * (2 + rnd(seed, i + 30) * 3),
+      1 + rnd(seed, i + 40) * 2,
+      (rnd(seed, i + 50) - 0.5) * 1.5,
+    );
+  }
+  group.add(swath.points);
 
-  spawn(host, group, life, (t) => {
+  spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const pulse = 1 + 0.12 * Math.sin(p * Math.PI);
-    group.scale.set(pulse, 1 + 0.25 * Math.sin(p * Math.PI * 2), pulse);
-    (core.material as THREE.MeshBasicMaterial).opacity = 0.52 * (1 - p);
-    (rim.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p * 0.9);
+    const pulse = 1 + 0.18 * Math.sin(p * Math.PI);
+    core.scale.set(pulse, pulse, 1);
+    shell.scale.set(pulse, pulse, 1);
+    coreMat.opacity = 0.7 * (1 - p);
+    shellMat.opacity = 0.32 * (1 - p * 0.9);
+    advectCloud(swath, dt, 4, 1.1);
+    swath.mat.opacity = 0.6 * (1 - p);
   });
 }
 
@@ -2971,18 +2993,15 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
   }
   pts.push(new THREE.Vector3(0, skyY, 0));
 
-  const boltGeo = new THREE.BufferGeometry().setFromPoints(pts);
-  const boltMat = new THREE.LineBasicMaterial({
-    color: 0xe8f6ff,
-    transparent: true,
-    opacity: 1,
-    depthWrite: false,
-  });
-  const bolt = new THREE.Line(boltGeo, boltMat);
+  // Volumetric bolt — a glowing tube core inside a soft shell, not a 2px line.
+  const boltTubular = Math.max(28, segments * 3);
+  const boltShell = volumetricStream(pts, 0.34, 0x9fdcff, 0, boltTubular, 7);
+  const bolt = volumetricStream(pts, 0.13, 0xe8f6ff, 1, boltTubular, 6);
+  group.add(boltShell);
   group.add(bolt);
 
-  // Short-lived branch bolts.
-  const branches: THREE.Line[] = [];
+  // Short-lived branch bolts (thin tubes).
+  const branchMats: THREE.MeshBasicMaterial[] = [];
   for (let b = 0; b < 2; b++) {
     const anchor = pts[3 + b * 2] ?? pts[3]!;
     const bpts: THREE.Vector3[] = [anchor.clone()];
@@ -2997,16 +3016,9 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
       if (cur.y < 0.1) cur.y = 0.1;
       bpts.push(cur);
     }
-    const bg = new THREE.BufferGeometry().setFromPoints(bpts);
-    const bm = new THREE.LineBasicMaterial({
-      color: 0xcfeaff,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-    });
-    const bl = new THREE.Line(bg, bm);
-    group.add(bl);
-    branches.push(bl);
+    const tube = volumetricStream(bpts, 0.07, 0xcfeaff, 0.85, 16, 5);
+    group.add(tube);
+    branchMats.push(tube.material as THREE.MeshBasicMaterial);
   }
 
   // Ground flash disc (bright, very short).
@@ -3071,16 +3083,11 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
     const strikePhase = t < 0.18 ? 1 : Math.max(0, 1 - (t - 0.18) / (life - 0.18));
     const flicker = 0.55 + 0.45 * Math.abs(Math.sin(t * 90));
     const boltOp = strikePhase * flicker;
-    const boltMat = bolt.material as THREE.LineBasicMaterial;
-    boltMat.opacity = boltOp;
-    /* Some drivers still draw 1px lines at opacity 0; hide the object explicitly. */
+    (bolt.material as THREE.MeshBasicMaterial).opacity = boltOp;
     bolt.visible = boltOp > 0.02;
-    for (const br of branches) {
-      const bOp = 0.85 * strikePhase * flicker;
-      const bm = br.material as THREE.LineBasicMaterial;
-      bm.opacity = bOp;
-      br.visible = bOp > 0.02;
-    }
+    (boltShell.material as THREE.MeshBasicMaterial).opacity = boltOp * 0.42;
+    boltShell.visible = boltOp > 0.02;
+    for (const bm of branchMats) bm.opacity = 0.85 * strikePhase * flicker;
     // Ground flash pops for ~0.12s then disappears.
     const flashP = t < 0.12 ? 1 - t / 0.12 : 0;
     (flash.material as THREE.MeshBasicMaterial).opacity = 0.95 * flashP;
