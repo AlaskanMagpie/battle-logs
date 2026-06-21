@@ -106,8 +106,12 @@ export function clearFx(host: FxHost): void {
 
 function disposeTree(obj: THREE.Object3D): void {
   obj.traverse((c) => {
-    const geo = "geometry" in c ? (c as { geometry?: THREE.BufferGeometry }).geometry : undefined;
-    if (geo && typeof geo.dispose === "function") geo.dispose();
+    // THREE.Sprite shares a single module-level geometry across every sprite, so
+    // disposing it here would free GPU buffers still used by live sprites. Skip it.
+    if (!(c instanceof THREE.Sprite)) {
+      const geo = "geometry" in c ? (c as { geometry?: THREE.BufferGeometry }).geometry : undefined;
+      if (geo && typeof geo.dispose === "function") geo.dispose();
+    }
     const m = "material" in c ? (c as { material?: THREE.Material | THREE.Material[] }).material : undefined;
     if (!m) return;
     if (Array.isArray(m)) for (const mm of m) mm?.dispose();
@@ -353,6 +357,149 @@ function lineMat(color: number, opacity: number): THREE.LineBasicMaterial {
 
 function elementalSeed(pos: { x: number; z: number }, opts?: CastFxSpawnOpts): number {
   return opts?.visualSeed ?? pos.x * 0.173 + pos.z * 0.319 + performance.now() * 0.001;
+}
+
+// ---------------------------------------------------------------------------
+// Volumetric FX toolkit
+//
+// The old combat reads were flat: triangle-fan ground cones, 2px tracer lines,
+// and ring planes. They read as "2D zaps" from the battle camera. This toolkit
+// builds genuinely volumetric primitives — camera-facing soft-particle clouds
+// (THREE.Points, one draw call), swept tube streams, and torus shock rings — so
+// every attack has depth and body from any angle, the way bending arcs do in
+// Avatar. Textures are created lazily (the test runner is a DOM-less Node env).
+// ---------------------------------------------------------------------------
+
+let _softPuffTex: THREE.Texture | null = null;
+/** Soft radial alpha sprite — the building block for volumetric particle puffs. */
+function softPuffTexture(): THREE.Texture {
+  if (_softPuffTex) return _softPuffTex;
+  const c = document.createElement("canvas");
+  c.width = 64;
+  c.height = 64;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.3, "rgba(255,255,255,0.7)");
+  g.addColorStop(0.7, "rgba(255,255,255,0.18)");
+  g.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  _softPuffTex = tex;
+  return tex;
+}
+
+/**
+ * A volumetric particle cloud: many soft camera-facing puffs in a single
+ * draw call. Positions/velocities are owned here so callers can advect them
+ * each frame (rise, swirl, gravity) for a true 3D body of fire/water/dust.
+ */
+interface VolCloud {
+  points: THREE.Points;
+  mat: THREE.PointsMaterial;
+  geo: THREE.BufferGeometry;
+  pos: Float32Array;
+  vel: Float32Array;
+  count: number;
+  baseOpacity: number;
+  baseSize: number;
+}
+
+function makeVolCloud(count: number, color: number, size: number, opacity: number): VolCloud {
+  const pos = new Float32Array(count * 3);
+  const vel = new Float32Array(count * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    color,
+    size,
+    map: softPuffTexture(),
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    sizeAttenuation: true,
+  });
+  const points = new THREE.Points(geo, mat);
+  // Local-space frustum culling on a tiny initial bound wrongly culls the cloud
+  // as particles fly outward; FX are short-lived so skip culling entirely.
+  points.frustumCulled = false;
+  return { points, mat, geo, pos, vel, count, baseOpacity: opacity, baseSize: size };
+}
+
+function setCloudParticle(
+  c: VolCloud,
+  i: number,
+  px: number,
+  py: number,
+  pz: number,
+  vx: number,
+  vy: number,
+  vz: number,
+): void {
+  c.pos[i * 3] = px;
+  c.pos[i * 3 + 1] = py;
+  c.pos[i * 3 + 2] = pz;
+  c.vel[i * 3] = vx;
+  c.vel[i * 3 + 1] = vy;
+  c.vel[i * 3 + 2] = vz;
+}
+
+/** Advect every particle by its velocity with optional gravity + drag, flag GPU upload. */
+function advectCloud(c: VolCloud, dt: number, gravity: number, drag: number): void {
+  const damp = Math.max(0, 1 - drag * dt);
+  for (let i = 0; i < c.count; i++) {
+    c.vel[i * 3 + 1] -= gravity * dt;
+    c.vel[i * 3] *= damp;
+    c.vel[i * 3 + 1] *= damp;
+    c.vel[i * 3 + 2] *= damp;
+    c.pos[i * 3] += c.vel[i * 3] * dt;
+    c.pos[i * 3 + 1] += c.vel[i * 3 + 1] * dt;
+    c.pos[i * 3 + 2] += c.vel[i * 3 + 2] * dt;
+  }
+  (c.geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+}
+
+/** Tapered volumetric tube swept through control points — an elemental stream/lance/whip. */
+function volumetricStream(
+  controlPoints: THREE.Vector3[],
+  radius: number,
+  color: number,
+  opacity: number,
+  tubularSeg = 22,
+  radialSeg = 8,
+): THREE.Mesh {
+  const curve = new THREE.CatmullRomCurve3(controlPoints);
+  const geo = new THREE.TubeGeometry(curve, tubularSeg, radius, radialSeg, false);
+  const mesh = new THREE.Mesh(geo, fxMat(color, opacity));
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/** Flat-lying volumetric torus — a shockwave ring with real cross-section, not a ring plane. */
+function volumetricShockRing(innerRadius: number, tubeRadius: number, color: number, opacity: number): THREE.Mesh {
+  const geo = new THREE.TorusGeometry(innerRadius, tubeRadius, 8, 28);
+  const mesh = new THREE.Mesh(geo, fxMat(color, opacity));
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/** Camera-facing soft glow billboard — focal core/impact flash with volumetric falloff. */
+function glowSprite(color: number, size: number, opacity: number): THREE.Sprite {
+  const mat = new THREE.SpriteMaterial({
+    map: softPuffTexture(),
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const s = new THREE.Sprite(mat);
+  s.scale.setScalar(size);
+  return s;
 }
 
 function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
@@ -1735,6 +1882,266 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
  * Ground **cone** of elemental energy rooted on the attacker, opening toward the target.
  * Layered meshes + spark flecks (additive) — telegraphs melee / breath without implying physical metal.
  */
+type CombatStrikeStep = (p: number, t: number, dt: number) => void;
+type CombatStrikePalette = { core: number; glow: number; rim: number; spark: number };
+
+/**
+ * Swarm — fast paired elemental whips that slash across the target (waterbender
+ * lash / airbender swipe), with a forward spray and an impact bloom.
+ */
+function buildSwarmStrike(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  reach: number,
+  pal: CombatStrikePalette,
+  seed: number,
+): void {
+  const h = 0.5;
+  for (let k = 0; k < 2; k++) {
+    const side = k === 0 ? 1 : -1;
+    const color = k === 0 ? pal.core : pal.spark;
+    const pts = [
+      new THREE.Vector3(side * 0.18, h * 0.55, 0.08),
+      new THREE.Vector3(side * 0.5, h + 0.3, reach * 0.45),
+      new THREE.Vector3(-side * 0.12, h * 0.95, reach * 0.82),
+      new THREE.Vector3(-side * 0.4, h * 0.5, reach),
+    ];
+    const whip = volumetricStream(pts, 0.09 + k * 0.015, color, 0, 18, 6);
+    whip.rotation.y = side * 0.45;
+    group.add(whip);
+    const mat = whip.material as THREE.MeshBasicMaterial;
+    anim.push((p) => {
+      const a = Math.sin(Math.min(1, p * 1.25) * Math.PI);
+      mat.opacity = 0.9 * a;
+      whip.rotation.y = side * (0.45 - p * 0.6);
+      whip.scale.setScalar(1 + p * 0.18);
+    });
+  }
+  const spray = makeVolCloud(6, pal.glow, 0.5, 0);
+  for (let i = 0; i < 6; i++) {
+    const ang = (rnd(seed, i + 11) - 0.5) * 0.9;
+    const sp = 2 + rnd(seed, i + 21) * 2.6;
+    setCloudParticle(
+      spray,
+      i,
+      Math.sin(ang) * 0.12,
+      0.45 + rnd(seed, i + 31) * 0.3,
+      reach * 0.82,
+      Math.sin(ang) * sp,
+      1 + rnd(seed, i + 41) * 1.6,
+      Math.cos(ang) * sp * 0.5 + 1.2,
+    );
+  }
+  group.add(spray.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(spray, dt, 5, 1.3);
+    spray.mat.opacity = 0.7 * (1 - p);
+    spray.mat.size = spray.baseSize * (1 + p);
+  });
+  const flash = glowSprite(pal.glow, 0.85, 0);
+  flash.position.set(0, 0.5, reach);
+  group.add(flash);
+  anim.push((p) => {
+    const a = Math.sin(Math.min(1, p * 1.6) * Math.PI);
+    (flash.material as THREE.SpriteMaterial).opacity = 0.95 * a;
+    flash.scale.setScalar(0.85 + p * 1.3);
+  });
+}
+
+/**
+ * Line — a focused elemental lance/jet (firebender beam): bright volumetric core
+ * inside a soft shell, a head that travels to the target, then an impact burst.
+ */
+function buildLineStrike(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  reach: number,
+  pal: CombatStrikePalette,
+  seed: number,
+): void {
+  const h = 0.7;
+  const pts = [
+    new THREE.Vector3(0, h, 0.08),
+    new THREE.Vector3(0, h + 0.32, reach * 0.5),
+    new THREE.Vector3(0, h * 0.92, reach),
+  ];
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const shell = volumetricStream(pts, 0.2, pal.rim, 0, 24, 8);
+  const core = volumetricStream(pts, 0.075, pal.core, 0, 24, 6);
+  group.add(shell);
+  group.add(core);
+  const shellMat = shell.material as THREE.MeshBasicMaterial;
+  const coreMat = core.material as THREE.MeshBasicMaterial;
+  anim.push((p) => {
+    const a = p < 0.22 ? p / 0.22 : Math.max(0, 1 - (p - 0.22) / 0.78);
+    shellMat.opacity = 0.45 * a;
+    coreMat.opacity = 0.95 * a;
+  });
+  const head = glowSprite(pal.glow, 0.6, 0);
+  group.add(head);
+  const headPos = new THREE.Vector3();
+  anim.push((p) => {
+    const tt = Math.min(1, p / 0.32);
+    curve.getPoint(tt, headPos);
+    head.position.copy(headPos);
+    (head.material as THREE.SpriteMaterial).opacity = tt < 1 ? 0.95 : 0;
+    head.scale.setScalar(0.6 + tt * 0.25);
+  });
+  const burst = makeVolCloud(7, pal.spark, 0.42, 0);
+  for (let i = 0; i < 7; i++) {
+    const ang = rnd(seed, i + 5) * Math.PI * 2;
+    const sp = 1.6 + rnd(seed, i + 15) * 2.4;
+    setCloudParticle(burst, i, 0, h, reach, Math.cos(ang) * sp, 0.8 + rnd(seed, i + 25) * 2, Math.sin(ang) * sp + 0.6);
+  }
+  group.add(burst.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(burst, dt, 5.5, 1.4);
+    burst.mat.opacity = p > 0.28 ? 0.85 * Math.max(0, 1 - (p - 0.28) / 0.72) : 0;
+  });
+  const ring = volumetricShockRing(0.22, 0.05, pal.rim, 0);
+  ring.position.set(0, 0.12, reach);
+  group.add(ring);
+  anim.push((p) => {
+    const a = p > 0.28 ? (p - 0.28) / 0.72 : 0;
+    ring.scale.setScalar(1 + a * reach * 1.5);
+    (ring.material as THREE.MeshBasicMaterial).opacity = p > 0.28 ? 0.6 * (1 - a) : 0;
+  });
+}
+
+/**
+ * Heavy — a ground-shattering slam at the target: an eruption dome of fire/dust,
+ * arcing debris chunks, an expanding shock torus, and a bright impact flash.
+ */
+function buildHeavyStrike(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  reach: number,
+  pal: CombatStrikePalette,
+  seed: number,
+  wide: boolean,
+): void {
+  const cx = reach * 0.85;
+  const domeN = wide ? 11 : 9;
+  const dome = makeVolCloud(domeN, pal.core, 0.8, 0);
+  for (let i = 0; i < domeN; i++) {
+    const ang = (i / domeN) * Math.PI * 2 + rnd(seed, i) * 0.5;
+    const out = 1.4 + rnd(seed, i + 17) * 1.8;
+    setCloudParticle(
+      dome,
+      i,
+      0,
+      0.2,
+      cx,
+      Math.cos(ang) * out,
+      2.2 + rnd(seed, i + 7) * 2.4,
+      Math.sin(ang) * out,
+    );
+  }
+  group.add(dome.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(dome, dt, 4.5, 0.9);
+    dome.mat.opacity = (p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85) * 0.85;
+    dome.mat.size = dome.baseSize * (1 + p * 0.7);
+  });
+  const debris = makeVolCloud(6, pal.rim, 0.3, 0);
+  for (let i = 0; i < 6; i++) {
+    const ang = rnd(seed, i + 31) * Math.PI * 2;
+    const out = 1 + rnd(seed, i + 41) * 2.4;
+    setCloudParticle(debris, i, 0, 0.25, cx, Math.cos(ang) * out, 3 + rnd(seed, i + 51) * 3, Math.sin(ang) * out);
+  }
+  group.add(debris.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(debris, dt, 9, 0.4);
+    debris.mat.opacity = 0.8 * (1 - p);
+  });
+  const ring = volumetricShockRing(0.3, 0.09, pal.glow, 0);
+  ring.position.set(0, 0.12, cx);
+  group.add(ring);
+  anim.push((p) => {
+    ring.scale.setScalar(1 + p * (reach * 0.5 + 2));
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.65 * (1 - p);
+  });
+  const flash = glowSprite(pal.glow, 1.1, 0);
+  flash.position.set(0, 0.6, cx);
+  group.add(flash);
+  anim.push((p) => {
+    const a = Math.sin(Math.min(1, p * 2) * Math.PI);
+    (flash.material as THREE.SpriteMaterial).opacity = 0.9 * a;
+    flash.scale.setScalar(1.1 + p * 1.4);
+  });
+}
+
+/**
+ * Titan — a colossal swirling vortex column erupting at the target, with a
+ * pulsing core, twin shock rings, and heavy debris. Reads as a true 3D maelstrom.
+ */
+function buildTitanStrike(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  reach: number,
+  pal: CombatStrikePalette,
+  seed: number,
+): void {
+  const cx = reach * 0.8;
+  const N = 12;
+  const vortex = makeVolCloud(N, pal.core, 0.95, 0);
+  const ang = new Float32Array(N);
+  const rad = new Float32Array(N);
+  const baseY = new Float32Array(N);
+  const rise = new Float32Array(N);
+  const aspd = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    ang[i] = rnd(seed, i) * Math.PI * 2;
+    rad[i] = 0.35 + rnd(seed, i + 13) * 1.0;
+    baseY[i] = rnd(seed, i + 23) * 2.4;
+    rise[i] = 1.6 + rnd(seed, i + 33) * 1.8;
+    aspd[i] = 4 + rnd(seed, i + 43) * 4;
+  }
+  group.add(vortex.points);
+  anim.push((p, _t, dt) => {
+    for (let i = 0; i < N; i++) {
+      ang[i]! += aspd[i]! * dt;
+      baseY[i]! += rise[i]! * dt;
+      const r = rad[i]! * (1 - p * 0.25);
+      vortex.pos[i * 3] = Math.cos(ang[i]!) * r;
+      vortex.pos[i * 3 + 1] = 0.25 + baseY[i]!;
+      vortex.pos[i * 3 + 2] = cx + Math.sin(ang[i]!) * r;
+    }
+    (vortex.geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    vortex.mat.opacity = (p < 0.18 ? p / 0.18 : 1 - (p - 0.18) / 0.82) * 0.8;
+  });
+  const orb = glowSprite(pal.glow, 1.3, 0);
+  orb.position.set(0, 0.8, cx);
+  group.add(orb);
+  anim.push((p, t) => {
+    const pulse = 1 + Math.sin(t * 40) * 0.15 * (1 - p);
+    orb.scale.setScalar((1.3 + p * 1.2) * pulse);
+    (orb.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - p);
+  });
+  for (let k = 0; k < 2; k++) {
+    const ring = volumetricShockRing(0.3 + k * 0.2, 0.1, k === 0 ? pal.glow : pal.rim, 0);
+    ring.position.set(0, 0.13, cx);
+    group.add(ring);
+    const delay = k * 0.12;
+    anim.push((p) => {
+      const a = Math.max(0, (p - delay) / (1 - delay));
+      ring.scale.setScalar(1 + a * (reach * 0.7 + 3));
+      (ring.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - a);
+    });
+  }
+  const debris = makeVolCloud(8, pal.rim, 0.34, 0);
+  for (let i = 0; i < 8; i++) {
+    const a2 = rnd(seed, i + 61) * Math.PI * 2;
+    const out = 1.4 + rnd(seed, i + 71) * 2.8;
+    setCloudParticle(debris, i, 0, 0.3, cx, Math.cos(a2) * out, 3.4 + rnd(seed, i + 81) * 3.4, Math.sin(a2) * out);
+  }
+  group.add(debris.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(debris, dt, 9.5, 0.4);
+    debris.mat.opacity = 0.8 * (1 - p);
+  });
+}
+
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS || m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
     spawnGeodeMonkForwardRings(host, m);
@@ -1743,270 +2150,35 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   const dx = m.tx - m.ax;
   const dz = m.tz - m.az;
   const dist = Math.hypot(dx, dz);
-  const reach = Math.max(0.45, Math.min(m.range, dist + 0.35) * (m.wide ? 1.08 : 1));
-  let classAngle = 1;
-  let classSpark = 1;
-  let classLife = 1;
+  const reach = Math.max(0.6, Math.min(m.range, dist + 0.35) * (m.wide ? 1.12 : 1));
+  const pal = elementalCombatPalette(m);
+  const seed = m.visualSeed;
+  const group = new THREE.Group();
+  group.position.set(m.ax, 0.05, m.az);
+  group.rotation.y = Math.atan2(dx, dz); // +Z aims at the target
+
+  const anim: CombatStrikeStep[] = [];
+  const life =
+    m.sizeClass === "Titan" ? 0.66 : m.sizeClass === "Heavy" ? 0.56 : m.sizeClass === "Line" ? 0.48 : 0.42;
   switch (m.sizeClass) {
-    case "Swarm":
-      classAngle = 1.12;
-      classSpark = 1.38;
-      classLife = 0.92;
-      break;
-    case "Line":
-      classAngle = 1.04;
-      classSpark = 1.08;
-      break;
     case "Heavy":
-      classAngle = 1.18;
-      classSpark = 0.92;
-      classLife = 1.08;
+      buildHeavyStrike(group, anim, reach, pal, seed, m.wide);
       break;
     case "Titan":
-      classAngle = 1.28;
-      classSpark = 0.78;
-      classLife = 1.15;
+      buildTitanStrike(group, anim, reach, pal, seed);
       break;
+    case "Line":
+      buildLineStrike(group, anim, reach, pal, seed);
+      break;
+    case "Swarm":
     default:
+      buildSwarmStrike(group, anim, reach, pal, seed);
       break;
-  }
-  const halfAngle = (m.wide ? 0.34 : 0.15) * Math.PI * classAngle;
-  const seg = Math.max(8, Math.round((m.wide ? 16 : 12) * Math.min(1.1, classAngle)));
-  const life = 0.42 * classLife;
-  const pal = elementalCombatPalette(m);
-  const group = new THREE.Group();
-  group.position.set(m.ax, 0.08, m.az);
-  group.rotation.y = Math.atan2(dx, dz);
-
-  const mkCone = (scale: number, op: number, hueShift: number): THREE.Mesh => {
-    const g = createGroundConeGeometry(halfAngle * scale, reach * (0.85 + (1 - scale) * 0.25), 0.12, seg);
-    const c = new THREE.Color(pal.core);
-    if (hueShift !== 0) c.offsetHSL(hueShift, 0, 0);
-    const mat = new THREE.MeshBasicMaterial({
-      color: c.getHex(),
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: op,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-    });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.rotation.x = 0;
-    return mesh;
-  };
-
-  const mid = mkCone(1, m.sizeClass === "Swarm" ? 0.2 : 0.3, 0);
-  const core = mkCone(0.52, m.sizeClass === "Swarm" ? 0.3 : 0.43, -0.03);
-  if (m.sizeClass !== "Swarm") group.add(mid);
-  group.add(core);
-
-  const tracerHeight =
-    m.sizeClass === "Swarm" ? 0.45 : m.sizeClass === "Line" ? 0.62 : m.sizeClass === "Heavy" ? 0.82 : 1.1;
-  const tracerGeo = new THREE.BufferGeometry();
-  tracerGeo.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute([0, tracerHeight, 0, 0, tracerHeight + 0.12, reach], 3),
-  );
-  const tracerMat = new THREE.LineBasicMaterial({
-    color: m.sizeClass === "Swarm" ? pal.spark : m.sizeClass === "Line" ? pal.glow : pal.rim,
-    transparent: true,
-    opacity: m.sizeClass === "Titan" ? 0.62 : 0.46,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const tracer = new THREE.Line(tracerGeo, tracerMat);
-  group.add(tracer);
-
-  const extraMats: THREE.Material[] = [];
-  let titanOrb: THREE.Mesh | null = null;
-  let titanShock: THREE.Mesh | null = null;
-  let titanTrail: THREE.Line | null = null;
-  if (m.sizeClass === "Swarm") {
-    for (let i = 0; i < 2; i++) {
-      const offset = i === 0 ? -0.16 : 0.16;
-      const g = new THREE.BufferGeometry();
-      g.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute([offset, 0.28, reach * 0.08, offset * -0.35, 0.34, reach * 0.72], 3),
-      );
-      const mat = new THREE.LineBasicMaterial({
-        color: pal.spark,
-        transparent: true,
-        opacity: 0.52,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      extraMats.push(mat);
-      group.add(new THREE.Line(g, mat));
-    }
-  } else if (m.sizeClass === "Heavy") {
-    const slam = new THREE.Mesh(
-      new THREE.RingGeometry(reach * 0.2, reach * 0.36, 12),
-      new THREE.MeshBasicMaterial({
-        color: pal.rim,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.42,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    slam.rotation.x = -Math.PI / 2;
-    slam.position.set(0, 0.14, reach * 0.72);
-    extraMats.push(slam.material as THREE.Material);
-    group.add(slam);
-  } else if (m.sizeClass === "Titan") {
-    const trailGeo = new THREE.BufferGeometry();
-    trailGeo.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(
-        [
-          0,
-          1.05,
-          reach * 0.08,
-          Math.sin(rnd(m.visualSeed, 201) * Math.PI * 2) * 0.28,
-          1.32,
-          reach * 0.42,
-          Math.sin(rnd(m.visualSeed, 202) * Math.PI * 2) * 0.34,
-          1.1,
-          reach * 0.78,
-        ],
-        3,
-      ),
-    );
-    const trailMat = new THREE.LineBasicMaterial({
-      color: pal.glow,
-      transparent: true,
-      opacity: 0.72,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    titanTrail = new THREE.Line(trailGeo, trailMat);
-    extraMats.push(trailMat);
-    group.add(titanTrail);
-
-    titanOrb = new THREE.Mesh(
-      new THREE.SphereGeometry(0.28, 14, 8),
-      new THREE.MeshBasicMaterial({
-        color: pal.glow,
-        transparent: true,
-        opacity: 0.64,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    titanOrb.position.set(0, 1.0, reach * 0.82);
-    extraMats.push(titanOrb.material as THREE.Material);
-    group.add(titanOrb);
-
-    titanShock = new THREE.Mesh(
-      new THREE.RingGeometry(reach * 0.16, reach * 0.3, 24),
-      new THREE.MeshBasicMaterial({
-        color: pal.rim,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.48,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    titanShock.rotation.x = -Math.PI / 2;
-    titanShock.position.set(0, 0.155, reach * 0.88);
-    extraMats.push(titanShock.material as THREE.Material);
-    group.add(titanShock);
-
-    const pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.08, 0.18, 1.5, 8, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: pal.glow,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.32,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    pillar.position.set(0, 0.75, reach * 0.76);
-    extraMats.push(pillar.material as THREE.Material);
-    group.add(pillar);
-  }
-
-  const rimGeo = new THREE.RingGeometry(reach * 0.88, reach * 1.02, seg, 1, -halfAngle, halfAngle * 2);
-  const rim = new THREE.Mesh(
-    rimGeo,
-    new THREE.MeshBasicMaterial({
-      color: pal.rim,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.32,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    }),
-  );
-  rim.rotation.x = -Math.PI / 2;
-  rim.position.y = 0.125;
-  group.add(rim);
-
-  const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
-  const nSpark = Math.max(2, Math.round((m.wide ? 6 : 3) * classSpark));
-  for (let i = 0; i < nSpark; i++) {
-    const u = rnd(m.visualSeed, i + 3);
-    const v = rnd(m.visualSeed, i + 19);
-    const ang = -halfAngle + u * (2 * halfAngle);
-    const rad = reach * (0.15 + v * 0.82);
-    const g = new THREE.SphereGeometry(0.045 + (m.wide ? 0.025 : 0), 4, 3);
-    const mat = new THREE.MeshBasicMaterial({
-      color: i % 3 === 0 ? pal.spark : pal.glow,
-      transparent: true,
-      opacity: 0.62,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.position.set(Math.sin(ang) * rad * 0.35, 0.2 + v * 0.35, Math.cos(ang) * rad * 0.35);
-    const burst = 0.8 + rnd(m.visualSeed, i + 40) * 1.45;
-    sparks.push({
-      mesh,
-      vx: Math.sin(ang) * burst,
-      vz: Math.cos(ang) * burst,
-      vy: 1.1 + rnd(m.visualSeed, i + 60) * 1.5,
-      mat,
-    });
-    group.add(mesh);
   }
 
   spawn(host, group, life, (t, dt) => {
-    const p = Math.min(1, t / life);
-    const breathe = 1 + Math.sin(t * 28) * 0.04 * (1 - p);
-    group.scale.setScalar(breathe);
-    (mid.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.2 : 0.3) * (1 - p * 0.92);
-    (core.material as THREE.MeshBasicMaterial).opacity = (m.sizeClass === "Swarm" ? 0.3 : 0.43) * (1 - p * 0.85);
-    tracerMat.opacity = (m.sizeClass === "Titan" ? 0.72 : 0.54) * (1 - p * 0.82);
-    (rim.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p);
-    for (const mat of extraMats) {
-      if ("opacity" in mat) mat.opacity = (m.sizeClass === "Titan" ? 0.32 : 0.46) * (1 - p);
-    }
-    if (titanOrb) {
-      const pulse = 1 + Math.sin(t * 46) * 0.16 * (1 - p);
-      titanOrb.scale.setScalar(pulse + p * 0.5);
-      (titanOrb.material as THREE.MeshBasicMaterial).opacity = 0.64 * (1 - p);
-    }
-    if (titanShock) {
-      titanShock.scale.setScalar(1 + p * 2.8);
-      (titanShock.material as THREE.MeshBasicMaterial).opacity = 0.48 * (1 - p);
-    }
-    if (titanTrail) {
-      const mat = titanTrail.material as THREE.LineBasicMaterial;
-      mat.opacity = 0.72 * (1 - p * 0.95);
-    }
-    for (const s of sparks) {
-      s.mesh.position.x += s.vx * dt;
-      s.mesh.position.z += s.vz * dt;
-      s.mesh.position.y += s.vy * dt;
-      s.vy -= 6 * dt;
-      s.mat.opacity = 0.62 * (1 - p);
-    }
+    const p = t >= life ? 1 : t / life;
+    for (let i = 0; i < anim.length; i++) anim[i]!(p, t, dt);
   });
 }
 
