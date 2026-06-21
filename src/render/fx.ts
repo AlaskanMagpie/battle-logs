@@ -247,25 +247,6 @@ function elementalCombatPalette(m: CombatHitMark): {
   return { core, glow, rim, spark };
 }
 
-/** Fan of triangles: apex at origin, opening toward +Z, lying near y. */
-function createGroundConeGeometry(halfAngle: number, reach: number, y: number, segments: number): THREE.BufferGeometry {
-  const positions: number[] = [0, y, 0];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const ang = -halfAngle + t * (2 * halfAngle);
-    positions.push(Math.sin(ang) * reach, y * 0.92, Math.cos(ang) * reach);
-  }
-  const indices: number[] = [];
-  for (let i = 0; i < segments; i++) {
-    indices.push(0, 1 + i, 2 + i);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(positions), 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-  return geo;
-}
-
 function rnd(seed: number, i: number): number {
   const u = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453;
   return u - Math.floor(u);
@@ -342,16 +323,6 @@ function fxMat(
     opacity,
     depthWrite: false,
     blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-  });
-}
-
-function lineMat(color: number, opacity: number): THREE.LineBasicMaterial {
-  return new THREE.LineBasicMaterial({
-    color,
-    transparent: true,
-    opacity,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
   });
 }
 
@@ -923,21 +894,18 @@ function spawnElementalWaterSpiral(
   const life = 1.05;
   const group = new THREE.Group();
   group.position.set(pos.x, 0.12, pos.z);
-  const ribbons: { line: THREE.Line; mat: THREE.LineBasicMaterial; phase: number }[] = [];
+  const ribbons: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; phase: number }[] = [];
   for (let r = 0; r < 4; r++) {
-    const pts: number[] = [];
+    const pts: THREE.Vector3[] = [];
     for (let i = 0; i <= 28; i++) {
       const t = i / 28;
       const a = t * Math.PI * 2.6 + r * Math.PI * 0.5;
       const rr = radius * (0.08 + t * 0.72);
-      pts.push(Math.cos(a) * rr, 0.12 + Math.sin(t * Math.PI) * (0.45 + r * 0.06), Math.sin(a) * rr);
+      pts.push(new THREE.Vector3(Math.cos(a) * rr, 0.12 + Math.sin(t * Math.PI) * (0.45 + r * 0.06), Math.sin(a) * rr));
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    const mat = lineMat(r % 2 === 0 ? pal.core : pal.hot, 0.66);
-    const line = new THREE.Line(geo, mat);
-    ribbons.push({ line, mat, phase: r * 0.7 });
-    group.add(line);
+    const tube = volumetricStream(pts, 0.08, r % 2 === 0 ? pal.core : pal.hot, 0.66, 40, 6);
+    ribbons.push({ mesh: tube, mat: tube.material as THREE.MeshBasicMaterial, phase: r * 0.7 });
+    group.add(tube);
   }
   const eye = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.72, 48), fxMat(pal.rim, 0.64));
   eye.rotation.x = -Math.PI / 2;
@@ -949,8 +917,8 @@ function spawnElementalWaterSpiral(
     eye.scale.setScalar(1 + Math.sin(p * Math.PI) * radius * 0.18);
     (eye.material as THREE.MeshBasicMaterial).opacity = 0.64 * (1 - p);
     for (const r of ribbons) {
-      r.line.rotation.y = -t * 2.8 + r.phase;
-      r.line.scale.setScalar(0.55 + Math.sin(p * Math.PI) * 0.82);
+      r.mesh.rotation.y = -t * 2.8 + r.phase;
+      r.mesh.scale.setScalar(0.55 + Math.sin(p * Math.PI) * 0.82);
       r.mat.opacity = 0.66 * (1 - p);
     }
   });
@@ -1681,17 +1649,25 @@ function spawnElementalAirBurst(
     group.add(ring);
   }
   const seed = elementalSeed(pos, opts);
-  const wisps: { line: THREE.Line; mat: THREE.LineBasicMaterial; vx: number; vz: number; vy: number }[] = [];
+  const wisps: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vz: number; vy: number }[] = [];
   const wispCount = compact ? 7 : 13;
+  const wispPts = [
+    new THREE.Vector3(0, 0.15, 0),
+    new THREE.Vector3(0.25, 0.55, 0.1),
+    new THREE.Vector3(0.55, 0.9, -0.08),
+  ];
   for (let i = 0; i < wispCount; i++) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0.15, 0, 0.25, 0.55, 0.1, 0.55, 0.9, -0.08], 3));
-    const mat = lineMat(i % 2 === 0 ? pal.trail : pal.core, 0.44);
-    const line = new THREE.Line(geo, mat);
+    const tube = volumetricStream(wispPts, 0.05, i % 2 === 0 ? pal.trail : pal.core, 0.44, 10, 4);
     const a = rnd(seed, i) * Math.PI * 2;
-    line.rotation.y = a;
-    wisps.push({ line, mat, vx: Math.cos(a) * (1.8 + rnd(seed, i + 10) * 2.8), vz: Math.sin(a) * (1.8 + rnd(seed, i + 20) * 2.8), vy: 1.2 + rnd(seed, i + 30) * 1.9 });
-    group.add(line);
+    tube.rotation.y = a;
+    wisps.push({
+      mesh: tube,
+      mat: tube.material as THREE.MeshBasicMaterial,
+      vx: Math.cos(a) * (1.8 + rnd(seed, i + 10) * 2.8),
+      vz: Math.sin(a) * (1.8 + rnd(seed, i + 20) * 2.8),
+      vy: 1.2 + rnd(seed, i + 30) * 1.9,
+    });
+    group.add(tube);
   }
 
   spawn(host, group, life, (t, dt) => {
@@ -1704,10 +1680,10 @@ function spawnElementalAirBurst(
       r.mat.opacity = 0.36 * Math.sin(Math.min(1, q) * Math.PI) * (1 - p * 0.45);
     }
     for (const w of wisps) {
-      w.line.position.x += w.vx * dt;
-      w.line.position.z += w.vz * dt;
-      w.line.position.y += w.vy * dt;
-      w.line.rotation.y += dt * 5.5;
+      w.mesh.position.x += w.vx * dt;
+      w.mesh.position.z += w.vz * dt;
+      w.mesh.position.y += w.vy * dt;
+      w.mesh.rotation.y += dt * 5.5;
       w.mat.opacity = 0.44 * (1 - p);
     }
   });
@@ -1729,14 +1705,17 @@ function spawnElementalArcaneRift(
   const iris = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.2, 42), fxMat(pal.hot, 0.22));
   iris.rotation.x = -Math.PI / 2;
   group.add(iris);
-  const spokes: THREE.Line[] = [];
+  const spokeMats: THREE.MeshBasicMaterial[] = [];
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0.2, 0, Math.cos(a) * radius * 0.72, 1.2, Math.sin(a) * radius * 0.72], 3));
-    const line = new THREE.Line(geo, lineMat(i % 2 ? pal.core : pal.trail, 0.48));
-    spokes.push(line);
-    group.add(line);
+    const pts = [
+      new THREE.Vector3(0, 0.2, 0),
+      new THREE.Vector3(Math.cos(a) * radius * 0.36, 0.82, Math.sin(a) * radius * 0.36),
+      new THREE.Vector3(Math.cos(a) * radius * 0.72, 1.2, Math.sin(a) * radius * 0.72),
+    ];
+    const tube = volumetricStream(pts, 0.06, i % 2 ? pal.core : pal.trail, 0.48, 12, 5);
+    spokeMats.push(tube.material as THREE.MeshBasicMaterial);
+    group.add(tube);
   }
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
@@ -1745,7 +1724,7 @@ function spawnElementalArcaneRift(
     (portal.material as THREE.MeshBasicMaterial).opacity = 0.82 * (1 - p);
     iris.scale.setScalar(0.75 + Math.sin(p * Math.PI) * 1.6);
     (iris.material as THREE.MeshBasicMaterial).opacity = 0.22 * (1 - p);
-    for (const s of spokes) (s.material as THREE.LineBasicMaterial).opacity = 0.48 * (1 - p);
+    for (const sm of spokeMats) sm.opacity = 0.48 * (1 - p);
   });
 }
 
@@ -1763,25 +1742,26 @@ function spawnElementalReclaimBloom(
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.7, 54), fxMat(pal.hot, 0.68));
   ring.rotation.x = -Math.PI / 2;
   group.add(ring);
-  const vines: { line: THREE.Line; mat: THREE.LineBasicMaterial; a: number; len: number }[] = [];
+  const vines: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; a: number; len: number }[] = [];
   for (let v = 0; v < 10; v++) {
     const a = rnd(seed, v) * Math.PI * 2;
     const len = radius * (0.35 + rnd(seed, v + 10) * 0.48);
-    const pts = [0, 0.1, 0, Math.cos(a + 0.35) * len * 0.45, 0.22, Math.sin(a + 0.35) * len * 0.45, Math.cos(a) * len, 0.16, Math.sin(a) * len];
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    const mat = lineMat(v % 2 ? pal.hot : pal.trail, 0.58);
-    const line = new THREE.Line(geo, mat);
-    vines.push({ line, mat, a, len });
-    group.add(line);
+    const pts = [
+      new THREE.Vector3(0, 0.1, 0),
+      new THREE.Vector3(Math.cos(a + 0.35) * len * 0.45, 0.22, Math.sin(a + 0.35) * len * 0.45),
+      new THREE.Vector3(Math.cos(a) * len, 0.16, Math.sin(a) * len),
+    ];
+    const tube = volumetricStream(pts, 0.06, v % 2 ? pal.hot : pal.trail, 0.58, 14, 5);
+    vines.push({ mesh: tube, mat: tube.material as THREE.MeshBasicMaterial, a, len });
+    group.add(tube);
   }
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
     ring.scale.setScalar(1 + p * radius * 0.34);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.68 * (1 - p);
     for (const v of vines) {
-      v.line.scale.setScalar(Math.sin(Math.min(1, p * 1.4) * Math.PI * 0.5));
-      v.line.position.y = Math.sin(t * 5 + v.a) * 0.08;
+      v.mesh.scale.setScalar(Math.sin(Math.min(1, p * 1.4) * Math.PI * 0.5));
+      v.mesh.position.y = Math.sin(t * 5 + v.a) * 0.08;
       v.mat.opacity = 0.58 * (1 - p);
     }
   });
@@ -1848,7 +1828,8 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
     const z = reach * t * 0.94 + 0.38;
     const outer = 0.48 + t * 1.62 + (m.wide ? 0.62 : 0.38) + rnd(seed, i + 11) * 0.2;
     const inner = outer * 0.74;
-    const geo = new THREE.RingGeometry(inner, outer, 40);
+    // Volumetric torus shockwave (real cross-section) instead of a flat ring plane.
+    const geo = new THREE.TorusGeometry((inner + outer) * 0.5, (outer - inner) * 0.5, 6, 32);
     const mat = new THREE.MeshBasicMaterial({
       color: i % 2 === 0 ? pal.core : pal.glow,
       side: THREE.DoubleSide,
