@@ -21,7 +21,7 @@ function collectFromDecor(decor: MapDecorDef[] | undefined): { discs: DiscObs[];
     const th = ((((d as { rotYDeg?: number }).rotYDeg ?? 0) * Math.PI) / 180) as number;
     const c = Math.cos(th);
     const s = Math.sin(th);
-    if (d.kind === "box") {
+    if (d.kind === "box" || d.kind === "building") {
       boxes.push({ cx: d.x, cz: d.z, hx: d.w * 0.5, hz: d.d * 0.5, c, s });
     } else if (d.kind === "cylinder") {
       discs.push({ cx: d.x, cz: d.z, r: d.radius });

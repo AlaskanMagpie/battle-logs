@@ -139,6 +139,7 @@ export function buildSkylineBackdrop(params: SkylineParams = {}): THREE.Group {
           seed: bseed,
           litEmissive: 0.4,
           emissiveScale: 0.5,
+          detail: "low",
         },
         mulberry32(bseed),
       );

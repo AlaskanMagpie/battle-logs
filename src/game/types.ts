@@ -105,6 +105,27 @@ export type MapDecorDef =
       tube: number;
       rotYDeg?: number;
       color?: number;
+    } & MapDecorBlock)
+  | ({
+      kind: "building";
+      x: number;
+      z: number;
+      /** Footprint width (X) and depth (Z) in world units; also the collision OBB extents. */
+      w: number;
+      d: number;
+      rotYDeg?: number;
+      /** Floor count; defaults derived from `seed`. Height = storeys * floor height. */
+      storeys?: number;
+      /** `render/buildgen` StyleKey; defaults derived from `seed` (curated subset). */
+      style?: string;
+      /** `render/buildgen` FootKey; defaults to "rect". */
+      foot?: string;
+      /** Deterministic variant seed; defaults hashed from x,z. */
+      seed?: number;
+      /** Optional team tint ("enemy" → subtle red). */
+      team?: "player" | "enemy";
+      /** Unused for buildings (palette comes from `style`); present for union uniformity. */
+      color?: number;
     } & MapDecorBlock);
 
 /** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */

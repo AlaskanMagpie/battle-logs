@@ -22,6 +22,7 @@ export function deepMerge(base: unknown, over: unknown): unknown {
 /** Pre-match map picker entries (site-root URLs). */
 export const MAP_REGISTRY: readonly { id: string; label: string; url: string }[] = [
   { id: "the_line", label: "The Line", url: "/map.json" },
+  { id: "skyline_siege", label: "Skyline Siege", url: "/maps/skyline_siege.json" },
   { id: "forgewarden", label: "Forgewarden Crucible", url: "/maps/forgewarden.json" },
   { id: "glacierline", label: "Glacierline Expanse", url: "/maps/glacierline.json" },
   { id: "mesa_badlands", label: "Mesa Badlands", url: "/maps/mesa_badlands.json" },

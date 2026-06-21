@@ -59,6 +59,29 @@ describe("mapObstacles", () => {
     }
   });
 
+  it("treats a blocking building as an oriented-box obstacle", () => {
+    const m3: MapData = {
+      ...map,
+      decor: [{ kind: "building", x: 0, z: 0, w: 24, d: 12, storeys: 6, style: "brutalist", blocksMovement: true }],
+    };
+    // Inside the building footprint → overlaps.
+    expect(circleOverlapsMapObstacles(m3, { x: 4, z: 2 }, 1)).toBe(true);
+    // Clear of it → no overlap.
+    expect(circleOverlapsMapObstacles(m3, { x: 40, z: 0 }, 1)).toBe(false);
+    // A unit caught inside is pushed back out of the footprint.
+    const p = { x: 4, z: 2 };
+    resolveCircleAgainstMapObstacles(m3, p, 1);
+    expect(circleOverlapsMapObstacles(m3, p, 1)).toBe(false);
+  });
+
+  it("a non-blocking building does not obstruct movement", () => {
+    const m4: MapData = {
+      ...map,
+      decor: [{ kind: "building", x: 0, z: 0, w: 24, d: 12 }],
+    };
+    expect(circleOverlapsMapObstacles(m4, { x: 0, z: 0 }, 1)).toBe(false);
+  });
+
   it("accepts dynamic footprints for live structure blockers", () => {
     const emptyMap = { ...map, decor: [] };
     const extra = [{ kind: "disc" as const, cx: 0, cz: 0, r: 5 }];

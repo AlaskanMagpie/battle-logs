@@ -50,12 +50,21 @@ import {
 } from "./fx";
 import {
   glbBoxExtentRef,
+  hashStringToSeed,
   requestGlbForHero,
   requestGlbForTower,
   requestGlbForUnit,
   type GlbExtentBasis,
 } from "./glbPool";
-import { buildProceduralBuilding, buildSkylineBackdrop, resolveStructureBuild } from "./buildgen";
+import {
+  buildProceduralBuilding,
+  buildSkylineBackdrop,
+  resolveStructureBuild,
+  CURATED_STYLE_KEYS,
+  STYLES,
+  type FootKey,
+  type StyleKey,
+} from "./buildgen";
 import {
   createManaNodeGroundBand,
   disposeManaNodeBand,
@@ -1139,6 +1148,8 @@ export class GameRenderer {
   private matchSkyboxPlacement = readMatchSkyboxPlacement();
   private rendererDisposed = false;
   private worldPlaneHalf = 0;
+  /** `world.halfExtents` the skyline backdrop was last built for (-1 = none). */
+  private skylineBuiltHalf = -1;
   private terrainSlab: THREE.Group | null = null;
   /** Imported terrain (GLB); raycast targets for `pickGround` when present. */
   private terrainRoot: THREE.Group | null = null;
@@ -1296,18 +1307,8 @@ export class GameRenderer {
 
     if (MATCH_SKYBOX_ENABLED && controlProfile.mode !== "mobile") void this._loadMatchSkybox();
 
-    // Static procedural city ring around the arena for backdrop depth (desktop
-    // only; purely cosmetic, outside the 240×240 play area).
-    if (controlProfile.mode !== "mobile") {
-      try {
-        const skyline = buildSkylineBackdrop({ seed: 0x5c1ea1, innerRadius: 175, rings: 2, perRing: 26 });
-        skyline.position.y = -0.02;
-        this.scene.add(skyline);
-        this.skylineGroup = skyline;
-      } catch (e) {
-        console.warn("[buildgen] skyline backdrop failed", e);
-      }
-    }
+    // Skyline backdrop is built lazily in syncSkyline() once the map's
+    // world bounds are known, so the ring hugs the actual map edge.
 
     this.fx = createFxHost(this.scene);
 
@@ -1904,6 +1905,7 @@ export class GameRenderer {
     }
     this.applyMapVisual(state);
     this.syncMapDecor(state);
+    this.syncSkyline(state);
     this.syncTerritory(state);
     this.syncMarkers(state);
     this.syncKeepMarker(state);
@@ -3329,6 +3331,33 @@ export class GameRenderer {
     this.groundVisualKey = "";
   }
 
+  /**
+   * Cosmetic procedural city ring that hugs the loaded map's edge (just outside
+   * `world.halfExtents`). Desktop-only; rebuilt when the map's bounds change.
+   * The group is tracked in `this.skylineGroup` and freed in `dispose()`.
+   */
+  private syncSkyline(state: GameState): void {
+    if (this.controlProfile.mode === "mobile") return;
+    const half = state.map.world.halfExtents;
+    if (this.skylineGroup && this.skylineBuiltHalf === half) return;
+    if (this.skylineGroup) {
+      this.scene.remove(this.skylineGroup);
+      this.disposeObject(this.skylineGroup);
+      this.skylineGroup = null;
+    }
+    this.skylineBuiltHalf = half;
+    try {
+      const innerRadius = half + 24;
+      const perRing = Math.max(24, Math.min(48, Math.round((Math.PI * 2 * innerRadius) / 46)));
+      const skyline = buildSkylineBackdrop({ seed: 0x5c1ea1, innerRadius, rings: 2, perRing });
+      skyline.position.y = -0.02;
+      this.scene.add(skyline);
+      this.skylineGroup = skyline;
+    } catch (e) {
+      console.warn("[buildgen] skyline backdrop failed", e);
+    }
+  }
+
   /** Keep any old terrain slab cleared; world bounds clamp play without a duplicate visual wall. */
   private syncTerrainSlab(_state: GameState): void {
     if (this.terrainSlab) {
@@ -3681,6 +3710,31 @@ export class GameRenderer {
         const core = new THREE.Mesh(new THREE.CylinderGeometry(d.radius * 0.36, d.radius * 0.42, d.tube * 0.75, 18), shadowMat);
         core.position.y = -d.tube * 0.12;
         mesh.add(core);
+      } else if (d.kind === "building") {
+        const seed = d.seed ?? hashStringToSeed(`${Math.round(d.x)}_${Math.round(d.z)}`);
+        const style: StyleKey =
+          d.style && d.style in STYLES
+            ? (d.style as StyleKey)
+            : CURATED_STYLE_KEYS[seed % CURATED_STYLE_KEYS.length]!;
+        const footOk = ["rect", "L", "U", "T", "plus", "round", "hex", "octagon"];
+        const foot: FootKey = d.foot && footOk.includes(d.foot) ? (d.foot as FootKey) : "rect";
+        const storeys = d.storeys ?? Math.max(3, Math.min(12, 4 + (seed % 7)));
+        mesh = buildProceduralBuilding({
+          style,
+          foot,
+          storeys,
+          width: d.w,
+          depth: d.d,
+          fh: 5,
+          roof: "auto",
+          seed,
+          litEmissive: 0.5,
+          emissiveScale: 0.6,
+          detail: this.controlProfile.mode === "mobile" ? "low" : "high",
+          team: d.team,
+        });
+        mesh.position.set(d.x, 0, d.z);
+        mesh.rotation.y = ((d.rotYDeg ?? 0) * Math.PI) / 180;
       }
       if (!mesh) continue;
       mesh.traverse((obj) => {
