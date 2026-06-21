@@ -594,12 +594,9 @@ function spawnElementalBolt(
   const segs = Math.max(7, Math.min(24, Math.round(dist * 0.7)));
   const jitter = Math.max(0.32, Math.min(2.2, dist * 0.075));
 
-  const primaryGeo = new THREE.BufferGeometry();
+  let mainPts: THREE.Vector3[];
   if (from) {
-    primaryGeo.setAttribute(
-      "position",
-      new THREE.BufferAttribute(heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, segs, jitter, seed), 3),
-    );
+    mainPts = boltPointsToVectors(heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, segs, jitter, seed));
   } else {
     const pts: number[] = [];
     const skyY = Math.max(18, opts?.impactRadius ? opts.impactRadius * 1.6 : 22);
@@ -607,30 +604,25 @@ function spawnElementalBolt(
       const t = i / segs;
       const fall = 1 - t;
       const amp = Math.sin(t * Math.PI) * jitter;
-      pts.push(
-        pos.x + (rnd(seed, i) - 0.5) * amp,
-        0.25 + skyY * fall,
-        pos.z + (rnd(seed, i + 29) - 0.5) * amp,
-      );
+      pts.push(pos.x + (rnd(seed, i) - 0.5) * amp, 0.25 + skyY * fall, pos.z + (rnd(seed, i + 29) - 0.5) * amp);
     }
-    primaryGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    mainPts = boltPointsToVectors(pts);
   }
+  const tub = Math.max(28, segs * 3);
+  const shell = volumetricStream(mainPts, 0.22, pal.rim, 0, tub, 7);
+  const core = volumetricStream(mainPts, 0.09, pal.core, 0, tub, 6);
+  root.add(shell);
+  root.add(core);
+  const shellMat = shell.material as THREE.MeshBasicMaterial;
+  const coreMat = core.material as THREE.MeshBasicMaterial;
 
-  const primaryMat = lineMat(pal.core, 0.96);
-  const primary = new THREE.Line(primaryGeo, primaryMat);
-  root.add(primary);
-
-  const forks: THREE.Line[] = [];
+  const forkMats: THREE.MeshBasicMaterial[] = [];
   const forkCount = from ? 2 : 3;
   for (let k = 0; k < forkCount; k++) {
-    const forkGeo = new THREE.BufferGeometry();
+    let fpts: THREE.Vector3[];
     if (from) {
-      forkGeo.setAttribute(
-        "position",
-        new THREE.BufferAttribute(
-          heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, Math.max(5, segs - 2), jitter * 0.72, seed + 11 + k),
-          3,
-        ),
+      fpts = boltPointsToVectors(
+        heroStrikeBoltPoints(from.x, from.z, pos.x, pos.z, Math.max(5, segs - 2), jitter * 0.72, seed + 11 + k),
       );
     } else {
       const pts: number[] = [];
@@ -644,38 +636,43 @@ function spawnElementalBolt(
           pos.z + Math.sin(ang) * len * t + (rnd(seed, i + k * 19) - 0.5) * 0.35,
         );
       }
-      forkGeo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+      fpts = boltPointsToVectors(pts);
     }
-    const fork = new THREE.Line(forkGeo, lineMat(k % 2 === 0 ? pal.hot : pal.trail, 0.6));
-    forks.push(fork);
+    const fork = volumetricStream(fpts, 0.05, k % 2 === 0 ? pal.hot : pal.trail, 0, tub, 5);
     root.add(fork);
+    forkMats.push(fork.material as THREE.MeshBasicMaterial);
   }
 
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.78, 34), fxMat(pal.rim, 0.78));
-  ring.rotation.x = -Math.PI / 2;
+  const ring = volumetricShockRing(0.3, 0.08, pal.rim, 0.78);
   ring.position.set(pos.x, 0.1, pos.z);
   root.add(ring);
+  const bloom = glowSprite(pal.core, 1.5, 0);
+  bloom.position.set(pos.x, 0.5, pos.z);
+  root.add(bloom);
 
-  const flash = new THREE.Mesh(new THREE.CircleGeometry(1.35, 28), fxMat(pal.core, 0.58));
-  flash.rotation.x = -Math.PI / 2;
-  flash.position.set(pos.x, 0.11, pos.z);
-  root.add(flash);
+  const burst = makeVolCloud(7, pal.trail, 0.42, 0);
+  burst.points.position.set(pos.x, 0, pos.z);
+  for (let i = 0; i < 7; i++) {
+    const ang = rnd(seed, i + 60) * Math.PI * 2;
+    const sp = 1.8 + rnd(seed, i + 70) * 2.6;
+    setCloudParticle(burst, i, 0, 0.4, 0, Math.cos(ang) * sp, 1.4 + rnd(seed, i + 80) * 2.4, Math.sin(ang) * sp);
+  }
+  root.add(burst.points);
 
-  spawn(host, root, life, (t) => {
-    const p = Math.min(1, t / life);
+  spawn(host, root, life, (t, dt) => {
+    const p = t >= life ? 1 : t / life;
     const snap = t < 0.16 ? 1 : Math.max(0, 1 - (t - 0.16) / (life - 0.16));
     const flicker = 0.62 + 0.38 * Math.abs(Math.sin(t * 110));
-    primaryMat.opacity = 0.96 * snap * flicker;
-    primary.visible = primaryMat.opacity > 0.03;
-    for (const fork of forks) {
-      const m = fork.material as THREE.LineBasicMaterial;
-      m.opacity = 0.6 * snap * flicker;
-      fork.visible = m.opacity > 0.03;
-    }
+    coreMat.opacity = 0.95 * snap * flicker;
+    shellMat.opacity = 0.4 * snap * flicker;
+    for (const fm of forkMats) fm.opacity = 0.5 * snap * flicker;
     ring.scale.setScalar(1 + p * 4.3);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.78 * (1 - p);
-    flash.scale.setScalar(1 + p * 0.85);
-    (flash.material as THREE.MeshBasicMaterial).opacity = t < 0.12 ? 0.58 * (1 - t / 0.12) : 0;
+    const a = Math.sin(Math.min(1, p * 2.2) * Math.PI);
+    (bloom.material as THREE.SpriteMaterial).opacity = 0.75 * a;
+    bloom.scale.setScalar(1.5 + p * 1.3);
+    advectCloud(burst, dt, 6, 1.2);
+    burst.mat.opacity = 0.7 * (1 - p);
   });
 }
 
@@ -693,7 +690,7 @@ function spawnElementalChainLightning(
   const start = from ?? { x: pos.x + (rnd(seed, 1) - 0.5) * radius, z: pos.z + (rnd(seed, 2) - 0.5) * radius };
   const mainDist = Math.hypot(pos.x - start.x, pos.z - start.z);
   const mainSegs = Math.max(8, Math.min(22, Math.round(mainDist * 0.85)));
-  const bolts: THREE.Line[] = [];
+  const bolts: { mat: THREE.MeshBasicMaterial; base: number }[] = [];
   const makeBolt = (
     ax: number,
     az: number,
@@ -701,24 +698,28 @@ function spawnElementalChainLightning(
     bz: number,
     color: number,
     opacity: number,
+    radiusTube: number,
     jitterMul: number,
     idx: number,
   ): void => {
     const d = Math.hypot(bx - ax, bz - az);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      "position",
-      new THREE.BufferAttribute(
-        heroStrikeBoltPoints(ax, az, bx, bz, Math.max(5, Math.min(18, Math.round(d * 0.75))), Math.max(0.35, d * 0.08 * jitterMul), seed + idx * 19),
-        3,
+    const pts = boltPointsToVectors(
+      heroStrikeBoltPoints(
+        ax,
+        az,
+        bx,
+        bz,
+        Math.max(5, Math.min(18, Math.round(d * 0.75))),
+        Math.max(0.35, d * 0.08 * jitterMul),
+        seed + idx * 19,
       ),
     );
-    const line = new THREE.Line(geo, lineMat(color, opacity));
-    bolts.push(line);
-    root.add(line);
+    const tube = volumetricStream(pts, radiusTube, color, 0, Math.max(24, Math.round(d * 2)), 6);
+    bolts.push({ mat: tube.material as THREE.MeshBasicMaterial, base: opacity });
+    root.add(tube);
   };
-  makeBolt(start.x, start.z, pos.x, pos.z, pal.core, 0.98, 1.05, 0);
-  makeBolt(start.x, start.z, pos.x, pos.z, pal.rim, 0.45, 1.55, 1);
+  makeBolt(start.x, start.z, pos.x, pos.z, pal.core, 0.98, 0.1, 1.05, 0);
+  makeBolt(start.x, start.z, pos.x, pos.z, pal.rim, 0.45, 0.22, 1.55, 1);
 
   const branchCount = 4;
   for (let i = 0; i < branchCount; i++) {
@@ -727,31 +728,37 @@ function spawnElementalChainLightning(
     const bz = start.z + (pos.z - start.z) * t;
     const a = rnd(seed, i + 30) * Math.PI * 2;
     const len = radius * (0.25 + rnd(seed, i + 40) * 0.32);
-    makeBolt(bx, bz, bx + Math.cos(a) * len, bz + Math.sin(a) * len, i % 2 === 0 ? pal.hot : pal.trail, 0.46, 1.2, i + 3);
+    makeBolt(bx, bz, bx + Math.cos(a) * len, bz + Math.sin(a) * len, i % 2 === 0 ? pal.hot : pal.trail, 0.46, 0.06, 1.2, i + 3);
   }
 
-  const impact = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.82, 46), fxMat(pal.core, 0.88));
-  impact.rotation.x = -Math.PI / 2;
+  const impact = volumetricShockRing(0.3, 0.1, pal.core, 0.88);
   impact.position.set(pos.x, 0.12, pos.z);
   root.add(impact);
-  const corona = new THREE.Mesh(new THREE.CircleGeometry(1.1, 34), fxMat(pal.hot, 0.42));
-  corona.rotation.x = -Math.PI / 2;
-  corona.position.set(pos.x, 0.1, pos.z);
+  const corona = glowSprite(pal.hot, 1.6, 0);
+  corona.position.set(pos.x, 0.55, pos.z);
   root.add(corona);
 
-  spawn(host, root, life, (t) => {
-    const p = Math.min(1, t / life);
+  const sparks = makeVolCloud(8, pal.trail, 0.4, 0);
+  sparks.points.position.set(pos.x, 0, pos.z);
+  for (let i = 0; i < 8; i++) {
+    const a = rnd(seed, i + 50) * Math.PI * 2;
+    const sp = 2 + rnd(seed, i + 55) * 3;
+    setCloudParticle(sparks, i, 0, 0.4, 0, Math.cos(a) * sp, 1.6 + rnd(seed, i + 65) * 2.8, Math.sin(a) * sp);
+  }
+  root.add(sparks.points);
+
+  spawn(host, root, life, (t, dt) => {
+    const p = t >= life ? 1 : t / life;
     const snap = t < 0.21 ? 1 : Math.max(0, 1 - (t - 0.21) / (life - 0.21));
     const flicker = 0.54 + 0.46 * Math.abs(Math.sin(t * 137 + mainSegs));
-    for (let i = 0; i < bolts.length; i++) {
-      const m = bolts[i]!.material as THREE.LineBasicMaterial;
-      m.opacity = (i < 2 ? 0.98 : 0.46) * snap * flicker;
-      bolts[i]!.visible = m.opacity > 0.025;
-    }
+    for (const b of bolts) b.mat.opacity = b.base * snap * flicker;
     impact.scale.setScalar(1 + p * radius * 0.28);
     (impact.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
-    corona.scale.setScalar(1 + p * radius * 0.16);
-    (corona.material as THREE.MeshBasicMaterial).opacity = 0.42 * (1 - p);
+    const a = Math.sin(Math.min(1, p * 2) * Math.PI);
+    (corona.material as THREE.SpriteMaterial).opacity = 0.55 * a;
+    corona.scale.setScalar(1.6 + p * radius * 0.18);
+    advectCloud(sparks, dt, 6, 1);
+    sparks.mat.opacity = 0.7 * (1 - p);
   });
 }
 
@@ -2306,7 +2313,14 @@ function heroStrikeElementalPalette(v: HeroStrikeFxVariant | undefined, visualSe
   }
 }
 
-/** Short radial burst + **elemental cone** along the strike line + optional ion bolt. */
+/** Convert a flat `[x,y,z,...]` bolt path into Vector3 control points for a tube. */
+function boltPointsToVectors(arr: ArrayLike<number>): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
+  for (let i = 0; i + 2 < arr.length; i += 3) out.push(new THREE.Vector3(arr[i]!, arr[i + 1]!, arr[i + 2]!));
+  return out;
+}
+
+/** Volumetric hero strike: an arcing energy bolt with a glow shell, a fork, and a torus impact bloom. */
 function spawnHeroStrike(
   host: FxHost,
   pos: { x: number; z: number },
@@ -2314,31 +2328,44 @@ function spawnHeroStrike(
   strikeVariant?: HeroStrikeFxVariant,
   visualSeed?: number,
 ): void {
-  const life = 0.42;
+  const life = 0.46;
   const pal = heroStrikeElementalPalette(strikeVariant, visualSeed);
   const root = new THREE.Group();
-  const ringWrap = new THREE.Group();
-  ringWrap.position.set(pos.x, 0.15, pos.z);
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.35, 1.35, 36),
-    new THREE.MeshBasicMaterial({
-      color: pal.core,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.88,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ringWrap.add(ring);
-  root.add(ringWrap);
+  const anim: CombatStrikeStep[] = [];
 
-  let coneGroup: THREE.Group | null = null;
-  let outerCone: THREE.Mesh | null = null;
-  let innerCone: THREE.Mesh | null = null;
-  let boltMat: THREE.LineBasicMaterial | null = null;
-  let forkMat: THREE.LineBasicMaterial | null = null;
+  // Impact shockwave — a real torus ring with cross-section, not a flat ring plane.
+  const ring = volumetricShockRing(0.35, 0.13, pal.core, 0.9);
+  ring.position.set(pos.x, 0.14, pos.z);
+  root.add(ring);
+  anim.push((p) => {
+    ring.scale.setScalar(1 + p * 3);
+    (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
+  });
+
+  // Impact bloom — soft volumetric flash at the target.
+  const flash = glowSprite(pal.rim, 1.4, 0);
+  flash.position.set(pos.x, 0.6, pos.z);
+  root.add(flash);
+  anim.push((p) => {
+    const a = Math.sin(Math.min(1, p * 2) * Math.PI);
+    (flash.material as THREE.SpriteMaterial).opacity = 0.95 * a;
+    flash.scale.setScalar(1.4 + p * 1.7);
+  });
+
+  // Impact burst — outward/upward particle body.
+  const seed = visualSeed ?? pos.x * 0.41 + pos.z * 0.17;
+  const burst = makeVolCloud(9, pal.bolt, 0.55, 0);
+  burst.points.position.set(pos.x, 0, pos.z);
+  for (let i = 0; i < 9; i++) {
+    const ang = rnd(seed, i + 3) * Math.PI * 2;
+    const sp = 2 + rnd(seed, i + 13) * 3;
+    setCloudParticle(burst, i, 0, 0.5, 0, Math.cos(ang) * sp, 1.4 + rnd(seed, i + 23) * 2.6, Math.sin(ang) * sp);
+  }
+  root.add(burst.points);
+  anim.push((p, _t, dt) => {
+    advectCloud(burst, dt, 6, 1.1);
+    burst.mat.opacity = 0.85 * (1 - p);
+  });
 
   if (from) {
     const ax = from.x;
@@ -2346,75 +2373,41 @@ function spawnHeroStrike(
     const dx = pos.x - ax;
     const dz = pos.z - az;
     const dist = Math.hypot(dx, dz);
-    const halfAngle = Math.PI * 0.11;
-    const reach = Math.max(0.6, dist * 1.02);
-    coneGroup = new THREE.Group();
-    coneGroup.position.set(ax, 0.1, az);
-    coneGroup.rotation.y = Math.atan2(dx, dz);
-    const gOut = createGroundConeGeometry(halfAngle * 1.25, reach, 0.11, 20);
-    outerCone = new THREE.Mesh(
-      gOut,
-      new THREE.MeshBasicMaterial({
-        color: pal.cone,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.28,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    const gIn = createGroundConeGeometry(halfAngle * 0.72, reach * 0.92, 0.13, 18);
-    innerCone = new THREE.Mesh(
-      gIn,
-      new THREE.MeshBasicMaterial({
-        color: pal.rim,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.42,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    coneGroup.add(outerCone);
-    coneGroup.add(innerCone);
-    root.add(coneGroup);
-
     const segs = Math.max(6, Math.min(16, Math.round(dist * 1.25)));
     const jitter = Math.min(1.6, 0.28 + dist * 0.09);
-    const seed = (ax + pos.z) * 0.413 + dist * 0.17;
-    const positions = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter, seed);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    boltMat = new THREE.LineBasicMaterial({
-      color: pal.bolt,
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+    const boltSeed = (ax + pos.z) * 0.413 + dist * 0.17;
+    const tubular = Math.max(28, segs * 3);
+
+    // Soft outer glow shell around the bolt.
+    const shellPts = boltPointsToVectors(heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter, boltSeed));
+    const shell = volumetricStream(shellPts, 0.28, pal.cone, 0, tubular, 8);
+    root.add(shell);
+    const shellMat = shell.material as THREE.MeshBasicMaterial;
+    anim.push((p) => {
+      shellMat.opacity = 0.34 * (1 - p);
     });
-    root.add(new THREE.Line(geo, boltMat));
-    const forkGeo = new THREE.BufferGeometry();
-    const forkPos = heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.82, seed + 19.1);
-    forkGeo.setAttribute("position", new THREE.BufferAttribute(forkPos, 3));
-    forkMat = new THREE.LineBasicMaterial({
-      color: pal.fork,
-      transparent: true,
-      opacity: 0.58,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+
+    // Bright volumetric bolt core.
+    const bolt = volumetricStream(shellPts, 0.1, pal.bolt, 0, tubular, 6);
+    root.add(bolt);
+    const boltMat = bolt.material as THREE.MeshBasicMaterial;
+    anim.push((p) => {
+      boltMat.opacity = 0.95 * (1 - p * 0.85);
     });
-    root.add(new THREE.Line(forkGeo, forkMat));
+
+    // Forked branch.
+    const forkPts = boltPointsToVectors(heroStrikeBoltPoints(ax, az, pos.x, pos.z, segs, jitter * 0.82, boltSeed + 19.1));
+    const fork = volumetricStream(forkPts, 0.06, pal.fork, 0, tubular, 5);
+    root.add(fork);
+    const forkMat = fork.material as THREE.MeshBasicMaterial;
+    anim.push((p) => {
+      forkMat.opacity = 0.6 * (1 - p);
+    });
   }
 
-  spawn(host, root, life, (t, _dt) => {
-    const p = Math.min(1, t / life);
-    ring.scale.setScalar(1 + p * 2.4);
-    (ring.material as THREE.MeshBasicMaterial).opacity = 0.88 * (1 - p);
-    if (coneGroup) coneGroup.scale.setScalar(1 + p * 0.25);
-    if (outerCone) (outerCone.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.9);
-    if (innerCone) (innerCone.material as THREE.MeshBasicMaterial).opacity = 0.42 * (1 - p * 0.85);
-    if (boltMat) boltMat.opacity = 0.95 * (1 - p);
-    if (forkMat) forkMat.opacity = 0.58 * (1 - p);
+  spawn(host, root, life, (t, dt) => {
+    const p = t >= life ? 1 : t / life;
+    for (let i = 0; i < anim.length; i++) anim[i]!(p, t, dt);
   });
 }
 
