@@ -1148,6 +1148,8 @@ export class GameRenderer {
   private readonly unitPrevAttackTick = new Map<number, number>();
   private readonly unitPrevPos = new Map<number, THREE.Vector2>();
   private readonly unitVisualPos = new Map<number, THREE.Vector2>();
+  /** Sim position captured when the unit's current attack clip began — used to detect mid-attack relocation. */
+  private readonly unitAttackAnchor = new Map<number, THREE.Vector2>();
   private readonly unitMotionVisuals = new Map<number, UnitMotionVisual>();
   /** Target chosen on the committed attack tick; cleared when recovery ends so units do not chase stale targets. */
   private readonly unitFaceTargets = new Map<number, Vec2>();
@@ -4383,6 +4385,7 @@ export class GameRenderer {
         this.unitPrevAttackTick.delete(id);
         this.unitPrevPos.delete(id);
         this.unitVisualPos.delete(id);
+        this.unitAttackAnchor.delete(id);
         this.unitMotionVisuals.delete(id);
         this.unitFaceTargets.delete(id);
         this.unitLodState.delete(id);
@@ -4421,6 +4424,11 @@ export class GameRenderer {
         else this.unitFaceTargets.delete(u.id);
       }
       if (isNewAttack && !mobileLodPlaceholder) this.playGlbAttackAnimation(g);
+      if (isNewAttack) {
+        const anchor = this.unitAttackAnchor.get(u.id);
+        if (anchor) anchor.set(u.x, u.z);
+        else this.unitAttackAnchor.set(u.id, new THREE.Vector2(u.x, u.z));
+      }
       if (attackTick !== undefined) this.unitPrevAttackTick.set(u.id, attackTick);
       const prevSim = this.unitPrevPos.get(u.id);
       const simFrameDist = prevSim ? Math.hypot(u.x - prevSim.x, u.z - prevSim.y) : 0;
@@ -4431,6 +4439,16 @@ export class GameRenderer {
       const simMoveDist = Math.hypot(simDx, simDz);
       const attackActive = isNewAttack || g.userData["glbAttackTimer"] !== undefined;
       const forceRunCatchup = simMoveDist > (attackActive ? 9.5 : 0.65);
+      // A genuine attack is stationary in the sim (units stop and only clamp once a target is in
+      // range — see ai.ts). So if the unit's net sim displacement since the swing began clears a
+      // small per-class distance, it is actually traveling: interrupt the punch/slash and run
+      // rather than slide across the ground mid-attack.
+      const attackAnchor = attackActive ? this.unitAttackAnchor.get(u.id) : undefined;
+      const attackRelocated =
+        attackActive &&
+        !isNewAttack &&
+        attackAnchor !== undefined &&
+        Math.hypot(u.x - attackAnchor.x, u.z - attackAnchor.y) > this.attackRelocateDist(u.sizeClass);
       const orderTargetDist =
         u.order && u.order.mode !== "stay" ? Math.hypot(u.order.x - u.x, u.order.z - u.z) : 0;
       const orderedToMove = orderTargetDist > (wasMoving ? 0.35 : 0.75);
@@ -4438,7 +4456,7 @@ export class GameRenderer {
       const runThreshold = wasMoving ? UNIT_VISUAL_RUN_STOP_EPS : UNIT_VISUAL_RUN_START_EPS;
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
-        (!attackActive || forceRunCatchup);
+        (!attackActive || forceRunCatchup || attackRelocated);
       if (shouldRun && attackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
@@ -5025,6 +5043,27 @@ export class GameRenderer {
       out.union(tmp);
     });
     return out;
+  }
+
+  /**
+   * Net sim displacement (world units) a unit may drift mid-attack before the swing is treated as
+   * relocation and crossfaded into a run. Tuned above oscillatory separation jitter (which random-
+   * walks and cancels out) but below the distance a directed mover covers, so units never slide
+   * across the ground while playing a punch/slash clip. Per-class: larger bodies tolerate more.
+   */
+  private attackRelocateDist(sizeClass: UnitSizeClass): number {
+    switch (sizeClass) {
+      case "Swarm":
+        return 1.1;
+      case "Line":
+        return 1.6;
+      case "Heavy":
+        return 2.0;
+      case "Titan":
+        return 2.6;
+      default:
+        return 1.6;
+    }
   }
 
   /** Crossfade window for run ↔ idle (sim-smoothed mesh vs. choppy pops). */
