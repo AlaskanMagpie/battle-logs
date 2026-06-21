@@ -342,22 +342,29 @@ function elementalSeed(pos: { x: number; z: number }, opts?: CastFxSpawnOpts): n
 // ---------------------------------------------------------------------------
 
 let _softPuffTex: THREE.Texture | null = null;
-/** Soft radial alpha sprite — the building block for volumetric particle puffs. */
+/**
+ * Soft radial alpha sprite — the building block for volumetric particle puffs.
+ * A bright, tight core fading through a long soft tail reads like glowing
+ * energy/embers under additive blending rather than a flat disc.
+ */
 function softPuffTexture(): THREE.Texture {
   if (_softPuffTex) return _softPuffTex;
   const c = document.createElement("canvas");
-  c.width = 64;
-  c.height = 64;
+  c.width = 128;
+  c.height = 128;
   const ctx = c.getContext("2d")!;
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.3, "rgba(255,255,255,0.7)");
-  g.addColorStop(0.7, "rgba(255,255,255,0.18)");
-  g.addColorStop(1, "rgba(255,255,255,0)");
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0.0, "rgba(255,255,255,1)");
+  g.addColorStop(0.18, "rgba(255,255,255,0.92)");
+  g.addColorStop(0.42, "rgba(255,255,255,0.45)");
+  g.addColorStop(0.72, "rgba(255,255,255,0.12)");
+  g.addColorStop(1.0, "rgba(255,255,255,0)");
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
+  ctx.fillRect(0, 0, 128, 128);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
   _softPuffTex = tex;
   return tex;
 }
@@ -373,18 +380,26 @@ interface VolCloud {
   geo: THREE.BufferGeometry;
   pos: Float32Array;
   vel: Float32Array;
+  /** Per-particle phase used for turbulence/swirl wobble. */
+  phase: Float32Array;
   count: number;
   baseOpacity: number;
   baseSize: number;
 }
 
-function makeVolCloud(count: number, color: number, size: number, opacity: number): VolCloud {
+/**
+ * Build a volumetric particle cloud (single draw call). When `accent` is given,
+ * particles are tinted in a hot→cool band (vertex colors) so the body has depth
+ * — a white-hot core fading to a cooler smoke edge — instead of one flat hue.
+ */
+function makeVolCloud(count: number, color: number, size: number, opacity: number, accent?: number): VolCloud {
   const pos = new Float32Array(count * 3);
   const vel = new Float32Array(count * 3);
+  const phase = new Float32Array(count);
+  for (let i = 0; i < count; i++) phase[i] = (i * 1.6180339887) % (Math.PI * 2);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-  const mat = new THREE.PointsMaterial({
-    color,
+  const matParams: THREE.PointsMaterialParameters = {
     size,
     map: softPuffTexture(),
     transparent: true,
@@ -392,12 +407,30 @@ function makeVolCloud(count: number, color: number, size: number, opacity: numbe
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     sizeAttenuation: true,
-  });
+  };
+  if (accent !== undefined) {
+    const colors = new Float32Array(count * 3);
+    const base = new THREE.Color(color);
+    const acc = new THREE.Color(accent);
+    const tmp = new THREE.Color();
+    for (let i = 0; i < count; i++) {
+      const t = (i % 3) / 2; // 3-tone banding: hot / mid / cool
+      tmp.copy(base).lerp(acc, t);
+      colors[i * 3] = tmp.r;
+      colors[i * 3 + 1] = tmp.g;
+      colors[i * 3 + 2] = tmp.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    matParams.vertexColors = true;
+  } else {
+    matParams.color = color;
+  }
+  const mat = new THREE.PointsMaterial(matParams);
   const points = new THREE.Points(geo, mat);
   // Local-space frustum culling on a tiny initial bound wrongly culls the cloud
   // as particles fly outward; FX are short-lived so skip culling entirely.
   points.frustumCulled = false;
-  return { points, mat, geo, pos, vel, count, baseOpacity: opacity, baseSize: size };
+  return { points, mat, geo, pos, vel, phase, count, baseOpacity: opacity, baseSize: size };
 }
 
 function setCloudParticle(
@@ -961,7 +994,7 @@ function spawnElementalCone(
   }
   // Cone-filling particle body that erupts forward and outward.
   const N = 14;
-  const cloud = makeVolCloud(N, pal.hot, 0.62, 0);
+  const cloud = makeVolCloud(N, pal.hot, 0.62, 0, pal.core);
   for (let i = 0; i < N; i++) {
     const ang = (rnd(seed, i) * 2 - 1) * halfAngle;
     const sp = reach * (1.4 + rnd(seed, i + 30) * 1.2);
@@ -1934,7 +1967,7 @@ function buildSwarmStrike(
       whip.scale.setScalar(1 + p * 0.18);
     });
   }
-  const spray = makeVolCloud(6, pal.glow, 0.5, 0);
+  const spray = makeVolCloud(6, pal.glow, 0.5, 0, pal.spark);
   for (let i = 0; i < 6; i++) {
     const ang = (rnd(seed, i + 11) - 0.5) * 0.9;
     const sp = 2 + rnd(seed, i + 21) * 2.6;
@@ -2004,7 +2037,7 @@ function buildLineStrike(
     (head.material as THREE.SpriteMaterial).opacity = tt < 1 ? 0.95 : 0;
     head.scale.setScalar(0.6 + tt * 0.25);
   });
-  const burst = makeVolCloud(7, pal.spark, 0.42, 0);
+  const burst = makeVolCloud(7, pal.spark, 0.42, 0, pal.core);
   for (let i = 0; i < 7; i++) {
     const ang = rnd(seed, i + 5) * Math.PI * 2;
     const sp = 1.6 + rnd(seed, i + 15) * 2.4;
@@ -2039,7 +2072,7 @@ function buildHeavyStrike(
 ): void {
   const cx = reach * 0.85;
   const domeN = wide ? 11 : 9;
-  const dome = makeVolCloud(domeN, pal.core, 0.8, 0);
+  const dome = makeVolCloud(domeN, pal.core, 0.8, 0, pal.glow);
   for (let i = 0; i < domeN; i++) {
     const ang = (i / domeN) * Math.PI * 2 + rnd(seed, i) * 0.5;
     const out = 1.4 + rnd(seed, i + 17) * 1.8;
@@ -2060,7 +2093,7 @@ function buildHeavyStrike(
     dome.mat.opacity = (p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85) * 0.85;
     dome.mat.size = dome.baseSize * (1 + p * 0.7);
   });
-  const debris = makeVolCloud(6, pal.rim, 0.3, 0);
+  const debris = makeVolCloud(6, pal.rim, 0.3, 0, pal.glow);
   for (let i = 0; i < 6; i++) {
     const ang = rnd(seed, i + 31) * Math.PI * 2;
     const out = 1 + rnd(seed, i + 41) * 2.4;
@@ -2101,7 +2134,7 @@ function buildTitanStrike(
 ): void {
   const cx = reach * 0.8;
   const N = 12;
-  const vortex = makeVolCloud(N, pal.core, 0.95, 0);
+  const vortex = makeVolCloud(N, pal.core, 0.95, 0, pal.glow);
   const ang = new Float32Array(N);
   const rad = new Float32Array(N);
   const baseY = new Float32Array(N);
@@ -2146,7 +2179,7 @@ function buildTitanStrike(
       (ring.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - a);
     });
   }
-  const debris = makeVolCloud(8, pal.rim, 0.34, 0);
+  const debris = makeVolCloud(8, pal.rim, 0.34, 0, pal.glow);
   for (let i = 0; i < 8; i++) {
     const a2 = rnd(seed, i + 61) * Math.PI * 2;
     const out = 1.4 + rnd(seed, i + 71) * 2.8;
@@ -2364,7 +2397,7 @@ function spawnHeroStrike(
 
   // Impact burst — outward/upward particle body.
   const seed = visualSeed ?? pos.x * 0.41 + pos.z * 0.17;
-  const burst = makeVolCloud(9, pal.bolt, 0.55, 0);
+  const burst = makeVolCloud(9, pal.bolt, 0.55, 0, pal.rim);
   burst.points.position.set(pos.x, 0, pos.z);
   for (let i = 0; i < 9; i++) {
     const ang = rnd(seed, i + 3) * Math.PI * 2;
