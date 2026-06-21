@@ -554,6 +554,32 @@ function addImpactStar(
   }
 }
 
+/**
+ * A vertical light shaft erupting upward from the impact — a soft billboard
+ * anchored at its base so it shoots up like vented energy / a god-ray, then
+ * fades. Sells the verticality of a heavy strike without a hard geometry beam.
+ */
+function addLightShaft(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  x: number,
+  baseY: number,
+  z: number,
+  color: number,
+  width: number,
+  height: number,
+): void {
+  const s = glowSprite(color, 1, 0);
+  s.center.set(0.5, 0); // anchor the bottom edge at `position` so it grows upward
+  s.position.set(x, baseY, z);
+  group.add(s);
+  anim.push((p) => {
+    const a = Math.sin(Math.min(1, p * 1.8) * Math.PI);
+    (s.material as THREE.SpriteMaterial).opacity = 0.55 * a;
+    s.scale.set(width * (1 - p * 0.3), height * (0.5 + p * 0.85), 1);
+  });
+}
+
 /** Self-contained impact starburst (for FX functions that don't keep an anim list). */
 function addImpactStarFx(
   host: FxHost,
@@ -2192,6 +2218,7 @@ function buildHeavyStrike(
     flash.scale.setScalar(1.1 + p * 1.4);
   });
   addImpactStar(group, anim, 0, 0.6, cx, pal.glow, 3, reach * 0.4 + 2.4);
+  addLightShaft(group, anim, 0, 0.1, cx, pal.glow, reach * 0.18 + 0.9, reach * 0.5 + 3);
 }
 
 /**
@@ -2242,6 +2269,7 @@ function buildTitanStrike(
     (orb.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - p);
   });
   addImpactStar(group, anim, 0, 0.8, cx, pal.glow, 4, reach * 0.55 + 3);
+  addLightShaft(group, anim, 0, 0.1, cx, pal.glow, reach * 0.22 + 1.2, reach * 0.75 + 5);
   for (let k = 0; k < 2; k++) {
     const ring = volumetricShockRing(0.3 + k * 0.2, 0.1, k === 0 ? pal.glow : pal.rim, 0);
     ring.position.set(0, 0.13, cx);
@@ -2469,6 +2497,7 @@ function spawnHeroStrike(
     flash.scale.setScalar(1.4 + p * 1.7);
   });
   addImpactStar(root, anim, pos.x, 0.6, pos.z, pal.rim, 4, 3.2);
+  addLightShaft(root, anim, pos.x, 0.1, pos.z, pal.core, 1.1, 4.2);
 
   // Impact burst — outward/upward particle body.
   const seed = visualSeed ?? pos.x * 0.41 + pos.z * 0.17;
