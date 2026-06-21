@@ -788,72 +788,50 @@ function spawnElementalLine(
   group.position.set((from.x + ex) * 0.5, 0.12, (from.z + ez) * 0.5);
   group.rotation.y = Math.atan2(ux, uz);
 
-  const core = new THREE.Mesh(
-    new THREE.BoxGeometry(focused ? Math.max(0.24, halfW * 0.58) : halfW * 2, focused ? 0.3 : 0.18, L),
-    fxMat(focused ? pal.core : pal.hot, focused ? 0.5 : 0.12),
-  );
+  // Volumetric beam — a tapered tube core inside a soft shell, running the
+  // length of the corridor in local Z, instead of flat boxes and rail lines.
+  const y = focused ? 0.5 : 0.32;
+  const beamPts = [
+    new THREE.Vector3(0, y, -L * 0.5),
+    new THREE.Vector3(0, y + (focused ? 0.07 : 0.03), 0),
+    new THREE.Vector3(0, y, L * 0.5),
+  ];
+  const coreR = focused ? 0.14 : Math.max(0.32, halfW * 0.5);
+  const shellR = focused ? 0.36 : Math.max(0.7, halfW);
+  const shell = volumetricStream(beamPts, shellR, focused ? pal.hot : pal.rim, 0, 22, 8);
+  const core = volumetricStream(beamPts, coreR, focused ? pal.core : pal.hot, 0, 22, 6);
+  group.add(shell);
   group.add(core);
-  const rim = new THREE.Mesh(
-    new THREE.BoxGeometry(halfW * (focused ? 1.7 : 2.25), 0.12, L + 0.4),
-    fxMat(focused ? pal.hot : pal.rim, focused ? 0.28 : 0.1),
-  );
-  rim.position.y = -0.01;
-  group.add(rim);
-
-  const rails: THREE.Line[] = [];
-  for (let side = -1; side <= 1; side += 2) {
-    const railGeo = new THREE.BufferGeometry();
-    const pts = new Float32Array([
-      side * halfW * 0.92,
-      0.42,
-      -L * 0.5,
-      side * halfW * 0.35,
-      0.58,
-      0,
-      side * halfW * 0.92,
-      0.42,
-      L * 0.5,
-    ]);
-    railGeo.setAttribute("position", new THREE.BufferAttribute(pts, 3));
-    const rail = new THREE.Line(railGeo, lineMat(side < 0 ? pal.trail : pal.hot, focused ? 0.66 : 0.36));
-    rails.push(rail);
-    group.add(rail);
-  }
+  const shellMat = shell.material as THREE.MeshBasicMaterial;
+  const coreMat = core.material as THREE.MeshBasicMaterial;
 
   const seed = elementalSeed(end, opts);
-  const motes: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
-  const moteCount = focused ? 5 : Math.min(18, Math.max(7, Math.round(L * 0.18)));
+  const moteCount = focused ? 6 : Math.min(22, Math.max(9, Math.round(L * 0.22)));
+  const motes = makeVolCloud(moteCount, pal.trail, focused ? 0.32 : 0.52, 0);
   for (let i = 0; i < moteCount; i++) {
-    const mat = fxMat(i % 2 === 0 ? pal.trail : pal.hot, 0.78);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(focused ? 0.08 : 0.12, 5, 4), mat);
     const z = -L * 0.45 + rnd(seed, i) * L * 0.9;
-    mesh.position.set((rnd(seed, i + 10) - 0.5) * width, 0.26 + rnd(seed, i + 20) * 0.4, z);
-    motes.push({
-      mesh,
-      mat,
-      vx: (rnd(seed, i + 30) - 0.5) * 1.2,
-      vy: 1.1 + rnd(seed, i + 40) * 1.8,
-      vz: (rnd(seed, i + 50) - 0.5) * 2.2,
-    });
-    group.add(mesh);
+    setCloudParticle(
+      motes,
+      i,
+      (rnd(seed, i + 10) - 0.5) * width,
+      y + rnd(seed, i + 20) * 0.4,
+      z,
+      (rnd(seed, i + 30) - 0.5) * 1.3,
+      1.1 + rnd(seed, i + 40) * 1.8,
+      (rnd(seed, i + 50) - 0.5) * 2.2,
+    );
   }
+  group.add(motes.points);
 
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const pulse = 1 + Math.sin(p * Math.PI) * (focused ? 0.08 : 0.12);
-    group.scale.set(pulse, 1, 1 + Math.sin(p * Math.PI) * 0.03);
-    (core.material as THREE.MeshBasicMaterial).opacity = (focused ? 0.5 : 0.12) * (1 - p);
-    (rim.material as THREE.MeshBasicMaterial).opacity = (focused ? 0.28 : 0.1) * (1 - p * 0.9);
-    for (const rail of rails) {
-      (rail.material as THREE.LineBasicMaterial).opacity = (focused ? 0.66 : 0.36) * (1 - p);
-    }
-    for (const m of motes) {
-      m.mesh.position.x += m.vx * dt;
-      m.mesh.position.y += m.vy * dt;
-      m.mesh.position.z += m.vz * dt;
-      m.vy -= 5.8 * dt;
-      m.mat.opacity = 0.78 * (1 - p);
-    }
+    const pulse = 1 + Math.sin(p * Math.PI) * (focused ? 0.1 : 0.16);
+    core.scale.set(pulse, pulse, 1);
+    shell.scale.set(pulse, pulse, 1);
+    coreMat.opacity = (focused ? 0.85 : 0.4) * (1 - p);
+    shellMat.opacity = (focused ? 0.4 : 0.22) * (1 - p * 0.9);
+    advectCloud(motes, dt, 5.8, 0.8);
+    motes.mat.opacity = (focused ? 0.8 : 0.7) * (1 - p);
   });
 }
 
@@ -997,25 +975,54 @@ function spawnElementalCone(
   group.position.set(from.x, 0.1, from.z);
   group.rotation.y = Math.atan2(dx, dz);
 
-  const outer = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.12, 22), fxMat(pal.rim, 0.07));
-  const inner = new THREE.Mesh(createGroundConeGeometry(halfAngle * 0.55, reach * 0.95, 0.14, 18), fxMat(pal.hot, 0.09));
-  group.add(outer, inner);
+  const seed = elementalSeed(pos, opts);
+  // Fanned volumetric jets sweeping across the cone — a firebender's spray, not a flat fan.
+  const jetMats: THREE.MeshBasicMaterial[] = [];
+  const jetCount = 3;
+  for (let j = 0; j < jetCount; j++) {
+    const side = jetCount > 1 ? (j - (jetCount - 1) / 2) / ((jetCount - 1) / 2) : 0; // -1..1
+    const spread = Math.sin(halfAngle) * reach * side;
+    const pts = [
+      new THREE.Vector3(0, 0.42, 0.1),
+      new THREE.Vector3(spread * 0.45, 0.72, reach * 0.5),
+      new THREE.Vector3(spread, 0.5, reach),
+    ];
+    const jet = volumetricStream(pts, 0.12 + (1 - Math.abs(side)) * 0.08, j === 1 ? pal.core : pal.hot, 0, 18, 6);
+    group.add(jet);
+    jetMats.push(jet.material as THREE.MeshBasicMaterial);
+  }
+  // Cone-filling particle body that erupts forward and outward.
+  const N = 14;
+  const cloud = makeVolCloud(N, pal.hot, 0.62, 0);
+  for (let i = 0; i < N; i++) {
+    const ang = (rnd(seed, i) * 2 - 1) * halfAngle;
+    const sp = reach * (1.4 + rnd(seed, i + 30) * 1.2);
+    setCloudParticle(
+      cloud,
+      i,
+      Math.sin(ang) * reach * 0.08,
+      0.42 + rnd(seed, i + 40) * 0.5,
+      reach * 0.06,
+      Math.sin(ang) * sp,
+      0.6 + rnd(seed, i + 50) * 1.2,
+      Math.cos(ang) * sp,
+    );
+  }
+  group.add(cloud.points);
+  const flash = glowSprite(pal.core, 1.0, 0);
+  flash.position.set(0, 0.5, reach * 0.15);
+  group.add(flash);
 
-  const lip = new THREE.Mesh(
-    new THREE.RingGeometry(reach * 0.82, reach * 0.98, 28, 1, -halfAngle, halfAngle * 2),
-    fxMat(pal.core, 0.2),
-  );
-  lip.rotation.x = -Math.PI / 2;
-  lip.position.y = 0.16;
-  group.add(lip);
-
-  spawn(host, group, life, (t) => {
+  spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const surge = 0.88 + Math.sin(p * Math.PI) * 0.22;
-    group.scale.set(1 + p * 0.08, 1, surge);
-    (outer.material as THREE.MeshBasicMaterial).opacity = 0.07 * (1 - p);
-    (inner.material as THREE.MeshBasicMaterial).opacity = 0.09 * (1 - p * 0.9);
-    (lip.material as THREE.MeshBasicMaterial).opacity = 0.2 * (1 - p);
+    const env = 1 - p;
+    for (const jm of jetMats) jm.opacity = 0.5 * env;
+    advectCloud(cloud, dt, 3.5, 1.3);
+    cloud.mat.opacity = 0.6 * (1 - p);
+    cloud.mat.size = cloud.baseSize * (1 + p * 0.6);
+    const a = Math.sin(Math.min(1, p * 2.5) * Math.PI);
+    (flash.material as THREE.SpriteMaterial).opacity = 0.7 * a;
+    flash.scale.setScalar(1 + p * 1.2);
   });
 }
 
@@ -1037,25 +1044,38 @@ function spawnElementalAirCone(
   group.position.set(from.x, 0.16, from.z);
   group.rotation.y = Math.atan2(dx, dz);
   const halfAngle = Math.max(0.18, Math.min(0.78, Math.atan2(width * 0.5, reach)));
-  const veil = new THREE.Mesh(createGroundConeGeometry(halfAngle, reach, 0.08, 24), fxMat(pal.hot, 0.06));
-  group.add(veil);
+  // Drifting volumetric wisp body instead of a flat veil cone.
+  const seed = elementalSeed(pos, opts);
+  const wisps = makeVolCloud(10, pal.hot, 0.7, 0);
+  for (let i = 0; i < 10; i++) {
+    const ang = (rnd(seed, i) * 2 - 1) * halfAngle;
+    const sp = reach * (1.1 + rnd(seed, i + 20) * 1.0);
+    setCloudParticle(
+      wisps,
+      i,
+      Math.sin(ang) * reach * 0.08,
+      0.4 + rnd(seed, i + 30) * 0.6,
+      reach * 0.06,
+      Math.sin(ang) * sp,
+      0.4 + rnd(seed, i + 40) * 0.8,
+      Math.cos(ang) * sp,
+    );
+  }
+  group.add(wisps.points);
 
-  const ribbons: { line: THREE.Line; mat: THREE.LineBasicMaterial; phase: number; side: number }[] = [];
+  const ribbons: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; phase: number; side: number }[] = [];
   for (let r = 0; r < 5; r++) {
-    const pts: number[] = [];
     const side = r % 2 === 0 ? -1 : 1;
-    for (let i = 0; i <= 18; i++) {
-      const t = i / 18;
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 12; i++) {
+      const t = i / 12;
       const sway = Math.sin(t * Math.PI * 2.2 + r * 1.1) * width * 0.1;
       const fan = side * Math.sin(t * Math.PI) * width * (0.13 + r * 0.028);
-      pts.push(fan + sway, 0.32 + Math.sin(t * Math.PI) * (0.55 + r * 0.07), t * reach);
+      pts.push(new THREE.Vector3(fan + sway, 0.32 + Math.sin(t * Math.PI) * (0.55 + r * 0.07), t * reach));
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    const mat = lineMat(r % 2 === 0 ? pal.core : pal.trail, 0.5);
-    const line = new THREE.Line(geo, mat);
-    ribbons.push({ line, mat, phase: r * 0.47, side });
-    group.add(line);
+    const tube = volumetricStream(pts, 0.05 + r * 0.008, r % 2 === 0 ? pal.core : pal.trail, 0.5, 16, 5);
+    ribbons.push({ mesh: tube, mat: tube.material as THREE.MeshBasicMaterial, phase: r * 0.47, side });
+    group.add(tube);
   }
 
   const gusts: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; z: number; x: number }[] = [];
@@ -1069,13 +1089,14 @@ function spawnElementalAirCone(
     group.add(ring);
   }
 
-  spawn(host, group, life, (t) => {
+  spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const fade = 1 - p;
-    (veil.material as THREE.MeshBasicMaterial).opacity = 0.06 * fade;
+    advectCloud(wisps, dt, 1.5, 1.0);
+    wisps.mat.opacity = 0.45 * fade;
     for (const r of ribbons) {
-      r.line.position.x = Math.sin(t * 9 + r.phase) * width * 0.045;
-      r.line.position.y = Math.sin(t * 7 + r.phase) * 0.08;
+      r.mesh.position.x = Math.sin(t * 9 + r.phase) * width * 0.045;
+      r.mesh.position.y = Math.sin(t * 7 + r.phase) * 0.08;
       r.mat.opacity = 0.5 * fade;
     }
     for (const g of gusts) {
