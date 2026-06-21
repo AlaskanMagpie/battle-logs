@@ -516,6 +516,64 @@ function glowSprite(color: number, size: number, opacity: number): THREE.Sprite 
   return s;
 }
 
+/**
+ * Anime-style impact starburst — a few elongated screen-facing light streaks
+ * radiating from the hit point that stab outward and snap-fade. Adds a sharp,
+ * satisfying "crack" of energy to a heavy impact. Pushes its own anim steps.
+ */
+function addImpactStar(
+  group: THREE.Group,
+  anim: CombatStrikeStep[],
+  x: number,
+  y: number,
+  z: number,
+  color: number,
+  spikes: number,
+  len: number,
+  delay = 0,
+): void {
+  for (let k = 0; k < spikes; k++) {
+    const mat = new THREE.SpriteMaterial({
+      map: softPuffTexture(),
+      color,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      rotation: (k / spikes) * Math.PI,
+    });
+    const s = new THREE.Sprite(mat);
+    s.position.set(x, y, z);
+    group.add(s);
+    anim.push((p) => {
+      const lp = delay > 0 ? Math.max(0, (p - delay) / (1 - delay)) : p;
+      const a = Math.sin(Math.min(1, lp * 2.4) * Math.PI);
+      mat.opacity = 0.9 * a;
+      s.scale.set(0.14 * len, len * (0.45 + lp * 1.15), 1);
+    });
+  }
+}
+
+/** Self-contained impact starburst (for FX functions that don't keep an anim list). */
+function addImpactStarFx(
+  host: FxHost,
+  x: number,
+  y: number,
+  z: number,
+  color: number,
+  spikes: number,
+  len: number,
+  life: number,
+): void {
+  const group = new THREE.Group();
+  const anim: CombatStrikeStep[] = [];
+  addImpactStar(group, anim, x, y, z, color, spikes, len);
+  spawn(host, group, life, (t) => {
+    const p = t >= life ? 1 : t / life;
+    for (let i = 0; i < anim.length; i++) anim[i]!(p, t, 0);
+  });
+}
+
 function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
   const element = opts?.element ?? "arcane";
   const shape = opts?.shape ?? "impact";
@@ -672,6 +730,7 @@ function spawnElementalBolt(
     setCloudParticle(burst, i, 0, 0.4, 0, Math.cos(ang) * sp, 1.4 + rnd(seed, i + 80) * 2.4, Math.sin(ang) * sp);
   }
   root.add(burst.points);
+  addImpactStarFx(host, pos.x, 0.5, pos.z, pal.core, 4, 3.0, life);
 
   spawn(host, root, life, (t, dt) => {
     const p = t >= life ? 1 : t / life;
@@ -760,6 +819,7 @@ function spawnElementalChainLightning(
     setCloudParticle(sparks, i, 0, 0.4, 0, Math.cos(a) * sp, 1.6 + rnd(seed, i + 65) * 2.8, Math.sin(a) * sp);
   }
   root.add(sparks.points);
+  addImpactStarFx(host, pos.x, 0.55, pos.z, pal.core, 5, 3.4, life);
 
   spawn(host, root, life, (t, dt) => {
     const p = t >= life ? 1 : t / life;
@@ -2131,6 +2191,7 @@ function buildHeavyStrike(
     (flash.material as THREE.SpriteMaterial).opacity = 0.9 * a;
     flash.scale.setScalar(1.1 + p * 1.4);
   });
+  addImpactStar(group, anim, 0, 0.6, cx, pal.glow, 3, reach * 0.4 + 2.4);
 }
 
 /**
@@ -2180,6 +2241,7 @@ function buildTitanStrike(
     orb.scale.setScalar((1.3 + p * 1.2) * pulse);
     (orb.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - p);
   });
+  addImpactStar(group, anim, 0, 0.8, cx, pal.glow, 4, reach * 0.55 + 3);
   for (let k = 0; k < 2; k++) {
     const ring = volumetricShockRing(0.3 + k * 0.2, 0.1, k === 0 ? pal.glow : pal.rim, 0);
     ring.position.set(0, 0.13, cx);
@@ -2406,6 +2468,7 @@ function spawnHeroStrike(
     (flash.material as THREE.SpriteMaterial).opacity = 0.95 * a;
     flash.scale.setScalar(1.4 + p * 1.7);
   });
+  addImpactStar(root, anim, pos.x, 0.6, pos.z, pal.rim, 4, 3.2);
 
   // Impact burst — outward/upward particle body.
   const seed = visualSeed ?? pos.x * 0.41 + pos.z * 0.17;
@@ -3103,6 +3166,7 @@ function spawnLightning(host: FxHost, pos: { x: number; z: number }): void {
   }
 
   const maxRing = 5.2;
+  addImpactStarFx(host, pos.x, 0.6, pos.z, 0xeaf6ff, 4, 3.6, life);
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
     // Bolt + tube flicker for the first ~0.18s, then fade.
