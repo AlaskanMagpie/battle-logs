@@ -22,12 +22,14 @@ export function deepMerge(base: unknown, over: unknown): unknown {
 /** Pre-match map picker entries (site-root URLs). */
 export const MAP_REGISTRY: readonly { id: string; label: string; url: string }[] = [
   { id: "the_line", label: "The Line", url: "/map.json" },
+  { id: "survival_horde", label: "Survival Horde", url: "/maps/survival_horde.json" },
   { id: "forgewarden", label: "Forgewarden Crucible", url: "/maps/forgewarden.json" },
   { id: "glacierline", label: "Glacierline Expanse", url: "/maps/glacierline.json" },
   { id: "mesa_badlands", label: "Mesa Badlands", url: "/maps/mesa_badlands.json" },
 ] as const;
 
 export const DEFAULT_MAP_URL = "/map.json";
+export const SURVIVAL_MAP_URL = "/maps/survival_horde.json";
 
 /**
  * Load a battle map JSON, then deep-merge `map.local.json` on top (optional dev override).

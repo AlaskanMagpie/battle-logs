@@ -5,7 +5,7 @@ import { CATALOG, DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "../../game/cat
 import { getControlProfile } from "../../controlProfile";
 import { DOCTRINE_SLOT_COUNT } from "../../game/constants";
 import { normalizeDoctrineSlotsForMatch } from "../../game/state";
-import { DEFAULT_MAP_URL, MAP_REGISTRY } from "../../game/loadMap";
+import { DEFAULT_MAP_URL, MAP_REGISTRY, SURVIVAL_MAP_URL } from "../../game/loadMap";
 import { fillDoctrineSlotsWithDuplicatePicks, QUICK_MATCH_DOCTRINE_SLOTS } from "../../game/quickMatchDoctrine";
 import { type PortalContext } from "../../game/portal";
 import {
@@ -50,12 +50,13 @@ import "./binderPicker.css";
 const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
 const QUICKPLAY_COACHMARK_KEY = "signalWarsQuickplayCoachmarkDismissed.v1";
 
-type PrematchOpponentChoice = "ai" | "matchmake" | "matchmake_strict";
+type PrematchOpponentChoice = "ai" | "matchmake" | "matchmake_strict" | "pve_survival";
 type PrematchLaunchOptions = Pick<MatchLaunchOptions, "aiOpponentId">;
 
 function initialOpponentFromUrl(): PrematchOpponentChoice {
   if (typeof window === "undefined") return "matchmake";
   const o = new URLSearchParams(window.location.search).get("opponent")?.trim().toLowerCase() ?? "";
+  if (o === "survival" || o === "pve" || o === "horde" || o === "hoard" || o === "pve_survival") return "pve_survival";
   if (o === "ai") return "ai";
   if (o === "matchmake" || o === "pvp") return "matchmake";
   if (o === "human" || o === "wait" || o === "strict" || o === "matchmake_strict") return "matchmake_strict";
@@ -63,6 +64,7 @@ function initialOpponentFromUrl(): PrematchOpponentChoice {
 }
 
 function matchModeFromPrematchChoice(c: PrematchOpponentChoice): MatchMode {
+  if (c === "pve_survival") return "pve_survival";
   if (c === "ai") return "ai";
   if (c === "matchmake") return "matchmake";
   return "matchmake_strict";
@@ -382,7 +384,9 @@ export function DoctrineBinderPicker({
   const [loading, setLoading] = useState(true);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [page, setPage] = useState({ c: 0, t: 1 });
+  const initialOpponentMode = useMemo(initialOpponentFromUrl, []);
   const [mapUrl, setMapUrl] = useState<string>(() => {
+    if (initialOpponentMode === "pve_survival") return SURVIVAL_MAP_URL;
     try {
       const saved = localStorage.getItem(MAP_URL_STORAGE_KEY);
       return saved && validMapUrls.has(saved) ? saved : DEFAULT_MAP_URL;
@@ -392,7 +396,7 @@ export function DoctrineBinderPicker({
   });
   /** Map / page nav / start — floating panel so the binder stays full-bleed. */
   const [prematchSetupOpen, setPrematchSetupOpen] = useState(false);
-  const [opponentMode, setOpponentMode] = useState<PrematchOpponentChoice>(initialOpponentFromUrl);
+  const [opponentMode, setOpponentMode] = useState<PrematchOpponentChoice>(initialOpponentMode);
   const [aiProgress] = useState(() => readAiLadderProgress());
   const [prematchNotice, setPrematchNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -450,6 +454,7 @@ export function DoctrineBinderPicker({
     ? Math.min(100, (Math.min(activeAiWins, AI_LADDER_WINS_TO_UNLOCK) / AI_LADDER_WINS_TO_UNLOCK) * 100)
     : 100;
   const launchOptionsForOpponent = useCallback((): PrematchLaunchOptions | undefined => {
+    if (opponentMode === "pve_survival") return undefined;
     return opponentMode === "matchmake_strict" ? undefined : { aiOpponentId: activeAiOpponent.id };
   }, [activeAiOpponent.id, opponentMode]);
 
@@ -490,9 +495,10 @@ export function DoctrineBinderPicker({
   useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      const mapped = opponentMode === "ai" ? "ai" : opponentMode === "matchmake" ? "matchmake" : "human";
+      const mapped =
+        opponentMode === "pve_survival" ? "survival" : opponentMode === "ai" ? "ai" : opponentMode === "matchmake" ? "matchmake" : "human";
       url.searchParams.set("opponent", mapped);
-      if (opponentMode === "matchmake_strict") url.searchParams.delete("aiOpponent");
+      if (opponentMode === "matchmake_strict" || opponentMode === "pve_survival") url.searchParams.delete("aiOpponent");
       else url.searchParams.set("aiOpponent", activeAiOpponent.id);
       window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
     } catch {
@@ -1270,7 +1276,10 @@ export function DoctrineBinderPicker({
     }
     let norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(raw));
     norm = fillDoctrineSlotsWithDuplicatePicks(norm);
-    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    const mapPick =
+      opponentMode === "pve_survival"
+        ? (MAP_REGISTRY.find((m) => m.url === SURVIVAL_MAP_URL) ?? MAP_REGISTRY[0]!)
+        : MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
     setMapUrl(mapPick.url);
     setActiveDoctrineSlot(null);
     setBinderSlotPick(Array.from({ length: DOCTRINE_SLOT_COUNT }, () => null));
@@ -1282,7 +1291,7 @@ export function DoctrineBinderPicker({
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [opponentMode]);
 
   const saveDoctrine = useCallback(() => {
     const norm = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(slots));
@@ -1350,7 +1359,10 @@ export function DoctrineBinderPicker({
     const sorted = sortPickerHandByFluxCost(norm, emptyPick);
     let finalSlots = normalizeDoctrineSlotsForMatch(padDoctrineSlotsLocal(sorted.slots));
     finalSlots = fillDoctrineSlotsWithDuplicatePicks(finalSlots);
-    const mapPick = MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
+    const mapPick =
+      opponentMode === "pve_survival"
+        ? (MAP_REGISTRY.find((m) => m.url === SURVIVAL_MAP_URL) ?? MAP_REGISTRY[0]!)
+        : MAP_REGISTRY[Math.floor(Math.random() * MAP_REGISTRY.length)]!;
     setActiveDoctrineSlot(null);
     setBinderSlotPick(sorted.binderPick);
     setSlots(finalSlots);
@@ -1691,6 +1703,19 @@ export function DoctrineBinderPicker({
                     </div>
                     <fieldset className="binder-picker-toolbar-map" aria-label="Opponent">
                       <legend>Opponent</legend>
+                      <label>
+                        <input
+                          type="radio"
+                          name="binder-opponent-mode"
+                          value="pve_survival"
+                          checked={opponentMode === "pve_survival"}
+                          onChange={() => {
+                            setOpponentMode("pve_survival");
+                            setMapUrl(SURVIVAL_MAP_URL);
+                          }}
+                        />
+                        Survival / Horde
+                      </label>
                       <label>
                         <input
                           type="radio"

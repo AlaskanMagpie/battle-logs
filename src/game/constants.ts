@@ -7,6 +7,19 @@ export const MATCH_MAX_DURATION_SEC = 3 * 60;
 /** Sim ticks until `timeLimitCheck` may end the match (`MATCH_MAX_DURATION_SEC` of game time at `TICK_HZ`). */
 export const MATCH_DURATION_TICKS = MATCH_MAX_DURATION_SEC * TICK_HZ;
 
+/** PvE Survival: difficulty ramps from opening pressure to full horde pressure over ten minutes. */
+export const SURVIVAL_RAMP_DURATION_SEC = 10 * 60;
+export const SURVIVAL_RAMP_DURATION_TICKS = SURVIVAL_RAMP_DURATION_SEC * TICK_HZ;
+/** Opening breathing room before the first hostile flash-in. */
+export const SURVIVAL_FIRST_WAVE_DELAY_SEC = 18;
+/** Director cadence bounds; interval lerps from max to min as intensity rises. */
+export const SURVIVAL_WAVE_INTERVAL_MAX_SEC = 24;
+export const SURVIVAL_WAVE_INTERVAL_MIN_SEC = 8;
+/** Living hostile cap for the survival director. Renderer LOD handles visuals above normal PvP counts. */
+export const SURVIVAL_ENEMY_GLOBAL_CAP = 2600;
+/** Keep hostile building count bounded; each can still produce units through the normal production system. */
+export const SURVIVAL_ENEMY_STRUCTURE_CAP = 28;
+
 /** Cast FX (lightning, rings, etc.) are forcibly removed after this many wall-clock seconds. */
 export const FX_ABSOLUTE_MAX_LIFETIME_SEC = 3;
 

@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "mapId": "survival_horde",
+  "world": {
+    "halfExtents": 520,
+    "groundY": 0
+  },
+  "useAuthorTapSlots": true,
+  "useAllAuthorTapSlots": true,
+  "visual": {
+    "groundPreset": "ember_wastes",
+    "fogHex": 1185046,
+    "fogNear": 260,
+    "fogFar": 1280,
+    "skyHex": 3551792,
+    "sunHex": 16772290
+  },
+  "difficulty": {
+    "enemyEffectivenessMult": 0.72,
+    "enemyEconomyMult": 0.5,
+    "enemyProductionSpeedMult": 0.7
+  },
+  "tapSlots": [
+    { "id": "surv_ring_inner_n", "x": 0, "z": -96 },
+    { "id": "surv_ring_inner_s", "x": 0, "z": 96 },
+    { "id": "surv_ring_inner_e", "x": 96, "z": 0 },
+    { "id": "surv_ring_inner_w", "x": -96, "z": 0 },
+    { "id": "surv_ring_mid_ne", "x": 154, "z": -154 },
+    { "id": "surv_ring_mid_nw", "x": -154, "z": -154 },
+    { "id": "surv_ring_mid_se", "x": 154, "z": 154 },
+    { "id": "surv_ring_mid_sw", "x": -154, "z": 154 },
+    { "id": "surv_ring_mid_n", "x": 0, "z": -224 },
+    { "id": "surv_ring_mid_s", "x": 0, "z": 224 },
+    { "id": "surv_ring_mid_e", "x": 224, "z": 0 },
+    { "id": "surv_ring_mid_w", "x": -224, "z": 0 },
+    { "id": "surv_ring_outer_ne", "x": 298, "z": -298 },
+    { "id": "surv_ring_outer_nw", "x": -298, "z": -298 },
+    { "id": "surv_ring_outer_se", "x": 298, "z": 298 },
+    { "id": "surv_ring_outer_sw", "x": -298, "z": 298 },
+    { "id": "surv_ring_outer_nne", "x": 156, "z": -372 },
+    { "id": "surv_ring_outer_nnw", "x": -156, "z": -372 },
+    { "id": "surv_ring_outer_sse", "x": 156, "z": 372 },
+    { "id": "surv_ring_outer_ssw", "x": -156, "z": 372 },
+    { "id": "surv_ring_outer_ene", "x": 372, "z": -156 },
+    { "id": "surv_ring_outer_ese", "x": 372, "z": 156 },
+    { "id": "surv_ring_outer_wnw", "x": -372, "z": -156 },
+    { "id": "surv_ring_outer_wsw", "x": -372, "z": 156 }
+  ],
+  "playerRelaySlots": [
+    { "id": "surv_base_core", "x": 0, "z": 0 }
+  ],
+  "enemyRelaySlots": [],
+  "playerStart": {
+    "x": 0,
+    "z": 0
+  },
+  "enemyStart": {
+    "x": 0,
+    "z": -460
+  },
+  "enemyCamps": [
+    { "id": "surv_spawn_n", "origin": { "x": 0, "z": -468 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_s", "origin": { "x": 0, "z": 468 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_e", "origin": { "x": 468, "z": 0 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_w", "origin": { "x": -468, "z": 0 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_ne", "origin": { "x": 372, "z": -372 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_nw", "origin": { "x": -372, "z": -372 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_se", "origin": { "x": 372, "z": 372 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 },
+    { "id": "surv_spawn_sw", "origin": { "x": -372, "z": 372 }, "aggroRadius": 44, "wakeRadius": 640, "initialUnitCount": 0 }
+  ],
+  "decor": [
+    { "kind": "torus", "x": 0, "z": 0, "radius": 34, "tube": 1.5, "color": 3148799 },
+    { "kind": "torus", "x": 0, "z": 0, "radius": 112, "tube": 1, "color": 2109504 },
+    { "kind": "torus", "x": 0, "z": 0, "radius": 232, "tube": 1, "color": 2109504 },
+    { "kind": "torus", "x": 0, "z": 0, "radius": 382, "tube": 1, "color": 2109504 }
+  ]
+}

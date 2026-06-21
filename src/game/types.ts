@@ -146,6 +146,11 @@ export interface MapData {
    */
   useAuthorTapSlots?: boolean;
   /**
+   * When true, use every authored Mana node instead of subsampling for readable PvP lanes.
+   * Survival maps use this so the solo player can capture the whole battlefield.
+   */
+  useAllAuthorTapSlots?: boolean;
+  /**
    * Optional site-root URL for custom terrain (e.g. `/terrain/arena.glb`). When set, the
    * renderer loads this mesh for raycasts and hides the default ground plane.
    */

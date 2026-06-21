@@ -6,7 +6,7 @@ import {
 } from "./game/catalog";
 import { DOCTRINE_SLOT_COUNT, TICK_HZ } from "./game/constants";
 import type { PlayerIntent } from "./game/intents";
-import { DEFAULT_MAP_URL, loadMapMerged, MAP_REGISTRY } from "./game/loadMap";
+import { DEFAULT_MAP_URL, loadMapMerged, MAP_REGISTRY, SURVIVAL_MAP_URL } from "./game/loadMap";
 import {
   doctrineSlotsForUrlQuickMatch,
   isUserDoctrineHandViableForQuickMatch,
@@ -685,6 +685,8 @@ function runMatch(
 ): void {
   void (async () => {
     const requestedMode = launchOptions.mode ?? "ai";
+    const isSurvivalMode = requestedMode === "pve_survival";
+    const resolvedMapUrl = isSurvivalMode && mapUrl === DEFAULT_MAP_URL ? SURVIVAL_MAP_URL : mapUrl;
     const matchId = launchOptions.matchId ?? makeClientMatchId();
     const ownerAiBattle = requestedMode === "ai" && isOwnerAiDuelAuthorized(params);
     const aiProgress = readAiLadderProgress();
@@ -700,7 +702,7 @@ function runMatch(
       queueState: launchOptions.queueState ?? "idle",
       fallbackReason: launchOptions.fallbackReason,
       room: launchOptions.room,
-      aiOpponentId: requestedMode === "pvp" ? undefined : aiOpponent.id,
+      aiOpponentId: requestedMode === "pvp" || requestedMode === "pve_survival" ? undefined : aiOpponent.id,
       aiBattle: ownerAiBattle,
     };
     const needsHumanQueue = requestedMode === "matchmake" || requestedMode === "matchmake_strict";
@@ -719,7 +721,7 @@ function runMatch(
           timeoutMs: strict
             ? clampMatchmakingStrictTimeoutMs(params.get("matchStrictTimeoutMs"))
             : clampMatchmakingTimeoutMs(params.get("matchTimeoutMs")),
-          mapUrl,
+          mapUrl: resolvedMapUrl,
           doctrineSlots: initialDoctrine,
           username: portalContext.params.username,
           abortSignal: matchmakingAbort.signal,
@@ -764,22 +766,24 @@ function runMatch(
     } finally {
       dismissMatchmakingOverlay?.();
     }
-    const loadedMap = await loadMapMerged(mapUrl);
+    const loadedMap = await loadMapMerged(resolvedMapUrl);
     const difficultyOverride = queryDifficultyOverride(window.location.search);
     const map =
-      resolvedLaunch.mode === "pvp" && !difficultyOverride
+      (resolvedLaunch.mode === "pvp" || resolvedLaunch.mode === "pve_survival") && !difficultyOverride
         ? loadedMap
         : {
           ...loadedMap,
           difficulty: {
             ...(loadedMap.difficulty ?? {}),
-            ...(resolvedLaunch.mode === "pvp" ? {} : aiOpponent.difficulty),
+            ...(resolvedLaunch.mode === "pvp" || resolvedLaunch.mode === "pve_survival" ? {} : aiOpponent.difficulty),
             ...(difficultyOverride ?? {}),
           },
         };
     const renderer = new GameRenderer(canvas, CONTROL_PROFILE);
     await renderer.loadTerrainFromMap(map);
-    let state: GameState = createInitialState(map, initialDoctrine);
+    let state: GameState = createInitialState(map, initialDoctrine, {
+      scenario: resolvedLaunch.mode === "pve_survival" ? "survival" : "standard",
+    });
     applyControlProfileDefaults(state);
     configureGamePortals(state, portalContext, window.location.href);
     if (resolvedLaunch.aiBattle) {
@@ -793,6 +797,8 @@ function runMatch(
       state.lastMessage = `Matched online (${resolvedLaunch.seat ?? "seat"}). Server-authoritative sync is active for room ${resolvedLaunch.room?.roomId ?? "battle"}.`;
     } else if (resolvedLaunch.mode === "fallback_ai") {
       state.lastMessage = "No human opponent found quickly — AI rival engaged.";
+    } else if (resolvedLaunch.mode === "pve_survival") {
+      state.lastMessage = "Survival: central base online. Claim nodes, build outward, and hold as the horde ramps for 10 minutes.";
     }
     let onlineSession: OnlineMatchSession | null = null;
     if (resolvedLaunch.mode === "pvp") {
@@ -860,7 +866,7 @@ function runMatch(
           return: state.portal.returnUrl ? state.portal.returnPortal : null,
           pendingRedirect: !!state.portal.pendingRedirectUrl,
         },
-        aiOpponent: resolvedLaunch.mode === "pvp"
+        aiOpponent: resolvedLaunch.mode === "pvp" || resolvedLaunch.mode === "pve_survival"
           ? null
           : {
             id: aiOpponent.id,
@@ -872,6 +878,18 @@ function runMatch(
           },
         controlProfile: CONTROL_PROFILE.mode,
         captainMode: state.heroCaptainEnabled,
+        survival:
+          state.scenario === "survival" && state.survival
+            ? {
+                wave: state.survival.waveIndex,
+                nextSpawnTick: state.survival.nextSpawnTick,
+                rampPct: Math.round((state.tick / Math.max(1, state.survival.rampDurationTicks)) * 100),
+                totalHostilesSpawned: state.survival.totalHostilesSpawned,
+                hostileBuildingsSpawned: state.survival.hostileBuildingsSpawned,
+                peakHostilesAlive: state.survival.peakHostilesAlive,
+                lastWave: state.survival.lastWave ?? null,
+              }
+            : null,
         selectedUnitIds: state.selectedUnitIds,
         taps: state.taps.map((t) => ({
           id: t.defId,
@@ -1020,7 +1038,7 @@ function runMatch(
         phase: completed.phase,
         durationTicks: completed.tick,
         matchMode: resolvedLaunch.mode,
-        mapId: map.mapId ?? mapUrl,
+        mapId: map.mapId ?? resolvedMapUrl,
         clientMatchId: resolvedLaunch.matchId,
       })
         .catch(() => undefined);
@@ -1120,7 +1138,9 @@ function runMatch(
       pendingIntents.length = 0;
       clearGameLog();
       renderer.clearCastFx();
-      state = createInitialState(map, initialDoctrine);
+      state = createInitialState(map, initialDoctrine, {
+        scenario: resolvedLaunch.mode === "pve_survival" ? "survival" : "standard",
+      });
       applyControlProfileDefaults(state);
       configureGamePortals(state, portalContext, window.location.href);
       if (resolvedLaunch.aiBattle) {
@@ -1131,6 +1151,8 @@ function runMatch(
         state.lastMessage = `AI ladder: tier ${aiOpponent.tier} ${aiOpponent.name}. Beat it twice to unlock the next model.`;
       } else if (resolvedLaunch.mode === "fallback_ai") {
         state.lastMessage = `AI takeover: tier ${aiOpponent.tier} ${aiOpponent.name}.`;
+      } else if (resolvedLaunch.mode === "pve_survival") {
+        state.lastMessage = "Survival rematch: central base online. Reclaim the map and endure the horde.";
       }
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
@@ -1848,17 +1870,17 @@ async function boot(): Promise<void> {
     pickerRoot.style.display = "none";
     const stored = loadDoctrineSlots();
     const slotRow = doctrineSlotsForUrlQuickMatch(stored);
+    const mode = normalizeMatchMode(params.get("opponent"));
     const mapParam = params.get("map");
-    let mapUrl = mapParam ?? DEFAULT_MAP_URL;
+    let mapUrl = mapParam ?? (mode === "pve_survival" ? SURVIVAL_MAP_URL : DEFAULT_MAP_URL);
     if (!mapParam && isUserDoctrineHandViableForQuickMatch(stored)) {
       try {
         const saved = localStorage.getItem("signalWarsMapUrl.v2");
-        if (saved && MAP_REGISTRY.some((m) => m.url === saved)) mapUrl = saved;
+        if (mode !== "pve_survival" && saved && MAP_REGISTRY.some((m) => m.url === saved)) mapUrl = saved;
       } catch {
         /* ignore */
       }
     }
-    const mode = normalizeMatchMode(params.get("opponent"));
     runMatch([...slotRow], mapUrl, mountPortalPicker, portalContext, {
       mode,
       matchId: makeClientMatchId(),
