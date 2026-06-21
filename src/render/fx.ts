@@ -2214,10 +2214,10 @@ function buildHeavyStrike(
   group.add(flash);
   anim.push((p) => {
     const a = Math.sin(Math.min(1, p * 2) * Math.PI);
-    (flash.material as THREE.SpriteMaterial).opacity = 0.9 * a;
+    (flash.material as THREE.SpriteMaterial).opacity = 0.72 * a;
     flash.scale.setScalar(1.1 + p * 1.4);
   });
-  addImpactStar(group, anim, 0, 0.6, cx, pal.glow, 3, reach * 0.4 + 2.4);
+  addImpactStar(group, anim, 0, 0.6, cx, pal.glow, 3, reach * 0.4 + 2.4, 0.06);
   addLightShaft(group, anim, 0, 0.1, cx, pal.glow, reach * 0.18 + 0.9, reach * 0.5 + 3);
 }
 
@@ -2268,7 +2268,7 @@ function buildTitanStrike(
     orb.scale.setScalar((1.3 + p * 1.2) * pulse);
     (orb.material as THREE.SpriteMaterial).opacity = 0.85 * (1 - p);
   });
-  addImpactStar(group, anim, 0, 0.8, cx, pal.glow, 4, reach * 0.55 + 3);
+  addImpactStar(group, anim, 0, 0.8, cx, pal.glow, 4, reach * 0.55 + 3, 0.07);
   addLightShaft(group, anim, 0, 0.1, cx, pal.glow, reach * 0.22 + 1.2, reach * 0.75 + 5);
   for (let k = 0; k < 2; k++) {
     const ring = volumetricShockRing(0.3 + k * 0.2, 0.1, k === 0 ? pal.glow : pal.rim, 0);
@@ -2496,7 +2496,7 @@ function spawnHeroStrike(
     (flash.material as THREE.SpriteMaterial).opacity = 0.95 * a;
     flash.scale.setScalar(1.4 + p * 1.7);
   });
-  addImpactStar(root, anim, pos.x, 0.6, pos.z, pal.rim, 4, 3.2);
+  addImpactStar(root, anim, pos.x, 0.6, pos.z, pal.rim, 4, 3.2, 0.05);
   addLightShaft(root, anim, pos.x, 0.1, pos.z, pal.core, 1.1, 4.2);
 
   // Impact burst — outward/upward particle body.
