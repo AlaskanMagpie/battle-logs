@@ -451,8 +451,12 @@ function setCloudParticle(
   c.vel[i * 3 + 2] = vz;
 }
 
-/** Advect every particle by its velocity with optional gravity + drag, flag GPU upload. */
-function advectCloud(c: VolCloud, dt: number, gravity: number, drag: number): void {
+/**
+ * Advect every particle by its velocity with gravity + drag, flag GPU upload.
+ * `t`/`swirl` add per-particle curl turbulence so smoke and flame churn and
+ * billow instead of drifting in dead-straight lines.
+ */
+function advectCloud(c: VolCloud, dt: number, gravity: number, drag: number, t = 0, swirl = 0): void {
   const damp = Math.max(0, 1 - drag * dt);
   for (let i = 0; i < c.count; i++) {
     c.vel[i * 3 + 1] -= gravity * dt;
@@ -462,6 +466,12 @@ function advectCloud(c: VolCloud, dt: number, gravity: number, drag: number): vo
     c.pos[i * 3] += c.vel[i * 3] * dt;
     c.pos[i * 3 + 1] += c.vel[i * 3 + 1] * dt;
     c.pos[i * 3 + 2] += c.vel[i * 3 + 2] * dt;
+    if (swirl !== 0) {
+      const ph = c.phase[i]!;
+      c.pos[i * 3] += Math.sin(t * 5.0 + ph) * swirl * dt;
+      c.pos[i * 3 + 2] += Math.cos(t * 4.3 + ph * 1.7) * swirl * dt;
+      c.pos[i * 3 + 1] += Math.sin(t * 3.1 + ph * 0.7) * swirl * 0.5 * dt;
+    }
   }
   (c.geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
 }
@@ -675,7 +685,7 @@ function spawnElementalBolt(
     const a = Math.sin(Math.min(1, p * 2.2) * Math.PI);
     (bloom.material as THREE.SpriteMaterial).opacity = 0.75 * a;
     bloom.scale.setScalar(1.5 + p * 1.3);
-    advectCloud(burst, dt, 6, 1.2);
+    advectCloud(burst, dt, 6, 1.2, t, 1.5);
     burst.mat.opacity = 0.7 * (1 - p);
   });
 }
@@ -834,7 +844,7 @@ function spawnElementalLine(
     shell.scale.set(pulse, pulse, 1);
     coreMat.opacity = (focused ? 0.85 : 0.4) * (1 - p);
     shellMat.opacity = (focused ? 0.4 : 0.22) * (1 - p * 0.9);
-    advectCloud(motes, dt, 5.8, 0.8);
+    advectCloud(motes, dt, 5.8, 0.8, t, 1.2);
     motes.mat.opacity = (focused ? 0.8 : 0.7) * (1 - p);
   });
 }
@@ -1018,7 +1028,7 @@ function spawnElementalCone(
     const p = Math.min(1, t / life);
     const env = 1 - p;
     for (const jm of jetMats) jm.opacity = 0.5 * env;
-    advectCloud(cloud, dt, 3.5, 1.3);
+    advectCloud(cloud, dt, 3.5, 1.3, t, 2.4);
     cloud.mat.opacity = 0.6 * (1 - p);
     cloud.mat.size = cloud.baseSize * (1 + p * 0.6);
     const a = Math.sin(Math.min(1, p * 2.5) * Math.PI);
@@ -1983,8 +1993,8 @@ function buildSwarmStrike(
     );
   }
   group.add(spray.points);
-  anim.push((p, _t, dt) => {
-    advectCloud(spray, dt, 5, 1.3);
+  anim.push((p, t, dt) => {
+    advectCloud(spray, dt, 5, 1.3, t, 1.6);
     spray.mat.opacity = 0.7 * (1 - p);
     spray.mat.size = spray.baseSize * (1 + p);
   });
@@ -2088,10 +2098,12 @@ function buildHeavyStrike(
     );
   }
   group.add(dome.points);
-  anim.push((p, _t, dt) => {
-    advectCloud(dome, dt, 4.5, 0.9);
-    dome.mat.opacity = (p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85) * 0.85;
-    dome.mat.size = dome.baseSize * (1 + p * 0.7);
+  anim.push((p, t, dt) => {
+    advectCloud(dome, dt, 4.5, 0.9, t, 2.6);
+    // Bright flash early, then a slower smoke tail that lingers and grows.
+    const flash = p < 0.15 ? p / 0.15 : 1 - (p - 0.15) / 0.85;
+    dome.mat.opacity = (flash * 0.6 + (1 - p) * (1 - p) * 0.4) * 0.95;
+    dome.mat.size = dome.baseSize * (1 + p * 1.3);
   });
   const debris = makeVolCloud(6, pal.rim, 0.3, 0, pal.glow);
   for (let i = 0; i < 6; i++) {
@@ -2186,8 +2198,8 @@ function buildTitanStrike(
     setCloudParticle(debris, i, 0, 0.3, cx, Math.cos(a2) * out, 3.4 + rnd(seed, i + 81) * 3.4, Math.sin(a2) * out);
   }
   group.add(debris.points);
-  anim.push((p, _t, dt) => {
-    advectCloud(debris, dt, 9.5, 0.4);
+  anim.push((p, t, dt) => {
+    advectCloud(debris, dt, 9.5, 0.4, t, 1.4);
     debris.mat.opacity = 0.8 * (1 - p);
   });
 }
@@ -2405,8 +2417,8 @@ function spawnHeroStrike(
     setCloudParticle(burst, i, 0, 0.5, 0, Math.cos(ang) * sp, 1.4 + rnd(seed, i + 23) * 2.6, Math.sin(ang) * sp);
   }
   root.add(burst.points);
-  anim.push((p, _t, dt) => {
-    advectCloud(burst, dt, 6, 1.1);
+  anim.push((p, t, dt) => {
+    advectCloud(burst, dt, 6, 1.1, t, 1.8);
     burst.mat.opacity = 0.85 * (1 - p);
   });
 
@@ -2849,7 +2861,7 @@ function spawnLineCleave(
     shell.scale.set(pulse, pulse, 1);
     coreMat.opacity = 0.7 * (1 - p);
     shellMat.opacity = 0.32 * (1 - p * 0.9);
-    advectCloud(swath, dt, 4, 1.1);
+    advectCloud(swath, dt, 4, 1.1, t, 1.6);
     swath.mat.opacity = 0.6 * (1 - p);
   });
 }
