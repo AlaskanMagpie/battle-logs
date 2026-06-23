@@ -1,4 +1,5 @@
 import { INTRO_BGM_SRC, INTRO_PAGES, introPageCandidateSrcs, type IntroPage, type ResolvedIntroPage } from "./introManifest";
+import { motionAnimate, prefersReducedMotion } from "../../motion";
 
 const INTRO_BGM_KEY = "intro:bgm";
 const COMIC_FIT_KEY = "intro:comicFit";
@@ -76,6 +77,9 @@ export function showComicLoreModal(): Promise<void> {
   activeComicPromise = new Promise<void>((resolve) => {
     let pages = fallbackPages();
     let pageIndex = 0;
+    // Page-transition direction: +1 next, -1 prev, 0 initial / async re-render.
+    let navDir = 0;
+    let firstRender = true;
     let dismissed = false;
     let fitMode: ComicFitMode = storageGet(localStorage, COMIC_FIT_KEY) === "screen" ? "screen" : "width";
     let comicUserZoom = 1;
@@ -187,6 +191,24 @@ export function showComicLoreModal(): Promise<void> {
       count.textContent = `Page ${pageIndex + 1} / ${pages.length}`;
       prevButton.disabled = pageIndex <= 0;
       nextButton.textContent = pageIndex >= pages.length - 1 ? "Done" : "Next";
+
+      // Slide/fade the page in on navigation (and the first reveal); skip the
+      // re-render that fires when higher-res pages finish preloading.
+      const animateThisRender = navDir !== 0 || firstRender;
+      firstRender = false;
+      if (animateThisRender && !prefersReducedMotion()) {
+        motionAnimate(img, {
+          opacity: [0, 1],
+          translateX: [navDir * 36, 0],
+          duration: 280,
+          ease: "outQuad",
+          onComplete: () => {
+            img.style.transform = "";
+            img.style.opacity = "";
+          },
+        });
+      }
+      navDir = 0;
     };
 
     const advance = (): void => {
@@ -195,12 +217,14 @@ export function showComicLoreModal(): Promise<void> {
         return;
       }
       pageIndex += 1;
+      navDir = 1;
       renderPage();
     };
 
     const retreat = (): void => {
       if (pageIndex <= 0) return;
       pageIndex -= 1;
+      navDir = -1;
       renderPage();
     };
 

@@ -4,6 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getControlProfile, type ControlProfile } from "../controlProfile";
+import { motionAnimate, motionStop, prefersReducedMotion } from "../motion";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
@@ -1177,6 +1178,17 @@ export class GameRenderer {
   /** Orbit / pan allowed (e.g. false while dragging a doctrine card). */
   private controlsUserDesiredEnabled = true;
 
+  /** Active during the post-win camera pull-back; anime.js drives the eased
+   *  progress and fires completion, the render loop reads `t` and moves the rig. */
+  private victoryCamActive = false;
+  private readonly victoryCamStartPos = new THREE.Vector3();
+  private readonly victoryCamStartTgt = new THREE.Vector3();
+  private readonly victoryCamEndPos = new THREE.Vector3();
+  private readonly victoryCamEndTgt = new THREE.Vector3();
+  private readonly victoryCamProgress = { t: 0 };
+  /** Last match phase seen in `sync`, so the victory move fires once on the win edge. */
+  private lastSyncedPhase: string | null = null;
+
   /** Rigid translate: preserves camera↔target offset (OrbitControls distance = zoom). */
   private nudgeCameraRigTowardFollowPivot(dt: number): void {
     if (this.introCinematicStartMs !== null) return;
@@ -1468,7 +1480,8 @@ export class GameRenderer {
   }
 
   private refreshControlsEnabledFromIntro(): void {
-    this.controls.enabled = this.controlsUserDesiredEnabled && this.introCinematicStartMs === null;
+    this.controls.enabled =
+      this.controlsUserDesiredEnabled && this.introCinematicStartMs === null && !this.victoryCamActive;
   }
 
   rotateCameraByPixels(dx: number, dy: number): void {
@@ -1677,6 +1690,8 @@ export class GameRenderer {
 
   /** High map orbit, then continuous landing over the player hero. */
   private startMatchIntroCinematic(state: GameState): void {
+    this.victoryCamActive = false;
+    motionStop(this.victoryCamProgress);
     const { pos: endPos, tgt: endTgt } = this.getHeroIntroEndCameraRig(state);
     this.introEndPos.copy(endPos);
     this.introEndTgt.copy(endTgt);
@@ -1747,6 +1762,55 @@ export class GameRenderer {
       this.cameraFollowUnitId = null;
       this.refreshControlsEnabledFromIntro();
     }
+  }
+
+  /**
+   * After a win, pull the camera back and lift it to take in the whole field —
+   * a small victory-lap orbit. anime.js owns the eased 0→1 progress and the
+   * completion that restores hero-follow; the render loop reads the progress and
+   * moves the rig (so the two never fight over the camera). Skipped under
+   * reduced motion.
+   */
+  private startVictoryCinematic(state: GameState): void {
+    if (this.victoryCamActive || prefersReducedMotion()) return;
+    this.victoryCamStartPos.copy(this.camera.position);
+    this.victoryCamStartTgt.copy(this.controls.target);
+    const focusX = state.hero.hp > 0 ? state.hero.x : this.controls.target.x;
+    const focusZ = state.hero.hp > 0 ? state.hero.z : this.controls.target.z;
+    this.victoryCamEndTgt.set(focusX, 4, focusZ);
+    // End rig: the current view offset rotated ~24° and pulled back 1.6×, lifted.
+    const offX = this.victoryCamStartPos.x - this.victoryCamStartTgt.x;
+    const offZ = this.victoryCamStartPos.z - this.victoryCamStartTgt.z;
+    const cos = Math.cos(0.42);
+    const sin = Math.sin(0.42);
+    const rotX = offX * cos - offZ * sin;
+    const rotZ = offX * sin + offZ * cos;
+    const lift = Math.max(40, this.victoryCamStartPos.y * 1.3);
+    this.victoryCamEndPos.set(focusX + rotX * 1.6, lift, focusZ + rotZ * 1.6);
+    this.victoryCamProgress.t = 0;
+    this.victoryCamActive = true;
+    this.cameraFollowHero = false;
+    this.cameraFollowUnitId = null;
+    this.refreshControlsEnabledFromIntro();
+    motionStop(this.victoryCamProgress);
+    motionAnimate(this.victoryCamProgress, {
+      t: 1,
+      duration: 2600,
+      ease: "outCubic",
+      onComplete: () => {
+        this.victoryCamActive = false;
+        this.refreshControlsEnabledFromIntro();
+      },
+    });
+  }
+
+  private tickVictoryCinematic(): void {
+    if (!this.victoryCamActive) return;
+    const t = this.victoryCamProgress.t;
+    this.controls.target.copy(this.victoryCamStartTgt).lerp(this.victoryCamEndTgt, t);
+    this.camera.position.copy(this.victoryCamStartPos).lerp(this.victoryCamEndPos, t);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
   }
 
   pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number } | null {
@@ -1896,6 +1960,12 @@ export class GameRenderer {
     this.visualSyncDt = Math.min(visualCap, Math.max(0, (syncNow - this.lastSyncFrameMs) / 1000));
     this.lastSyncFrameMs = syncNow;
     this.currentState = state;
+    if (this.lastSyncedPhase !== state.phase) {
+      if (state.phase === "win" && this.lastSyncedPhase === "playing") {
+        this.startVictoryCinematic(state);
+      }
+      this.lastSyncedPhase = state.phase;
+    }
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
     this.syncTerrainSlab(state);
@@ -5403,6 +5473,7 @@ export class GameRenderer {
     this.lastRenderFrameMs = now;
     this.tuneMobileRenderQuality(dt, now);
     this.tickMatchIntroCinematic();
+    this.tickVictoryCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();
     this.tickGlbAnimations(dt);
