@@ -26,6 +26,7 @@ import type { ControlProfile } from "../controlProfile";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
+import { motionAnimate, motionStagger } from "../motion";
 
 const HAND_ACTIVE_LIFT = 5;
 
@@ -45,6 +46,33 @@ function prefersReducedMotion(): boolean {
   }
   return reducedMotionQuery?.matches ?? false;
 }
+
+/**
+ * Cascade the doctrine hand in on match start — a brief "deal" so the cards
+ * arrive rather than blink into place. Inline transform/opacity are cleared on
+ * completion so the CSS hover-lift / arc styling resumes. No-op under reduced
+ * motion.
+ */
+function dealInDoctrineHand(hand: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const slots = Array.from(hand.querySelectorAll<HTMLElement>(".slot"));
+  if (slots.length === 0) return;
+  motionAnimate(slots, {
+    opacity: [0, 1],
+    translateY: [26, 0],
+    scale: [0.9, 1],
+    duration: 460,
+    delay: motionStagger(45, { start: 120 }),
+    ease: "outBack(1.5)",
+    onComplete: () => {
+      for (const s of slots) {
+        s.style.transform = "";
+        s.style.opacity = "";
+      }
+    },
+  });
+}
+
 const FIRST_MATCH_STRATEGY_TOAST_KEY = "signalWarsFirstMatchStrategyToastShown.v1";
 
 function escapeHudHtml(s: string): string {
@@ -694,6 +722,7 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
   }
 
   hydrateCardPreviewImages(doctrineTrack);
+  dealInDoctrineHand(doctrineHand);
 
   doctrineTrack.addEventListener("dblclick", (ev) => {
     if (!(ev.target instanceof Element)) return;

@@ -33,12 +33,14 @@ import { hydrateCardPreviewImages } from "./ui/cardGlbPreview";
 import { tcgCardSlotHtml } from "./ui/doctrineCard";
 import { loadDoctrineSlots } from "./ui/doctrineStorage";
 import {
-  destroyDragGhost,
   DRAG_THRESHOLD_PX,
   makeDragGhost,
   moveDragGhost,
   pointInRect,
+  snapBackDragGhost,
+  spendDragGhost,
 } from "./ui/doctrineDrag";
+import { shakeElement } from "./motion";
 import { mountDoctrinePicker } from "./ui/doctrinePicker";
 import { installCardArtOverlayCalibrator } from "./ui/cardArtOverlay";
 import {
@@ -535,55 +537,65 @@ function wireDoctrineDragToMap(
     }
 
     dragRef.active = false;
-    destroyDragGhost(snap.ghost);
+    const ghost = snap.ghost;
+    const sourceSlot = (doctrine?.querySelector(`[data-slot-index="${snap.slotIndex}"]`) ??
+      null) as HTMLElement | null;
     renderer.setControlsEnabled(true);
     renderer.setPlacementGhost(null, false);
     renderer.setCommandGhost(null, null, false);
     hideDragReason();
 
-    const dropPhase = getState().phase;
-    if (dropPhase !== "playing") return;
+    let played = false;
+    try {
+      const dropPhase = getState().phase;
+      if (dropPhase !== "playing") return;
 
-    const st = getState();
-    const entry = getCatalogEntry(snap.catalogId);
-    if (!entry) {
-      st.lastMessage = "Unknown card.";
-      logGame("input", "Could not play card: unknown card.", st.tick);
-      updateHud(st);
-      return;
-    }
+      const st = getState();
+      const entry = getCatalogEntry(snap.catalogId);
+      if (!entry) {
+        st.lastMessage = "Unknown card.";
+        logGame("input", "Could not play card: unknown card.", st.tick);
+        updateHud(st);
+        return;
+      }
 
-    const rect = canvas.getBoundingClientRect();
-    if (!pointInRect(ev.clientX, ev.clientY, rect)) {
-      st.lastMessage = "Drop a doctrine card on the battlefield to play it.";
-      logGame("input", `Could not play ${entry.name}: drop was outside the battlefield.`, st.tick);
-      updateHud(st);
-      return;
-    }
-    const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
-    if (!hit) {
-      st.lastMessage = "No valid ground under the card drop.";
-      logGame("input", `Could not play ${entry.name}: no valid ground under drop.`, st.tick);
-      updateHud(st);
-      return;
-    }
-    const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
+      const rect = canvas.getBoundingClientRect();
+      if (!pointInRect(ev.clientX, ev.clientY, rect)) {
+        st.lastMessage = "Drop a doctrine card on the battlefield to play it.";
+        logGame("input", `Could not play ${entry.name}: drop was outside the battlefield.`, st.tick);
+        updateHud(st);
+        return;
+      }
+      const hit = renderer.pickGround(ev.clientX, ev.clientY, rect);
+      if (!hit) {
+        st.lastMessage = "No valid ground under the card drop.";
+        logGame("input", `Could not play ${entry.name}: no valid ground under drop.`, st.tick);
+        updateHud(st);
+        return;
+      }
+      const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
 
-    const playable = doctrineCardPlayability(st, snap.catalogId, hit, snap.slotIndex);
-    if (playable.reason) {
-      st.lastMessage = playable.reason;
-      logGame("input", `Could not play ${entry.name}: ${playable.reason}`, st.tick);
-      updateHud(st);
-      return;
+      const playable = doctrineCardPlayability(st, snap.catalogId, hit, snap.slotIndex);
+      if (playable.reason) {
+        st.lastMessage = playable.reason;
+        logGame("input", `Could not play ${entry.name}: ${playable.reason}`, st.tick);
+        updateHud(st);
+        shakeElement(sourceSlot);
+        return;
+      }
+      pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
+      pendingIntents.push({
+        type: "try_click_world",
+        pos: { x: hit.x, z: hit.z },
+        shiftKey: ev.shiftKey,
+        altKey: ev.altKey,
+        pickedUnitId,
+      });
+      played = true;
+    } finally {
+      if (played) spendDragGhost(ghost);
+      else snapBackDragGhost(ghost, sourceSlot);
     }
-    pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
-    pendingIntents.push({
-      type: "try_click_world",
-      pos: { x: hit.x, z: hit.z },
-      shiftKey: ev.shiftKey,
-      altKey: ev.altKey,
-      pickedUnitId,
-    });
   }
 
   doctrine.addEventListener("pointerdown", (ev: PointerEvent) => {

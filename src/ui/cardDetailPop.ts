@@ -3,6 +3,7 @@ import { getCardArtUrl } from "./cardArtManifest";
 import { doctrineCardFullModalHtml } from "./doctrineCard";
 import { getCatalogEntry } from "../game/catalog";
 import { cardArtOverlayHtml } from "./cardArtOverlay";
+import { motionAnimate, motionStop, prefersReducedMotion } from "../motion";
 
 /** @deprecated Long-press to open detail was removed. */
 export const CARD_DETAIL_HOLD_MS = 0;
@@ -189,18 +190,87 @@ function refitDetailSoon(body: HTMLElement): void {
   });
 }
 
-function closePop(): void {
-  if (!layer || layer.hasAttribute("hidden")) return;
-  detailRenderToken++;
-  disarmHoverOutsideDismiss();
+/** True while the exit animation is running (layer is visible but on its way out). */
+let detailClosing = false;
+
+/** Synchronous teardown — the original close behavior, run after the exit tween. */
+function finalizeClose(): void {
+  if (!layer) return;
+  detailClosing = false;
   detailOpenedFromHover = false;
   hoverPreviewSourceEl = null;
   unwireDetailResize();
   layer.setAttribute("hidden", "");
   layer.setAttribute("aria-hidden", "true");
   layer.classList.remove("card-detail-pop--hover-dock");
-  const body = layer.querySelector("#card-detail-pop-body");
-  if (body) body.innerHTML = "";
+  const body = layer.querySelector("#card-detail-pop-body") as HTMLElement | null;
+  if (body) {
+    body.style.transform = "";
+    body.style.opacity = "";
+    body.innerHTML = "";
+  }
+}
+
+function closePop(): void {
+  if (!layer || layer.hasAttribute("hidden")) return;
+  detailRenderToken++;
+  disarmHoverOutsideDismiss();
+  if (prefersReducedMotion()) {
+    finalizeClose();
+    return;
+  }
+  if (detailClosing) return;
+  detailClosing = true;
+  const el = layer;
+  const backdrop = el.querySelector(".card-detail-pop-backdrop") as HTMLElement | null;
+  const body = el.querySelector("#card-detail-pop-body") as HTMLElement | null;
+  if (backdrop) motionAnimate(backdrop, { opacity: 0, duration: 130, ease: "outQuad" });
+  if (body) {
+    motionAnimate(body, {
+      opacity: 0,
+      scale: 0.95,
+      translateY: 6,
+      duration: 150,
+      ease: "inQuad",
+      onComplete: finalizeClose,
+    });
+  } else {
+    finalizeClose();
+  }
+}
+
+/** Play the pop's entrance. Subtler/faster when docked as a hover preview. */
+function playDetailEnter(el: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const dock = el.classList.contains("card-detail-pop--hover-dock");
+  const backdrop = el.querySelector(".card-detail-pop-backdrop") as HTMLElement | null;
+  const body = el.querySelector("#card-detail-pop-body") as HTMLElement | null;
+  if (backdrop) {
+    motionAnimate(backdrop, { opacity: [0, 1], duration: dock ? 120 : 200, ease: "outQuad" });
+  }
+  if (body) {
+    motionAnimate(body, {
+      opacity: [0, 1],
+      scale: dock ? [0.98, 1] : [0.9, 1],
+      translateY: dock ? [4, 0] : [10, 0],
+      duration: dock ? 180 : 300,
+      ease: dock ? "outQuad" : "outBack(1.6)",
+      onComplete: () => {
+        body.style.transform = "";
+        body.style.opacity = "";
+      },
+    });
+  }
+}
+
+/** If a close is mid-flight when we re-open, cancel it so the entrance is clean. */
+function cancelDetailExit(el: HTMLElement): void {
+  if (!detailClosing) return;
+  detailClosing = false;
+  const backdrop = el.querySelector(".card-detail-pop-backdrop") as HTMLElement | null;
+  const body = el.querySelector("#card-detail-pop-body") as HTMLElement | null;
+  if (backdrop) motionStop(backdrop);
+  if (body) motionStop(body);
 }
 
 function wireCardDetailPopEvents(el: HTMLElement): void {
@@ -283,9 +353,11 @@ export function showDoctrineCardDetail(catalogId: string, opts?: ShowDoctrineCar
   else el.classList.remove("card-detail-pop--hover-dock");
   const body = el.querySelector("#card-detail-pop-body") as HTMLElement;
   unwireDetailResize();
+  cancelDetailExit(el);
   body.innerHTML = loadingCardHtml();
   el.removeAttribute("hidden");
   el.setAttribute("aria-hidden", "false");
+  playDetailEnter(el);
   refitDetailSoon(body);
 
   void (async () => {
