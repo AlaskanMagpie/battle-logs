@@ -26,7 +26,14 @@ import type { ControlProfile } from "../controlProfile";
 import { hydrateCardPreviewImages } from "./cardGlbPreview";
 import { doctrineSlotButtonInnerHtml } from "./doctrineCard";
 import { tapYieldMultForOwner } from "../game/sim/systems/homeDistance";
-import { motionAnimate, motionStagger } from "../motion";
+import {
+  motionAnimate,
+  motionStagger,
+  tweenCount,
+  tweenBarPercent,
+  flashElement,
+  resetCount,
+} from "../motion";
 
 const HAND_ACTIVE_LIFT = 5;
 
@@ -53,6 +60,25 @@ function prefersReducedMotion(): boolean {
  * completion so the CSS hover-lift / arc styling resumes. No-op under reduced
  * motion.
  */
+/**
+ * Flash a vital card red when its hit points drop. Throttled per vital so a
+ * stream of chip damage pulses at most a few times a second rather than every
+ * frame; remembers the last seen value to detect a decrease. No-op under
+ * reduced motion (`flashElement` returns null).
+ */
+const vitalHpMemo = new Map<string, number>();
+const vitalFlashMemo = new Map<string, number>();
+function flashVitalOnDamage(card: HTMLElement | null, key: string, current: number): void {
+  const prev = vitalHpMemo.get(key);
+  vitalHpMemo.set(key, current);
+  if (!card || prev === undefined || current >= prev) return;
+  const now = typeof performance !== "undefined" ? performance.now() : 0;
+  const last = vitalFlashMemo.get(key) ?? 0;
+  if (now - last < 240) return;
+  vitalFlashMemo.set(key, now);
+  flashElement(card, { color: "rgba(255,70,70,0.9)", duration: 360 });
+}
+
 function dealInDoctrineHand(hand: HTMLElement): void {
   if (prefersReducedMotion()) return;
   const slots = Array.from(hand.querySelectorAll<HTMLElement>(".slot"));
@@ -71,6 +97,54 @@ function dealInDoctrineHand(hand: HTMLElement): void {
       }
     },
   });
+}
+
+/**
+ * One-shot entrance for the end-of-match banner: the panel pops in, the stat
+ * rows fade up in a stagger (their numbers roll from zero separately via
+ * `tweenCount`), then the action buttons rise. Inline transform/opacity are
+ * cleared on completion so resting layout is untouched. No-op under reduced
+ * motion. Call exactly once per transition into the end phase.
+ */
+function playEndgameEntrance(end: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const clearInline = (el: HTMLElement): void => {
+    el.style.transform = "";
+    el.style.opacity = "";
+  };
+  const panel = end.querySelector<HTMLElement>(".hud-endgame-panel");
+  if (panel) {
+    motionAnimate(panel, {
+      opacity: [0, 1],
+      scale: [0.9, 1],
+      translateY: [16, 0],
+      duration: 520,
+      ease: "outBack(1.4)",
+      onComplete: () => clearInline(panel),
+    });
+  }
+  const rows = Array.from(end.querySelectorAll<HTMLElement>(".hud-endgame-stat"));
+  if (rows.length) {
+    motionAnimate(rows, {
+      opacity: [0, 1],
+      translateY: [8, 0],
+      duration: 420,
+      delay: motionStagger(45, { start: 220 }),
+      ease: "outQuad",
+      onComplete: () => rows.forEach(clearInline),
+    });
+  }
+  const actions = end.querySelector<HTMLElement>(".hud-endgame-actions");
+  if (actions) {
+    motionAnimate(actions, {
+      opacity: [0, 1],
+      translateY: [10, 0],
+      duration: 360,
+      delay: 360,
+      ease: "outQuad",
+      onComplete: () => clearInline(actions),
+    });
+  }
 }
 
 const FIRST_MATCH_STRATEGY_TOAST_KEY = "signalWarsFirstMatchStrategyToastShown.v1";
@@ -778,33 +852,33 @@ export function mountHud(root: HTMLElement, initial: GameState, api: HudMountApi
 }
 
 export function updateHud(state: GameState): void {
-  const flux = document.querySelector("#flux");
-  const salvage = document.querySelector("#salvage");
-  const pop = document.querySelector("#pop");
-  const nodes = document.querySelector("#nodes");
+  const flux = document.querySelector<HTMLElement>("#flux");
+  const salvage = document.querySelector<HTMLElement>("#salvage");
+  const pop = document.querySelector<HTMLElement>("#pop");
+  const nodes = document.querySelector<HTMLElement>("#nodes");
   const mode = document.querySelector("#mode");
   const phaseTimer = document.querySelector("#hud-phase-timer");
-  const phaseDmgP = document.querySelector("#hud-phase-dmg-p");
-  const phaseDmgE = document.querySelector("#hud-phase-dmg-e");
+  const phaseDmgP = document.querySelector<HTMLElement>("#hud-phase-dmg-p");
+  const phaseDmgE = document.querySelector<HTMLElement>("#hud-phase-dmg-e");
   const msg = document.querySelector("#msg");
   const captain = document.querySelector("#btn-captain");
   const nodeIncome = playerManaIncomePerSec(state);
   const salvageIncome = salvageManaPerSec(state);
   if (flux) {
-    flux.textContent = String(Math.floor(state.flux));
+    tweenCount(flux, Math.floor(state.flux), { duration: 220 });
     const parent = flux.closest<HTMLElement>(".hud-stat");
     if (parent) parent.title = `Mana pays for cards. Income: +${(nodeIncome + salvageIncome).toFixed(1)}/s (${nodeIncome.toFixed(1)} from nodes, ${salvageIncome.toFixed(1)} from Salvage).`;
   }
   if (salvage) {
-    salvage.textContent = String(Math.floor(state.salvage));
+    tweenCount(salvage, Math.floor(state.salvage), { duration: 220 });
     const parent = salvage.closest<HTMLElement>(".hud-stat");
     if (parent) parent.title = `Salvage is a reserve that converts into Mana over time: +${salvageIncome.toFixed(1)}/s right now.`;
   }
   const popVal = totalPlayerPop(state);
-  if (pop) pop.textContent = String(popVal);
+  if (pop) tweenCount(pop, popVal);
   if (nodes) {
     const claimed = claimedTapCount(state);
-    nodes.textContent = String(claimed);
+    tweenCount(nodes, claimed);
     const parent = nodes.closest<HTMLElement>(".hud-stat");
     const activeYielding = state.taps.filter((t) => t.active && t.ownerTeam === "player" && t.yieldRemaining > 0 && (t.anchorHp ?? 0) > 0).length;
     if (parent) parent.title = `${claimed} Mana nodes claimed; ${activeYielding} still producing. Claim neutral rings to expand the cyan build area.`;
@@ -832,8 +906,8 @@ export function updateHud(state: GameState): void {
     if (state.scenario === "survival") {
       const rampTicks = Math.max(1, state.survival?.rampDurationTicks ?? MATCH_DURATION_TICKS);
       const rampLabel = formatMatchDurationFromTicks(rampTicks);
-      phaseDmgP.textContent = String(state.stats.enemyKills);
-      phaseDmgE.textContent = String(enemyCount(state));
+      tweenCount(phaseDmgP, state.stats.enemyKills);
+      tweenCount(phaseDmgE, enemyCount(state));
       if (timeKicker) timeKicker.textContent = "Survived";
       if (statKicker) statKicker.textContent = "Kills / Hostiles";
       if (statRow) {
@@ -848,8 +922,8 @@ export function updateHud(state: GameState): void {
     } else {
       const dp = Math.round(state.stats.damageDealtPlayer);
       const de = Math.round(state.stats.damageDealtEnemy);
-      phaseDmgP.textContent = String(dp);
-      phaseDmgE.textContent = String(de);
+      tweenCount(phaseDmgP, dp);
+      tweenCount(phaseDmgE, de);
       if (timeKicker) timeKicker.textContent = "Time Left";
       if (statKicker) statKicker.textContent = "Damage You / Foe";
       if (statRow) {
@@ -962,9 +1036,12 @@ export function updateHud(state: GameState): void {
   if (heroHpFill && heroHpVal) {
     const frac = state.hero.maxHp > 0 ? state.hero.hp / state.hero.maxHp : 0;
     const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
-    heroHpFill.style.width = `${pct}%`;
-    heroHpVal.textContent = `${Math.max(0, Math.ceil(state.hero.hp))}/${Math.ceil(state.hero.maxHp)}`;
+    const hpCur = Math.max(0, Math.ceil(state.hero.hp));
+    const hpMax = Math.ceil(state.hero.maxHp);
+    tweenBarPercent(heroHpFill, pct);
+    tweenCount(heroHpVal, hpCur, { duration: 240, format: (v) => `${Math.round(v)}/${hpMax}` });
     const card = heroHpFill.closest<HTMLElement>(".hud-vital");
+    flashVitalOnDamage(card, "hero", hpCur);
     if (card) {
       card.classList.toggle("hud-vital--low", pct > 0 && pct <= 35);
       card.classList.toggle("hud-vital--critical", pct > 0 && pct <= 18);
@@ -979,9 +1056,16 @@ export function updateHud(state: GameState): void {
     const keep = findKeep(state);
     const frac = keep && keep.maxHp > 0 ? keep.hp / keep.maxHp : 0;
     const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
-    keepHpFill.style.width = `${pct}%`;
-    keepHpVal.textContent = keep ? `${Math.max(0, Math.ceil(keep.hp))}/${Math.ceil(keep.maxHp)}` : "-";
+    tweenBarPercent(keepHpFill, pct);
     const card = keepHpFill.closest<HTMLElement>(".hud-vital");
+    if (keep) {
+      const hpCur = Math.max(0, Math.ceil(keep.hp));
+      const hpMax = Math.ceil(keep.maxHp);
+      tweenCount(keepHpVal, hpCur, { duration: 240, format: (v) => `${Math.round(v)}/${hpMax}` });
+      flashVitalOnDamage(card, "keep", hpCur);
+    } else {
+      keepHpVal.textContent = "-";
+    }
     if (card) {
       card.classList.toggle("hud-vital--low", pct > 0 && pct <= 35);
       card.classList.toggle("hud-vital--critical", pct > 0 && pct <= 18);
@@ -1000,6 +1084,7 @@ export function updateHud(state: GameState): void {
     if (state.phase === "playing") {
       end.hidden = true;
       end.classList.remove("hud-endgame--win", "hud-endgame--lose");
+      delete end.dataset.introPlayed;
       endTitle.textContent = "Match over";
       if (endStrategyToast) {
         endStrategyToast.hidden = true;
@@ -1017,6 +1102,14 @@ export function updateHud(state: GameState): void {
       end.classList.toggle("hud-endgame--lose", !won);
       endTitle.textContent = state.scenario === "survival" ? "Survival ended" : won ? "Victory" : "Defeat";
       endArt.src = won ? "/assets/hud/end-victory.png" : "/assets/hud/end-defeat.png";
+      const firstEndFrame = end.dataset.introPlayed !== "1";
+      if (firstEndFrame) {
+        end.dataset.introPlayed = "1";
+        playEndgameEntrance(end);
+      }
+      // Roll numeric stats up from zero only on the first frame of the banner.
+      const rollStats = firstEndFrame && !prefersReducedMotion();
+      let statRollIndex = 0;
       const st = state.stats;
       const best = readLocalLeaderboard()[0];
       const timeSec = simSecondsFromMatchTick(state.tick);
@@ -1027,7 +1120,23 @@ export function updateHud(state: GameState): void {
       const setEndStat = (id: string, value: string | number, title?: string): void => {
         const el = document.querySelector<HTMLElement>(`#hud-endgame-stat-${id}`);
         if (!el) return;
-        el.textContent = String(value);
+        if (typeof value === "number" && Number.isFinite(value)) {
+          if (rollStats) {
+            resetCount(el);
+            tweenCount(el, value, {
+              from: 0,
+              duration: 760,
+              ease: "outExpo",
+              delay: 140 + statRollIndex * 55,
+            });
+            statRollIndex++;
+          } else {
+            tweenCount(el, value, { duration: 220 });
+          }
+        } else {
+          resetCount(el);
+          el.textContent = String(value);
+        }
         if (title) el.setAttribute("title", title);
         else el.removeAttribute("title");
       };

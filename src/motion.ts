@@ -116,62 +116,97 @@ export function tweenNumber(opts: TweenNumberOptions): MotionHandle | null {
   });
 }
 
-/** Per-element count-up bookkeeping so repeated updates retarget smoothly. */
-type CountState = { displayed: number; target: number };
-const countStates = new WeakMap<Element, CountState>();
+/** Per-element bookkeeping so repeated updates retarget a single value smoothly. */
+type TrackState = { displayed: number; target: number };
+const trackStates = new WeakMap<Element, TrackState>();
 
-export type CountOptions = {
+type TrackOptions = {
   duration?: number;
   ease?: string;
-  /** Format the integer for display. Defaults to `String(Math.round(v))`. */
-  format?: (value: number) => string;
-  /** Only animate when the jump is at least this large; smaller deltas snap. */
   minDelta?: number;
+  /** Starting value when no prior state is retained (e.g. roll up from 0). */
+  from?: number;
+  /** Delay before the tween starts — handy for staggering a group of counts. */
+  delay?: number;
 };
 
 /**
- * Animate an element's text from its previously displayed number toward
- * `target`, retargeting in-flight if called again before it settles. Ideal for
- * HUD resources/stats that update every frame: small trickle reads as a smooth
- * rising counter, discrete jumps get a satisfying roll-up. No-ops (snaps) under
- * reduced motion or when the value is unchanged.
+ * Core retargeting tween: animate one scalar per element from its previously
+ * displayed value toward `target`, calling `render` each frame. Retargets
+ * in-flight if called again before settling — so it can be driven every frame
+ * from `updateHud`. Snaps under reduced motion or when within `minDelta`.
  */
-export function tweenCount(el: HTMLElement, target: number, opts: CountOptions = {}): void {
-  const format = opts.format ?? ((v: number) => String(Math.round(v)));
-  const prev = countStates.get(el);
+function tweenTracked(
+  el: Element,
+  target: number,
+  render: (value: number) => void,
+  opts: TrackOptions,
+): void {
+  const prev = trackStates.get(el);
   if (prev && prev.target === target) return;
 
-  const from = prev ? prev.displayed : target;
-  const state: CountState = { displayed: from, target };
-  countStates.set(el, state);
+  const from = prev ? prev.displayed : opts.from ?? target;
+  const state: TrackState = { displayed: from, target };
+  trackStates.set(el, state);
 
   const minDelta = opts.minDelta ?? 0;
   if (prefersReducedMotion() || Math.abs(target - from) <= minDelta) {
     state.displayed = target;
-    el.textContent = format(target);
+    render(target);
     return;
   }
 
   motionStop(state);
+  render(from);
   animate(state, {
     displayed: target,
     duration: opts.duration ?? 300,
     ease: opts.ease ?? "outQuad",
-    onUpdate: () => {
-      el.textContent = format(state.displayed);
-    },
+    delay: opts.delay ?? 0,
+    onUpdate: () => render(state.displayed),
     onComplete: () => {
       state.displayed = target;
-      el.textContent = format(target);
+      render(target);
     },
   });
 }
 
-/** Drop any retained count-up state for an element (e.g. on teardown/rebuild). */
+export type CountOptions = TrackOptions & {
+  /** Format the value for display. Defaults to `String(Math.round(v))`. */
+  format?: (value: number) => string;
+};
+
+/**
+ * Animate an element's text from its previously displayed number toward
+ * `target`. Ideal for HUD resources/stats updated every frame: trickle reads as
+ * a smooth rising counter, discrete jumps get a satisfying roll-up.
+ */
+export function tweenCount(el: HTMLElement, target: number, opts: CountOptions = {}): void {
+  const format = opts.format ?? ((v: number) => String(Math.round(v)));
+  tweenTracked(el, target, (v) => (el.textContent = format(v)), opts);
+}
+
+/**
+ * Animate an element's `width` toward `pct` (0..100), so HP/progress bars drain
+ * and fill smoothly instead of snapping. Retargets every frame.
+ */
+export function tweenBarPercent(el: HTMLElement, pct: number, opts: TrackOptions = {}): void {
+  const clamped = Math.max(0, Math.min(100, pct));
+  tweenTracked(
+    el,
+    clamped,
+    (v) => {
+      el.style.width = `${Math.max(0, Math.min(100, v))}%`;
+    },
+    { duration: 240, ...opts },
+  );
+}
+
+/** Drop any retained tween state for an element (e.g. on teardown/rebuild). */
 export function resetCount(el: HTMLElement): void {
-  const s = countStates.get(el);
+  const s = trackStates.get(el);
   if (s) motionStop(s);
-  countStates.delete(el);
+  trackStates.delete(el);
 }
 
 export type FlashOptions = {
