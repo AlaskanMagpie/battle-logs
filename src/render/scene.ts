@@ -1799,6 +1799,7 @@ export class GameRenderer {
       ease: "outCubic",
       onComplete: () => {
         this.victoryCamActive = false;
+        this.cameraFollowHero = true;
         this.refreshControlsEnabledFromIntro();
       },
     });

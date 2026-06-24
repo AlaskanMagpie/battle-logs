@@ -55,12 +55,6 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Cascade the doctrine hand in on match start — a brief "deal" so the cards
- * arrive rather than blink into place. Inline transform/opacity are cleared on
- * completion so the CSS hover-lift / arc styling resumes. No-op under reduced
- * motion.
- */
-/**
  * Flash a vital card red when its hit points drop. Throttled per vital so a
  * stream of chip damage pulses at most a few times a second rather than every
  * frame; remembers the last seen value to detect a decrease. No-op under
@@ -79,6 +73,12 @@ function flashVitalOnDamage(card: HTMLElement | null, key: string, current: numb
   flashElement(card, { color: "rgba(255,70,70,0.9)", duration: 360 });
 }
 
+/**
+ * Cascade the doctrine hand in on match start — a brief "deal" so the cards
+ * arrive rather than blink into place. Inline transform/opacity are cleared on
+ * completion so the CSS hover-lift / arc styling resumes. No-op under reduced
+ * motion.
+ */
 function dealInDoctrineHand(hand: HTMLElement): void {
   if (prefersReducedMotion()) return;
   const slots = Array.from(hand.querySelectorAll<HTMLElement>(".slot"));

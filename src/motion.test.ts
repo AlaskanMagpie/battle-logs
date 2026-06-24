@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  flashElement,
   motionStagger,
   prefersReducedMotion,
   resetCount,
+  shakeElement,
   tweenBarPercent,
   tweenCount,
   tweenNumber,
@@ -64,6 +66,20 @@ describe("motion: SSR-safe snap behavior", () => {
     tweenCount(el, 1);
     expect(() => resetCount(el)).not.toThrow();
   });
+
+  it("tweenCount retargets from the previously displayed value (no stale double-write)", () => {
+    const el = fakeEl();
+    tweenCount(el, 10); // first call seeds and snaps to 10
+    expect(el.textContent).toBe("10");
+    // Retarget: must cancel the prior tween and begin from the last shown value.
+    expect(() => tweenCount(el, 25)).not.toThrow();
+    expect(el.textContent).toBe("10");
+  });
+
+  it("flashElement / shakeElement no-op on a null target", () => {
+    expect(flashElement(null)).toBeNull();
+    expect(shakeElement(null)).toBeNull();
+  });
 });
 
 describe("motion: reduced-motion contract", () => {
@@ -85,5 +101,8 @@ describe("motion: reduced-motion contract", () => {
     const el = { textContent: "", style: {} as CSSStyleDeclaration } as unknown as HTMLElement;
     m.tweenCount(el, 99, { from: 0 });
     expect(el.textContent).toBe("99");
+    // Decorative flashes are suppressed entirely.
+    expect(m.flashElement(el)).toBeNull();
+    expect(m.shakeElement(el)).toBeNull();
   });
 });

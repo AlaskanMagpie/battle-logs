@@ -156,7 +156,7 @@ function tweenTracked(
     return;
   }
 
-  motionStop(state);
+  motionStop(prev ?? state);
   render(from);
   animate(state, {
     displayed: target,
@@ -192,6 +192,9 @@ export function tweenCount(el: HTMLElement, target: number, opts: CountOptions =
  */
 export function tweenBarPercent(el: HTMLElement, pct: number, opts: TrackOptions = {}): void {
   const clamped = Math.max(0, Math.min(100, pct));
+  // anime.js writes width every frame; suppress any CSS `transition: width` on
+  // the element so the two don't compound (and so reduced motion snaps cleanly).
+  el.style.transition = "none";
   tweenTracked(
     el,
     clamped,
@@ -218,13 +221,16 @@ export type FlashOptions = {
 };
 
 /**
- * Brief brightness/scale flash on an element — used for "can't afford" denials
- * and damage hits. Animates filter + transform and restores them on complete.
+ * Brief brightness flash on an element — used for "can't afford" denials and
+ * damage hits. Cancels any in-flight flash on the same element first (so rapid
+ * hits don't stack competing filter animations) and clears the inline filter on
+ * completion. No-op under reduced motion.
  */
 export function flashElement(el: HTMLElement | null, opts: FlashOptions = {}): MotionHandle | null {
   if (!el || prefersReducedMotion()) return null;
   const intensity = opts.intensity ?? 1;
   const color = opts.color ?? "rgba(255,90,90,0.85)";
+  motionStop(el);
   return animate(el, {
     filter: [
       "brightness(1) drop-shadow(0 0 0 transparent)",
@@ -233,6 +239,9 @@ export function flashElement(el: HTMLElement | null, opts: FlashOptions = {}): M
     ],
     duration: opts.duration ?? 420,
     ease: "outQuad",
+    onComplete: () => {
+      el.style.filter = "";
+    },
   });
 }
 

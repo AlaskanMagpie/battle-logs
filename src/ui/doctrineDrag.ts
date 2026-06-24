@@ -18,10 +18,6 @@ export function moveDragGhost(el: HTMLElement | null, clientX: number, clientY: 
   el.style.top = `${clientY + 14}px`;
 }
 
-export function destroyDragGhost(el: HTMLElement | null): void {
-  el?.remove();
-}
-
 /**
  * Failed play: glide the drag ghost back to its source slot and fade it out
  * before removing, so a rejected card reads as "returned to hand" rather than

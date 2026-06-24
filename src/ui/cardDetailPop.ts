@@ -235,6 +235,7 @@ function closePop(): void {
       onComplete: finalizeClose,
     });
   } else {
+    if (backdrop) motionStop(backdrop);
     finalizeClose();
   }
 }
