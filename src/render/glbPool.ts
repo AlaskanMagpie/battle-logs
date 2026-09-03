@@ -363,59 +363,56 @@ function boneLeafFromPositionTrack(trackName: string): string {
 }
 
 /**
- * Horizontal travel baked on hips/root/pelvis position — runs read higher than idles/attacks
- * for most Meshy humanoids (same metric as inspect tooling).
+ * Horizontal travel baked into a rig's Hips / Pelvis / Root / Armature track.
+ *
+ * Doctrine owns world XZ on the parent group from the simulation. Letting a
+ * source clip also translate its skeleton makes actions drift, crossfades
+ * smear, and locomotion look like skating. Preserve the initial offset so a
+ * valid authored rest pose stays intact; only flatten motion after frame zero.
  */
-function hipsRootHorizontalStrideXZ(clip: THREE.AnimationClip): number {
-  let maxRange = 0;
-  for (const track of clip.tracks) {
-    if (!track.name.toLowerCase().endsWith(".position")) continue;
-    const leaf = boneLeafFromPositionTrack(track.name).toLowerCase();
-    if (!/(hips|pelvis|root|rootground)$/i.test(leaf) && !/hips/i.test(leaf)) continue;
-    if (!(track instanceof THREE.VectorKeyframeTrack)) continue;
-    if (track.times.length < 2) continue;
-    const v = track.values;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minZ = Infinity;
-    let maxZ = -Infinity;
-    for (let i = 0; i < v.length; i += 3) {
-      minX = Math.min(minX, v[i]!);
-      maxX = Math.max(maxX, v[i]!);
-      minZ = Math.min(minZ, v[i + 2]!);
-      maxZ = Math.max(maxZ, v[i + 2]!);
-    }
-    maxRange = Math.max(maxRange, Math.hypot(maxX - minX, maxZ - minZ));
-  }
-  return maxRange;
+function isRootMotionPositionTrack(track: THREE.KeyframeTrack): boolean {
+  if (!track.name.toLowerCase().endsWith(".position")) return false;
+  const rawLeaf = boneLeafFromPositionTrack(track.name).toLowerCase();
+  const leaf = rawLeaf.replace(/[^a-z0-9]+/g, "");
+  return (
+    leaf === "root" ||
+    leaf === "rootground" ||
+    leaf === "armature" ||
+    leaf === "skeleton" ||
+    leaf === "pelvis" ||
+    leaf === "hip" ||
+    leaf === "hips" ||
+    leaf.endsWith("hips") ||
+    leaf.endsWith("pelvis")
+  );
 }
 
-/**
- * Run/walk clips often bake root translation on **Hips.position** (forward/side drift in place).
- * We already drive world XY from the sim; keeping those keys fights the unit root and reads as
- * horizontal jitter (especially Line / Meshy exports).
- * Preserve Y so vertical bounce from the authored cycle remains.
- */
-function stripHipsHorizontalTranslation(clip: THREE.AnimationClip): THREE.AnimationClip {
+function stripRootHorizontalTranslation(clip: THREE.AnimationClip): THREE.AnimationClip {
   const tracks = clip.tracks.map((track) => {
-    if (!track.name.endsWith(".position")) return track;
-    if (!/hips$/i.test(boneLeafFromPositionTrack(track.name))) return track;
-    if (!(track instanceof THREE.VectorKeyframeTrack)) return track;
+    if (!isRootMotionPositionTrack(track)) return track;
+    if (!(track instanceof THREE.VectorKeyframeTrack) || track.times.length < 2) return track;
     const values = Float32Array.from(track.values);
+    const baseX = values[0] ?? 0;
+    const baseZ = values[2] ?? 0;
     for (let i = 0; i < values.length; i += 3) {
-      values[i] = 0;
-      values[i + 2] = 0;
+      values[i] = baseX;
+      values[i + 2] = baseZ;
     }
     return new THREE.VectorKeyframeTrack(track.name, Array.from(track.times), Array.from(values));
   });
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
-function safeClip(clip: THREE.AnimationClip, stripHipsRootXZ = false): THREE.AnimationClip {
-  // Meshy exports often include scale keys that fight our class-based GLB normalization.
+/**
+ * Strip scale tracks that fight class normalization and, by default, neutralize
+ * baked horizontal root motion for every runtime role. The simulation remains
+ * the sole authority for position while the clip still supplies posture, feet,
+ * vertical bounce, attack anticipation, and recovery.
+ */
+function safeClip(clip: THREE.AnimationClip, stripRootMotionXZ = true): THREE.AnimationClip {
   const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
   let out = new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  if (stripHipsRootXZ) out = stripHipsHorizontalTranslation(out);
+  if (stripRootMotionXZ) out = stripRootHorizontalTranslation(out);
   return out;
 }
 
