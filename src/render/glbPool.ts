@@ -668,7 +668,9 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
       if (/\b(kick|spell|mage|cast|dance|flip|jump|attack|slash)\b/.test(hay)) score -= 180;
     }
   } else if (role === "attack") {
-    if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 100;
+    // Meshy has several legitimate caster labels (including its recurrent
+    // misspelling `soell`). They are still full combat releases, not idles.
+    if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight|cast|spell|soell|mage|fireball|blast)\b/.test(hay)) score += 100;
     if (file.includes("starbound_arcanist_hero")) {
       // Prefer readable melee on the default action; short cast bursts are strike-roulette only.
       if (/\b(mage|spell|soell|cast)\b/.test(hay)) score -= 220;
