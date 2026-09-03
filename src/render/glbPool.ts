@@ -383,7 +383,9 @@ function isRootMotionPositionTrack(track: THREE.KeyframeTrack): boolean {
     leaf === "hip" ||
     leaf === "hips" ||
     leaf.endsWith("hips") ||
-    leaf.endsWith("pelvis")
+    leaf.endsWith("pelvis") ||
+    leaf.endsWith("root") ||
+    leaf.endsWith("rootground")
   );
 }
 
