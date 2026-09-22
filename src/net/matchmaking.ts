@@ -57,6 +57,7 @@ function fallback(reason: MatchmakingFallbackReason): MatchmakingResult {
   const copy: Record<MatchmakingFallbackReason, string> = {
     timeout: "No human opponent found quickly; starting against AI.",
     server_unavailable: "Multiplayer server is unavailable; starting against AI.",
+    not_configured: "Human matches are not configured for this build; starting against AI.",
     cancelled: "Matchmaking cancelled; starting against AI.",
     opponent_left: "Opponent left before start; starting against AI.",
     invalid_response: "Multiplayer room returned invalid setup; starting against AI.",
@@ -72,12 +73,13 @@ function abortPromise(signal: AbortSignal | undefined): Promise<"abort"> {
   });
 }
 
-function humanNotFound(
-  reason: "timeout" | "server_unavailable" | "invalid_response",
-): Extract<MatchmakingResult, { mode: "human_not_found" }> {
-  const messages: Record<"timeout" | "server_unavailable" | "invalid_response", string> = {
+type HumanNotFoundReason = "timeout" | "server_unavailable" | "not_configured" | "invalid_response";
+
+function humanNotFound(reason: HumanNotFoundReason): Extract<MatchmakingResult, { mode: "human_not_found" }> {
+  const messages: Record<HumanNotFoundReason, string> = {
     timeout: "No human opponent joined within the wait window.",
     server_unavailable: "Could not reach the multiplayer server.",
+    not_configured: "Human matches are not configured for this build. Set VITE_COLYSEUS_URL and redeploy.",
     invalid_response: "Matchmaking finished but the room did not return a valid start payload.",
   };
   return { mode: "human_not_found", reason, message: messages[reason] };
@@ -133,7 +135,7 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
   const strict = options.strictHumanMatch ?? false;
   const endpoint = configuredEndpoint(options.endpoint);
   if (!endpoint) {
-    return strict ? humanNotFound("server_unavailable") : fallback("server_unavailable");
+    return strict ? humanNotFound("not_configured") : fallback("not_configured");
   }
   const request: MatchmakingRequest = {
     version: MULTIPLAYER_PROTOCOL_VERSION,

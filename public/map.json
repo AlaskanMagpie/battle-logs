@@ -139,7 +139,7 @@
   "playerRelaySlots": [
     {
       "id": "p_relay_1",
-      "x": -404,
+      "x": -394,
       "z": 0
     },
     {
@@ -186,7 +186,7 @@
     }
   ],
   "playerStart": {
-    "x": -404,
+    "x": -394,
     "z": 14
   },
   "enemyStart": {

@@ -6,9 +6,9 @@ import {
   KEEP_ID,
   PRODUCED_UNIT_CHRONO_SENTINELS,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
-  STRUCTURE_MESH_VISUAL_SCALE,
 } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
+import { structureVisualDims } from "../game/structureObstacles";
 import { getDoctrineForCard } from "../game/assetLabDoctrine";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
@@ -872,7 +872,7 @@ function visibleMeshBounds(root: THREE.Object3D, relativeTo?: THREE.Object3D): T
   return out;
 }
 
-function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, basis: GlbExtentBasis): void {
+function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, basis: GlbExtentBasis, minHeight = 0): void {
   inst.updateMatrixWorld(true);
   const parent = inst.parent ?? undefined;
   const box = visibleMeshBounds(inst, parent);
@@ -881,6 +881,9 @@ function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, bas
   box.getSize(size);
   const ref = glbBoxExtentRef(size, basis);
   inst.scale.multiplyScalar(targetMaxExtent / ref);
+  // Towers authored as squat XZ models need height without expanding their collision footprint.
+  const scaledHeight = size.y * targetMaxExtent / ref;
+  if (minHeight > 0 && scaledHeight > 0 && scaledHeight < minHeight) inst.scale.y *= minHeight / scaledHeight;
   inst.updateMatrixWorld(true);
   const b2 = visibleMeshBounds(inst, parent);
   inst.position.x -= (b2.min.x + b2.max.x) / 2;
@@ -1070,6 +1073,8 @@ type AttachGlbOpts = {
   keepPlaceholderHidden?: boolean;
   /** How to read authored bounds for normalization (default: height for animated units, max otherwise). */
   extentBasis?: GlbExtentBasis;
+  /** Optional tower height floor after horizontal sizing (does not increase XZ footprint). */
+  minHeight?: number;
   /**
    * Exact AnimationClip.name overrides from asset lab (`battleLogs.assetLab.doctrine.v1`).
    * Keys match Three roles; asset lab “die” maps to `death`.
@@ -1248,7 +1253,7 @@ async function attachGlbByFile(
         console.warn(`[glb] ${opts.animationRoleLabel} missing animation roles: ${missing.join(", ") || "all"}`, file);
       }
     }
-    normalizeGlbInstance(inst, targetMaxExtent, extentBasis);
+    normalizeGlbInstance(inst, targetMaxExtent, extentBasis, opts?.minHeight);
 
     if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
 
@@ -1326,8 +1331,13 @@ export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = 
   await attachGlbForClass("hero", placeholder, 3.0, team);
 }
 
-/** Player towers: canonical max extent (matches `structureDims` battle scale). */
-export const TOWER_GLB_TARGET_EXTENT = unitMeshLinearSize("Titan") * STRUCTURE_MESH_VISUAL_SCALE;
+/** Match the authored tower's horizontal footprint; tall GLBs no longer become oversized. */
+export function towerGlbTargetExtent(catalogId: string): number {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return 0;
+  const { w, d } = structureVisualDims(entry);
+  return Math.max(w, d);
+}
 
 /**
  * Active structure catalog ids map to stable tower art fallbacks. Removed placeholder
@@ -1419,12 +1429,15 @@ export async function getCatalogPreviewAssetUrl(catalogId: string): Promise<stri
 
 /** Load tower art from the same unit manifest; hides procedural silhouette on success. */
 export async function requestGlbForTower(catalogId: string, placeholder: THREE.Mesh): Promise<void> {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return;
   const m = await loadManifest();
   const file = pickTowerFile(catalogId, m);
   if (!file) return;
-  await attachGlbByFile(file, placeholder, TOWER_GLB_TARGET_EXTENT, {
+  await attachGlbByFile(file, placeholder, towerGlbTargetExtent(catalogId), {
     hideSilhouetteUserDataKey: "structureSilhouette",
     keepPlaceholderHidden: true,
+    minHeight: structureVisualDims(entry).h * 0.55,
   });
 }
 

@@ -115,15 +115,15 @@ describe("resource-first doctrine gates", () => {
     s.flux = 1000;
 
     expect(canUseDoctrineSlot(s, 0)).toBeNull();
-    /** Outside keep disc + `STRUCTURE_MAP_OBSTACLE_RADIUS` union (see `structureObstacleFootprints`). */
-    expect(placementFailureReason(s, "verdant_citadel", { x: -20, z: 0 }, 0)).toBeNull();
+    /** Outside the completed Keep and Citadel footprints. */
+    expect(placementFailureReason(s, "verdant_citadel", { x: -5, z: 40 }, 0)).toBeNull();
   });
 
   it("enemy placement is also resource-only", () => {
     const s = createInitialState(tinyMap, []);
     s.enemyFlux = 1000;
 
-    expect(canPlaceEnemyStructureAt(s, "bastion_keep", { x: 78, z: 4 })).toBeNull();
+    expect(canPlaceEnemyStructureAt(s, "bastion_keep", { x: 80, z: 31 })).toBeNull();
   });
 });
 
@@ -131,7 +131,7 @@ describe("doctrine card playability", () => {
   it("explains affordable, unaffordable, cooldown, and territory states", () => {
     const ready = createInitialState(tinyMap, ["watchtower"]);
     ready.flux = 1000;
-    expect(doctrineCardPlayability(ready, "watchtower", { x: -20, z: 0 }, 0).kind).toBe("ready");
+    expect(doctrineCardPlayability(ready, "watchtower", { x: -5, z: 25 }, 0).kind).toBe("ready");
 
     const poor = createInitialState(tinyMap, ["watchtower"]);
     poor.flux = 0;
@@ -724,6 +724,13 @@ describe("command spells", () => {
   it("Fortify creates a tactics field", () => {
     const s = createInitialState(tinyMap, ["fortify"]);
     s.flux = 1000;
+    const enemy = unit(4100, "enemy", "Line", null);
+    enemy.x = -15;
+    enemy.z = 4;
+    const ally = unit(4101, "player", "Line", null);
+    ally.x = -15;
+    ally.z = 4;
+    s.units.push(enemy, ally);
 
     applyPlayerIntents(s, [
       { type: "select_doctrine_slot", index: 0 },
@@ -734,6 +741,8 @@ describe("command spells", () => {
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "fortify")).toBe(true);
     expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "shield", shape: "field" }));
+    expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
+    expect(Math.hypot(ally.vxImpulse, ally.vzImpulse)).toBe(0);
   });
 
   it("Shatter chains into enemy fortresses and silences production", () => {
@@ -769,6 +778,7 @@ describe("command spells", () => {
     ]);
 
     expect(enemy.spellStatuses?.some((st) => st.kind === "frozen" || st.kind === "chilled")).toBe(true);
+    expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
   });
 });
 

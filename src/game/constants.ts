@@ -333,9 +333,7 @@ export const HERO_MAX_HP = 500;
 export const HERO_WASD_SPEED = HERO_SPEED;
 /** Circle radius vs `map.decor` with `blocksMovement` for wizard pathing (world units). */
 export const HERO_MAP_OBSTACLE_RADIUS = 2.85;
-/** Structure ghost center must stay outside blocking decor by at least this radius. */
-export const STRUCTURE_MAP_OBSTACLE_RADIUS = 11;
-/** Uniform scale for structure meshes in the battle view (silhouettes, tower GLBs, Keep/relay props). Gameplay radii unchanged. */
+/** Uniform scale for structure meshes in the battle view. Their completed footprint is also reserved in gameplay. */
 export const STRUCTURE_MESH_VISUAL_SCALE = 4;
 /** Melee strike — range from wizard, damage per hit, cooldown in sim ticks (~2s wall time — deliberate swings). */
 export const HERO_ATTACK_RANGE = 18;
