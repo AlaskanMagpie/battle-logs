@@ -636,6 +636,9 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "line_cleave")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({
+      kind: "elemental_spell", element: "water", shape: "line", fromX: expect.any(Number),
+    }));
   });
 
   it("Firestorm damages units and emits its cast visuals", () => {
@@ -656,6 +659,8 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "firestorm")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "fire", shape: "meteor" }));
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "fire", shape: "aoe" }));
     expect(enemy.spellStatuses?.some((st) => st.kind === "burning")).toBe(true);
     expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
   });
@@ -728,6 +733,7 @@ describe("command spells", () => {
     expect(s.tacticsFieldZones).toHaveLength(1);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "fortify")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "shield", shape: "field" }));
   });
 
   it("Shatter chains into enemy fortresses and silences production", () => {
@@ -743,6 +749,8 @@ describe("command spells", () => {
     expect(s.enemyRelays[0]!.silencedUntilTick).toBeGreaterThan(s.tick);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "shatter")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "lightning", shape: "chain" }));
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "earth", shape: "impact" }));
   });
 
   it("Shatter freezes enemy units caught by chain impacts", () => {

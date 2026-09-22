@@ -76,6 +76,8 @@ export interface CombatHitMark {
   attackerId?: number;
   /** When set, renderer may swap wedge FX (e.g. geode monks → traveling ring shock). */
   producedUnitId?: ProducedUnitId;
+  /** Identifies producer-specific styles when its units have no GLB profile id (e.g. Thornkeep). */
+  producerCatalogId?: string;
   ax: number;
   az: number;
   tx: number;
