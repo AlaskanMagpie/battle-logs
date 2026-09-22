@@ -188,11 +188,15 @@ function makeGroundOverlayTexture(preset: MapGroundPreset): THREE.CanvasTexture 
   };
   const tint =
     preset === "ember_wastes"
-      ? { blob: "rgba(255,150,82,0.18)", crack: "rgba(255,220,160,0.22)" }
+      ? { blob: "rgba(186,128,94,0.13)", crack: "rgba(216,173,134,0.13)" }
+      : preset === "forge_slag"
+        ? { blob: "rgba(242,112,54,0.14)", crack: "rgba(255,161,84,0.14)" }
+      : preset === "cinder_field"
+        ? { blob: "rgba(147,88,95,0.12)", crack: "rgba(199,100,77,0.1)" }
       : preset === "glacier_grid"
-        ? { blob: "rgba(155,220,255,0.16)", crack: "rgba(235,252,255,0.2)" }
+        ? { blob: "rgba(155,220,255,0.12)", crack: "rgba(235,252,255,0.12)" }
         : preset === "mesa_band"
-          ? { blob: "rgba(255,190,116,0.17)", crack: "rgba(255,225,170,0.18)" }
+          ? { blob: "rgba(255,190,116,0.12)", crack: "rgba(255,225,170,0.1)" }
           : { blob: "rgba(155,205,255,0.12)", crack: "rgba(210,235,255,0.16)" };
 
   // Soft blotches only; repeated lines shimmer badly at shallow camera angles.
@@ -257,7 +261,11 @@ function makeDecorWrapTexture(preset: MapGroundPreset, tag: string): THREE.Canva
 
   const pal =
     preset === "ember_wastes"
-      ? { a: "#a58272", b: "#6f4635", light: "rgba(255,235,205,0.28)", dark: "rgba(24,10,7,0.42)" }
+      ? { a: "#8e786c", b: "#594740", light: "rgba(239,220,201,0.24)", dark: "rgba(24,15,13,0.38)" }
+      : preset === "forge_slag"
+        ? { a: "#94634c", b: "#443833", light: "rgba(255,190,125,0.22)", dark: "rgba(22,12,10,0.42)" }
+      : preset === "cinder_field"
+        ? { a: "#776365", b: "#393038", light: "rgba(216,163,157,0.2)", dark: "rgba(14,11,17,0.42)" }
       : preset === "glacier_grid"
         ? { a: "#b5d0da", b: "#638596", light: "rgba(255,255,255,0.28)", dark: "rgba(12,24,34,0.4)" }
         : preset === "mesa_band"
@@ -414,7 +422,11 @@ function decorRockPalette(preset: MapGroundPreset): {
 } {
   switch (preset) {
     case "ember_wastes":
-      return { dark: 0x221715, base: 0x5e4036, light: 0xa98268, accent: 0xd06a34, scale: 0.13, blockiness: 0.72 };
+      return { dark: 0x211b1a, base: 0x59453d, light: 0x998072, accent: 0xb9754b, scale: 0.13, blockiness: 0.72 };
+    case "forge_slag":
+      return { dark: 0x1b1a1c, base: 0x574039, light: 0x9a6850, accent: 0xd46a35, scale: 0.13, blockiness: 0.78 };
+    case "cinder_field":
+      return { dark: 0x1a1920, base: 0x49393e, light: 0x826466, accent: 0xb35b4a, scale: 0.13, blockiness: 0.67 };
     case "glacier_grid":
       return { dark: 0x152331, base: 0x4f6d7a, light: 0xb2cbd2, accent: 0x8ed8ff, scale: 0.12, blockiness: 0.56 };
     case "mesa_band":
@@ -935,7 +947,8 @@ function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
   const plinth = ud["plinthMesh"] as THREE.Object3D | undefined;
   if (silhouette) silhouette.visible = visible;
   if (body) body.visible = visible;
-  if (plinth) plinth.visible = visible;
+  // Keep the footprint/team base visible when a tower GLB replaces the procedural body.
+  if (plinth) plinth.visible = true;
 }
 
 function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy", size: UnitSizeClass): THREE.Group {
@@ -3444,14 +3457,20 @@ export class GameRenderer {
       overlayMat.map = makeGroundOverlayTexture(preset);
       oldOverlay?.dispose();
       if (preset === "ember_wastes") {
-        overlayMat.color.setHex(0xffb07a);
-        overlayMat.opacity = 0.16;
+        overlayMat.color.setHex(0xc9a189);
+        overlayMat.opacity = 0.11;
+      } else if (preset === "forge_slag") {
+        overlayMat.color.setHex(0xe99e72);
+        overlayMat.opacity = 0.11;
+      } else if (preset === "cinder_field") {
+        overlayMat.color.setHex(0xb88d95);
+        overlayMat.opacity = 0.1;
       } else if (preset === "glacier_grid") {
         overlayMat.color.setHex(0xb6eaff);
-        overlayMat.opacity = 0.135;
+        overlayMat.opacity = 0.1;
       } else if (preset === "mesa_band") {
         overlayMat.color.setHex(0xffd4a4);
-        overlayMat.opacity = 0.15;
+        overlayMat.opacity = 0.11;
       } else {
         overlayMat.color.setHex(0xb9d8ff);
         overlayMat.opacity = 0.1;

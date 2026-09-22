@@ -7,7 +7,7 @@
   },
   "useAuthorTapSlots": true,
   "visual": {
-    "groundPreset": "ember_wastes",
+    "groundPreset": "forge_slag",
     "showGrid": false,
     "fogHex": 2109478,
     "fogNear": 120,
