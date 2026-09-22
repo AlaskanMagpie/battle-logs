@@ -79,7 +79,13 @@ export function setHeroMovePath(s: GameState, target: { x: number; z: number }):
     HERO_MAP_OBSTACLE_RADIUS,
     structureObstacleFootprints(s),
   );
-  const first = path.shift() ?? clamped;
+  const first = path.shift();
+  if (!first) {
+    h.targetX = null;
+    h.targetZ = null;
+    h.moveWaypoints.length = 0;
+    return;
+  }
   h.targetX = first.x;
   h.targetZ = first.z;
   h.moveWaypoints.length = 0;

@@ -142,12 +142,8 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
     username: options.username,
     timeoutMs: options.timeoutMs,
   };
-  let joinedRoom: Room<BattleRoomState> | null = null;
   const client = new Client(endpoint);
-  const joinPromise = client.joinOrCreate<BattleRoomState>("battle_room", request).then((room) => {
-    joinedRoom = room;
-    return room;
-  });
+  const joinPromise = client.joinOrCreate<BattleRoomState>("battle_room", request);
   const timeoutPromise = new Promise<"timeout">((resolve) => {
     window.setTimeout(() => resolve("timeout"), options.timeoutMs);
   });
@@ -167,7 +163,7 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
     const payload = await Promise.race([
       new Promise<MatchFoundPayload | null | "abort">((resolve) => {
         let settled = false;
-        let fallbackTimer: ReturnType<typeof window.setTimeout> | null = null;
+        let fallbackTimer: number | null = null;
         const finish = (v: MatchFoundPayload | null | "abort") => {
           if (settled) return;
           settled = true;
@@ -203,7 +199,7 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
       // eslint-disable-next-line no-console
       console.warn("[matchmaking] joinOrCreate failed", err);
     }
-    if (joinedRoom) void joinedRoom.leave(true);
+    void joinPromise.then((room) => room.leave(true)).catch(() => undefined);
     return strict ? humanNotFound("server_unavailable") : fallback("server_unavailable");
   }
 }

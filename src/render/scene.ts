@@ -4454,9 +4454,11 @@ export class GameRenderer {
       const orderedToMove = orderTargetDist > (wasMoving ? 0.35 : 0.75);
       const travelSignal = Math.max(simFrameDist, simMoveDist);
       const runThreshold = wasMoving ? UNIT_VISUAL_RUN_STOP_EPS : UNIT_VISUAL_RUN_START_EPS;
+      const directedTravelDuringAttack =
+        attackActive && orderedToMove && simFrameDist > UNIT_VISUAL_RUN_STOP_EPS;
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
-        (!attackActive || forceRunCatchup || attackRelocated);
+        (!attackActive || forceRunCatchup || attackRelocated || directedTravelDuringAttack);
       if (shouldRun && attackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
@@ -4691,7 +4693,13 @@ export class GameRenderer {
     if (Math.hypot(dx, dz) <= 0.001) return;
     const target = Math.atan2(dx, dz);
     const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
-    root.rotation.y += delta * 0.22;
+    // A fixed per-frame fraction made turning depend on refresh rate: at 30fps
+    // units visibly skated sideways, while high-refresh units snapped too hard.
+    // This exponential turn is stable at every supported render cadence.
+    const turnRate = attackTarget ? 15.5 : 11.5;
+    const dt = Math.max(1 / 120, this.visualSyncDt);
+    const turn = 1 - Math.exp(-turnRate * dt);
+    root.rotation.y += delta * turn;
   }
 
   private updateUnitMotionVisual(
@@ -5203,24 +5211,16 @@ export class GameRenderer {
         ? strikePool[Math.floor(Math.random() * strikePool.length)]!
         : attackDefault;
     if (!attack) return;
-    if (ud["glbAttackTimer"] !== undefined) return;
+    // The simulation can strike again before a long source clip finishes. Restart the
+    // authored strike for every committed hit instead of leaving the previous action
+    // stopped or blending back into locomotion during the new hit.
     const titan = ud["sizeClass"] === "Titan";
     const producedId = ud["producedUnitId"] as string | undefined;
     const punchyLineMonks =
       producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
       producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
-    const minDuration = punchyLineMonks
-      ? 2.02
-      : ud["sizeClass"] === "hero"
-        ? 1.78
-        : ud["sizeClass"] === "Swarm"
-          ? 3.1
-          : ud["sizeClass"] === "Line"
-            ? 4.35
-            : titan
-              ? 3.35
-              : 3.05;
+    const minDuration = punchyLineMonks ? 1.2 : isHero ? 1.15 : titan ? 1.25 : 0.85;
     let duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
     if (isHero && strikePool && strikePool.length > 0) {
       const idx = strikePool.indexOf(attack);
@@ -5346,8 +5346,11 @@ export class GameRenderer {
       producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
     const titan = ud["sizeClass"] === "Titan";
-    // Lower run cross-weight so baked root motion in the slam / punch clip is not double-driven (twitchy).
-    return punchyLineMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    // Keep a small compatible base layer alive so crossfades never expose a bind
+    // pose, but do not let a run cycle overpower the actual swing. The old
+    // 0.58–0.62 underlay made attacks read like a character skating while a
+    // punch/slash played on top.
+    return punchyLineMonks ? 0.16 : titan ? 0.22 : ud["sizeClass"] === "Swarm" ? 0.28 : 0.24;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {

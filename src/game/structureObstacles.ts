@@ -69,14 +69,8 @@ function structureBuildScale(st: StructureRuntime): number {
 export function structureObstacleFootprints(s: Pick<GameState, "structures">): MapObstacleFootprint[] {
   const out: MapObstacleFootprint[] = [];
   for (const st of s.structures) {
-    if (st.hp <= 0) continue;
-    const entry = getCatalogEntry(st.catalogId);
-    if (!entry || !isStructureEntry(entry)) continue;
-    const dims = structureVisualDims(entry);
-    const buildScale = structureBuildScale(st);
-    if (dims.h * buildScale <= SWARM_WADE_HEIGHT) continue;
-    const halfFootprint = Math.max(dims.w, dims.d) * 0.5 * buildScale;
-    const r = clamp(halfFootprint * STRUCTURE_DISC_INSET, STRUCTURE_DISC_MIN_RADIUS, STRUCTURE_DISC_MAX_RADIUS);
+    const r = structureObstacleRadius(st);
+    if (r <= 0) continue;
     out.push({
       kind: "disc",
       cx: st.x,
@@ -85,4 +79,16 @@ export function structureObstacleFootprints(s: Pick<GameState, "structures">): M
     });
   }
   return out;
+}
+
+/** Combat range to a structure is measured from its collision edge, not its center. */
+export function structureObstacleRadius(st: StructureRuntime): number {
+  if (st.hp <= 0) return 0;
+  const entry = getCatalogEntry(st.catalogId);
+  if (!entry || !isStructureEntry(entry)) return 0;
+  const dims = structureVisualDims(entry);
+  const buildScale = structureBuildScale(st);
+  if (dims.h * buildScale <= SWARM_WADE_HEIGHT) return 0;
+  const halfFootprint = Math.max(dims.w, dims.d) * 0.5 * buildScale;
+  return clamp(halfFootprint * STRUCTURE_DISC_INSET, STRUCTURE_DISC_MIN_RADIUS, STRUCTURE_DISC_MAX_RADIUS);
 }

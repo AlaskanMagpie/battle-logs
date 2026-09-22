@@ -3,6 +3,7 @@ import { getCatalogEntry } from "./catalog";
 import { buildProgress, production } from "./sim/systems/production";
 import { availableProductionSlots } from "./sim/systems/production";
 import { movement } from "./sim/systems/ai";
+import { setHeroMovePath } from "./sim/systems/hero";
 import { applyAttackImpulse, combat } from "./sim/systems/combat";
 import { applyPlayerIntents } from "./sim/systems/intents";
 import { advanceTick } from "./sim/tick";
@@ -31,6 +32,7 @@ import {
   UNIT_MOVEMENT_SPEED_SCALE,
 } from "./constants";
 import { enemyCaptureSpeedScalar, enemyDamageScalar, enemyProductionSpeedScalar } from "./difficulty";
+import { structureObstacleRadius } from "./structureObstacles";
 import {
   canPlaceEnemyStructureAt,
   canUseDoctrineSlot,
@@ -546,6 +548,46 @@ describe("hero captain mode", () => {
       expect(s.hero.targetX).not.toBe(tap.x);
       expect(s.hero.targetZ).not.toBe(tap.z);
     }
+  });
+
+  it("holds a Wizard and ordered ground unit when a barrier leaves no route", () => {
+    const barrierMap: MapData = {
+      ...tinyMap,
+      decor: [{ kind: "box", x: 0, z: 0, w: 8, h: 8, d: 320, blocksMovement: true }],
+    };
+    const s = createInitialState(barrierMap, []);
+    const start = { x: s.hero.x, z: s.hero.z };
+    setHeroMovePath(s, { x: 40, z: 0 });
+    expect(s.hero.targetX).toBeNull();
+    expect(s.hero.targetZ).toBeNull();
+    expect({ x: s.hero.x, z: s.hero.z }).toEqual(start);
+
+    const u = unit(9001, "player", "Line", null);
+    u.x = -25;
+    u.z = 70;
+    u.order = { mode: "move", x: 40, z: 0, waypoints: [], queued: [] };
+    s.units = [u];
+    movement(s);
+    expect(u.x).toBe(-25);
+    expect(u.z).toBe(70);
+    expect(u.order?.waypoints).toEqual([]);
+    expect(u.order?.pathRetryTick).toBeGreaterThan(s.tick);
+  });
+
+  it("lets melee damage a solid structure from just outside its collision edge", () => {
+    const s = createInitialState(tinyMap, []);
+    const target = structure("watchtower", 9002, "enemy");
+    const radius = structureObstacleRadius(target);
+    const u = unit(9003, "player", "Line", null);
+    u.x = target.x - radius - u.range * 0.5;
+    u.z = target.z;
+    s.units = [u];
+    s.structures = [target];
+    s.enemyRelays = [];
+    s.enemyHero.hp = 0;
+    combat(s);
+    expect(target.hp).toBeLessThan(target.maxHp);
+    expect(u.lastAttackTick).toBe(s.tick);
   });
 
   it("auto-places a doctrine structure while Captain mode is enabled", () => {

@@ -70,4 +70,38 @@ describe("mapObstacles", () => {
       cur = wp;
     }
   });
+
+  it("stops on impossible and scenery-occupied destinations", () => {
+    const barrier = { ...map, decor: [{ kind: "box" as const, x: 0, z: 0, w: 8, d: 200, h: 8, blocksMovement: true }] };
+    expect(planChainedPathAroundMapObstacles(barrier, { x: -30, z: 0 }, { x: 30, z: 0 }, 1)).toEqual([]);
+    expect(planChainedPathAroundMapObstacles(map, { x: -30, z: 0 }, { x: 10, z: 0 }, 1)).toEqual([]);
+  });
+
+  it("approaches a solid attack target at a clear perimeter, without crossing it", () => {
+    const empty = { ...map, decor: [] };
+    const structure = [{ kind: "disc" as const, cx: 0, cz: 0, r: 6 }];
+    const path = planChainedPathAroundMapObstacles(empty, { x: -30, z: 0 }, { x: 0, z: 0 }, 1, structure);
+    expect(path.length).toBeGreaterThan(0);
+    let cur = { x: -30, z: 0 };
+    for (const wp of path) {
+      expect(segmentHitsMapObstacles(empty, cur, wp, 1, structure)).toBe(false);
+      cur = wp;
+    }
+    expect(Math.hypot(cur.x, cur.z)).toBeCloseTo(7.35, 1);
+  });
+
+  it("routes around a large round blocker and a second wall without unsafe legs", () => {
+    const clutter = { ...map, decor: [
+      { kind: "cylinder" as const, x: -5, z: 0, radius: 21, h: 6, blocksMovement: true },
+      { kind: "box" as const, x: 28, z: 0, w: 10, d: 27, h: 6, blocksMovement: true },
+    ] };
+    const path = planChainedPathAroundMapObstacles(clutter, { x: -45, z: 0 }, { x: 50, z: 0 }, 1.5);
+    expect(path.length).toBeGreaterThan(1);
+    let cur = { x: -45, z: 0 };
+    for (const wp of path) {
+      expect(segmentHitsMapObstacles(clutter, cur, wp, 1.5)).toBe(false);
+      cur = wp;
+    }
+    expect(cur).toEqual({ x: 50, z: 0 });
+  });
 });

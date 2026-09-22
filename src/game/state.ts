@@ -354,6 +354,9 @@ export interface UnitOrderRuntime {
   z: number;
   waypoints: Vec2[];
   queued: Vec2[];
+  /** Avoid repeating an impossible graph search on every simulation tick. */
+  pathRetryTick?: number;
+  pathGoal?: Vec2;
   /**
    * When set, this order is a commitment to that Mana node index in `GameState.taps`:
    * move/fight there until your team owns the node or this unit dies — no "arrived and idle" early exit.
@@ -370,6 +373,7 @@ export interface UnitAutoOrderRuntime {
   x: number;
   z: number;
   waypoints: Vec2[];
+  pathRetryTick?: number;
 }
 
 export interface FormationMarchRuntime {
