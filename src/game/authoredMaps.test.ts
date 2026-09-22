@@ -34,13 +34,17 @@ describe("published battle maps", () => {
         expect(Math.abs(footprint.cx) + reachX).toBeLessThanOrEqual(half + 3);
         expect(Math.abs(footprint.cz) + reachZ).toBeLessThanOrEqual(half + 3);
       }
+      const objectives = [...map.tapSlots, ...map.playerRelaySlots, ...map.enemyRelaySlots,
+        ...map.enemyCamps.map((camp) => ({ ...camp.origin, id: camp.id }))];
       for (const start of [map.playerStart, map.enemyStart ?? { x: -map.playerStart.x, z: -map.playerStart.z }]) {
-        for (const tap of map.tapSlots) {
-          const path = planChainedPathAroundMapObstacles(map, start, tap, AGENT_RADIUS);
-          expect(path.length, `${entry.id}: ${tap.id} is unreachable`).toBeGreaterThan(0);
+        for (const objective of objectives) {
+          const path = planChainedPathAroundMapObstacles(map, start, objective, AGENT_RADIUS);
+          if (Math.hypot(objective.x - start.x, objective.z - start.z) > 0.35) {
+            expect(path.length, `${entry.id}: ${objective.id} is unreachable`).toBeGreaterThan(0);
+          }
           let from = start;
           for (const to of path) {
-            expect(segmentHitsMapObstacles(map, from, to, AGENT_RADIUS), `${entry.id}: ${tap.id} has a blocked leg`).toBe(false);
+            expect(segmentHitsMapObstacles(map, from, to, AGENT_RADIUS), `${entry.id}: ${objective.id} has a blocked leg`).toBe(false);
             from = to;
           }
         }
