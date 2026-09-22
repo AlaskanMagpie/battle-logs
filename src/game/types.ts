@@ -108,7 +108,7 @@ export type MapDecorDef =
     } & MapDecorBlock);
 
 /** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */
-export type MapGroundPreset = "solid" | "ember_wastes" | "glacier_grid" | "mesa_band";
+export type MapGroundPreset = "solid" | "ember_wastes" | "forge_slag" | "cinder_field" | "glacier_grid" | "mesa_band";
 
 export interface MapVisualSettings {
   groundPreset?: MapGroundPreset;

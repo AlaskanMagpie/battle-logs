@@ -1,6 +1,8 @@
 import { getCatalogEntry } from "../../catalog";
 import { TICK_HZ } from "../../constants";
 import { enemyDamageScalar, enemyProductionSpeedScalar } from "../../difficulty";
+import { circleOverlapsMapObstacles } from "../../mapObstacles";
+import { structureObstacleFootprints, structureObstacleRadius } from "../../structureObstacles";
 import {
   dominantSignal,
   rand,
@@ -10,10 +12,38 @@ import {
   type UnitRuntime,
 } from "../../state";
 import { isStructureEntry, type StructureCatalogEntry } from "../../types";
-import { productionBatchSizeForClass, unitStatsForCatalog } from "./helpers";
+import { productionBatchSizeForClass, unitSeparationRadiusXZ, unitStatsForCatalog } from "./helpers";
 
-/** Slightly wider ring than +/-1 so units clear the tower footprint / GLB hull. */
-const SPAWN_JITTER = 3.5;
+/** Find a clear release point outside the finished tower, decor and existing squads. */
+function unitSpawnPoint(
+  s: GameState,
+  def: StructureCatalogEntry,
+  center: { x: number; z: number },
+  structureId: number | null,
+  batchIndex: number,
+  batchTotal: number,
+): { x: number; z: number } | null {
+  const unitR = unitSeparationRadiusXZ(def.producedSizeClass, def.unitFlying);
+  const structure = structureId === null ? null : s.structures.find((st) => st.id === structureId);
+  const rootR = structure ? structureObstacleRadius(structure) : 2;
+  const obstacles = structureObstacleFootprints(s);
+  const baseAngle = rand(s) * Math.PI * 2 + (batchIndex / Math.max(1, batchTotal)) * Math.PI * 2;
+  const half = s.map.world.halfExtents;
+  for (let ring = 0; ring < 3; ring++) {
+    const distance = rootR + unitR + 0.8 + ring * (unitR * 2 + 1.5);
+    for (let slot = 0; slot < 24; slot++) {
+      const angle = baseAngle + slot * Math.PI * 2 / 24;
+      const pos = { x: center.x + Math.cos(angle) * distance, z: center.z + Math.sin(angle) * distance };
+      if (Math.abs(pos.x) + unitR > half || Math.abs(pos.z) + unitR > half) continue;
+      if (circleOverlapsMapObstacles(s.map, pos, unitR, obstacles)) continue;
+      if (s.units.some((u) => u.hp > 0 && Math.hypot(pos.x - u.x, pos.z - u.z) < unitR + unitSeparationRadiusXZ(u.sizeClass, u.flying))) continue;
+      if (s.hero.hp > 0 && Math.hypot(pos.x - s.hero.x, pos.z - s.hero.z) < unitR + 2.85) continue;
+      if (s.enemyHero.hp > 0 && Math.hypot(pos.x - s.enemyHero.x, pos.z - s.enemyHero.z) < unitR + 2.85) continue;
+      return pos;
+    }
+  }
+  return null;
+}
 
 function pushSpawnedUnitFromStructureDef(
   s: GameState,
@@ -23,7 +53,7 @@ function pushSpawnedUnitFromStructureDef(
   team: "player" | "enemy",
   batchIndex: number,
   batchTotal: number,
-): void {
+): boolean {
   const stStats = unitStatsForCatalog(def.producedSizeClass);
   const antiClasses =
     def.producedAntiClasses && def.producedAntiClasses.length > 0
@@ -31,16 +61,14 @@ function pushSpawnedUnitFromStructureDef(
       : def.producedAntiClass
         ? [def.producedAntiClass]
         : undefined;
-  const spread = Math.max(1, batchTotal);
-  const baseAngle = rand(s) * Math.PI * 2;
-  const angle = baseAngle + (batchIndex / spread) * Math.PI * 2 + (rand(s) - 0.5) * 0.32;
-  const radius = SPAWN_JITTER * (0.52 + rand(s) * 0.35);
+  const pos = unitSpawnPoint(s, def, center, structureId, batchIndex, batchTotal);
+  if (!pos) return false;
   const u: UnitRuntime = {
     id: s.nextId.unit++,
     team,
     structureId,
-    x: center.x + Math.cos(angle) * radius,
-    z: center.z + Math.sin(angle) * radius,
+    x: pos.x,
+    z: pos.z,
     hp: stStats.maxHp,
     maxHp: stStats.maxHp,
     sizeClass: def.producedSizeClass,
@@ -63,6 +91,7 @@ function pushSpawnedUnitFromStructureDef(
   };
   s.units.push(u);
   if (team === "player") s.stats.unitsProduced += 1;
+  return true;
 }
 
 export function availableProductionSlots(_s: GameState, st: StructureRuntime): number {
@@ -77,10 +106,10 @@ function pushSpawnedUnitBody(
   team: "player" | "enemy",
   batchIndex: number,
   batchTotal: number,
-): void {
+): boolean {
   const def = getCatalogEntry(st.catalogId);
-  if (!def || !isStructureEntry(def)) return;
-  pushSpawnedUnitFromStructureDef(s, def, { x: st.x, z: st.z }, st.id, team, batchIndex, batchTotal);
+  if (!def || !isStructureEntry(def)) return false;
+  return pushSpawnedUnitFromStructureDef(s, def, { x: st.x, z: st.z }, st.id, team, batchIndex, batchTotal);
 }
 
 /**
@@ -96,28 +125,30 @@ export function spawnEnemyBatchFromStructureCatalogId(
   if (!def || !isStructureEntry(def)) return 0;
   const n = productionBatchSizeForClass(def.producedSizeClass);
   if (n <= 0) return 0;
+  let spawned = 0;
   for (let i = 0; i < n; i++) {
-    pushSpawnedUnitFromStructureDef(s, def, pos, null, "enemy", i, n);
+    if (pushSpawnedUnitFromStructureDef(s, def, pos, null, "enemy", i, n)) spawned += 1;
   }
-  s.stats.enemyUnitsSpawned += n;
-  return n;
+  s.stats.enemyUnitsSpawned += spawned;
+  return spawned;
 }
 
-function pushSpawnedBatch(s: GameState, st: StructureRuntime, team: "player" | "enemy", count: number): void {
-  for (let i = 0; i < count; i++) pushSpawnedUnitBody(s, st, team, i, count);
+function pushSpawnedBatch(s: GameState, st: StructureRuntime, team: "player" | "enemy", count: number): number {
+  let spawned = 0;
+  for (let i = 0; i < count; i++) if (pushSpawnedUnitBody(s, st, team, i, count)) spawned += 1;
+  return spawned;
 }
 
 export function spawnPlayerUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  if (n > 0) pushSpawnedBatch(s, st, "player", n);
-  return n;
+  return n > 0 ? pushSpawnedBatch(s, st, "player", n) : 0;
 }
 
 export function spawnEnemyUnit(s: GameState, st: StructureRuntime): number {
   const n = availableProductionSlots(s, st);
-  if (n > 0) pushSpawnedBatch(s, st, "enemy", n);
-  if (n > 0) s.stats.enemyUnitsSpawned += n;
-  return n;
+  const spawned = n > 0 ? pushSpawnedBatch(s, st, "enemy", n) : 0;
+  s.stats.enemyUnitsSpawned += spawned;
+  return spawned;
 }
 
 function productionTicksForStructure(s: GameState, st: StructureRuntime): number {

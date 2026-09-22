@@ -13,7 +13,6 @@ import {
   HERO_SPAWN_SIDE_FROM_KEEP,
   HERO_SPEED,
   HERO_TELEPORT_COOLDOWN_SEC,
-  STRUCTURE_MAP_OBSTACLE_RADIUS,
   INFRA_PLACE_RADIUS,
   KEEP_ID,
   KEEP_MAX_HP,
@@ -33,7 +32,7 @@ import {
 } from "./constants";
 import { enemyDamageScalar, enemyHpScalar, normalizeMapDifficulty } from "./difficulty";
 import { TRAILER_HERO_MODE, trailerHeroModeStartingFlux } from "../dev/heroMode";
-import { unitStatsForCatalog } from "./sim/systems/helpers";
+import { unitSeparationRadiusXZ, unitStatsForCatalog } from "./sim/systems/helpers";
 import type {
   AttackRangeBand,
   CatalogEntry,
@@ -43,6 +42,7 @@ import type {
   SignalType,
   SpellFxElement,
   SpellFxShape,
+  StructureCatalogEntry,
   TeamId,
   TapSlotDef,
   UnitFormationKind,
@@ -52,7 +52,7 @@ import type {
 } from "./types";
 import { isCommandEntry, isStructureEntry } from "./types";
 import { circleOverlapsMapObstacles, resolveCircleAgainstMapObstacles } from "./mapObstacles";
-import { structureObstacleFootprints } from "./structureObstacles";
+import { structureObstacleFootprints, structureVisualRadius } from "./structureObstacles";
 
 export type CastFxKind =
   | "firestorm"
@@ -76,6 +76,8 @@ export interface CombatHitMark {
   attackerId?: number;
   /** When set, renderer may swap wedge FX (e.g. geode monks → traveling ring shock). */
   producedUnitId?: ProducedUnitId;
+  /** Identifies producer-specific styles when its units have no GLB profile id (e.g. Thornkeep). */
+  producerCatalogId?: string;
   ax: number;
   az: number;
   tx: number;
@@ -354,6 +356,9 @@ export interface UnitOrderRuntime {
   z: number;
   waypoints: Vec2[];
   queued: Vec2[];
+  /** Avoid repeating an impossible graph search on every simulation tick. */
+  pathRetryTick?: number;
+  pathGoal?: Vec2;
   /**
    * When set, this order is a commitment to that Mana node index in `GameState.taps`:
    * move/fight there until your team owns the node or this unit dies — no "arrived and idle" early exit.
@@ -370,6 +375,7 @@ export interface UnitAutoOrderRuntime {
   x: number;
   z: number;
   waypoints: Vec2[];
+  pathRetryTick?: number;
 }
 
 export interface FormationMarchRuntime {
@@ -1476,8 +1482,9 @@ export function doctrineCardPlayability(
     if (!inPlayerTerritory(s, pos) && !nearSafeDeployAura(s, pos)) {
       return blocked("territory", "Outside your territory — claim more Mana nodes to expand the cyan area.", "Need territory");
     }
-    if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
-      return blocked("terrain", "Blocked by terrain — try another spot.", "Blocked");
+    const siteProblem = structureSiteBlockReason(s, entry, pos);
+    if (siteProblem) {
+      return blocked("terrain", siteProblem, "Blocked");
     }
   }
 
@@ -1515,6 +1522,28 @@ export function canPlaceStructureHere(
 
 const ENEMY_KEEP_EXCLUSION_RADIUS = 24;
 
+/** Shared collision gate for player, enemy, and survival buildings. Reserve the completed
+ * visual footprint immediately, including map objectives and actors already on the site. */
+export function structureSiteBlockReason(s: GameState, entry: StructureCatalogEntry, pos: Vec2): string | null {
+  const r = structureVisualRadius(entry);
+  const half = s.map.world.halfExtents;
+  if (Math.abs(pos.x) + r > half || Math.abs(pos.z) + r > half) return "Too close to the map edge.";
+  if (circleOverlapsMapObstacles(s.map, pos, r, structureObstacleFootprints(s))) return "Blocked by terrain or another building.";
+  const overlaps = (x: number, z: number, clearance: number): boolean =>
+    Math.hypot(pos.x - x, pos.z - z) < r + clearance;
+  // The Mana decal is a territory indicator, but the pillar and claim target must remain clear.
+  if (s.taps.some((t) => overlaps(t.x, t.z, 3))) return "Too close to a Mana node.";
+  if (s.enemyRelays.some((relay) => overlaps(relay.x, relay.z, 5.6))) return "Too close to a relay.";
+  if (s.map.playerRelaySlots.some((relay) => overlaps(relay.x, relay.z, 5.6))) return "Too close to a relay.";
+  if (s.map.enemyCamps.some((camp) => overlaps(camp.origin.x, camp.origin.z, 4))) return "Too close to a camp.";
+  if (s.hero.hp > 0 && overlaps(s.hero.x, s.hero.z, HERO_MAP_OBSTACLE_RADIUS)) return "A wizard is standing here.";
+  if (s.enemyHero && s.enemyHero.hp > 0 && overlaps(s.enemyHero.x, s.enemyHero.z, HERO_MAP_OBSTACLE_RADIUS)) return "A wizard is standing here.";
+  if (s.units.some((u) => u.hp > 0 && overlaps(u.x, u.z, unitSeparationRadiusXZ(u.sizeClass, u.flying)))) {
+    return "Units are standing here.";
+  }
+  return null;
+}
+
 /** Validates a position for an AI-placed enemy structure (no doctrine slot). */
 export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: Vec2): string | null {
   const entry = getCatalogEntry(catalogId);
@@ -1529,10 +1558,7 @@ export function canPlaceEnemyStructureAt(s: GameState, catalogId: string, pos: V
       return "Too close to Wizard Keep.";
     }
   }
-  if (circleOverlapsMapObstacles(s.map, pos, STRUCTURE_MAP_OBSTACLE_RADIUS, structureObstacleFootprints(s))) {
-    return "Blocked by terrain.";
-  }
-  return null;
+  return structureSiteBlockReason(s, entry, pos);
 }
 
 /**

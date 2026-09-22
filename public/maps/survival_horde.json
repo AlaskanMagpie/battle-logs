@@ -8,7 +8,7 @@
   "useAuthorTapSlots": true,
   "useAllAuthorTapSlots": true,
   "visual": {
-    "groundPreset": "ember_wastes",
+    "groundPreset": "cinder_field",
     "fogHex": 1185046,
     "fogNear": 260,
     "fogFar": 1280,

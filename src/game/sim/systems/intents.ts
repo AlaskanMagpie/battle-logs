@@ -10,6 +10,7 @@ import {
   HERO_TELEPORT_UNIT_RADIUS,
   SHATTER_TARGET_RADIUS,
   SMART_RADIAL_IDLE_RADIUS,
+  SPELL_AOE_KNOCKBACK,
   SPELL_KNOCKBACK_SPEED,
   TAP_UNIT_ORDER_SNAP_RADIUS,
   TICK_HZ,
@@ -67,6 +68,25 @@ function applyRadialSpellStatus(
     if (teams === "enemy" && u.team !== "enemy") continue;
     if (dist2(u, center) > r2) continue;
     applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
+  }
+}
+
+/** Apply one falloff impulse to nearby hostile units without moving allies. */
+function applyRadialImpulseToEnemyUnits(
+  s: GameState,
+  center: Vec2,
+  radius: number,
+  maxSpeed: number,
+  minSpeed = 0,
+): void {
+  if (radius <= 0) return;
+  for (const u of s.units) {
+    if (u.team !== "enemy" || u.hp <= 0) continue;
+    const distance = Math.hypot(u.x - center.x, u.z - center.z);
+    if (distance > radius) continue;
+    const strength = minSpeed + (maxSpeed - minSpeed) * (1 - distance / radius);
+    const source = distance < 0.001 ? { x: u.x - 1, z: u.z } : center;
+    applyAttackImpulse(u, source, strength);
   }
 }
 
@@ -651,7 +671,6 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         if (u.team !== "enemy" || u.hp <= 0) continue;
         if (dist2(u, pos) > r2) continue;
         damageEnemyUnitFromCommand(s, u, fx.damage);
-        applyAttackImpulse(u, pos, SPELL_KNOCKBACK_SPEED * 1.28);
         applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
         applyUnitSpellStatus(s, u, "winded", Math.round(1.2 * TICK_HZ), 0.5);
       }
@@ -665,6 +684,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
       applyRadialSpellStatus(s, pos, fx.radius, "winded", 2.3, 0.54);
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius * 1.08, SPELL_KNOCKBACK_SPEED * 1.36, SPELL_AOE_KNOCKBACK);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
@@ -710,6 +730,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
         enemyIncomingDamageMult: fx.enemyIncomingDamageMult,
       });
       s.hero.spellFacingToward = { x: pos.x, z: pos.z };
+      applyRadialImpulseToEnemyUnits(s, pos, fx.radius, SPELL_AOE_KNOCKBACK * 0.95);
       consumeCommandSlot(s, slotIdx, cmd);
       emitFx(s, "lightning", pos);
       pushFx(s, { kind: "fortify", x: pos.x, z: pos.z, impactRadius: fx.radius });
@@ -841,6 +862,13 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           hop % 2 === 0 ? "frozen" : "chilled",
           hop === 0 ? 1.45 : 0.95,
           hop === 0 ? 0.86 : 0.62,
+        );
+        applyRadialImpulseToEnemyUnits(
+          s,
+          { x: bx, z: bz },
+          hop === 0 ? fx.castRadius * 0.36 : fx.chainRange * 0.2,
+          hop === 0 ? SPELL_KNOCKBACK_SPEED * 0.98 : SPELL_AOE_KNOCKBACK * 1.08,
+          SPELL_AOE_KNOCKBACK * 0.35,
         );
         hits++;
         ox = bx;

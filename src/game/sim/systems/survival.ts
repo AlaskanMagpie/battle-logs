@@ -8,9 +8,8 @@ import {
   TICK_HZ,
 } from "../../constants";
 import { enemyHpScalar } from "../../difficulty";
-import { pushFx, rand, type GameState, type StructureRuntime } from "../../state";
+import { pushFx, rand, structureSiteBlockReason, type GameState, type StructureRuntime } from "../../state";
 import { isStructureEntry, type EnemyCampDef, type Vec2 } from "../../types";
-import { dist2 } from "./helpers";
 import { spawnEnemyBatchFromStructureCatalogId } from "./production";
 
 const SURVIVAL_UNIT_CATALOG_IDS = [
@@ -111,11 +110,7 @@ function spawnSurvivalBuilding(s: GameState, pos: Vec2, intensity: number): bool
   const def = getCatalogEntry(catalogId);
   if (!def || !isStructureEntry(def)) return false;
 
-  const minSep2 = 22 * 22;
-  for (const st of s.structures) {
-    if (st.hp <= 0) continue;
-    if (dist2(st, pos) < minSep2) return false;
-  }
+  if (structureSiteBlockReason(s, def, pos)) return false;
 
   const hp = Math.max(1, Math.round(def.maxHp * enemyHpScalar(s.map) * (0.72 + intensity * 0.45)));
   const productionTicks = Math.max(1, Math.round(def.productionSeconds * TICK_HZ * (1.08 - intensity * 0.28)));
@@ -216,8 +211,14 @@ export function survivalHordeDirector(s: GameState): void {
     for (let i = 0; i < attempts; i++) {
       const anchor = buildingAnchors[i % buildingAnchors.length];
       if (!anchor) continue;
-      const pos = jitteredAnchorPoint(s, anchor.origin, 28 + intensity * 48);
-      if (spawnSurvivalBuilding(s, pos, intensity)) buildings += 1;
+      // Map decor and combatants can occupy a sampled site; retry around this camp.
+      for (let sample = 0; sample < 10; sample++) {
+        const pos = jitteredAnchorPoint(s, anchor.origin, 28 + intensity * 48);
+        if (spawnSurvivalBuilding(s, pos, intensity)) {
+          buildings += 1;
+          break;
+        }
+      }
     }
   }
 

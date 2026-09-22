@@ -211,16 +211,33 @@ function moveUnitOnPath(
   structureObstacles: MapObstacleFootprint[],
 ): boolean {
   const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * UNIT_MAP_OBSTACLE_RADIUS_MULT;
+  if (dist2(u, target) <= 2.2 * 2.2) return true;
   if (!u.flying && u.order && u.order.waypoints.length > 0) {
     const wp = u.order.waypoints[0]!;
     if (segmentHitsMapObstacles(s.map, u, wp, r, structureObstacles)) u.order.waypoints.length = 0;
   }
   if (!u.flying && (!u.order || u.order.waypoints.length === 0)) {
+    if (
+      u.order?.pathRetryTick && s.tick < u.order.pathRetryTick &&
+      u.order.pathGoal && dist2(u.order.pathGoal, target) < 8 * 8
+    ) {
+      clampToWorldAndObstacles(s, u, structureObstacles);
+      return false;
+    }
     const path = planChainedPathAroundMapObstacles(s.map, u, target, r, structureObstacles);
-    if (u.order) u.order.waypoints = path;
-    else u.order = { mode: "move", x: target.x, z: target.z, waypoints: path, queued: [] };
+    if (u.order) {
+      u.order.waypoints = path;
+      u.order.pathRetryTick = path.length ? undefined : s.tick + TICK_HZ;
+      u.order.pathGoal = { ...target };
+    } else {
+      u.order = { mode: "move", x: target.x, z: target.z, waypoints: path, queued: [] };
+    }
   }
-  const next = !u.flying && u.order && u.order.waypoints.length > 0 ? u.order.waypoints[0]! : target;
+  if (!u.flying && !u.order?.waypoints.length) {
+    clampToWorldAndObstacles(s, u, structureObstacles);
+    return dist2(u, target) <= 2.2 * 2.2;
+  }
+  const next = !u.flying ? u.order!.waypoints[0]! : target;
   moveToward(u, next, step);
   clampToWorldAndObstacles(s, u, structureObstacles);
   if (dist2(u, next) <= 1.4 * 1.4 && u.order && u.order.waypoints.length > 0) u.order.waypoints.shift();
@@ -246,16 +263,23 @@ function moveUnitAutonomousOnPath(
     !ao0 ||
     dist2(ao0, target) > 8 * 8 ||
     pathBlocked ||
-    (!u.flying && ao0.waypoints.length === 0 && dist2(u, target) > 3.4 * 3.4);
+    (!u.flying && ao0.waypoints.length === 0 && dist2(u, target) > 3.4 * 3.4 &&
+      (!ao0.pathRetryTick || s.tick >= ao0.pathRetryTick));
   if (stale) {
+    const waypoints = u.flying ? [] : planChainedPathAroundMapObstacles(s.map, u, target, r, structureObstacles);
     u.autoOrder = {
       x: target.x,
       z: target.z,
-      waypoints: u.flying ? [] : planChainedPathAroundMapObstacles(s.map, u, target, r, structureObstacles),
+      waypoints,
+      pathRetryTick: !u.flying && waypoints.length === 0 ? s.tick + TICK_HZ : undefined,
     };
   }
   const ao = u.autoOrder!;
-  const next = !u.flying && ao.waypoints.length > 0 ? ao.waypoints[0]! : target;
+  if (!u.flying && ao.waypoints.length === 0) {
+    clampToWorldAndObstacles(s, u, structureObstacles);
+    return dist2(u, target) <= 2.2 * 2.2;
+  }
+  const next = !u.flying ? ao.waypoints[0]! : target;
   moveToward(u, next, step);
   clampToWorldAndObstacles(s, u, structureObstacles);
   if (dist2(u, next) <= 1.4 * 1.4 && ao.waypoints.length > 0) ao.waypoints.shift();

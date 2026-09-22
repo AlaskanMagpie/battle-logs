@@ -151,7 +151,14 @@ export function circleOverlapsMapObstacles(
   agentR: number,
   extra: MapObstacleFootprint[] = [],
 ): boolean {
-  const { discs, boxes } = obstacleSets(map, extra);
+  return circleOverlapsSets(obstacleSets(map, extra), pos, agentR);
+}
+
+function circleOverlapsSets(
+  { discs, boxes }: { discs: DiscObs[]; boxes: BoxObs[] },
+  pos: Vec2,
+  agentR: number,
+): boolean {
   for (const o of discs) {
     const dx = pos.x - o.cx;
     const dz = pos.z - o.cz;
@@ -204,49 +211,34 @@ function segmentHitsBox(a: Vec2, b: Vec2, box: BoxObs, pad: number): boolean {
   return clip(-dx, la.lx + hx) && clip(dx, hx - la.lx) && clip(-dz, la.lz + hz) && clip(dz, hz - la.lz);
 }
 
-function firstBlockingFootprint(
-  map: MapData,
+function segmentHitsObstacleSets(
+  { discs, boxes }: { discs: DiscObs[]; boxes: BoxObs[] },
   from: Vec2,
   to: Vec2,
   agentR: number,
-  extra: MapObstacleFootprint[] = [],
-): MapObstacleFootprint | null {
-  const { discs, boxes } = obstacleSets(map, extra);
-  let best: MapObstacleFootprint | null = null;
-  let bestD = Infinity;
+): boolean {
   for (const d of discs) {
-    if (segmentDist2ToPoint(from, to, { x: d.cx, z: d.cz }) > (d.r + agentR) * (d.r + agentR)) continue;
-    const dd = (d.cx - from.x) * (d.cx - from.x) + (d.cz - from.z) * (d.cz - from.z);
-    if (dd < bestD) {
-      bestD = dd;
-      best = { kind: "disc", ...d };
-    }
+    if (segmentDist2ToPoint(from, to, { x: d.cx, z: d.cz }) <= (d.r + agentR) * (d.r + agentR)) return true;
   }
   for (const b of boxes) {
-    if (!segmentHitsBox(from, to, b, agentR)) continue;
-    const dd = (b.cx - from.x) * (b.cx - from.x) + (b.cz - from.z) * (b.cz - from.z);
-    if (dd < bestD) {
-      bestD = dd;
-      best = { kind: "box", ...b };
-    }
+    if (segmentHitsBox(from, to, b, agentR)) return true;
   }
-  return best;
+  return false;
 }
 
-function clampWorld(map: MapData, p: Vec2): Vec2 {
-  const h = map.world.halfExtents;
+function clampWorld(map: MapData, p: Vec2, agentR = 0): Vec2 {
+  const h = Math.max(0, map.world.halfExtents - agentR);
   return { x: Math.max(-h, Math.min(h, p.x)), z: Math.max(-h, Math.min(h, p.z)) };
 }
 
 function detourCandidates(o: MapObstacleFootprint, pad: number): Vec2[] {
   if (o.kind === "disc") {
     const r = o.r + pad;
-    return [
-      { x: o.cx + r, z: o.cz },
-      { x: o.cx - r, z: o.cz },
-      { x: o.cx, z: o.cz + r },
-      { x: o.cx, z: o.cz - r },
-    ];
+    const count = Math.max(8, Math.ceil(Math.PI / Math.acos(Math.min(0.999, (o.r + pad - 2) / r))));
+    return Array.from({ length: count }, (_, i) => ({
+      x: o.cx + r * Math.cos((i * Math.PI * 2) / count),
+      z: o.cz + r * Math.sin((i * Math.PI * 2) / count),
+    }));
   }
   const hx = o.hx + pad;
   const hz = o.hz + pad;
@@ -270,37 +262,8 @@ export function planPathAroundMapObstacles(
   agentR: number,
   extra: MapObstacleFootprint[] = [],
 ): Vec2[] {
-  const direct = firstBlockingFootprint(map, from, to, agentR, extra);
-  if (!direct) return [clampWorld(map, to)];
-  const pad = Math.max(agentR + 3.2, 6);
-  const candidates = detourCandidates(direct, pad)
-    .map((p) => clampWorld(map, p))
-    .filter((p) => !circleOverlapsMapObstacles(map, p, agentR, extra));
-  let best: Vec2[] | null = null;
-  let bestScore = Infinity;
-  for (const c of candidates) {
-    const first = firstBlockingFootprint(map, from, c, agentR, extra);
-    const second = firstBlockingFootprint(map, c, to, agentR, extra);
-    if (first || second) continue;
-    const score = Math.hypot(c.x - from.x, c.z - from.z) + Math.hypot(to.x - c.x, to.z - c.z);
-    if (score < bestScore) {
-      bestScore = score;
-      best = [c, clampWorld(map, to)];
-    }
-  }
-  if (best) return best;
-  for (const c of candidates) {
-    if (firstBlockingFootprint(map, from, c, agentR, extra)) continue;
-    if (firstBlockingFootprint(map, c, to, agentR, extra)) continue;
-    return [c, clampWorld(map, to)];
-  }
-  for (const c of candidates) {
-    if (!firstBlockingFootprint(map, from, c, agentR, extra)) return [c, clampWorld(map, to)];
-  }
-  return [clampWorld(map, to)];
+  return planChainedPathAroundMapObstacles(map, from, to, agentR, extra);
 }
-
-const MAX_PATH_CHAIN = 72;
 
 /** True if the open segment `a`→`b` intersects expanded blocking decor for an agent of radius `agentR`. */
 export function segmentHitsMapObstacles(
@@ -310,12 +273,12 @@ export function segmentHitsMapObstacles(
   agentR: number,
   extra: MapObstacleFootprint[] = [],
 ): boolean {
-  return firstBlockingFootprint(map, a, b, agentR, extra) !== null;
+  return segmentHitsObstacleSets(obstacleSets(map, extra), a, b, agentR);
 }
 
 /**
- * Polyline of waypoints from `from` toward `to`, chaining {@link planPathAroundMapObstacles}
- * so units can navigate multiple walls/boxes instead of a single detour.
+ * Shortest safe polyline through obstacle corners/ring points. An empty path means the
+ * destination is unreachable; callers must hold rather than step directly into a wall.
  */
 export function planChainedPathAroundMapObstacles(
   map: MapData,
@@ -324,32 +287,75 @@ export function planChainedPathAroundMapObstacles(
   agentR: number,
   extra: MapObstacleFootprint[] = [],
 ): Vec2[] {
-  const goal = clampWorld(map, to);
-  const out: Vec2[] = [];
-  let cur: Vec2 = { ...from };
-
-  for (let hop = 0; hop < MAX_PATH_CHAIN; hop++) {
-    if (!firstBlockingFootprint(map, cur, goal, agentR, extra)) {
-      if (Math.hypot(goal.x - cur.x, goal.z - cur.z) > 0.35) out.push(goal);
-      return out;
-    }
-
-    const piece = planPathAroundMapObstacles(map, cur, goal, agentR, extra);
-    if (piece.length === 0) {
-      out.push(goal);
-      return out;
-    }
-
-    const nxt = piece[0]!;
-    if (Math.hypot(nxt.x - cur.x, nxt.z - cur.z) < 0.06) {
-      out.push(goal);
-      return out;
-    }
-
-    out.push(nxt);
-    cur = nxt;
+  const goal = clampWorld(map, to, agentR);
+  if (Math.hypot(goal.x - from.x, goal.z - from.z) <= 0.35) return [];
+  const staticSets = obstacleSets(map);
+  const allSets = obstacleSets(map, extra);
+  const playableHalf = map.world.halfExtents - agentR;
+  // A wall sealed against both map edges divides the arena; no visibility
+  // search can cross it. This also keeps impossible squad orders cheap.
+  for (const b of allSets.boxes) {
+    if (Math.abs(b.s) < 1e-6 && b.cz - b.hz <= -playableHalf && b.cz + b.hz >= playableHalf &&
+        (from.x < b.cx - b.hx - agentR && goal.x > b.cx + b.hx + agentR ||
+         goal.x < b.cx - b.hx - agentR && from.x > b.cx + b.hx + agentR)) return [];
+    if (Math.abs(b.s) < 1e-6 && b.cx - b.hx <= -playableHalf && b.cx + b.hx >= playableHalf &&
+        (from.z < b.cz - b.hz - agentR && goal.z > b.cz + b.hz + agentR ||
+         goal.z < b.cz - b.hz - agentR && from.z > b.cz + b.hz + agentR)) return [];
   }
+  // Built structures are solid, but their centers are attack targets. Route to
+  // the accessible rim; authored scenery, by contrast, is an invalid destination.
+  if (circleOverlapsSets(staticSets, goal, agentR)) return [];
+  const hitExtra = extra.filter((o) => circleOverlapsSets(
+    o.kind === "disc" ? { discs: [o], boxes: [] } : { discs: [], boxes: [o] }, goal, agentR,
+  ));
+  const terminalPoints = hitExtra.length
+    ? hitExtra.flatMap((o) => detourCandidates(o, agentR + 0.35)).filter((p) =>
+        Math.abs(p.x) <= map.world.halfExtents - agentR &&
+        Math.abs(p.z) <= map.world.halfExtents - agentR &&
+        !circleOverlapsSets(allSets, p, agentR))
+    : [goal];
+  if (!terminalPoints.length) return [];
+  if (hitExtra.length === 0 && !segmentHitsObstacleSets(allSets, from, goal, agentR)) return [goal];
 
-  if (Math.hypot(goal.x - cur.x, goal.z - cur.z) > 0.35) out.push(goal);
-  return out;
+  const pad = Math.max(agentR + 3.2, 6);
+  const points: Vec2[] = [from, ...terminalPoints];
+  const terminals = new Set(terminalPoints.map((_, i) => i + 1));
+  for (const obstacle of [...allSets.discs.map((d) => ({ kind: "disc" as const, ...d })),
+    ...allSets.boxes.map((b) => ({ kind: "box" as const, ...b }))]) {
+    for (const p of detourCandidates(obstacle, pad)) {
+      const h = map.world.halfExtents - agentR;
+      if (Math.abs(p.x) > h || Math.abs(p.z) > h) continue;
+      if (!circleOverlapsSets(allSets, p, agentR)) points.push(p);
+    }
+  }
+  // Dijkstra on visible edges. Evaluate edges lazily so clear, short routes do not
+  // spend time checking the full graph; all emitted legs have collision clearance.
+  const cost = Array<number>(points.length).fill(Infinity);
+  const previous = Array<number>(points.length).fill(-1);
+  const visited = new Set<number>();
+  cost[0] = 0;
+  for (let pass = 0; pass < points.length; pass++) {
+    let current = -1;
+    for (let i = 0; i < points.length; i++) {
+      if (!visited.has(i) && (current < 0 || cost[i]! < cost[current]!)) current = i;
+    }
+    if (current < 0 || !Number.isFinite(cost[current])) break;
+    if (terminals.has(current)) {
+      const route: Vec2[] = [];
+      for (let at = current; at !== 0; at = previous[at]!) route.push(points[at]!);
+      return route.reverse();
+    }
+    visited.add(current);
+    for (let next = 1; next < points.length; next++) {
+      if (next === current || visited.has(next)) continue;
+      const a = points[current]!;
+      const b = points[next]!;
+      const candidate = cost[current]! + Math.hypot(a.x - b.x, a.z - b.z);
+      if (candidate >= cost[next]!) continue;
+      if (segmentHitsObstacleSets(allSets, a, b, agentR)) continue;
+      cost[next] = candidate;
+      previous[next] = current;
+    }
+  }
+  return [];
 }

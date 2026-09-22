@@ -16,6 +16,7 @@ import {
   UNIT_TAP_ANCHOR_DAMAGE_MULT,
 } from "../../constants";
 import { enemyAttackSpeedScalar } from "../../difficulty";
+import { structureObstacleRadius } from "../../structureObstacles";
 import {
   classifyAttackRangeBand,
   liveSquadCount,
@@ -146,6 +147,7 @@ function pushAttackMark(
   s.combatHitMarks.push({
     attackerId: attacker.id,
     producedUnitId: attacker.producedUnitId,
+    producerCatalogId: attacker.producerCatalogId,
     ax: attacker.x,
     az: attacker.z,
     tx: target.x,
@@ -168,6 +170,7 @@ export function combat(s: GameState): void {
   const markAttackers = new Set<number>();
   const buckets = buildCombatUnitBuckets(s, cell);
   const markMax = combatMarkBudget(s.units.length);
+  const structureRadii = new Map(s.structures.map((st) => [st.id, structureObstacleRadius(st)]));
 
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
@@ -202,12 +205,13 @@ export function combat(s: GameState): void {
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
-    const ur2 = u.range * u.range;
     let best: StructureRuntime | null = null;
-    let bestD = ur2;
+    let bestD = Infinity;
     for (const st of s.structures) {
       if (st.team !== "player") continue;
       const d = dist2(u, st);
+      const reach = u.range + (structureRadii.get(st.id) ?? 0);
+      if (d > reach * reach) continue;
       if (d <= bestD) {
         bestD = d;
         best = st;
@@ -289,7 +293,8 @@ export function combat(s: GameState): void {
     if (attacked) continue;
     for (const st of s.structures) {
       if (st.team !== "enemy") continue;
-      if (dist2(u, st) <= u.range * u.range) {
+      const reach = u.range + (structureRadii.get(st.id) ?? 0);
+      if (dist2(u, st) <= reach * reach) {
         const raw =
           attackDamageFromPerTick(u, u.dmgPerTick) *
           PLAYER_UNIT_STRUCTURE_DAMAGE_MULT *

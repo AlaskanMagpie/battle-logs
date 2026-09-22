@@ -3,6 +3,7 @@ import { getCatalogEntry } from "./catalog";
 import { buildProgress, production } from "./sim/systems/production";
 import { availableProductionSlots } from "./sim/systems/production";
 import { movement } from "./sim/systems/ai";
+import { setHeroMovePath } from "./sim/systems/hero";
 import { applyAttackImpulse, combat } from "./sim/systems/combat";
 import { applyPlayerIntents } from "./sim/systems/intents";
 import { advanceTick } from "./sim/tick";
@@ -31,6 +32,7 @@ import {
   UNIT_MOVEMENT_SPEED_SCALE,
 } from "./constants";
 import { enemyCaptureSpeedScalar, enemyDamageScalar, enemyProductionSpeedScalar } from "./difficulty";
+import { structureObstacleRadius } from "./structureObstacles";
 import {
   canPlaceEnemyStructureAt,
   canUseDoctrineSlot,
@@ -113,15 +115,15 @@ describe("resource-first doctrine gates", () => {
     s.flux = 1000;
 
     expect(canUseDoctrineSlot(s, 0)).toBeNull();
-    /** Outside keep disc + `STRUCTURE_MAP_OBSTACLE_RADIUS` union (see `structureObstacleFootprints`). */
-    expect(placementFailureReason(s, "verdant_citadel", { x: -20, z: 0 }, 0)).toBeNull();
+    /** Outside the completed Keep and Citadel footprints. */
+    expect(placementFailureReason(s, "verdant_citadel", { x: -5, z: 40 }, 0)).toBeNull();
   });
 
   it("enemy placement is also resource-only", () => {
     const s = createInitialState(tinyMap, []);
     s.enemyFlux = 1000;
 
-    expect(canPlaceEnemyStructureAt(s, "bastion_keep", { x: 78, z: 4 })).toBeNull();
+    expect(canPlaceEnemyStructureAt(s, "bastion_keep", { x: 80, z: 31 })).toBeNull();
   });
 });
 
@@ -129,7 +131,7 @@ describe("doctrine card playability", () => {
   it("explains affordable, unaffordable, cooldown, and territory states", () => {
     const ready = createInitialState(tinyMap, ["watchtower"]);
     ready.flux = 1000;
-    expect(doctrineCardPlayability(ready, "watchtower", { x: -20, z: 0 }, 0).kind).toBe("ready");
+    expect(doctrineCardPlayability(ready, "watchtower", { x: -5, z: 25 }, 0).kind).toBe("ready");
 
     const poor = createInitialState(tinyMap, ["watchtower"]);
     poor.flux = 0;
@@ -548,6 +550,46 @@ describe("hero captain mode", () => {
     }
   });
 
+  it("holds a Wizard and ordered ground unit when a barrier leaves no route", () => {
+    const barrierMap: MapData = {
+      ...tinyMap,
+      decor: [{ kind: "box", x: 0, z: 0, w: 8, h: 8, d: 320, blocksMovement: true }],
+    };
+    const s = createInitialState(barrierMap, []);
+    const start = { x: s.hero.x, z: s.hero.z };
+    setHeroMovePath(s, { x: 40, z: 0 });
+    expect(s.hero.targetX).toBeNull();
+    expect(s.hero.targetZ).toBeNull();
+    expect({ x: s.hero.x, z: s.hero.z }).toEqual(start);
+
+    const u = unit(9001, "player", "Line", null);
+    u.x = -25;
+    u.z = 70;
+    u.order = { mode: "move", x: 40, z: 0, waypoints: [], queued: [] };
+    s.units = [u];
+    movement(s);
+    expect(u.x).toBe(-25);
+    expect(u.z).toBe(70);
+    expect(u.order?.waypoints).toEqual([]);
+    expect(u.order?.pathRetryTick).toBeGreaterThan(s.tick);
+  });
+
+  it("lets melee damage a solid structure from just outside its collision edge", () => {
+    const s = createInitialState(tinyMap, []);
+    const target = structure("watchtower", 9002, "enemy");
+    const radius = structureObstacleRadius(target);
+    const u = unit(9003, "player", "Line", null);
+    u.x = target.x - radius - u.range * 0.5;
+    u.z = target.z;
+    s.units = [u];
+    s.structures = [target];
+    s.enemyRelays = [];
+    s.enemyHero.hp = 0;
+    combat(s);
+    expect(target.hp).toBeLessThan(target.maxHp);
+    expect(u.lastAttackTick).toBe(s.tick);
+  });
+
   it("auto-places a doctrine structure while Captain mode is enabled", () => {
     const s = createInitialState(tinyMap, ["outpost", "watchtower"]);
     s.flux = 1000;
@@ -594,6 +636,9 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "line_cleave")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({
+      kind: "elemental_spell", element: "water", shape: "line", fromX: expect.any(Number),
+    }));
   });
 
   it("Firestorm damages units and emits its cast visuals", () => {
@@ -614,6 +659,8 @@ describe("command spells", () => {
     expect(enemy.hp).toBeLessThan(100);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "firestorm")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "fire", shape: "meteor" }));
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "fire", shape: "aoe" }));
     expect(enemy.spellStatuses?.some((st) => st.kind === "burning")).toBe(true);
     expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
   });
@@ -677,6 +724,13 @@ describe("command spells", () => {
   it("Fortify creates a tactics field", () => {
     const s = createInitialState(tinyMap, ["fortify"]);
     s.flux = 1000;
+    const enemy = unit(4100, "enemy", "Line", null);
+    enemy.x = -15;
+    enemy.z = 4;
+    const ally = unit(4101, "player", "Line", null);
+    ally.x = -15;
+    ally.z = 4;
+    s.units.push(enemy, ally);
 
     applyPlayerIntents(s, [
       { type: "select_doctrine_slot", index: 0 },
@@ -686,6 +740,9 @@ describe("command spells", () => {
     expect(s.tacticsFieldZones).toHaveLength(1);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "fortify")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "shield", shape: "field" }));
+    expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
+    expect(Math.hypot(ally.vxImpulse, ally.vzImpulse)).toBe(0);
   });
 
   it("Shatter chains into enemy fortresses and silences production", () => {
@@ -701,6 +758,8 @@ describe("command spells", () => {
     expect(s.enemyRelays[0]!.silencedUntilTick).toBeGreaterThan(s.tick);
     expect(s.stats.commandsCast).toBe(1);
     expect(s.fxQueue.some((fx) => fx.kind === "shatter")).toBe(true);
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "lightning", shape: "chain" }));
+    expect(s.fxQueue).toContainEqual(expect.objectContaining({ kind: "elemental_spell", element: "earth", shape: "impact" }));
   });
 
   it("Shatter freezes enemy units caught by chain impacts", () => {
@@ -719,6 +778,7 @@ describe("command spells", () => {
     ]);
 
     expect(enemy.spellStatuses?.some((st) => st.kind === "frozen" || st.kind === "chilled")).toBe(true);
+    expect(Math.hypot(enemy.vxImpulse, enemy.vzImpulse)).toBeGreaterThan(0);
   });
 });
 

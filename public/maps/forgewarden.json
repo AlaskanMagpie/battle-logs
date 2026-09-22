@@ -7,7 +7,7 @@
   },
   "useAuthorTapSlots": true,
   "visual": {
-    "groundPreset": "ember_wastes",
+    "groundPreset": "forge_slag",
     "showGrid": false,
     "fogHex": 2109478,
     "fogNear": 120,
@@ -94,7 +94,7 @@
     {
       "id": "tap_fw_p_15",
       "x": -48,
-      "z": 110
+      "z": 102
     },
     {
       "id": "tap_fw_e_00",
@@ -174,13 +174,13 @@
     {
       "id": "tap_fw_e_15",
       "x": 48,
-      "z": 110
+      "z": 102
     }
   ],
   "playerRelaySlots": [
     {
       "id": "p_relay_1",
-      "x": -158,
+      "x": -140,
       "z": 0
     },
     {
@@ -202,7 +202,7 @@
   "enemyRelaySlots": [
     {
       "id": "e_relay_1",
-      "x": 158,
+      "x": 150,
       "z": 0
     },
     {
@@ -212,7 +212,7 @@
     }
   ],
   "playerStart": {
-    "x": -154,
+    "x": -144,
     "z": 10
   },
   "enemyStart": {

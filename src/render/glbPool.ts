@@ -6,9 +6,9 @@ import {
   KEEP_ID,
   PRODUCED_UNIT_CHRONO_SENTINELS,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
-  STRUCTURE_MESH_VISUAL_SCALE,
 } from "../game/constants";
 import { getCatalogEntry } from "../game/catalog";
+import { structureVisualDims } from "../game/structureObstacles";
 import { getDoctrineForCard } from "../game/assetLabDoctrine";
 import { unitMeshLinearSize } from "../game/sim/systems/helpers";
 import { isCommandEntry, type TeamId, type UnitSizeClass } from "../game/types";
@@ -363,16 +363,37 @@ function boneLeafFromPositionTrack(trackName: string): string {
 }
 
 /**
- * Horizontal travel baked on hips/root/pelvis position — runs read higher than idles/attacks
- * for most Meshy humanoids (same metric as inspect tooling).
+ * Horizontal travel baked into a rig's Hips / Pelvis / Root / Armature track.
+ *
+ * Doctrine owns world XZ on the parent group from the simulation. Letting a
+ * source clip also translate its skeleton makes actions drift, crossfades
+ * smear, and locomotion look like skating. Preserve the initial offset so a
+ * valid authored rest pose stays intact; only flatten motion after frame zero.
  */
+function isRootMotionPositionTrack(track: THREE.KeyframeTrack): boolean {
+  if (!track.name.toLowerCase().endsWith(".position")) return false;
+  const rawLeaf = boneLeafFromPositionTrack(track.name).toLowerCase();
+  const leaf = rawLeaf.replace(/[^a-z0-9]+/g, "");
+  return (
+    leaf === "root" ||
+    leaf === "rootground" ||
+    leaf === "armature" ||
+    leaf === "skeleton" ||
+    leaf === "pelvis" ||
+    leaf === "hip" ||
+    leaf === "hips" ||
+    leaf.endsWith("hips") ||
+    leaf.endsWith("pelvis") ||
+    leaf.endsWith("root") ||
+    leaf.endsWith("rootground")
+  );
+}
+
+/** Inspect the source clip before stripping translation; merged packs use stride to identify run cycles. */
 function hipsRootHorizontalStrideXZ(clip: THREE.AnimationClip): number {
   let maxRange = 0;
   for (const track of clip.tracks) {
-    if (!track.name.toLowerCase().endsWith(".position")) continue;
-    const leaf = boneLeafFromPositionTrack(track.name).toLowerCase();
-    if (!/(hips|pelvis|root|rootground)$/i.test(leaf) && !/hips/i.test(leaf)) continue;
-    if (!(track instanceof THREE.VectorKeyframeTrack)) continue;
+    if (!isRootMotionPositionTrack(track) || !(track instanceof THREE.VectorKeyframeTrack)) continue;
     if (track.times.length < 2) continue;
     const v = track.values;
     let minX = Infinity;
@@ -390,32 +411,32 @@ function hipsRootHorizontalStrideXZ(clip: THREE.AnimationClip): number {
   return maxRange;
 }
 
-/**
- * Run/walk clips often bake root translation on **Hips.position** (forward/side drift in place).
- * We already drive world XY from the sim; keeping those keys fights the unit root and reads as
- * horizontal jitter (especially Line / Meshy exports).
- * Preserve Y so vertical bounce from the authored cycle remains.
- */
-function stripHipsHorizontalTranslation(clip: THREE.AnimationClip): THREE.AnimationClip {
+function stripRootHorizontalTranslation(clip: THREE.AnimationClip): THREE.AnimationClip {
   const tracks = clip.tracks.map((track) => {
-    if (!track.name.endsWith(".position")) return track;
-    if (!/hips$/i.test(boneLeafFromPositionTrack(track.name))) return track;
-    if (!(track instanceof THREE.VectorKeyframeTrack)) return track;
+    if (!isRootMotionPositionTrack(track)) return track;
+    if (!(track instanceof THREE.VectorKeyframeTrack) || track.times.length < 2) return track;
     const values = Float32Array.from(track.values);
+    const baseX = values[0] ?? 0;
+    const baseZ = values[2] ?? 0;
     for (let i = 0; i < values.length; i += 3) {
-      values[i] = 0;
-      values[i + 2] = 0;
+      values[i] = baseX;
+      values[i + 2] = baseZ;
     }
     return new THREE.VectorKeyframeTrack(track.name, Array.from(track.times), Array.from(values));
   });
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
 }
 
-function safeClip(clip: THREE.AnimationClip, stripHipsRootXZ = false): THREE.AnimationClip {
-  // Meshy exports often include scale keys that fight our class-based GLB normalization.
+/**
+ * Strip scale tracks that fight class normalization and, by default, neutralize
+ * baked horizontal root motion for every runtime role. The simulation remains
+ * the sole authority for position while the clip still supplies posture, feet,
+ * vertical bounce, attack anticipation, and recovery.
+ */
+function safeClip(clip: THREE.AnimationClip, stripRootMotionXZ = true): THREE.AnimationClip {
   const tracks = clip.tracks.filter((track) => !track.name.endsWith(".scale"));
   let out = new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  if (stripHipsRootXZ) out = stripHipsHorizontalTranslation(out);
+  if (stripRootMotionXZ) out = stripRootHorizontalTranslation(out);
   return out;
 }
 
@@ -669,7 +690,9 @@ function clipRoleScore(role: Exclude<UnitAnimationRole, "model">, file: string, 
       if (/\b(kick|spell|mage|cast|dance|flip|jump|attack|slash)\b/.test(hay)) score -= 180;
     }
   } else if (role === "attack") {
-    if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight)\b/.test(hay)) score += 100;
+    // Meshy has several legitimate caster labels (including its recurrent
+    // misspelling `soell`). They are still full combat releases, not idles.
+    if (/\b(attack|attacking|slash|strike|melee|combo|spin|bow|charge|fight|cast|spell|soell|mage|fireball|blast)\b/.test(hay)) score += 100;
     if (file.includes("starbound_arcanist_hero")) {
       // Prefer readable melee on the default action; short cast bursts are strike-roulette only.
       if (/\b(mage|spell|soell|cast)\b/.test(hay)) score -= 220;
@@ -849,7 +872,7 @@ function visibleMeshBounds(root: THREE.Object3D, relativeTo?: THREE.Object3D): T
   return out;
 }
 
-function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, basis: GlbExtentBasis): void {
+function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, basis: GlbExtentBasis, minHeight = 0): void {
   inst.updateMatrixWorld(true);
   const parent = inst.parent ?? undefined;
   const box = visibleMeshBounds(inst, parent);
@@ -858,6 +881,9 @@ function normalizeGlbInstance(inst: THREE.Object3D, targetMaxExtent: number, bas
   box.getSize(size);
   const ref = glbBoxExtentRef(size, basis);
   inst.scale.multiplyScalar(targetMaxExtent / ref);
+  // Towers authored as squat XZ models need height without expanding their collision footprint.
+  const scaledHeight = size.y * targetMaxExtent / ref;
+  if (minHeight > 0 && scaledHeight > 0 && scaledHeight < minHeight) inst.scale.y *= minHeight / scaledHeight;
   inst.updateMatrixWorld(true);
   const b2 = visibleMeshBounds(inst, parent);
   inst.position.x -= (b2.min.x + b2.max.x) / 2;
@@ -1047,6 +1073,8 @@ type AttachGlbOpts = {
   keepPlaceholderHidden?: boolean;
   /** How to read authored bounds for normalization (default: height for animated units, max otherwise). */
   extentBasis?: GlbExtentBasis;
+  /** Optional tower height floor after horizontal sizing (does not increase XZ footprint). */
+  minHeight?: number;
   /**
    * Exact AnimationClip.name overrides from asset lab (`battleLogs.assetLab.doctrine.v1`).
    * Keys match Three roles; asset lab “die” maps to `death`.
@@ -1177,12 +1205,7 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(
-          clipRaw,
-          attackFile.includes("amber_geode_monks_attack") ||
-            isEmberboundAsceticMergedMotionFile(attackFile) ||
-            isAstralKnightMergedMotionFile(attackFile),
-        );
+        const clip = safeClip(clipRaw);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = false;
@@ -1201,12 +1224,7 @@ async function attachGlbByFile(
       if (clipRaw) {
         strikeExcludeClipNames.add(clipRaw.name);
         mixer ??= new THREE.AnimationMixer(inst);
-        const clip = safeClip(
-          clipRaw,
-          deathFile.includes("amber_geode_monks_death") ||
-            isEmberboundAsceticMergedMotionFile(deathFile) ||
-            isAstralKnightMergedMotionFile(deathFile),
-        );
+        const clip = safeClip(clipRaw);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
@@ -1235,7 +1253,7 @@ async function attachGlbByFile(
         console.warn(`[glb] ${opts.animationRoleLabel} missing animation roles: ${missing.join(", ") || "all"}`, file);
       }
     }
-    normalizeGlbInstance(inst, targetMaxExtent, extentBasis);
+    normalizeGlbInstance(inst, targetMaxExtent, extentBasis, opts?.minHeight);
 
     if (opts?.teamTint) applyGlbTeamTint(inst, opts.teamTint);
 
@@ -1313,8 +1331,13 @@ export async function requestGlbForHero(placeholder: THREE.Mesh, team: TeamId = 
   await attachGlbForClass("hero", placeholder, 3.0, team);
 }
 
-/** Player towers: canonical max extent (matches `structureDims` battle scale). */
-export const TOWER_GLB_TARGET_EXTENT = unitMeshLinearSize("Titan") * STRUCTURE_MESH_VISUAL_SCALE;
+/** Match the authored tower's horizontal footprint; tall GLBs no longer become oversized. */
+export function towerGlbTargetExtent(catalogId: string): number {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return 0;
+  const { w, d } = structureVisualDims(entry);
+  return Math.max(w, d);
+}
 
 /**
  * Active structure catalog ids map to stable tower art fallbacks. Removed placeholder
@@ -1406,12 +1429,15 @@ export async function getCatalogPreviewAssetUrl(catalogId: string): Promise<stri
 
 /** Load tower art from the same unit manifest; hides procedural silhouette on success. */
 export async function requestGlbForTower(catalogId: string, placeholder: THREE.Mesh): Promise<void> {
+  const entry = getCatalogEntry(catalogId);
+  if (!entry || isCommandEntry(entry)) return;
   const m = await loadManifest();
   const file = pickTowerFile(catalogId, m);
   if (!file) return;
-  await attachGlbByFile(file, placeholder, TOWER_GLB_TARGET_EXTENT, {
+  await attachGlbByFile(file, placeholder, towerGlbTargetExtent(catalogId), {
     hideSilhouetteUserDataKey: "structureSilhouette",
     keepPlaceholderHidden: true,
+    minHeight: structureVisualDims(entry).h * 0.55,
   });
 }
 

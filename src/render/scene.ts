@@ -4,6 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { getControlProfile, type ControlProfile } from "../controlProfile";
+import { motionAnimate, motionStop, prefersReducedMotion } from "../motion";
 import { getCatalogEntry } from "../game/catalog";
 import {
   HERO_CLAIM_RADIUS,
@@ -17,6 +18,7 @@ import {
 } from "../game/constants";
 import { claimChannelSecForTap } from "../game/sim/systems/homeDistance";
 import { dist2, unitMeshLinearSize, unitStatsForCatalog } from "../game/sim/systems/helpers";
+import { structureVisualDims as structureDims, structureVisualRadius } from "../game/structureObstacles";
 import {
   dominantSignal,
   enemyTerritorySources,
@@ -186,11 +188,15 @@ function makeGroundOverlayTexture(preset: MapGroundPreset): THREE.CanvasTexture 
   };
   const tint =
     preset === "ember_wastes"
-      ? { blob: "rgba(255,150,82,0.18)", crack: "rgba(255,220,160,0.22)" }
+      ? { blob: "rgba(186,128,94,0.13)", crack: "rgba(216,173,134,0.13)" }
+      : preset === "forge_slag"
+        ? { blob: "rgba(242,112,54,0.14)", crack: "rgba(255,161,84,0.14)" }
+      : preset === "cinder_field"
+        ? { blob: "rgba(147,88,95,0.12)", crack: "rgba(199,100,77,0.1)" }
       : preset === "glacier_grid"
-        ? { blob: "rgba(155,220,255,0.16)", crack: "rgba(235,252,255,0.2)" }
+        ? { blob: "rgba(155,220,255,0.12)", crack: "rgba(235,252,255,0.12)" }
         : preset === "mesa_band"
-          ? { blob: "rgba(255,190,116,0.17)", crack: "rgba(255,225,170,0.18)" }
+          ? { blob: "rgba(255,190,116,0.12)", crack: "rgba(255,225,170,0.1)" }
           : { blob: "rgba(155,205,255,0.12)", crack: "rgba(210,235,255,0.16)" };
 
   // Soft blotches only; repeated lines shimmer badly at shallow camera angles.
@@ -255,7 +261,11 @@ function makeDecorWrapTexture(preset: MapGroundPreset, tag: string): THREE.Canva
 
   const pal =
     preset === "ember_wastes"
-      ? { a: "#a58272", b: "#6f4635", light: "rgba(255,235,205,0.28)", dark: "rgba(24,10,7,0.42)" }
+      ? { a: "#8e786c", b: "#594740", light: "rgba(239,220,201,0.24)", dark: "rgba(24,15,13,0.38)" }
+      : preset === "forge_slag"
+        ? { a: "#94634c", b: "#443833", light: "rgba(255,190,125,0.22)", dark: "rgba(22,12,10,0.42)" }
+      : preset === "cinder_field"
+        ? { a: "#776365", b: "#393038", light: "rgba(216,163,157,0.2)", dark: "rgba(14,11,17,0.42)" }
       : preset === "glacier_grid"
         ? { a: "#b5d0da", b: "#638596", light: "rgba(255,255,255,0.28)", dark: "rgba(12,24,34,0.4)" }
         : preset === "mesa_band"
@@ -412,7 +422,11 @@ function decorRockPalette(preset: MapGroundPreset): {
 } {
   switch (preset) {
     case "ember_wastes":
-      return { dark: 0x221715, base: 0x5e4036, light: 0xa98268, accent: 0xd06a34, scale: 0.13, blockiness: 0.72 };
+      return { dark: 0x211b1a, base: 0x59453d, light: 0x998072, accent: 0xb9754b, scale: 0.13, blockiness: 0.72 };
+    case "forge_slag":
+      return { dark: 0x1b1a1c, base: 0x574039, light: 0x9a6850, accent: 0xd46a35, scale: 0.13, blockiness: 0.78 };
+    case "cinder_field":
+      return { dark: 0x1a1920, base: 0x49393e, light: 0x826466, accent: 0xb35b4a, scale: 0.13, blockiness: 0.67 };
     case "glacier_grid":
       return { dark: 0x152331, base: 0x4f6d7a, light: 0xb2cbd2, accent: 0x8ed8ff, scale: 0.12, blockiness: 0.56 };
     case "mesa_band":
@@ -443,48 +457,6 @@ function makeDecorRockMaterial(preset: MapGroundPreset, tag: string, shade = 1):
     fragmentShader: DECOR_ROCK_FRAG,
     glslVersion: THREE.GLSL3,
   });
-}
-
-function structureDims(entry: StructureCatalogEntry | null): { w: number; h: number; d: number } {
-  const H = unitMeshLinearSize("Titan");
-  const S = STRUCTURE_MESH_VISUAL_SCALE;
-  let w: number;
-  let d: number;
-  if (!entry) {
-    w = 4.8;
-    d = 4.8;
-  } else {
-    const signals = entry.signalTypes;
-    const isBastion = signals.filter((s) => s === "Bastion").length >= 2;
-    const isVanguard = signals.filter((s) => s === "Vanguard").length >= 1;
-    const isReclaim = signals.filter((s) => s === "Reclaim").length >= 1;
-    if (entry.producedSizeClass === "Titan") {
-      w = 6.2;
-      d = 6.2;
-    } else if (entry.producedSizeClass === "Heavy" && isBastion) {
-      w = 6.4;
-      d = 6.4;
-    } else if (entry.producedSizeClass === "Heavy") {
-      w = 5.6;
-      d = 5.6;
-    } else if (isBastion) {
-      w = 6.2;
-      d = 6.2;
-    } else if (isVanguard && isReclaim) {
-      w = 5.1;
-      d = 5.1;
-    } else if (isVanguard) {
-      w = 4.5;
-      d = 4.5;
-    } else if (isReclaim) {
-      w = 5.2;
-      d = 5.2;
-    } else {
-      w = 4.8;
-      d = 4.8;
-    }
-  }
-  return { w: w * S, h: H * S, d: d * S };
 }
 
 function hsl(hex: number, dl: number): THREE.Color {
@@ -975,7 +947,8 @@ function setStructureFallbackVisible(g: THREE.Group, visible: boolean): void {
   const plinth = ud["plinthMesh"] as THREE.Object3D | undefined;
   if (silhouette) silhouette.visible = visible;
   if (body) body.visible = visible;
-  if (plinth) plinth.visible = visible;
+  // Keep the footprint/team base visible when a tower GLB replaces the procedural body.
+  if (plinth) plinth.visible = true;
 }
 
 function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy", size: UnitSizeClass): THREE.Group {
@@ -1176,6 +1149,17 @@ export class GameRenderer {
   private introOrbitStartAngle = 0;
   /** Orbit / pan allowed (e.g. false while dragging a doctrine card). */
   private controlsUserDesiredEnabled = true;
+
+  /** Active during the post-win camera pull-back; anime.js drives the eased
+   *  progress and fires completion, the render loop reads `t` and moves the rig. */
+  private victoryCamActive = false;
+  private readonly victoryCamStartPos = new THREE.Vector3();
+  private readonly victoryCamStartTgt = new THREE.Vector3();
+  private readonly victoryCamEndPos = new THREE.Vector3();
+  private readonly victoryCamEndTgt = new THREE.Vector3();
+  private readonly victoryCamProgress = { t: 0 };
+  /** Last match phase seen in `sync`, so the victory move fires once on the win edge. */
+  private lastSyncedPhase: string | null = null;
 
   /** Rigid translate: preserves camera↔target offset (OrbitControls distance = zoom). */
   private nudgeCameraRigTowardFollowPivot(dt: number): void {
@@ -1468,7 +1452,8 @@ export class GameRenderer {
   }
 
   private refreshControlsEnabledFromIntro(): void {
-    this.controls.enabled = this.controlsUserDesiredEnabled && this.introCinematicStartMs === null;
+    this.controls.enabled =
+      this.controlsUserDesiredEnabled && this.introCinematicStartMs === null && !this.victoryCamActive;
   }
 
   rotateCameraByPixels(dx: number, dy: number): void {
@@ -1677,6 +1662,8 @@ export class GameRenderer {
 
   /** High map orbit, then continuous landing over the player hero. */
   private startMatchIntroCinematic(state: GameState): void {
+    this.victoryCamActive = false;
+    motionStop(this.victoryCamProgress);
     const { pos: endPos, tgt: endTgt } = this.getHeroIntroEndCameraRig(state);
     this.introEndPos.copy(endPos);
     this.introEndTgt.copy(endTgt);
@@ -1747,6 +1734,56 @@ export class GameRenderer {
       this.cameraFollowUnitId = null;
       this.refreshControlsEnabledFromIntro();
     }
+  }
+
+  /**
+   * After a win, pull the camera back and lift it to take in the whole field —
+   * a small victory-lap orbit. anime.js owns the eased 0→1 progress and the
+   * completion that restores hero-follow; the render loop reads the progress and
+   * moves the rig (so the two never fight over the camera). Skipped under
+   * reduced motion.
+   */
+  private startVictoryCinematic(state: GameState): void {
+    if (this.victoryCamActive || prefersReducedMotion()) return;
+    this.victoryCamStartPos.copy(this.camera.position);
+    this.victoryCamStartTgt.copy(this.controls.target);
+    const focusX = state.hero.hp > 0 ? state.hero.x : this.controls.target.x;
+    const focusZ = state.hero.hp > 0 ? state.hero.z : this.controls.target.z;
+    this.victoryCamEndTgt.set(focusX, 4, focusZ);
+    // End rig: the current view offset rotated ~24° and pulled back 1.6×, lifted.
+    const offX = this.victoryCamStartPos.x - this.victoryCamStartTgt.x;
+    const offZ = this.victoryCamStartPos.z - this.victoryCamStartTgt.z;
+    const cos = Math.cos(0.42);
+    const sin = Math.sin(0.42);
+    const rotX = offX * cos - offZ * sin;
+    const rotZ = offX * sin + offZ * cos;
+    const lift = Math.max(40, this.victoryCamStartPos.y * 1.3);
+    this.victoryCamEndPos.set(focusX + rotX * 1.6, lift, focusZ + rotZ * 1.6);
+    this.victoryCamProgress.t = 0;
+    this.victoryCamActive = true;
+    this.cameraFollowHero = false;
+    this.cameraFollowUnitId = null;
+    this.refreshControlsEnabledFromIntro();
+    motionStop(this.victoryCamProgress);
+    motionAnimate(this.victoryCamProgress, {
+      t: 1,
+      duration: 2600,
+      ease: "outCubic",
+      onComplete: () => {
+        this.victoryCamActive = false;
+        this.cameraFollowHero = true;
+        this.refreshControlsEnabledFromIntro();
+      },
+    });
+  }
+
+  private tickVictoryCinematic(): void {
+    if (!this.victoryCamActive) return;
+    const t = this.victoryCamProgress.t;
+    this.controls.target.copy(this.victoryCamStartTgt).lerp(this.victoryCamEndTgt, t);
+    this.camera.position.copy(this.victoryCamStartPos).lerp(this.victoryCamEndPos, t);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
   }
 
   pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number } | null {
@@ -1896,6 +1933,12 @@ export class GameRenderer {
     this.visualSyncDt = Math.min(visualCap, Math.max(0, (syncNow - this.lastSyncFrameMs) / 1000));
     this.lastSyncFrameMs = syncNow;
     this.currentState = state;
+    if (this.lastSyncedPhase !== state.phase) {
+      if (state.phase === "win" && this.lastSyncedPhase === "playing") {
+        this.startVictoryCinematic(state);
+      }
+      this.lastSyncedPhase = state.phase;
+    }
     this.useGlb = useGlb;
     this.syncWorldPlane(state);
     this.syncTerrainSlab(state);
@@ -2036,14 +2079,13 @@ export class GameRenderer {
     }
   }
 
-  setPlacementGhost(pos: { x: number; z: number } | null, valid: boolean): void {
+  setPlacementGhost(pos: { x: number; z: number } | null, valid: boolean, catalogId?: string): void {
     if (!pos) {
       if (this.ghost) this.ghost.visible = false;
       return;
     }
     if (!this.ghost) {
-      const r = 2.6 * STRUCTURE_MESH_VISUAL_SCALE;
-      const geo = new THREE.CylinderGeometry(r, r, 0.3, 24);
+      const geo = new THREE.CylinderGeometry(1, 1, 0.3, 32);
       const mat = new THREE.MeshStandardMaterial({
         color: 0x57a8ff,
         roughness: 0.8,
@@ -2059,6 +2101,9 @@ export class GameRenderer {
     }
     this.ghost.visible = true;
     this.ghost.position.set(pos.x, 0.2, pos.z);
+    const entry = catalogId ? getCatalogEntry(catalogId) : null;
+    const radius = entry && isStructureEntry(entry) ? structureVisualRadius(entry) : 2.6 * STRUCTURE_MESH_VISUAL_SCALE;
+    this.ghost.scale.set(radius, 1, radius);
     const mat = this.ghost.material as THREE.MeshStandardMaterial;
     mat.color.set(valid ? 0x57a8ff : 0xf26464);
   }
@@ -3412,14 +3457,20 @@ export class GameRenderer {
       overlayMat.map = makeGroundOverlayTexture(preset);
       oldOverlay?.dispose();
       if (preset === "ember_wastes") {
-        overlayMat.color.setHex(0xffb07a);
-        overlayMat.opacity = 0.16;
+        overlayMat.color.setHex(0xc9a189);
+        overlayMat.opacity = 0.11;
+      } else if (preset === "forge_slag") {
+        overlayMat.color.setHex(0xe99e72);
+        overlayMat.opacity = 0.11;
+      } else if (preset === "cinder_field") {
+        overlayMat.color.setHex(0xb88d95);
+        overlayMat.opacity = 0.1;
       } else if (preset === "glacier_grid") {
         overlayMat.color.setHex(0xb6eaff);
-        overlayMat.opacity = 0.135;
+        overlayMat.opacity = 0.1;
       } else if (preset === "mesa_band") {
         overlayMat.color.setHex(0xffd4a4);
-        overlayMat.opacity = 0.15;
+        overlayMat.opacity = 0.11;
       } else {
         overlayMat.color.setHex(0xb9d8ff);
         overlayMat.opacity = 0.1;
@@ -4454,9 +4505,11 @@ export class GameRenderer {
       const orderedToMove = orderTargetDist > (wasMoving ? 0.35 : 0.75);
       const travelSignal = Math.max(simFrameDist, simMoveDist);
       const runThreshold = wasMoving ? UNIT_VISUAL_RUN_STOP_EPS : UNIT_VISUAL_RUN_START_EPS;
+      const directedTravelDuringAttack =
+        attackActive && orderedToMove && simFrameDist > UNIT_VISUAL_RUN_STOP_EPS;
       const shouldRun =
         (travelSignal > runThreshold || (orderedToMove && simMoveDist > UNIT_VISUAL_RUN_STOP_EPS)) &&
-        (!attackActive || forceRunCatchup || attackRelocated);
+        (!attackActive || forceRunCatchup || attackRelocated || directedTravelDuringAttack);
       if (shouldRun && attackActive && !mobileLodPlaceholder) {
         const ud = g.userData as Record<string, unknown>;
         const strike = (ud["glbStrikeActive"] ?? ud["glbAttackAction"]) as THREE.AnimationAction | undefined;
@@ -4691,7 +4744,13 @@ export class GameRenderer {
     if (Math.hypot(dx, dz) <= 0.001) return;
     const target = Math.atan2(dx, dz);
     const delta = Math.atan2(Math.sin(target - root.rotation.y), Math.cos(target - root.rotation.y));
-    root.rotation.y += delta * 0.22;
+    // A fixed per-frame fraction made turning depend on refresh rate: at 30fps
+    // units visibly skated sideways, while high-refresh units snapped too hard.
+    // This exponential turn is stable at every supported render cadence.
+    const turnRate = attackTarget ? 15.5 : 11.5;
+    const dt = Math.max(1 / 120, this.visualSyncDt);
+    const turn = 1 - Math.exp(-turnRate * dt);
+    root.rotation.y += delta * turn;
   }
 
   private updateUnitMotionVisual(
@@ -5203,24 +5262,16 @@ export class GameRenderer {
         ? strikePool[Math.floor(Math.random() * strikePool.length)]!
         : attackDefault;
     if (!attack) return;
-    if (ud["glbAttackTimer"] !== undefined) return;
+    // The simulation can strike again before a long source clip finishes. Restart the
+    // authored strike for every committed hit instead of leaving the previous action
+    // stopped or blending back into locomotion during the new hit.
     const titan = ud["sizeClass"] === "Titan";
     const producedId = ud["producedUnitId"] as string | undefined;
     const punchyLineMonks =
       producedId === PRODUCED_UNIT_AMBER_GEODE_MONKS ||
       producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
-    const minDuration = punchyLineMonks
-      ? 2.02
-      : ud["sizeClass"] === "hero"
-        ? 1.78
-        : ud["sizeClass"] === "Swarm"
-          ? 3.1
-          : ud["sizeClass"] === "Line"
-            ? 4.35
-            : titan
-              ? 3.35
-              : 3.05;
+    const minDuration = punchyLineMonks ? 1.2 : isHero ? 1.15 : titan ? 1.25 : 0.85;
     let duration = Math.max(minDuration, (ud["glbAttackDuration"] as number | undefined) ?? minDuration);
     if (isHero && strikePool && strikePool.length > 0) {
       const idx = strikePool.indexOf(attack);
@@ -5346,8 +5397,11 @@ export class GameRenderer {
       producedId === PRODUCED_UNIT_LAVA_WIZARD_MONKS ||
       producedId === PRODUCED_UNIT_CHRONO_SENTINELS;
     const titan = ud["sizeClass"] === "Titan";
-    // Lower run cross-weight so baked root motion in the slam / punch clip is not double-driven (twitchy).
-    return punchyLineMonks ? 0.34 : titan ? 0.42 : ud["sizeClass"] === "Swarm" ? 0.58 : 0.62;
+    // Keep a small compatible base layer alive so crossfades never expose a bind
+    // pose, but do not let a run cycle overpower the actual swing. The old
+    // 0.58–0.62 underlay made attacks read like a character skating while a
+    // punch/slash played on top.
+    return punchyLineMonks ? 0.16 : titan ? 0.22 : ud["sizeClass"] === "Swarm" ? 0.28 : 0.24;
   }
 
   private setGlbMoveAnimation(root: THREE.Object3D, moving: boolean): void {
@@ -5403,6 +5457,7 @@ export class GameRenderer {
     this.lastRenderFrameMs = now;
     this.tuneMobileRenderQuality(dt, now);
     this.tickMatchIntroCinematic();
+    this.tickVictoryCinematic();
     this.applyHeroCameraFollow(dt);
     this.controls.update();
     this.tickGlbAnimations(dt);

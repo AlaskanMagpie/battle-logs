@@ -1,7 +1,10 @@
 import * as THREE from "three";
 import {
   FX_ABSOLUTE_MAX_LIFETIME_SEC,
+  PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS,
   PRODUCED_UNIT_AMBER_GEODE_MONKS,
+  PRODUCED_UNIT_CHRONO_SENTINELS,
+  PRODUCED_UNIT_LANTERNBOUND_LINE,
   PRODUCED_UNIT_LAVA_WIZARD_MONKS,
 } from "../game/constants";
 import type { CastFxKind, CombatHitMark, HeroStrikeFxVariant } from "../game/state";
@@ -28,20 +31,26 @@ export type CastFxSpawnOpts = {
 };
 
 /**
- * Rudimentary, procedural cast/damage FX. One shared group registered on the scene;
- * each event creates a few short-lived meshes that are animated per-frame via `step(dt)`
- * and disposed when their lifetime elapses.
+ * Procedural, element-aware cast and attack FX. Short-lived geometry lives in one
+ * bounded scene group and is disposed as each cue expires.
  */
 export interface FxHost {
   group: THREE.Group;
   active: ActiveFx[];
+  /** Set explicitly in tests; otherwise follows the current OS motion preference at spawn time. */
+  reducedMotion?: boolean;
 }
+
+/** Protects the renderer during large PvE battles while reserving room for spells. */
+export const MAX_ACTIVE_FX = 64;
 
 interface ActiveFx {
   age: number;
   life: number;
   /** Wall-clock start for hard cap (handles stuck/zero `dt` or driver quirks). */
   createdAtMs: number;
+  priority: number;
+  staticFrame: boolean;
   node: THREE.Object3D;
   update: (t: number, dt: number) => void;
   dispose: () => void;
@@ -64,23 +73,14 @@ export function stepFx(host: FxHost, dt: number): void {
   let w = 0;
   for (let r = 0; r < active.length; r++) {
     const fx = active[r]!;
-    fx.age += dt;
-    fx.update(fx.age, dt);
+    const frameDt = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.05)) : 0;
+    fx.age += frameDt;
+    if (!fx.staticFrame) fx.update(fx.age, frameDt);
     const wallMs = now - fx.createdAtMs;
     if (fx.age < fx.life && wallMs < maxWallMs) {
       active[w++] = fx;
     } else {
-      fx.node.visible = false;
-      try {
-        host.group.remove(fx.node);
-      } catch {
-        /* already detached */
-      }
-      try {
-        fx.dispose();
-      } catch {
-        /* ignore double-dispose */
-      }
+      disposeFx(host, fx);
     }
   }
   active.length = w;
@@ -88,20 +88,14 @@ export function stepFx(host: FxHost, dt: number): void {
 
 /** Remove every active FX (e.g. rematch) so nothing lingers in the scene graph. */
 export function clearFx(host: FxHost): void {
-  for (const fx of host.active) {
-    fx.node.visible = false;
-    try {
-      host.group.remove(fx.node);
-    } catch {
-      /* ignore */
-    }
-    try {
-      fx.dispose();
-    } catch {
-      /* ignore */
-    }
-  }
+  for (const fx of host.active) disposeFx(host, fx);
   host.active = [];
+}
+
+function disposeFx(host: FxHost, fx: ActiveFx): void {
+  fx.node.visible = false;
+  host.group.remove(fx.node);
+  fx.dispose();
 }
 
 function disposeTree(obj: THREE.Object3D): void {
@@ -119,12 +113,33 @@ function disposeTree(obj: THREE.Object3D): void {
   });
 }
 
-function spawn(host: FxHost, node: THREE.Object3D, life: number, update: ActiveFx["update"]): void {
+function spawn(host: FxHost, node: THREE.Object3D, life: number, update: ActiveFx["update"], priority = 2): void {
+  if (host.active.length >= MAX_ACTIVE_FX) {
+    let candidate = -1;
+    for (let i = 0; i < host.active.length; i++) {
+      if (host.active[i]!.priority <= priority && (candidate < 0 || host.active[i]!.priority < host.active[candidate]!.priority)) {
+        candidate = i;
+      }
+    }
+    if (candidate < 0) {
+      disposeTree(node);
+      return;
+    }
+    disposeFx(host, host.active.splice(candidate, 1)[0]!);
+  }
+  const reducedMotion = host.reducedMotion ??
+    (typeof window !== "undefined" && typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  // Keep the impact / targeting cue visible, but hold one frame rather than
+  // flashing and sweeping it across the screen for a reduced-motion player.
+  if (reducedMotion) update(life * 0.55, 0);
   host.group.add(node);
   host.active.push({
     age: 0,
-    life: Math.min(life, FX_ABSOLUTE_MAX_LIFETIME_SEC),
+    life: Math.min(reducedMotion ? 0.35 : life, FX_ABSOLUTE_MAX_LIFETIME_SEC),
     createdAtMs: performance.now(),
+    priority,
+    staticFrame: !!reducedMotion,
     node,
     update,
     dispose: () => disposeTree(node),
@@ -177,7 +192,7 @@ function mulHex(c: number, r: number, g: number, b: number): number {
   return col.getHex();
 }
 
-/** Elemental identity: signal school first, then unit class, then team bias. */
+/** Unit signature first, then signal school and size class; team retains a subtle tint. */
 function elementalCombatPalette(m: CombatHitMark): {
   core: number;
   glow: number;
@@ -192,7 +207,37 @@ function elementalCombatPalette(m: CombatHitMark): {
   let glow = 0xffffff;
   let rim = 0xaaddff;
   let spark = 0xe8f6ff;
-  if (sig === "Vanguard") {
+  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS) {
+    core = 0xffcd7b;
+    glow = 0xfff1c0;
+    rim = 0x8e603b;
+    spark = 0xe8b863;
+  } else if (m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
+    core = 0xff6a19;
+    glow = 0xffe7a1;
+    rim = 0xbb210a;
+    spark = 0xffc05e;
+  } else if (m.producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS) {
+    core = 0x9ce9ff;
+    glow = 0xffffff;
+    rim = 0x7161d8;
+    spark = 0xe5dfff;
+  } else if (m.producedUnitId === PRODUCED_UNIT_LANTERNBOUND_LINE) {
+    core = 0x69e5ce;
+    glow = 0xecfff7;
+    rim = 0x298b9f;
+    spark = 0xa8fff0;
+  } else if (m.producedUnitId === PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS) {
+    core = 0x99f4c6;
+    glow = 0xf8fff0;
+    rim = 0x3a9cc3;
+    spark = 0xe6ffca;
+  } else if (m.sizeClass === "Titan" && m.producerCatalogId === "verdant_citadel") {
+    core = 0x86e599;
+    glow = 0xe9ffe1;
+    rim = 0x307a61;
+    spark = 0xc8ffb3;
+  } else if (sig === "Vanguard") {
     core = 0xff5a38;
     glow = 0xffcc88;
     rim = 0xff2200;
@@ -603,7 +648,12 @@ function addImpactStarFx(
 function spawnElementalSpell(host: FxHost, pos: { x: number; z: number }, opts?: CastFxSpawnOpts): void {
   const element = opts?.element ?? "arcane";
   const shape = opts?.shape ?? "impact";
-  const pal = spellPalette(element);
+  const base = spellPalette(element);
+  // Cut Back and Fortify carry a second school. Give that school a visible
+  // ribbon/inner ring without changing the primary shape or damage footprint.
+  const pal = opts?.secondaryElement && opts.secondaryElement !== element
+    ? { ...base, trail: spellPalette(opts.secondaryElement).rim }
+    : base;
   if (shape === "surprise") return spawnElementalSurprise(host, pos, opts, pal, element);
   switch (shape) {
     case "bolt":
@@ -666,16 +716,6 @@ function spawnElementalSurprise(
     case "shield":
       return spawnElementalShieldBastion(host, pos, opts, pal);
   }
-}
-
-function makeSoftSmokeMat(opacity: number): THREE.MeshBasicMaterial {
-  return new THREE.MeshBasicMaterial({
-    color: 0x2a201c,
-    transparent: true,
-    opacity,
-    depthWrite: false,
-    blending: THREE.NormalBlending,
-  });
 }
 
 function spawnElementalBolt(
@@ -963,7 +1003,7 @@ function spawnElementalWaterLine(
   group.add(wash);
 
   const waves: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; offset: number; side: number }[] = [];
-  const waveCount = Math.min(9, Math.max(4, Math.round(L / 7)));
+  const waveCount = Math.min(6, Math.max(4, Math.round(L / 9)));
   for (let i = 0; i < waveCount; i++) {
     const mat = fxMat(i % 2 === 0 ? pal.core : pal.trail, 0.58);
     const wave = new THREE.Mesh(new THREE.TorusGeometry(width * (0.18 + (i % 3) * 0.025), 0.035, 5, 34, Math.PI * 1.15), mat);
@@ -975,21 +1015,15 @@ function spawnElementalWaterLine(
   }
 
   const seed = elementalSeed(end, opts);
-  const droplets: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
   const dropletCount = Math.min(22, Math.max(8, Math.round(L * 0.22)));
+  const droplets = makeVolCloud(dropletCount, pal.hot, 0.28, 0.62, pal.core);
   for (let i = 0; i < dropletCount; i++) {
-    const mat = fxMat(i % 3 === 0 ? pal.core : pal.hot, 0.62);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.07 + rnd(seed, i) * 0.05, 5, 4), mat);
-    mesh.position.set((rnd(seed, i + 10) - 0.5) * width, 0.18 + rnd(seed, i + 20) * 0.34, -L * 0.46 + rnd(seed, i + 30) * L * 0.92);
-    droplets.push({
-      mesh,
-      mat,
-      vx: (rnd(seed, i + 40) - 0.5) * 2.2,
-      vy: 1.4 + rnd(seed, i + 50) * 2.0,
-      vz: 2.6 + rnd(seed, i + 60) * 4.6,
-    });
-    group.add(mesh);
+    setCloudParticle(droplets, i, (rnd(seed, i + 10) - 0.5) * width,
+      0.18 + rnd(seed, i + 20) * 0.34, -L * 0.46 + rnd(seed, i + 30) * L * 0.92,
+      (rnd(seed, i + 40) - 0.5) * 2.2, 1.4 + rnd(seed, i + 50) * 2.0,
+      2.6 + rnd(seed, i + 60) * 4.6);
   }
+  group.add(droplets.points);
 
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
@@ -1003,13 +1037,8 @@ function spawnElementalWaterLine(
       w.mesh.scale.setScalar(0.75 + phase * 1.1);
       w.mat.opacity = 0.58 * Math.sin(phase * Math.PI) * (1 - p * 0.42);
     }
-    for (const d of droplets) {
-      d.mesh.position.x += d.vx * dt;
-      d.mesh.position.y += d.vy * dt;
-      d.mesh.position.z += d.vz * dt;
-      d.vy -= 6.2 * dt;
-      d.mat.opacity = 0.62 * (1 - p);
-    }
+    advectCloud(droplets, dt, 6.2, 0.12);
+    droplets.mat.opacity = 0.62 * (1 - p);
   });
 }
 
@@ -1234,7 +1263,7 @@ function spawnElementalField(
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.09;
   group.add(ring);
-  const inner = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.38, 42), fxMat(pal.core, 0.54));
+  const inner = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.38, 42), fxMat(opts?.secondaryElement ? pal.trail : pal.core, 0.54));
   inner.rotation.x = -Math.PI / 2;
   inner.position.y = 0.11;
   group.add(inner);
@@ -1357,24 +1386,16 @@ function spawnElementalFireMeteor(
   scorch.position.set(pos.x, 0.025, pos.z);
   root.add(scorch);
 
-  const smoke: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number; delay: number }[] = [];
   const smokeCount = Math.min(16, Math.max(8, Math.round(radius * 0.8)));
+  const smoke = makeVolCloud(smokeCount, 0x55453c, 0.95, 0, 0xa47758);
   for (let i = 0; i < smokeCount; i++) {
-    const mat = makeSoftSmokeMat(0.22);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.42 + rnd(seed, i + 70) * 0.35, 7, 5), mat);
-    mesh.position.set(pos.x, 0.28, pos.z);
     const a = rnd(seed, i + 80) * Math.PI * 2;
     const sp = 1.8 + rnd(seed, i + 90) * 3.2;
-    smoke.push({
-      mesh,
-      mat,
-      vx: Math.cos(a) * sp,
-      vz: Math.sin(a) * sp,
-      vy: 1.0 + rnd(seed, i + 100) * 1.7,
-      delay: 0.22 + rnd(seed, i + 110) * 0.18,
-    });
-    root.add(mesh);
+    setCloudParticle(smoke, i, pos.x + Math.cos(a) * 0.22, 0.28,
+      pos.z + Math.sin(a) * 0.22, Math.cos(a) * sp,
+      1.0 + rnd(seed, i + 100) * 1.7, Math.sin(a) * sp);
   }
+  root.add(smoke.points);
 
   spawn(host, root, life, (t, dt) => {
     const p = Math.min(1, t / life);
@@ -1392,17 +1413,10 @@ function spawnElementalFireMeteor(
     (heat.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.74);
     scorch.scale.setScalar(radius * (0.3 + hitP * 0.62));
     (scorch.material as THREE.MeshBasicMaterial).opacity = 0.34 * (1 - p * 0.38);
-    for (const s of smoke) {
-      if (t < s.delay) {
-        s.mat.opacity = 0;
-        continue;
-      }
-      s.mesh.position.x += s.vx * dt;
-      s.mesh.position.y += s.vy * dt;
-      s.mesh.position.z += s.vz * dt;
-      s.vy += 0.52 * dt;
-      s.mesh.scale.multiplyScalar(1 + dt * 1.25);
-      s.mat.opacity = 0.22 * Math.max(0, 1 - (t - s.delay) / (life - s.delay));
+    if (t > 0.23) {
+      advectCloud(smoke, dt, -0.52, 0.24, t, 0.36);
+      smoke.mat.opacity = 0.25 * Math.max(0, 1 - (t - 0.23) / (life - 0.23));
+      smoke.mat.size = smoke.baseSize * (1 + p * 0.55);
     }
   });
 }
@@ -1430,27 +1444,15 @@ function spawnElementalAoe(
   core.position.y = 0.015;
   group.add(core);
   const seed = elementalSeed(pos, opts);
-  const particles: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
   const count = compact ? 8 : Math.min(28, Math.max(12, Math.round(radius * 1.35)));
+  const particles = makeVolCloud(count, pal.hot, compact ? 0.3 : 0.42, 0.82, pal.core);
   for (let i = 0; i < count; i++) {
-    const mat = fxMat(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.trail, compact ? 0.72 : 0.82);
-    const geom =
-      pal.shadow === 0x231910
-        ? new THREE.BoxGeometry(0.16, 0.16, 0.16)
-        : new THREE.SphereGeometry(compact ? 0.08 : 0.12, 5, 4);
-    const mesh = new THREE.Mesh(geom, mat);
     const a = rnd(seed, i) * Math.PI * 2;
     const sp = (compact ? 2.2 : 3.4) + rnd(seed, i + 20) * (compact ? 2.1 : 3.2);
-    mesh.position.set(Math.cos(a) * 0.3, 0.22, Math.sin(a) * 0.3);
-    particles.push({
-      mesh,
-      mat,
-      vx: Math.cos(a) * sp,
-      vz: Math.sin(a) * sp,
-      vy: 1.6 + rnd(seed, i + 40) * (compact ? 2.4 : 3.6),
-    });
-    group.add(mesh);
+    setCloudParticle(particles, i, Math.cos(a) * 0.3, 0.22, Math.sin(a) * 0.3,
+      Math.cos(a) * sp, 1.6 + rnd(seed, i + 40) * (compact ? 2.4 : 3.6), Math.sin(a) * sp);
   }
+  group.add(particles.points);
 
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
@@ -1458,13 +1460,8 @@ function spawnElementalAoe(
     (ring.material as THREE.MeshBasicMaterial).opacity = (compact ? 0.78 : 0.68) * (1 - p);
     core.scale.setScalar(Math.max(0.5, radius * 0.32) * (0.45 + p * 0.36));
     (core.material as THREE.MeshBasicMaterial).opacity = (compact ? 0.42 : 0.34) * (1 - p * 0.85);
-    for (const pt of particles) {
-      pt.mesh.position.x += pt.vx * dt;
-      pt.mesh.position.z += pt.vz * dt;
-      pt.mesh.position.y += pt.vy * dt;
-      pt.vy -= 7.2 * dt;
-      pt.mat.opacity = (compact ? 0.72 : 0.82) * (1 - p);
-    }
+    advectCloud(particles, dt, 7.2, 0.12);
+    particles.mat.opacity = (compact ? 0.72 : 0.82) * (1 - p);
   });
 }
 
@@ -1490,32 +1487,38 @@ function spawnElementalGeodeImpact(
   pulse.position.y = 0.09;
   group.add(pulse);
 
-  const shards: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; baseY: number; rise: number; spin: number }[] = [];
   const shardCount = compact ? 7 : Math.min(18, Math.max(10, Math.round(radius * 1.4)));
+  const shards = new THREE.InstancedMesh(new THREE.ConeGeometry(0.2, 1, 5), fxMat(0xffffff, 0.86), shardCount);
+  shards.frustumCulled = false;
+  const shardData: { x: number; z: number; baseY: number; rise: number; spin: number; angle: number; tilt: number; height: number; width: number }[] = [];
+  const instance = new THREE.Object3D();
   for (let i = 0; i < shardCount; i++) {
-    const mat = fxMat(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.rim, 0.86);
     const h = 0.55 + rnd(seed, i + 10) * (compact ? 1.0 : 1.7);
     const r = radius * (0.12 + rnd(seed, i + 20) * 0.82);
     const a = rnd(seed, i + 30) * Math.PI * 2;
-    const geom = new THREE.ConeGeometry(0.12 + rnd(seed, i + 40) * 0.16, h, 5);
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.set(Math.cos(a) * r, h * 0.28, Math.sin(a) * r);
-    mesh.rotation.set((rnd(seed, i + 50) - 0.5) * 0.55, a, (rnd(seed, i + 60) - 0.5) * 0.55);
-    shards.push({ mesh, mat, baseY: mesh.position.y, rise: h * (0.48 + rnd(seed, i + 70) * 0.55), spin: (rnd(seed, i + 80) - 0.5) * 1.8 });
-    group.add(mesh);
+    shardData.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, baseY: h * 0.28,
+      rise: h * (0.48 + rnd(seed, i + 70) * 0.55), spin: (rnd(seed, i + 80) - 0.5) * 1.8,
+      angle: a, tilt: (rnd(seed, i + 50) - 0.5) * 0.55, height: h,
+      width: (0.12 + rnd(seed, i + 40) * 0.16) / 0.2 });
+    instance.position.set(Math.cos(a) * r, h * 0.28, Math.sin(a) * r);
+    instance.rotation.set((rnd(seed, i + 50) - 0.5) * 0.55, a, 0);
+    instance.scale.set(shardData[i]!.width, h, shardData[i]!.width);
+    instance.updateMatrix();
+    shards.setMatrixAt(i, instance.matrix);
+    shards.setColorAt(i, new THREE.Color(i % 3 === 0 ? pal.core : i % 2 === 0 ? pal.hot : pal.rim));
   }
+  shards.instanceMatrix.needsUpdate = true;
+  group.add(shards);
 
-  const dust: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vx: number; vy: number; vz: number }[] = [];
   const dustCount = compact ? 8 : 16;
+  const dust = makeVolCloud(dustCount, pal.shadow, 0.54, 0.22, pal.trail);
   for (let i = 0; i < dustCount; i++) {
-    const mat = fxMat(pal.shadow, 0.18, false);
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.18 + rnd(seed, i + 90) * 0.22, 6, 4), mat);
     const a = rnd(seed, i + 100) * Math.PI * 2;
     const sp = 1.3 + rnd(seed, i + 110) * 2.7;
-    mesh.position.set(0, 0.22, 0);
-    dust.push({ mesh, mat, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: 0.7 + rnd(seed, i + 120) * 1.1 });
-    group.add(mesh);
+    setCloudParticle(dust, i, 0, 0.22, 0, Math.cos(a) * sp,
+      0.7 + rnd(seed, i + 120) * 1.1, Math.sin(a) * sp);
   }
+  group.add(dust.points);
 
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
@@ -1525,20 +1528,18 @@ function spawnElementalGeodeImpact(
     (crack.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - p * 0.8);
     pulse.scale.setScalar(1 + p * radius * 0.26);
     (pulse.material as THREE.MeshBasicMaterial).opacity = 0.58 * (1 - p);
-    for (const s of shards) {
-      s.mesh.position.y = s.baseY + Math.sin(erupt * Math.PI * 0.5) * s.rise - settle * s.rise * 0.42;
-      s.mesh.rotation.y += s.spin * dt;
-      s.mesh.scale.y = 1 - settle * 0.28;
-      s.mat.opacity = 0.86 * (1 - settle * 0.85);
+    for (let i = 0; i < shardData.length; i++) {
+      const s = shardData[i]!;
+      instance.position.set(s.x, s.baseY + Math.sin(erupt * Math.PI * 0.5) * s.rise - settle * s.rise * 0.42, s.z);
+      instance.rotation.set(s.tilt, s.angle + s.spin * t, -s.tilt);
+      instance.scale.set(s.width, s.height * (1 - settle * 0.28), s.width);
+      instance.updateMatrix();
+      shards.setMatrixAt(i, instance.matrix);
     }
-    for (const d of dust) {
-      d.mesh.position.x += d.vx * dt;
-      d.mesh.position.y += d.vy * dt;
-      d.mesh.position.z += d.vz * dt;
-      d.vy -= 1.9 * dt;
-      d.mesh.scale.multiplyScalar(1 + dt * 0.62);
-      d.mat.opacity = 0.18 * (1 - p);
-    }
+    shards.instanceMatrix.needsUpdate = true;
+    (shards.material as THREE.MeshBasicMaterial).opacity = 0.86 * (1 - settle * 0.85);
+    advectCloud(dust, dt, 1.9, 0.25);
+    dust.mat.opacity = 0.22 * (1 - p);
   });
 }
 
@@ -1947,10 +1948,11 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
   const pal = elementalCombatPalette(m);
   const seed = m.visualSeed;
   const group = new THREE.Group();
+  group.name = `attack:${PRODUCED_UNIT_AMBER_GEODE_MONKS}`;
   group.position.set(m.ax, 0.07, m.az);
   group.rotation.y = Math.atan2(dx, dz);
 
-  const ringCount = m.wide ? 7 : 5;
+  const ringCount = m.wide ? 6 : 4;
   const rings: { mesh: THREE.Mesh; z: number; mat: THREE.MeshBasicMaterial }[] = [];
   for (let i = 0; i < ringCount; i++) {
     const t = (i + 1) / (ringCount + 1.25);
@@ -1974,34 +1976,21 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
     group.add(mesh);
   }
 
-  const sparks: { mesh: THREE.Mesh; vx: number; vz: number; vy: number; mat: THREE.MeshBasicMaterial }[] = [];
+  // One soft cloud replaces a draw call and material for every individual shard.
   const nSpark = m.wide ? 14 : 10;
+  const sparks = makeVolCloud(nSpark, pal.rim, 0.24, 0.55, pal.spark);
   for (let i = 0; i < nSpark; i++) {
     const u = rnd(seed, i + 90);
     const v = rnd(seed, i + 190);
     const z0 = 0.4 + u * reach * 0.92;
     const ang = v * Math.PI * 2;
     const rad = 0.15 + rnd(seed, i + 290) * (0.55 + (m.wide ? 0.45 : 0.25));
-    const g = new THREE.SphereGeometry(0.038 + rnd(seed, i + 390) * 0.04, 4, 3);
-    const mat = new THREE.MeshBasicMaterial({
-      color: i % 3 === 0 ? pal.spark : pal.rim,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const mesh = new THREE.Mesh(g, mat);
-    mesh.position.set(Math.sin(ang) * rad, 0.16 + rnd(seed, i + 490) * 0.35, z0 + Math.cos(ang) * rad * 0.25);
     const burst = 0.85 + rnd(seed, i + 590) * 1.6;
-    sparks.push({
-      mesh,
-      vx: Math.sin(ang) * burst * 0.35,
-      vz: burst * (0.55 + rnd(seed, i + 690) * 0.55),
-      vy: 0.9 + rnd(seed, i + 790) * 1.1,
-      mat,
-    });
-    group.add(mesh);
+    setCloudParticle(sparks, i, Math.sin(ang) * rad, 0.16 + rnd(seed, i + 490) * 0.35,
+      z0 + Math.cos(ang) * rad * 0.25, Math.sin(ang) * burst * 0.35,
+      0.9 + rnd(seed, i + 790) * 1.1, burst * (0.55 + rnd(seed, i + 690) * 0.55));
   }
+  group.add(sparks.points);
 
   const life = 0.56;
   const sigma2 = reach * reach * (m.wide ? 0.034 : 0.028) + 0.02;
@@ -2013,15 +2002,9 @@ function spawnGeodeMonkForwardRings(host: FxHost, m: CombatHitMark): void {
       const bell = Math.exp(-(d * d) / sigma2);
       r.mat.opacity = (m.wide ? 0.36 : 0.4) * bell * (1 - p * 0.38);
     }
-    for (const s of sparks) {
-      s.mesh.position.x += s.vx * dt;
-      s.mesh.position.z += s.vz * dt;
-      s.mesh.position.y += s.vy * dt;
-      s.vy -= 5.5 * dt;
-      const sp = Math.min(1, t / life);
-      s.mat.opacity = 0.55 * (1 - sp * 0.92);
-    }
-  });
+    advectCloud(sparks, dt, 5.5, 0.4);
+    sparks.mat.opacity = 0.55 * (1 - p * 0.92);
+  }, 1);
 }
 
 /**
@@ -2294,8 +2277,93 @@ function buildTitanStrike(
   });
 }
 
+/** Oasis runners bend a paired turquoise current around the focused line shot. */
+function buildOasisStrike(group: THREE.Group, anim: CombatStrikeStep[], reach: number, pal: CombatStrikePalette, seed: number): void {
+  buildLineStrike(group, anim, reach, pal, seed);
+  for (const side of [-1, 1]) {
+    const stream = volumetricStream([
+      new THREE.Vector3(side * 0.25, 0.4, 0),
+      new THREE.Vector3(side * 0.72, 1.0, reach * 0.38),
+      new THREE.Vector3(-side * 0.42, 0.7, reach * 0.72),
+      new THREE.Vector3(0, 0.6, reach),
+    ], 0.07, side > 0 ? pal.core : pal.spark, 0, 18, 5);
+    group.add(stream);
+    anim.push((p) => {
+      (stream.material as THREE.MeshBasicMaterial).opacity = 0.56 * Math.sin(Math.min(1, p * 1.15) * Math.PI);
+    });
+  }
+}
+
+/** Fast scouts leave a curved wind slash ahead of their paired whips. */
+function buildScoutStrike(group: THREE.Group, anim: CombatStrikeStep[], reach: number, pal: CombatStrikePalette, seed: number): void {
+  buildSwarmStrike(group, anim, reach, pal, seed);
+  const shear = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.045, 5, 22, Math.PI * 1.35), fxMat(pal.rim, 0));
+  shear.rotation.x = -Math.PI / 3;
+  shear.position.set(0, 0.7, reach * 0.8);
+  group.add(shear);
+  anim.push((p) => {
+    shear.rotation.z = p * 1.5;
+    shear.scale.setScalar(0.75 + p * 1.35);
+    (shear.material as THREE.MeshBasicMaterial).opacity = 0.64 * Math.sin(Math.min(1, p * 1.3) * Math.PI);
+  });
+}
+
+/** Chrono bolts pass through three staggered time dials before hitting. */
+function buildChronoStrike(group: THREE.Group, anim: CombatStrikeStep[], reach: number, pal: CombatStrikePalette, seed: number): void {
+  buildLineStrike(group, anim, reach, pal, seed);
+  for (let i = 0; i < 3; i++) {
+    const dial = volumetricShockRing(0.34 + i * 0.09, 0.045, i === 1 ? pal.rim : pal.core, 0);
+    dial.rotation.x = 0; // an upright portal along the attack path
+    dial.position.set(0, 0.74, reach * (0.26 + i * 0.34));
+    group.add(dial);
+    anim.push((p) => {
+      const phase = Math.max(0, (p - i * 0.1) / (1 - i * 0.1));
+      dial.rotation.z = phase * (i % 2 === 0 ? 1 : -1) * 1.4;
+      dial.scale.setScalar(0.75 + phase * 0.52);
+      (dial.material as THREE.MeshBasicMaterial).opacity = 0.68 * Math.sin(phase * Math.PI);
+    });
+  }
+}
+
+/** Emberroot ascetics cast a white-hot lance with a single batched ember spray. */
+function buildEmberrootStrike(group: THREE.Group, anim: CombatStrikeStep[], reach: number, pal: CombatStrikePalette, seed: number): void {
+  buildLineStrike(group, anim, reach, pal, seed);
+  const embers = makeVolCloud(10, pal.core, 0.42, 0, pal.spark);
+  for (let i = 0; i < 10; i++) {
+    const a = rnd(seed, i + 51) * Math.PI * 2;
+    setCloudParticle(embers, i, Math.cos(a) * 0.18, 0.7, reach * (0.65 + rnd(seed, i + 61) * 0.35),
+      Math.cos(a) * 1.8, 1.6 + rnd(seed, i + 71) * 1.8, Math.sin(a) * 1.8);
+  }
+  group.add(embers.points);
+  anim.push((p, t, dt) => {
+    advectCloud(embers, dt, -0.2, 0.8, t, 0.45);
+    embers.mat.opacity = 0.8 * Math.max(0, 1 - p);
+  });
+  addLightShaft(group, anim, 0, 0.12, reach, pal.glow, 0.6, 2.5);
+}
+
+/** Living Thornkeep's titan slams outward through branching emerald roots. */
+function buildThornkeepStrike(group: THREE.Group, anim: CombatStrikeStep[], reach: number, pal: CombatStrikePalette, seed: number): void {
+  buildTitanStrike(group, anim, reach, pal, seed);
+  for (let i = 0; i < 3; i++) {
+    const a = i * Math.PI * 2 / 3 + rnd(seed, i + 90) * 0.3;
+    const x = Math.sin(a) * 1.8;
+    const z = reach * 0.8 + Math.cos(a) * 1.8;
+    const root = volumetricStream([
+      new THREE.Vector3(0, 0.55, reach * 0.8),
+      new THREE.Vector3(x * 0.45, 0.45, reach * 0.8 + (z - reach * 0.8) * 0.45),
+      new THREE.Vector3(x, 0.15, z),
+    ], 0.1, i === 0 ? pal.spark : pal.rim, 0, 12, 5);
+    group.add(root);
+    anim.push((p) => {
+      (root.material as THREE.MeshBasicMaterial).opacity = 0.75 * Math.sin(Math.min(1, p * 1.3) * Math.PI);
+      root.scale.setScalar(0.85 + 0.25 * p);
+    });
+  }
+}
+
 export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
-  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS || m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
+  if (m.producedUnitId === PRODUCED_UNIT_AMBER_GEODE_MONKS) {
     spawnGeodeMonkForwardRings(host, m);
     return;
   }
@@ -2306,13 +2374,24 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   const pal = elementalCombatPalette(m);
   const seed = m.visualSeed;
   const group = new THREE.Group();
+  group.name = `attack:${m.producedUnitId ?? m.producerCatalogId ?? m.sizeClass}`;
   group.position.set(m.ax, 0.05, m.az);
   group.rotation.y = Math.atan2(dx, dz); // +Z aims at the target
 
   const anim: CombatStrikeStep[] = [];
   const life =
     m.sizeClass === "Titan" ? 0.66 : m.sizeClass === "Heavy" ? 0.56 : m.sizeClass === "Line" ? 0.48 : 0.42;
-  switch (m.sizeClass) {
+  if (m.producedUnitId === PRODUCED_UNIT_LAVA_WIZARD_MONKS) {
+    buildEmberrootStrike(group, anim, reach, pal, seed);
+  } else if (m.producedUnitId === PRODUCED_UNIT_CHRONO_SENTINELS) {
+    buildChronoStrike(group, anim, reach, pal, seed);
+  } else if (m.producedUnitId === PRODUCED_UNIT_LANTERNBOUND_LINE) {
+    buildOasisStrike(group, anim, reach, pal, seed);
+  } else if (m.producedUnitId === PRODUCED_UNIT_ACROBAT_WARRIOR_SCOUTS) {
+    buildScoutStrike(group, anim, reach, pal, seed);
+  } else if (m.sizeClass === "Titan" && m.producerCatalogId === "verdant_citadel") {
+    buildThornkeepStrike(group, anim, reach, pal, seed);
+  } else switch (m.sizeClass) {
     case "Heavy":
       buildHeavyStrike(group, anim, reach, pal, seed, m.wide);
       break;
@@ -2331,7 +2410,7 @@ export function spawnCombatHitMark(host: FxHost, m: CombatHitMark): void {
   spawn(host, group, life, (t, dt) => {
     const p = t >= life ? 1 : t / life;
     for (let i = 0; i < anim.length; i++) anim[i]!(p, t, dt);
-  });
+  }, 1);
 }
 
 /** Compact unit/structure death cue: visible silhouette pop without the cost of a full spell burst. */
@@ -2558,119 +2637,40 @@ function spawnHeroStrike(
   });
 }
 
-/** Expanding red ring + ember surge. */
+/** Firestorm's readable blast radius, hot center, and batched ember front. */
 function spawnFirestorm(host: FxHost, pos: { x: number; z: number }, radius = 11): void {
   const life = 0.95;
+  const blastRadius = Math.max(2, Math.min(36, radius));
   const group = new THREE.Group();
   group.position.set(pos.x, 0.12, pos.z);
-
-  /** Fixed band; scale each frame — avoids dispose+rebuild every step (GPU stalls). */
-  const ringGeo = new THREE.RingGeometry(0.1, 0.6, 48);
-  const ringMat = new THREE.MeshBasicMaterial({
-    color: 0xff6a2a,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0.9,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
-  ring.rotation.x = -Math.PI / 2;
+  const ring = volumetricShockRing(0.62, 0.12, 0xff6a2a, 0.9);
   group.add(ring);
-
-  const innerGeo = new THREE.RingGeometry(0.2, 0.5, 32);
-  const innerMat = new THREE.MeshBasicMaterial({
-    color: 0xffd77a,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0.85,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const inner = new THREE.Mesh(innerGeo, innerMat);
-  inner.rotation.x = -Math.PI / 2;
-  group.add(inner);
-
-  const scorch = new THREE.Mesh(
-    new THREE.CircleGeometry(1, 36),
-    new THREE.MeshBasicMaterial({
-      color: 0x8a1f10,
-      transparent: true,
-      opacity: 0.28,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    }),
-  );
+  const heart = glowSprite(0xffd77a, 2.4, 0.85);
+  heart.position.y = 1.3;
+  group.add(heart);
+  const scorch = new THREE.Mesh(new THREE.CircleGeometry(1, 36), fxMat(0x8a1f10, 0.24, false));
   scorch.rotation.x = -Math.PI / 2;
-  scorch.position.y = -0.015;
+  scorch.position.y = -0.08;
   group.add(scorch);
-
-  const pillars: THREE.Mesh[] = [];
-  const pillarCount = Math.max(6, Math.round(radius * 0.45));
-  for (let i = 0; i < pillarCount; i++) {
-    const pillarH = Math.max(4.8, radius * 0.58);
-    const pillar = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.26, 0.72, pillarH, 8, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: i % 2 === 0 ? 0xffdd66 : 0xff5522,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.32,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      }),
-    );
-    const ang = (i / pillarCount) * Math.PI * 2 + 0.35;
-    const rr = radius * (i === 0 ? 0 : 0.28 + ((i * 7) % 5) * 0.11);
-    pillar.position.set(Math.cos(ang) * rr, pillarH * 0.47, Math.sin(ang) * rr);
-    group.add(pillar);
-    pillars.push(pillar);
+  const embers = makeVolCloud(24, 0xff6a22, 0.48, 0.84, 0xffd77a);
+  const seed = pos.x * 0.31 + pos.z * 0.27;
+  for (let i = 0; i < embers.count; i++) {
+    const ang = (i / embers.count) * Math.PI * 2 + rnd(seed, i) * 0.2;
+    const sp = 3.2 + rnd(seed, i + 24) * 4;
+    setCloudParticle(embers, i, Math.cos(ang) * 0.32, 0.3, Math.sin(ang) * 0.32,
+      Math.cos(ang) * sp, 2.3 + rnd(seed, i + 48) * 2.4, Math.sin(ang) * sp);
   }
-
-  const embers: { mesh: THREE.Mesh; vy: number; vx: number; vz: number }[] = [];
-  const emberCount = Math.max(24, Math.round(radius * 2.3));
-  for (let i = 0; i < emberCount; i++) {
-    const g = new THREE.SphereGeometry(0.18, 6, 6);
-    const m = new THREE.MeshBasicMaterial({
-      color: 0xffaa44,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const e = new THREE.Mesh(g, m);
-    const ang = (i / emberCount) * Math.PI * 2 + Math.random() * 0.4;
-    const sp = 4.5 + Math.random() * 4.5;
-    e.position.set(Math.cos(ang) * 0.3, 0.3, Math.sin(ang) * 0.3);
-    group.add(e);
-    embers.push({
-      mesh: e,
-      vx: Math.cos(ang) * sp,
-      vz: Math.sin(ang) * sp,
-      vy: 3 + Math.random() * 2,
-    });
-  }
-
+  group.add(embers.points);
   spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
-    const rOuter = 0.6 + p * radius;
-    ring.scale.setScalar(rOuter / 0.6);
+    ring.scale.setScalar(1 + p * blastRadius / 0.62);
     (ring.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
-    (inner.material as THREE.MeshBasicMaterial).opacity = 0.85 * (1 - p * 1.4);
-    inner.scale.setScalar(1 + p * Math.max(3, radius * 0.34));
-    scorch.scale.setScalar(Math.max(0.5, radius * 0.78) * (0.7 + p * 0.45));
-    (scorch.material as THREE.MeshBasicMaterial).opacity = 0.28 * (1 - p * 0.55);
-    for (const pillar of pillars) {
-      pillar.scale.set(1 + p * 0.7, 1 + p * 0.18, 1 + p * 0.7);
-      (pillar.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - p);
-    }
-    for (const e of embers) {
-      e.mesh.position.x += e.vx * dt;
-      e.mesh.position.z += e.vz * dt;
-      e.mesh.position.y += e.vy * dt;
-      e.vy -= 9 * dt;
-      (e.mesh.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - p);
-    }
+    heart.scale.setScalar(2.4 + p * 2.2);
+    (heart.material as THREE.SpriteMaterial).opacity = 0.8 * (1 - p);
+    scorch.scale.setScalar(blastRadius * (0.46 + p * 0.4));
+    (scorch.material as THREE.MeshBasicMaterial).opacity = 0.24 * (1 - p * 0.75);
+    advectCloud(embers, dt, 4.2, 0.8, t, 0.9);
+    embers.mat.opacity = 0.84 * (1 - p);
   });
 }
 
@@ -2726,31 +2726,23 @@ function spawnCombatBoom(
   pillar.position.y = impactRadius * 0.35;
   group.add(pillar);
 
-  const sparks: THREE.MeshBasicMaterial[] = [];
+  const sparks = makeVolCloud(10, pal.rim, 0.4, 0.9, pal.hot);
   for (let i = 0; i < 10; i++) {
-    const g = new THREE.SphereGeometry(0.12 + (i % 3) * 0.06, 5, 5);
-    const m = new THREE.MeshBasicMaterial({
-      color: i % 2 === 0 ? pal.rim : pal.hot,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    sparks.push(m);
-    const mesh = new THREE.Mesh(g, m);
     const a = (i / 10) * Math.PI * 2;
-    mesh.position.set(Math.cos(a) * impactRadius * 0.2, 0.4 + i * 0.08, Math.sin(a) * impactRadius * 0.2);
-    group.add(mesh);
+    setCloudParticle(sparks, i, Math.cos(a) * impactRadius * 0.2, 0.4 + i * 0.08,
+      Math.sin(a) * impactRadius * 0.2, Math.cos(a) * 1.4, 1.2 + i * 0.14, Math.sin(a) * 1.4);
   }
+  group.add(sparks.points);
 
-  spawn(host, group, life, (t, _dt) => {
+  spawn(host, group, life, (t, dt) => {
     const p = Math.min(1, t / life);
     const scl = 1 + p * (impactRadius / 0.45);
     disc.scale.setScalar(scl);
     (disc.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - p);
     pillar.scale.set(1 + p * 0.2, 1 + p * 0.35, 1 + p * 0.2);
     (pillar.material as THREE.MeshBasicMaterial).opacity = 0.35 * (1 - p * 0.9);
-    for (const m of sparks) m.opacity = 0.9 * (1 - p);
+    advectCloud(sparks, dt, 4.2, 0.65);
+    sparks.mat.opacity = 0.9 * (1 - p);
   });
 }
 
@@ -2793,23 +2785,20 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 16):
   pillar.position.y = pillarH * 0.5;
   group.add(pillar);
 
-  // Crack decal — a few thin rectangles radiating.
-  const cracks: THREE.Mesh[] = [];
+  // One instanced draw call for all nine ground fissures at each chain hop.
+  const cracks = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.18, 1), fxMat(0xe5e3ff, 0.66), 9);
   for (let i = 0; i < 9; i++) {
-    const g = new THREE.PlaneGeometry(0.18, radius * (0.56 + (i % 3) * 0.14));
-    const m = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.7,
-      depthWrite: false,
-    });
-    const c = new THREE.Mesh(g, m);
-    c.rotation.x = -Math.PI / 2;
-    c.rotation.z = (i / 9) * Math.PI * 2;
-    c.position.y = 0.01;
-    group.add(c);
-    cracks.push(c);
+    const a = (i / 9) * Math.PI * 2;
+    const length = radius * (0.56 + (i % 3) * 0.14);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, a, 0, "YXZ"));
+    cracks.setMatrixAt(i, new THREE.Matrix4().compose(
+      new THREE.Vector3(Math.sin(a) * length * 0.34, 0.012, Math.cos(a) * length * 0.34),
+      q,
+      new THREE.Vector3(1, length, 1),
+    ));
   }
+  cracks.instanceMatrix.needsUpdate = true;
+  group.add(cracks);
 
   spawn(host, group, life, (t) => {
     const p = Math.min(1, t / life);
@@ -2820,9 +2809,7 @@ function spawnShatter(host: FxHost, pos: { x: number; z: number }, radius = 16):
     }
     pillar.scale.set(1 + p * 0.5, 1 + p * 0.22, 1 + p * 0.5);
     (pillar.material as THREE.MeshBasicMaterial).opacity = 0.38 * (1 - p);
-    for (const c of cracks) {
-      (c.material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - p * 0.8);
-    }
+    (cracks.material as THREE.MeshBasicMaterial).opacity = 0.66 * (1 - p * 0.8);
   });
 }
 
