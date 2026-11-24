@@ -1,3 +1,7 @@
+import { MAP_REGISTRY } from "../game/loadMap";
+import { createInitialState } from "../game/state";
+import { planChainedPathAroundMapObstacles,segmentHitsMapObstacles } from "../game/mapObstacles";
+import { containsSurface,surfaceHeight } from "../game/surfaces";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -6,7 +10,7 @@ import { TAP_GENERATION_MIN_SEP } from "../game/constants";
 import type { MapData, RelaySlotDef, TapSlotDef, Vec2 } from "../game/types";
 import { collectMeshes, sampleTerrainSurface } from "./meshSample";
 
-type PlaceMode = "tap" | "pRelay" | "eRelay" | "pStart" | "eStart";
+type PlaceMode = "surface" | "tap" | "pRelay" | "eRelay" | "pStart" | "eStart";
 
 let baseMap: MapData | null = null;
 let terrainMeshes: THREE.Mesh[] = [];
@@ -96,7 +100,14 @@ function rebuildMarkers(): void {
     m.castShadow = false;
     markers.add(m);
   };
-  for (const t of tapSlots) mk(t.x, t.z, 0x5fc48a);
+  for (const d of baseMap?.surfaces ?? []) {
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(d.length,.3,d.width),new THREE.MeshBasicMaterial({color:0xb79a66,wireframe:true}));
+    mesh.position.set(d.x,d.height,d.z);
+    markers.add(mesh);
+    mk(d.x-d.length/2,d.z,0xf4b347);
+    mk(d.x+d.length/2,d.z,0xf4b347);
+  }
+  for (const t of tapSlots) mk(t.x,t.z,0x5fc48a,1.2+(baseMap ? surfaceHeight(baseMap,t) : 0));
   for (const r of playerRelaySlots) mk(r.x, r.z, 0x6aa6ff);
   for (const r of enemyRelaySlots) mk(r.x, r.z, 0xff6060);
   mk(playerStart.x, playerStart.z, 0x4da3ff, 2.2);
@@ -228,8 +239,18 @@ function onCanvasPointerDown(ev: PointerEvent): void {
   if (!hit) return;
   const { x, z } = hit;
   switch (placeMode) {
+    case "surface": {
+      if(!baseMap) return;
+      const value=(id:string)=>(document.getElementById(id) as HTMLInputElement).value;
+      const id=value("me-surface-id").trim();
+      const length=Number(value("me-length")),width=Number(value("me-width")),height=Number(value("me-height"));
+      if(!id || !(length>=12 && length<=200 && width>=4 && width<=60 && height>=1 && height<=32)) {log("Set a name and valid crossing dimensions.");return;}
+      baseMap.surfaces=[...(baseMap.surfaces ?? []).filter(s=>s.id!==id),{id,x,z,length,width,height,ramp:length*.2}];
+      break;
+    }
     case "tap":
-      tapSlots.push({ id: `tap_ed_${tapIdCounter++}`, x, z });
+      tapSlots.push({ id: `tap_ed_${tapIdCounter++}`, x, z, surfaceId:(document.getElementById("me-upper") as HTMLInputElement).checked
+        ? baseMap?.surfaces?.find(d=>containsSurface(d,{x,z}))?.id : undefined });
       break;
     case "pRelay":
       playerRelaySlots.push({ id: `p_ed_${prIdCounter++}`, x, z });
@@ -294,6 +315,19 @@ function wireUi(): void {
       document.querySelectorAll("[data-mode]").forEach((b) => b.classList.remove("me-active"));
       btn.classList.add("me-active");
     });
+  });
+  const worlds=document.querySelector<HTMLSelectElement>("#me-world")!;
+  for (const world of MAP_REGISTRY) worlds.add(new Option(world.label,world.url));
+  worlds.onchange=async()=>{const response=await fetch(worlds.value);if(response.ok) applyBaseMap(await response.json());};
+  document.getElementById("me-validate")?.addEventListener("click",()=>{
+    if(!baseMap) return;
+    const s=createInitialState({...baseMap,tapSlots,playerRelaySlots,enemyRelaySlots,playerStart,enemyStart},[]);
+    const failures:string[]=[];
+    for(const from of [playerStart,enemyStart]) for(const tap of s.taps) for(const [label,radius] of [["Wizard",2.85],["wide squad",5],["Titan",7]] as const) {
+      const path=planChainedPathAroundMapObstacles(s.map,from,tap,radius);
+      if(!path.length || path.some((p,i)=>segmentHitsMapObstacles(s.map,path[i-1]??from,p,radius))) failures.push(label+" → "+tap.defId);
+    }
+    log("Runtime nodes: "+s.taps.map(t=>t.defId).join(", ")+"\n"+(failures.length?"Blocked: "+failures.join(", "):"Both starts reach every node for all three footprints."));
   });
   document.getElementById("me-clear-taps")?.addEventListener("click", () => {
     tapSlots.length = 0;

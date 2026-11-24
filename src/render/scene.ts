@@ -1957,6 +1957,14 @@ export class GameRenderer {
     }
     this.applyMapVisual(state);
     this.syncMapDecor(state);
+    if (state.map.mapId==="fallen_orrery") {
+      const deck=this.decor.getObjectByName("alignment-deck");
+      if(deck) {
+        const occupied=state.hero.surfaceId || state.enemyHero.surfaceId || state.units.some(u=>u.surfaceId==="equatorial-ring");
+        const angle=state.map.ringAligned || occupied ? 0 : Math.PI/2;
+        deck.rotation.y=THREE.MathUtils.damp(deck.rotation.y,angle,5,this.visualSyncDt);
+      }
+    }
     this.syncTerritory(state);
     this.syncMarkers(state);
     this.syncKeepMarker(state);

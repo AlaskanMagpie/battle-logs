@@ -141,11 +141,11 @@ function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
         logGame("move", `Move queued → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
       }
     } else {
-      setHeroMovePath(s, { x, z });
+      setHeroMovePath(s, { x, z, surfaceId:pos.surfaceId });
       logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
     }
   } else {
-    setHeroMovePath(s, { x, z });
+    setHeroMovePath(s, { x, z, surfaceId:pos.surfaceId });
     logGame("move", `Move order → (${x.toFixed(1)}, ${z.toFixed(1)})`, s.tick);
   }
 }
@@ -1084,7 +1084,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       }
     } else if (it.type === "command_selected_units") {
       if (s.selectedUnitIds.includes(HERO_SELECTION_ID) && it.mode !== "stay") {
-        commandHeroMove(s, { x: it.x, z: it.z }, it.queue === true);
+        commandHeroMove(s, { x: it.x, z: it.z, surfaceId:it.surfaceId }, it.queue === true);
       }
       orderPlayerUnits(
         s,
@@ -1160,7 +1160,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       s.lastMessage = `Formation: ${formationKindLabel(s.formationPreset)} (RMB-drag selected units; Shift widens ranks).`;
     } else if (it.type === "hero_move") {
       if (s.selectedUnitIds.length > 0) continue;
-      commandHeroMove(s, { x: it.x, z: it.z }, it.shiftKey === true);
+      commandHeroMove(s, { x: it.x, z: it.z, surfaceId:it.surfaceId }, it.shiftKey === true);
     } else if (it.type === "hero_wasd") {
       const sx = Math.max(-1, Math.min(1, it.strafe));
       const sz = Math.max(-1, Math.min(1, it.forward));

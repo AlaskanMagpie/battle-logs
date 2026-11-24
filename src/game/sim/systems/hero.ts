@@ -66,10 +66,11 @@ function popNextHeroWaypoint(h: GameState["hero"]): void {
   }
 }
 
-export function setHeroMovePath(s: GameState, target: { x: number; z: number }): void {
+export function setHeroMovePath(s: GameState, target: Vec2): void {
   const h = s.hero;
   const half = s.map.world.halfExtents;
   const clamped = {
+    surfaceId:target.surfaceId,
     x: Math.max(-half, Math.min(half, target.x)),
     z: Math.max(-half, Math.min(half, target.z)),
   };
@@ -152,7 +153,7 @@ function nearestHeroCaptainObjective(s: GameState): { x: number; z: number } | n
     const d = dist2(h, p);
     if (d < bestD) {
       bestD = d;
-      best = { x: p.x, z: p.z };
+      best = { ...p };
     }
   };
 

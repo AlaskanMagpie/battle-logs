@@ -43,7 +43,7 @@ export type PlayerIntent =
   | { type: "toggle_formation_preset" }
   | { type: "begin_hero_teleport" }
   | { type: "hero_teleport"; x: number; z: number }
-  | { type: "hero_move"; x: number; z: number; shiftKey?: boolean }
+  | { type: "hero_move"; x: number; z: number; surfaceId?: string; shiftKey?: boolean }
   /**
    * Strafe / forward from keyboard (-1, 0, 1) in **camera** space when `camFx`…`camRz` are set
    * (W/S along view on the ground, A/D strafe). Otherwise legacy axis: A/D = world ±X, W/S = world ∓Z.

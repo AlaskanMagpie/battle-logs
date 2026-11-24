@@ -1436,7 +1436,7 @@ function runMatch(
         });
         return;
       }
-      pendingIntents.push({ type: "hero_move", x: hit.x, z: hit.z, shiftKey: false });
+      pendingIntents.push({ type: "hero_move", ...hit, shiftKey: false });
       if (state.selectedUnitIds.length > 0) {
         pendingIntents.push({
           type: "command_selected_units",

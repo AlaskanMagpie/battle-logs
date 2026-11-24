@@ -1,3 +1,4 @@
+import { surfaceRoute } from "./surfaces";
 import type { MapData, MapDecorDef, Vec2 } from "./types";
 
 const EPS = 0.055;
@@ -287,6 +288,22 @@ export function planChainedPathAroundMapObstacles(
   agentR: number,
   extra: MapObstacleFootprint[] = [],
 ): Vec2[] {
+  if (!map.surfaces?.length) return routeOnPlane(map,from,to,agentR,extra);
+  if(map.mapId==="fallen_orrery" && !map.ringAligned && from.surfaceId!=="equatorial-ring") {
+    extra=[...extra,{kind:"box",cx:0,cz:0,hx:3,hz:15,c:1,s:0}];
+  }
+  const route:Vec2[]=[];
+  let start=from;
+  for(const waypoint of surfaceRoute(map,from,to,agentR)) {
+    const leg=routeOnPlane(map,start,waypoint,agentR,extra);
+    if(!leg.length && Math.hypot(start.x-waypoint.x,start.z-waypoint.z)>.35) return [];
+    route.push(...leg);
+    start=waypoint;
+  }
+  return route;
+}
+
+function routeOnPlane(map:MapData,from:Vec2,to:Vec2,agentR:number,extra:MapObstacleFootprint[]):Vec2[] {
   const goal = clampWorld(map, to, agentR);
   if (Math.hypot(goal.x - from.x, goal.z - from.z) <= 0.35) return [];
   const staticSets = obstacleSets(map);

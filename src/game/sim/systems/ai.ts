@@ -620,7 +620,7 @@ export function movement(s: GameState): void {
           clampToWorldAndObstacles(s, u, structureObstacles);
           continue;
         }
-        moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstacles);
+        moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z, surfaceId:tap.surfaceId }, stepU(u), structureObstacles);
         continue;
       }
       const foe = u.order.mode === "attack_move"

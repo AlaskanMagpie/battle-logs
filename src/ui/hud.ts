@@ -1024,7 +1024,11 @@ export function updateHud(state: GameState): void {
   const objText = document.querySelector<HTMLElement>("#hud-objective-text");
   if (objWrap && objText) {
     if (state.phase === "playing") {
-      objText.textContent = computeObjective(state);
+      objText.textContent = state.map.mapId === "drowned_causeway"
+        ? (state.evacuationSecured ? "Evacuation secured • Win the battle" : "Hold the ford • " + Math.min(12,Math.floor((state.evacuationTicks ?? 0)/TICK_HZ)) + "/12 s")
+        : state.map.mapId === "fallen_orrery"
+          ? ((state.orreryOpenUntil ?? 0)>state.tick ? "Ring aligned • " + Math.ceil((state.orreryOpenUntil!-state.tick)/TICK_HZ) + " s" : "Align the ring • Hold the southern observatory")
+          : computeObjective(state);
       objWrap.hidden = false;
     } else {
       objWrap.hidden = true;

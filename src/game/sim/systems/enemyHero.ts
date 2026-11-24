@@ -1,4 +1,4 @@
-import { sameSurface, updateSurface } from "../../surfaces";
+import { surfaceRoute, sameSurface, updateSurface } from "../../surfaces";
 import { getCatalogEntry } from "../../catalog";
 import {
   ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
@@ -165,9 +165,10 @@ function pickMoveTargetForEnemyHero(s: GameState): void {
   if (idx === null) return;
   const t = s.taps[idx]!;
   const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
-  if (dist2(h, t) <= r2) return;
-  h.targetX = t.x;
-  h.targetZ = t.z;
+  if (sameSurface(h,t) && dist2(h,t)<=r2) return;
+  const waypoint=surfaceRoute(s.map,h,t,HERO_MAP_OBSTACLE_RADIUS).find(p=>dist2(p,h)>1) ?? t;
+  h.targetX=waypoint.x;
+  h.targetZ=waypoint.z;
 }
 
 function tryEnemyPlaceStructure(s: GameState, catalogId: string, pos: { x: number; z: number }): boolean {
@@ -272,7 +273,9 @@ function attemptEnemyAiBuild(s: GameState): void {
     const last = s.enemyAiLastBuildCatalogId;
     const diversity = id === last ? 0.22 : 1;
     const early = claimedEnemyTapCount(s) < 2 && cost > 95 ? 0.55 : 1;
-    return w * diversity * early;
+    const preferred = s.map.mapId === "emberroot_caldera" ? "emberroot_bastion"
+      : s.map.mapId === "fallen_orrery" ? "aionroot_observatory" : s.map.mapId === "drowned_causeway" ? "outpost" : null;
+    return w * diversity * early * (id===preferred ? 5 : 1);
   });
   const sumW = weights.reduce((a, b) => a + b, 0) || 1;
   function pickWeightedCatalogId(): string {

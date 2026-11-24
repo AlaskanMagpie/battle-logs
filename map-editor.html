@@ -137,6 +137,14 @@
             placeholder="/terrain/myarena.glb"
           />
         </label>
+        <label>Battlefield <select id="me-world"></select></label>
+        <label>Raised crossing <input id="me-surface-id" value="crossing" /></label>
+        <label>Length <input type="number" id="me-length" min="12" max="200" value="60" /></label>
+        <label>Width <input type="number" id="me-width" min="4" max="60" value="14" /></label>
+        <label>Elevation <input type="number" id="me-height" min="1" max="32" value="8" /></label>
+        <button type="button" data-mode="surface">Place or move crossing</button>
+        <label><input type="checkbox" id="me-upper" /> Place tap on crossing</label>
+        <button type="button" id="me-validate">Check runtime nodes and routes</button>
         <button type="button" id="me-export">Export map.local.json</button>
       </div>
       <div id="me-main">

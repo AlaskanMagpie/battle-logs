@@ -127,6 +127,7 @@ export interface MapVisualSettings {
 }
 
 export interface MapData {
+  ringAligned?: boolean;
   surfaces?: import("./surfaces").RaisedSurface[];
   version: number;
   world: { halfExtents: number; groundY: number };

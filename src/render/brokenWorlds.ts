@@ -26,6 +26,15 @@ export function buildWorldLandmark(map: MapData): THREE.Group {
     const slope=Math.atan2(elevation(surface,x+length/2)-elevation(surface,x-length/2),length);
     place(deckColor,box(length/Math.cos(slope)+.04,.5,surface.width),x,y-.18,surface.z,0,0,slope);
   }
+  if(id==="fallen_orrery") {
+    const deckGeometry=mergeGeometries((batches.get(deckColor) ?? []).map(g=>g.toNonIndexed()));
+    if(deckGeometry) {
+      const ringDeck=new THREE.Mesh(deckGeometry,new THREE.MeshStandardMaterial({color:brass}));
+      ringDeck.name="alignment-deck";
+      group.add(ringDeck);
+    }
+    batches.delete(deckColor);
+  }
   if (id==="drowned_causeway") {
     place(0x477d78,box(25,.05,229),0,.045,0);
     for(let i=-10;i<=10;i++) place(0x84aba1,box(8,.04,.22),Math.sin(i*4)*6,.09,i*10);
