@@ -1,3 +1,5 @@
+import { buildWorldLandmark } from "./brokenWorlds";
+import { sameSurface, surfaceHeight } from "../game/surfaces";
 import * as THREE from "three";
 import { MOUSE } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -2479,8 +2481,8 @@ export class GameRenderer {
       const t = state.taps[idx]!;
       let band = this.tapMeshes.get(t.defId);
       const nodeR2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
-      const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && dist2(u, t) <= nodeR2);
-      const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && dist2(u, t) <= nodeR2);
+      const playerNear = state.units.some((u) => u.team === "player" && u.hp > 0 && sameSurface(u,t) && dist2(u, t) <= nodeR2);
+      const enemyNear = state.units.some((u) => u.team === "enemy" && u.hp > 0 && sameSurface(u,t) && dist2(u, t) <= nodeR2);
       const contested = playerNear && enemyNear;
       const playerTerritory = inPlayerTerritory(state, t);
       const enemyTerritory = inEnemyTerritory(state, t);
@@ -2565,7 +2567,7 @@ export class GameRenderer {
 
         syncManaNodeBandTexture(mb, manaTex, decalOpacity);
         syncManaNodeSpinTint(mb, spinRgb);
-        mb.group.position.set(t.x, 0, t.z);
+        mb.group.position.set(t.x, surfaceHeight(state.map,t) + 0, t.z);
         mb.spinLayer.rotation.z = this.clock.getElapsedTime() * 0.18 + idx * 0.91;
       } else {
         if (band && band.group.userData["tapGfx"] === "mana") {
@@ -2581,7 +2583,7 @@ export class GameRenderer {
           this.markers.add(ringBand.group);
           this.tapMeshes.set(t.defId, ringBand);
         }
-        ringBand.group.position.set(t.x, 0.05, t.z);
+        ringBand.group.position.set(t.x, surfaceHeight(state.map,t) + 0.05, t.z);
 
         let ringColor = 0xc1ccd8;
         if (contested) ringColor = 0xffd36a;
@@ -2616,7 +2618,7 @@ export class GameRenderer {
           this.markers.add(claimBand.group);
           this.tapClaimArcs.set(t.defId, claimBand);
         }
-        claimBand.group.position.set(t.x, 0.07, t.z);
+        claimBand.group.position.set(t.x, surfaceHeight(state.map,t) + 0.07, t.z);
         const channelKey = isEnemyChannel
           ? `e:${state.enemyHero.claimChannelTicksRemaining}`
           : `p:${hero.claimChannelTicksRemaining}`;
@@ -2647,16 +2649,16 @@ export class GameRenderer {
       const claimedByEnemy = t.active && t.ownerTeam === "enemy";
       const depleted = t.active && t.yieldRemaining <= 0;
       const anchorUp = (t.anchorHp ?? 0) > 0;
-      if (!claimedByPlayer && !claimedByEnemy) {
+      if (depleted || (!claimedByPlayer && !claimedByEnemy)) {
         if (!label) {
           label = makeLabelSprite("Stand to claim", "#6ae1ff");
           this.markers.add(label.sprite);
           this.tapLabels.set(t.defId, label);
         }
-        const text = depleted ? "Node depleted" : contested ? "Contested Mana" : "Claim Mana node";
+        const text = depleted ? (claimedByPlayer ? "Your anchor · exhausted" : "Enemy anchor · exhausted") : contested ? "Contested Mana" : "Claim Mana node";
         const accent = depleted ? "#8a96a6" : contested ? "#ffd36a" : "#6ae1ff";
         drawLabel(label, text, accent);
-        label.sprite.position.set(t.x, Math.max(5.2, claimR * 0.45 + 3.8), t.z);
+        label.sprite.position.set(t.x, surfaceHeight(state.map,t) + Math.max(5.2, claimR * 0.45 + 3.8), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = depleted ? 0.55 : 1;
       } else if (claimedByEnemy && anchorUp) {
@@ -2666,7 +2668,7 @@ export class GameRenderer {
           this.tapLabels.set(t.defId, label);
         }
         drawLabel(label, "Destroy red anchor", "#ff9a7a");
-        label.sprite.position.set(t.x, Math.max(6, claimR * 0.48 + 4.2), t.z);
+        label.sprite.position.set(t.x, surfaceHeight(state.map,t) + Math.max(6, claimR * 0.48 + 4.2), t.z);
         label.sprite.visible = true;
         (label.sprite.material as THREE.SpriteMaterial).opacity = 0.95;
       } else if (label) {
@@ -2683,8 +2685,8 @@ export class GameRenderer {
           this.markers.add(arcBand.group);
           this.tapYieldArcs.set(t.defId, arcBand);
         }
-        arcBand.group.position.set(t.x, 0.07, t.z);
-        const yieldKey = `${t.ownerTeam}:${t.yieldRemaining}`;
+        arcBand.group.position.set(t.x, surfaceHeight(state.map,t) + 0.07, t.z);
+        const yieldKey = `${t.ownerTeam}:${Math.ceil(frac * 96)}`;
         const arcUd = arcBand.group.userData as Record<string, unknown>;
         if (arcUd["yieldGeomKey"] !== yieldKey) {
           arcUd["yieldGeomKey"] = yieldKey;
@@ -2732,7 +2734,7 @@ export class GameRenderer {
         this.markers.add(g);
         this.tapAnchorRoots.set(t.defId, g);
       }
-      g.position.set(t.x, 0, t.z);
+      g.position.set(t.x, surfaceHeight(state.map,t) + 0, t.z);
       const body = g.userData["bodyMesh"] as THREE.Mesh;
       const mat = body.material as THREE.MeshStandardMaterial;
       mat.color.setHex(t.ownerTeam === "player" ? 0x5ba8e8 : 0xd86060);
@@ -2766,7 +2768,7 @@ export class GameRenderer {
       }
       const elapsed = this.clock.getElapsedTime();
       const pulse = 0.5 + 0.5 * Math.sin(elapsed * 3.2);
-      this.nearestTapRing.group.position.set(t.x, 0.06, t.z);
+      this.nearestTapRing.group.position.set(t.x, surfaceHeight(state.map,t) + 0.06, t.z);
       const s = 1 + pulse * 0.18;
       this.nearestTapRing.group.scale.set(s, s, s);
       const pulseOp = 0.55 + 0.4 * pulse;
@@ -3539,6 +3541,7 @@ export class GameRenderer {
   private syncMapDecor(state: GameState): void {
     if (this.decorBuilt) return;
     this.decorBuilt = true;
+    if (state.map.surfaces?.length) this.decor.add(buildWorldLandmark(state.map));
     const preset = state.map.visual?.groundPreset ?? "solid";
     for (const d of state.map.decor ?? []) {
       let mesh: THREE.Object3D | null = null;
@@ -4300,7 +4303,7 @@ export class GameRenderer {
     }
     const visual = this.syncHeroVisualPosition(h, this.heroVisualPos);
     this.heroVisualPos = visual;
-    this.heroGroup.position.set(visual.x, 0, visual.y);
+    this.heroGroup.position.set(visual.x, surfaceHeight(state.map,state.hero), visual.y);
     this.heroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.heroGroup);
     const clickMove = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -4379,7 +4382,7 @@ export class GameRenderer {
     }
     const visual = this.syncHeroVisualPosition(h, this.enemyHeroVisualPos);
     this.enemyHeroVisualPos = visual;
-    this.enemyHeroGroup.position.set(visual.x, 0, visual.y);
+    this.enemyHeroGroup.position.set(visual.x, surfaceHeight(state.map,state.enemyHero), visual.y);
     this.enemyHeroGroup.rotation.y = h.facing;
     this.hideHeroPlinthUnderGlb(this.enemyHeroGroup);
     const clickMoveE = (h.targetX !== null && h.targetZ !== null) || h.moveWaypoints.length > 0;
@@ -4534,7 +4537,7 @@ export class GameRenderer {
       } else {
         visual.set(u.x, u.z);
       }
-      obj.position.set(visual.x, 0, visual.y);
+      obj.position.set(visual.x, surfaceHeight(state.map,u), visual.y);
       if (!attackActive) this.unitFaceTargets.delete(u.id);
       const faceTarget = attackActive && !shouldRun ? this.unitFaceTargets.get(u.id) : undefined;
       this.faceUnitForState(g, faceTarget, shouldRun ? { x: simDx, z: simDz } : null);
