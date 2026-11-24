@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "mapId": "fallen_orrery",
+  "world": {
+    "halfExtents": 120,
+    "groundY": 0
+  },
+  "useAuthorTapSlots": true,
+  "visual": {
+    "groundPreset": "glacier_grid",
+    "skyHex": 12178938,
+    "sunHex": 16770478
+  },
+  "tapSlots": [
+    {
+      "id": "fallen_orrery_0",
+      "x": -93,
+      "z": -12
+    },
+    {
+      "id": "fallen_orrery_1",
+      "x": -66,
+      "z": 42
+    },
+    {
+      "id": "fallen_orrery_2",
+      "x": -45,
+      "z": -34
+    },
+    {
+      "id": "fallen_orrery_3",
+      "x": -23,
+      "z": 42
+    },
+    {
+      "id": "fallen_orrery_4",
+      "x": 25,
+      "z": 42
+    },
+    {
+      "id": "fallen_orrery_5",
+      "x": 47,
+      "z": -34
+    },
+    {
+      "id": "fallen_orrery_6",
+      "x": 71,
+      "z": 11
+    },
+    {
+      "id": "fallen_orrery_7",
+      "x": 95,
+      "z": -15
+    }
+  ],
+  "playerStart": {
+    "x": -104,
+    "z": 0
+  },
+  "enemyStart": {
+    "x": 104,
+    "z": 0
+  },
+  "playerRelaySlots": [
+    {
+      "id": "keep",
+      "x": -106,
+      "z": 0
+    }
+  ],
+  "enemyRelaySlots": [
+    {
+      "id": "fortress",
+      "x": 106,
+      "z": 0
+    }
+  ],
+  "enemyCamps": [
+    {
+      "id": "guard",
+      "origin": {
+        "x": 83,
+        "z": 54
+      },
+      "aggroRadius": 18,
+      "wakeRadius": 40,
+      "coreMaxHp": 520
+    }
+  ],
+  "decor": [
+    {
+      "kind": "cylinder",
+      "x": 0,
+      "z": -25,
+      "radius": 7,
+      "h": 11,
+      "color": 6708565,
+      "blocksMovement": true
+    },
+    {
+      "kind": "cylinder",
+      "x": 0,
+      "z": 25,
+      "radius": 7,
+      "h": 11,
+      "color": 6708565,
+      "blocksMovement": true
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "equatorial-ring",
+      "x": 0,
+      "z": 0,
+      "length": 68,
+      "width": 14,
+      "ramp": 12,
+      "height": 7
+    }
+  ]
+}

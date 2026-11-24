@@ -1,3 +1,4 @@
+import { advanceWorldObjectives } from "../surfaces";
 import type { PlayerIntent } from "../intents";
 import { pruneUnitSpellStatuses, tickHeroTeleportCooldown, type GameState } from "../state";
 import { movement, wakeCamps } from "./systems/ai";
@@ -40,6 +41,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   heroSystem(s);
   if (s.scenario !== "survival") enemyHeroSystem(s);
   movement(s);
+  advanceWorldObjectives(s);
   portals(s);
   combat(s);
   cleanupDead(s);

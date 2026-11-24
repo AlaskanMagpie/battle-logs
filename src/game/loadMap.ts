@@ -26,6 +26,9 @@ export const MAP_REGISTRY: readonly { id: string; label: string; url: string }[]
   { id: "forgewarden", label: "Forgewarden Crucible", url: "/maps/forgewarden.json" },
   { id: "glacierline", label: "Glacierline Expanse", url: "/maps/glacierline.json" },
   { id: "mesa_badlands", label: "Mesa Badlands", url: "/maps/mesa_badlands.json" },
+  { id: "drowned_causeway", label: "Drowned Causeway", url: "/maps/drowned_causeway.json" },
+  { id: "emberroot_caldera", label: "Emberroot Caldera", url: "/maps/emberroot_caldera.json" },
+  { id: "fallen_orrery", label: "Fallen Orrery", url: "/maps/fallen_orrery.json" },
 ] as const;
 
 export const DEFAULT_MAP_URL = "/map.json";

@@ -1,3 +1,4 @@
+import { containsSurface } from "./surfaces";
 import { DEFAULT_DOCTRINE_SLOTS, getCatalogEntry } from "./catalog";
 import { logGame } from "./gameLog";
 import {
@@ -171,6 +172,7 @@ export function emitHeroStrikeFx(
 export type ArmyStance = "offense" | "defense";
 
 export interface TapRuntime {
+  surfaceId?: string;
   defId: string;
   x: number;
   z: number;
@@ -209,6 +211,7 @@ export function shatterTapAnchor(s: GameState, tap: TapRuntime): void {
 }
 
 export interface HeroRuntime {
+  surfaceId?: string;
   x: number;
   z: number;
   /** Move target in world; null when idle. */
@@ -277,6 +280,7 @@ export interface StructureRuntime {
 }
 
 export interface UnitRuntime {
+  surfaceId?: string;
   id: number;
   team: TeamId;
   structureId: number | null;
@@ -462,6 +466,10 @@ export interface SurvivalRuntime {
 }
 
 export interface GameState {
+  evacuationTicks?: number;
+  evacuationSecured?: boolean;
+  orreryOpenUntil?: number;
+  orreryChannel?: number;
   map: MapData;
   scenario: GameScenario;
   survival?: SurvivalRuntime;
@@ -963,7 +971,7 @@ function stripAuthorBoundaryDecor(map: MapData): MapData {
 }
 
 export function mapWithRuntimeTapSlots(map: MapData, taps: TapRuntime[]): MapData {
-  const tapSlots: TapSlotDef[] = taps.map((t) => ({ id: t.defId, x: t.x, z: t.z }));
+  const tapSlots: TapSlotDef[] = taps.map((t) => ({ id: t.defId, x: t.x, z: t.z, surfaceId: t.surfaceId }));
   return stripAuthorBoundaryDecor({ ...map, tapSlots });
 }
 
@@ -1035,6 +1043,7 @@ export function createInitialState(
     map.useAuthorTapSlots && map.tapSlots.length > 0
       ? pickReadableTapSlots(map.tapSlots, map.world.halfExtents, useAllAuthorTapSlots).map((ts) => ({
           defId: ts.id,
+          surfaceId: ts.surfaceId,
           x: ts.x,
           z: ts.z,
           active: false,
@@ -1526,6 +1535,7 @@ const ENEMY_KEEP_EXCLUSION_RADIUS = 24;
  * visual footprint immediately, including map objectives and actors already on the site. */
 export function structureSiteBlockReason(s: GameState, entry: StructureCatalogEntry, pos: Vec2): string | null {
   const r = structureVisualRadius(entry);
+  if (s.map.surfaces?.some(deck => containsSurface(deck, pos, r))) return "The crossing must stay clear. Build on the bank.";
   const half = s.map.world.halfExtents;
   if (Math.abs(pos.x) + r > half || Math.abs(pos.z) + r > half) return "Too close to the map edge.";
   if (circleOverlapsMapObstacles(s.map, pos, r, structureObstacleFootprints(s))) return "Blocked by terrain or another building.";

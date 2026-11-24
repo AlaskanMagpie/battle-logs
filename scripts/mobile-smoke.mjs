@@ -76,10 +76,10 @@ async function runViewport(browser, name, viewport, pathAndQuery) {
   if (metrics.profile !== "mobile") problems.push(`expected mobile profile, got ${metrics.profile}`);
   if (errors.length) problems.push(errors.join("\n"));
   if (!metrics.hud || !metrics.hand) problems.push("missing HUD or doctrine hand");
-  if (metrics.hud && metrics.hud.h > metrics.viewport.h * (viewport.width < viewport.height ? 0.2 : 0.28)) {
+  if (metrics.hud && metrics.hud.h > metrics.viewport.h * (metrics.viewport.w < metrics.viewport.h ? 0.2 : 0.28)) {
     problems.push(`HUD too tall: ${Math.round(metrics.hud.h)}px of ${Math.round(metrics.viewport.h)}px`);
   }
-  if (metrics.hand && metrics.hand.y < metrics.viewport.h * (viewport.width < viewport.height ? 0.72 : 0.68)) {
+  if (metrics.hand && metrics.hand.y < metrics.viewport.h * (metrics.viewport.w < metrics.viewport.h ? 0.72 : 0.68)) {
     problems.push(`hand too high: y=${Math.round(metrics.hand.y)} in ${Math.round(metrics.viewport.h)}px viewport`);
   }
   if (problems.length) {
@@ -110,7 +110,7 @@ try {
   }
 
   await waitForServer(baseUrl);
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH });
   try {
     const matchQuery = "/?quickMatch=1&opponent=ai&controlProfile=mobile&noOnboarding=1";
     await runViewport(browser, "portrait-match", { width: 412, height: 915 }, matchQuery);

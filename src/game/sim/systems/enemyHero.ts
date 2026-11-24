@@ -1,3 +1,4 @@
+import { sameSurface, updateSurface } from "../../surfaces";
 import { getCatalogEntry } from "../../catalog";
 import {
   ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
@@ -96,7 +97,7 @@ function findClaimableTapIndexNearEnemy(s: GameState, actor: { x: number; z: num
   let bestDAny = r2;
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
-    if (t.active) continue;
+    if (t.active || !sameSurface(actor, t)) continue;
     const d = dist2(actor, t);
     if (d > r2) continue;
     if (t.x >= margin && d <= bestDSide) {
@@ -309,9 +310,10 @@ export function enemyHeroSystem(s: GameState): void {
   moveEnemyHeroToward(s);
   pickMoveTargetForEnemyHero(s);
 
+  updateSurface(s, h);
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
-    if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
+    if (!tap || tap.active || !sameSurface(h, tap) || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
     }

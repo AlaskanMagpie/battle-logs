@@ -1,0 +1,132 @@
+{
+  "version": 2,
+  "mapId": "emberroot_caldera",
+  "world": {
+    "halfExtents": 120,
+    "groundY": 0
+  },
+  "useAuthorTapSlots": true,
+  "visual": {
+    "groundPreset": "forge_slag",
+    "skyHex": 15185563,
+    "sunHex": 16757876
+  },
+  "tapSlots": [
+    {
+      "id": "emberroot_caldera_0",
+      "x": -90,
+      "z": 12
+    },
+    {
+      "id": "emberroot_caldera_1",
+      "x": -58,
+      "z": 40
+    },
+    {
+      "id": "emberroot_caldera_2",
+      "x": -51,
+      "z": -35
+    },
+    {
+      "id": "emberroot_caldera_3",
+      "x": -22,
+      "z": -8,
+      "surfaceId": "monastery-terrace"
+    },
+    {
+      "id": "emberroot_caldera_4",
+      "x": 27,
+      "z": -8,
+      "surfaceId": "monastery-terrace"
+    },
+    {
+      "id": "emberroot_caldera_5",
+      "x": 55,
+      "z": 43
+    },
+    {
+      "id": "emberroot_caldera_6",
+      "x": 72,
+      "z": -38
+    },
+    {
+      "id": "emberroot_caldera_7",
+      "x": 94,
+      "z": 15
+    }
+  ],
+  "playerStart": {
+    "x": -104,
+    "z": 0
+  },
+  "enemyStart": {
+    "x": 104,
+    "z": 0
+  },
+  "playerRelaySlots": [
+    {
+      "id": "keep",
+      "x": -106,
+      "z": 0
+    }
+  ],
+  "enemyRelaySlots": [
+    {
+      "id": "fortress",
+      "x": 106,
+      "z": 0
+    }
+  ],
+  "enemyCamps": [
+    {
+      "id": "guard",
+      "origin": {
+        "x": 83,
+        "z": 54
+      },
+      "aggroRadius": 18,
+      "wakeRadius": 40,
+      "coreMaxHp": 520
+    }
+  ],
+  "decor": [
+    {
+      "kind": "cylinder",
+      "x": -18,
+      "z": 19,
+      "radius": 8,
+      "h": 9,
+      "color": 6708565,
+      "blocksMovement": true
+    },
+    {
+      "kind": "cylinder",
+      "x": 19,
+      "z": 20,
+      "radius": 9,
+      "h": 11,
+      "color": 6708565,
+      "blocksMovement": true
+    },
+    {
+      "kind": "cylinder",
+      "x": 0,
+      "z": -55,
+      "radius": 10,
+      "h": 8,
+      "color": 6708565,
+      "blocksMovement": true
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "monastery-terrace",
+      "x": 0,
+      "z": -8,
+      "length": 98,
+      "width": 25,
+      "ramp": 21,
+      "height": 11
+    }
+  ]
+}

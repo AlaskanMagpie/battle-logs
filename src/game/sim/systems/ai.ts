@@ -1,3 +1,4 @@
+import { sameSurface, updateSurface } from "../../surfaces";
 import {
   FORMATION_ASSEMBLY_CATCHUP_MULT,
   FORMATION_ASSEMBLY_TICKS,
@@ -734,6 +735,7 @@ export function movement(s: GameState): void {
     if (u.hp <= 0 || u.flying) continue;
     clampToWorldAndObstacles(s, u, structureObstacles);
   }
+  if (s.map.surfaces?.length) for (const u of s.units) updateSurface(s, u);
   unitCaptureNodes(s);
 }
 
@@ -749,7 +751,7 @@ function unitCaptureNodes(s: GameState): void {
     const r2 = HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS;
     for (const u of s.units) {
       if (u.hp <= 0) continue;
-      if (dist2(u, tap) > r2) continue;
+      if (!sameSurface(u, tap) || dist2(u, tap) > r2) continue;
       if (team && team !== u.team) {
         team = null;
         break;

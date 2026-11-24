@@ -15,6 +15,7 @@ export interface Vec2 {
 }
 
 export interface TapSlotDef {
+  surfaceId?: string;
   id: string;
   x: number;
   z: number;
@@ -125,6 +126,7 @@ export interface MapVisualSettings {
 }
 
 export interface MapData {
+  surfaces?: import("./surfaces").RaisedSurface[];
   version: number;
   world: { halfExtents: number; groundY: number };
   tapSlots: TapSlotDef[];

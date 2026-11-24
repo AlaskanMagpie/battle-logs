@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "mapId": "drowned_causeway",
+  "world": {
+    "halfExtents": 120,
+    "groundY": 0
+  },
+  "useAuthorTapSlots": true,
+  "visual": {
+    "groundPreset": "mesa_band",
+    "skyHex": 10077884,
+    "sunHex": 16768681
+  },
+  "tapSlots": [
+    {
+      "id": "drowned_causeway_0",
+      "x": -94,
+      "z": 8
+    },
+    {
+      "id": "drowned_causeway_1",
+      "x": -67,
+      "z": -39
+    },
+    {
+      "id": "drowned_causeway_2",
+      "x": -34,
+      "z": 47
+    },
+    {
+      "id": "ford",
+      "x": 0,
+      "z": 0
+    },
+    {
+      "id": "drowned_causeway_4",
+      "x": 27,
+      "z": -45
+    },
+    {
+      "id": "drowned_causeway_5",
+      "x": 47,
+      "z": 32
+    },
+    {
+      "id": "drowned_causeway_6",
+      "x": 73,
+      "z": 2
+    },
+    {
+      "id": "drowned_causeway_7",
+      "x": 98,
+      "z": -35
+    }
+  ],
+  "playerStart": {
+    "x": -104,
+    "z": 0
+  },
+  "enemyStart": {
+    "x": 104,
+    "z": 0
+  },
+  "playerRelaySlots": [
+    {
+      "id": "keep",
+      "x": -106,
+      "z": 0
+    }
+  ],
+  "enemyRelaySlots": [
+    {
+      "id": "fortress",
+      "x": 106,
+      "z": 0
+    }
+  ],
+  "enemyCamps": [
+    {
+      "id": "guard",
+      "origin": {
+        "x": 83,
+        "z": 54
+      },
+      "aggroRadius": 18,
+      "wakeRadius": 40,
+      "coreMaxHp": 520
+    }
+  ],
+  "decor": [
+    {
+      "kind": "cylinder",
+      "x": -5,
+      "z": -38,
+      "radius": 8,
+      "h": 7,
+      "color": 6708565,
+      "blocksMovement": true
+    },
+    {
+      "kind": "cylinder",
+      "x": 6,
+      "z": 34,
+      "radius": 6,
+      "h": 8,
+      "color": 6708565,
+      "blocksMovement": true
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "processional-road",
+      "x": 0,
+      "z": 0,
+      "length": 84,
+      "width": 14,
+      "ramp": 16,
+      "height": 9
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { sameSurface, updateSurface } from "../../surfaces";
 import { getCatalogEntry } from "../../catalog";
 import {
   ENEMY_AI_BUILD_ATTEMPT_INTERVAL_TICKS,
@@ -44,7 +45,7 @@ export function findNeutralTapIndexNearHero(s: GameState): number | null {
   let bestD = r2;
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
-    if (t.active) continue;
+    if (t.active || !sameSurface(s.hero, t)) continue;
     const d = dist2(s.hero, t);
     if (d <= bestD) {
       bestD = d;
@@ -341,13 +342,14 @@ export function heroSystem(s: GameState): void {
   h.wasdStrafe = 0;
   h.wasdForward = 0;
 
+  updateSurface(s, h);
   applyHeroCaptainMode(s);
 
   // Drop a claim only if the Wizard leaves the node. Movement inside the ring
   // should keep channeling so capture feels continuous while pathing.
   if (h.claimChannelTarget !== null) {
     const tap = s.taps[h.claimChannelTarget];
-    if (!tap || tap.active || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
+    if (!tap || tap.active || !sameSurface(h, tap) || dist2(h, tap) > HERO_CLAIM_RADIUS * HERO_CLAIM_RADIUS) {
       h.claimChannelTarget = null;
       h.claimChannelTicksRemaining = 0;
       s.lastMessage = "Claim cancelled.";
