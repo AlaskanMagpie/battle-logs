@@ -1,3 +1,6 @@
+import { armTapClaimAnchor } from "./game/state";
+import { TAP_YIELD_MAX } from "./game/constants";
+import { chapterObjective, expeditionMap, finishChapter } from "./game/expedition";
 import {
   commandEffectRadius,
   commandLineGhostPreview,
@@ -778,7 +781,9 @@ function runMatch(
     } finally {
       dismissMatchmakingOverlay?.();
     }
-    const loadedMap = await loadMapMerged(resolvedMapUrl);
+    const selectedMap = await loadMapMerged(resolvedMapUrl);
+    const run = launchOptions.expedition;
+    const loadedMap = run ? expeditionMap(selectedMap, run) : selectedMap;
     const difficultyOverride = queryDifficultyOverride(window.location.search);
     const map =
       (resolvedLaunch.mode === "pvp" || resolvedLaunch.mode === "pve_survival") && !difficultyOverride
@@ -844,6 +849,21 @@ function runMatch(
         });
       }
     }
+    const enterChapter = () => {
+      if (!run) return;
+      state.lastMessage = chapterObjective(run);
+      if (run.chapter === 1 && run.oath) {
+        const landing = state.taps.find(t => t.defId === "oasis_landing");
+        if (landing) {
+          landing.active = true;
+          landing.ownerTeam = "player";
+          armTapClaimAnchor(landing);
+          landing.yieldRemaining = TAP_YIELD_MAX;
+        }
+        if (!state.doctrineSlotCatalogIds.includes("outpost")) state.doctrineSlotCatalogIds[0] = "outpost";
+      }
+    };
+    enterChapter();
     let replay = createReplayCapture(state, map);
     const matchAbort = new AbortController();
     const signal = matchAbort.signal;
@@ -1043,6 +1063,10 @@ function runMatch(
     frameProfiler.setInfoProvider(() => renderer.getMobileQualityInfo());
     let leaderboardRecordedPhase: GameState["phase"] | null = null;
     const recordCompletedMatch = (completed: GameState): void => {
+      if (run) {
+        if (completed.phase === "win") completed.matchEndDetail = finishChapter(run, !!completed.evacuationSecured) + " Return to the binder to continue.";
+        return;
+      }
       recordLocalLeaderboardResult(completed, portalContext.params.username);
       void submitDamageLeaderboardEntry({
         username: portalContext.params.username,
@@ -1166,6 +1190,7 @@ function runMatch(
       } else if (resolvedLaunch.mode === "pve_survival") {
         state.lastMessage = "Survival rematch: central base online. Reclaim the map and endure the horde.";
       }
+      enterChapter();
       replay = createReplayCapture(state, map);
       renderer.setPlacementGhost(null, false);
       renderer.sync(state, USE_GLB);

@@ -78,6 +78,7 @@ export interface NetworkGameSnapshot {
 }
 
 export interface MatchLaunchOptions {
+  expedition?: import("../game/expedition").Expedition;
   mode: MatchMode;
   matchId: string;
   seat?: MatchSeat;

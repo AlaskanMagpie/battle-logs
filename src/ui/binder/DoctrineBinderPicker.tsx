@@ -1,3 +1,4 @@
+import { chapters, startExpedition, expeditionSave } from "../../game/expedition";
 import * as THREE from "three";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -51,7 +52,7 @@ const PREMATCH_FLASH_KEY = "signalWarsPrematchFlash";
 const QUICKPLAY_COACHMARK_KEY = "signalWarsQuickplayCoachmarkDismissed.v1";
 
 type PrematchOpponentChoice = "ai" | "matchmake" | "matchmake_strict" | "pve_survival";
-type PrematchLaunchOptions = Pick<MatchLaunchOptions, "aiOpponentId">;
+type PrematchLaunchOptions = Pick<MatchLaunchOptions, "aiOpponentId" | "expedition">;
 
 function initialOpponentFromUrl(): PrematchOpponentChoice {
   if (typeof window === "undefined") return "matchmake";
@@ -1573,6 +1574,14 @@ export function DoctrineBinderPicker({
                       </text>
                     </svg>
                   </span>
+                </button>
+                <button type="button" className="binder-picker-btn" disabled={loading || portalTransitioning}
+                  onClick={() => {
+                    const run = startExpedition();
+                    const row = slots.filter(Boolean).length >= MIN_FILLED ? slots : [...QUICK_MATCH_DOCTRINE_SLOTS];
+                    onStart(normalizeDoctrineSlotsForMatch(row), "/maps/" + chapters[run.chapter] + ".json", "ai", { expedition: run });
+                  }}>
+                  {expeditionSave().chapter > 0 && expeditionSave().chapter < 3 ? "Resume Broken Worlds" : "Broken Worlds expedition"}
                 </button>
                 {quickplayCoachmarkOpen ? (
                   <div className="binder-picker-quickplay-coachmark" role="dialog" aria-label="Quickplay tip">
