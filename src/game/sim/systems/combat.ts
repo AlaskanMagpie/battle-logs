@@ -169,7 +169,7 @@ function beginMarkedStrike(s: GameState, u: UnitRuntime, victim: Vec2 & {surface
   if (!ember && u.producedUnitId !== "amber_geode_monks") return false;
   const radius = ember ? 10 : 5;
   u.pendingStrike = {x:victim.x,z:victim.z,surfaceId:victim.surfaceId,originX:u.x,originZ:u.z,
-    due:s.tick+(ember ? 17 : 10), radius, ember};
+    due:s.tick+(ember ? 17 : 16), radius, ember};
   commitAttack(s,u);
   return true;
 }

@@ -140,7 +140,7 @@ function nearestEnemyContestingPoint(
   let bestD = Infinity;
   for (const o of s.units) {
     if (o.team !== "enemy" || o.hp <= 0) continue;
-    if (dist2(origin, o) > contestR2) continue;
+    if (!sameSurface(origin, o) || dist2(origin, o) > contestR2) continue;
     const d = dist2(fromUnit, o);
     if (d < bestD) {
       bestD = d;

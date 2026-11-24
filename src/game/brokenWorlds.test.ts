@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { chapters, expeditionMap, expeditionSave, finishChapter, startExpedition } from "./expedition";
 import { createInitialState, armTapClaimAnchor, shatterTapAnchor, inPlayerTerritory, wizardTier } from "./state";
 import { advanceWorldObjectives, updateSurface } from "./surfaces";
+import { applyPlayerIntents } from "./sim/systems/intents";
 import { economy } from "./sim/systems/economy";
 import { heroSystem } from "./sim/systems/hero";
 import { claimFluxRewardForTap } from "./sim/systems/homeDistance";
@@ -33,6 +34,19 @@ describe("Broken Worlds expedition", () => {
     expect(finishChapter(last,false)).toContain(rescued?"Covenant":"Solitary");
     expect(expeditionSave().chapter).toBe(3);
     expect(startExpedition()).toEqual(first);
+  });
+  it("guides the starting Wizard under the deck to capture the ford", () => {
+    const state=createInitialState(map(0),[]);
+    const ford=state.taps.find(t=>t.defId==="ford")!;
+    applyPlayerIntents(state,[{type:"hero_move",x:ford.x,z:ford.z}]);
+    for(let i=0;i<500;i++) {
+      state.tick++;
+      heroSystem(state);
+      advanceWorldObjectives(state);
+    }
+    expect(state.hero.surfaceId).toBeUndefined();
+    expect(ford.ownerTeam).toBe("player");
+    expect(state.evacuationSecured).toBe(true);
   });
   it("requires twelve uninterrupted seconds of ford ownership", () => {
     const state=createInitialState(map(0),[]);

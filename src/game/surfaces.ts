@@ -80,7 +80,7 @@ export function surfaceRoute(map:MapData, from:Vec2, to:Vec2, clearance:number):
     if(to.surfaceId===deck.id && from.surfaceId!==deck.id) {
       checkpoints.push({x:deck.x+sign*end,z:deck.z});
     } else if(!to.surfaceId && containsSurface(deck,to) && from.surfaceId!==deck.id &&
-      Math.abs(from.z-deck.z)<deck.width/2 && Math.abs(from.x-deck.x)>deck.length/2) {
+      Math.abs(from.x-deck.x)>deck.length/2) {
       const bank=deck.z+(from.z<deck.z?-1:1)*(deck.width/2+clearance+3);
       checkpoints.push({x:deck.x+sign*end,z:bank},{x:to.x,z:bank});
     }

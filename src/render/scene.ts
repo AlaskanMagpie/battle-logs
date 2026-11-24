@@ -4550,7 +4550,7 @@ export class GameRenderer {
       const attackTick = u.lastAttackTick;
       const prevAttackTick = this.unitPrevAttackTick.get(u.id);
       const isNewAttack = attackTick !== undefined && attackTick !== prevAttackTick;
-      const committedAttackTarget = attackTargets.get(u.id);
+      const committedAttackTarget = u.pendingStrike ?? attackTargets.get(u.id);
       if (isNewAttack) {
         if (committedAttackTarget) this.unitFaceTargets.set(u.id, committedAttackTarget);
         else this.unitFaceTargets.delete(u.id);
