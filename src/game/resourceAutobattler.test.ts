@@ -1073,3 +1073,39 @@ describe("selection commands", () => {
     expect(s.lastMessage).toContain("Wedge formation");
   });
 });
+
+describe("Mana at a layered crossing", () => {
+  const deck = {id:"deck", x:18, z:12, length:40, width:10, height:6, ramp:6};
+  const map = {...tinyMap, surfaces:[deck]};
+  it("preserves Wizard channel time through repeated movement orders inside the ring", () => {
+    const state = createInitialState(map, []);
+    const tap = state.taps[0]!;
+    Object.assign(state.hero, {x:tap.x,z:tap.z});
+    state.heroCaptainEnabled = false;
+    for (let i=0;i<Math.ceil(claimChannelSecForTap(state,"player",tap)*TICK_HZ);i++) {
+      advanceTick(state,[{type:"hero_move",x:tap.x+(i%2),z:tap.z}]);
+    }
+    expect(tap.ownerTeam).toBe("player");
+    expect(tap.anchorHp).toBe(200);
+  });
+
+  it("resets a squad channel only when the rival reaches the same surface", () => {
+    const state = createInitialState(map, []);
+    const tap = state.taps[0]!;
+    const ally=unit(8001,"player","Line",null);
+    const rival=unit(8002,"enemy","Line",null);
+    for(const u of [ally,rival]) Object.assign(u,{x:tap.x,z:tap.z, speedPerSec:0});
+    rival.surfaceId = deck.id;
+    state.units.push(ally,rival);
+    movement(state);
+    expect(tap.claimTeam).toBe("player");
+    rival.surfaceId=undefined;
+    movement(state);
+    expect(tap.claimTicksRemaining).toBeUndefined();
+    ally.hp=0;
+    for(let tick=0;tick<200 && !tap.active;tick++) movement(state);
+    expect(tap.ownerTeam).toBe("enemy");
+    expect(tap.anchorHp).toBe(200);
+    expect(tap.yieldRemaining).toBe(325);
+  });
+});

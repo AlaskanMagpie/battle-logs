@@ -1655,8 +1655,9 @@ export class GameRenderer {
     dz /= len;
     const half = state.map.world.halfExtents;
     const targetY = CAMERA_HERO_PIVOT_Y;
-    const back = Math.max(18, Math.min(34, half * 0.09));
-    const height = Math.max(26, Math.min(46, half * 0.13));
+    const framing = state.map.surfaces?.length ? (this.camera.aspect < 0.8 ? 2.8 : 1.9) : 1;
+    const back = framing * Math.max(18, Math.min(34, half * 0.09));
+    const height = framing * Math.max(26, Math.min(46, half * 0.13));
     const tgt = new THREE.Vector3(h.x, targetY, h.z);
     const pos = new THREE.Vector3(h.x - dx * back, targetY + height, h.z - dz * back);
     return { pos, tgt };
@@ -1793,12 +1794,31 @@ export class GameRenderer {
     const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     this.ndc.set(x, y);
     this.raycaster.setFromCamera(this.ndc, this.camera);
+    const ray = this.raycaster.ray;
+    let closest: { x: number; z: number; surfaceId: string } | null = null;
+    let nearest = Infinity;
     for (const deck of this.currentState?.map.surfaces ?? []) {
-      const point = new THREE.Vector3();
-      const top = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-deck.height),point);
-      if (top && Math.abs(top.x-deck.x) <= deck.length/2-deck.ramp && Math.abs(top.z-deck.z)<=deck.width/2)
-        return {x:top.x,z:top.z,surfaceId:deck.id};
+      if (deck.id === "equatorial-ring" && !this.currentState?.map.ringAligned) continue;
+      const left = deck.x - deck.length / 2;
+      const right = deck.x + deck.length / 2;
+      const slope = deck.height / deck.ramp;
+      for (const [start, end, rise, base] of [
+        [left, left + deck.ramp, slope, 0],
+        [left + deck.ramp, right - deck.ramp, 0, deck.height],
+        [right - deck.ramp, right, -slope, deck.height],
+      ]) {
+        const denominator = ray.direction.y - rise * ray.direction.x;
+        if (Math.abs(denominator) < 1e-8) continue;
+        const distance = (base + rise * (ray.origin.x - start) - ray.origin.y) / denominator;
+        if (distance < 0 || distance >= nearest) continue;
+        const x = ray.origin.x + distance * ray.direction.x;
+        const z = ray.origin.z + distance * ray.direction.z;
+        if (x < start || x > end || Math.abs(z - deck.z) > deck.width / 2) continue;
+        closest = { x, z, surfaceId: deck.id };
+        nearest = distance;
+      }
     }
+    if (closest) return closest;
     if (this.terrainHits.length > 0) {
       const hits = this.raycaster.intersectObjects(this.terrainHits, false);
       const p = hits[0]?.point;

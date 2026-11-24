@@ -212,7 +212,7 @@ function moveUnitOnPath(
   structureObstacles: MapObstacleFootprint[],
 ): boolean {
   const r = unitSeparationRadiusXZ(u.sizeClass, u.flying) * UNIT_MAP_OBSTACLE_RADIUS_MULT;
-  if (dist2(u, target) <= 2.2 * 2.2) return true;
+  if (sameSurface(u, target) && dist2(u, target) <= 2.2 * 2.2) return true;
   if (!u.flying && u.order && u.order.waypoints.length > 0) {
     const wp = u.order.waypoints[0]!;
     if (segmentHitsMapObstacles(s.map, u, wp, r, structureObstacles)) u.order.waypoints.length = 0;
@@ -236,13 +236,13 @@ function moveUnitOnPath(
   }
   if (!u.flying && !u.order?.waypoints.length) {
     clampToWorldAndObstacles(s, u, structureObstacles);
-    return dist2(u, target) <= 2.2 * 2.2;
+    return sameSurface(u, target) && dist2(u, target) <= 2.2 * 2.2;
   }
   const next = !u.flying ? u.order!.waypoints[0]! : target;
   moveToward(u, next, step);
   clampToWorldAndObstacles(s, u, structureObstacles);
   if (dist2(u, next) <= 1.4 * 1.4 && u.order && u.order.waypoints.length > 0) u.order.waypoints.shift();
-  return dist2(u, target) <= 2.2 * 2.2;
+  return sameSurface(u, target) && dist2(u, target) <= 2.2 * 2.2;
 }
 
 function moveUnitAutonomousOnPath(
@@ -278,7 +278,7 @@ function moveUnitAutonomousOnPath(
   const ao = u.autoOrder!;
   if (!u.flying && ao.waypoints.length === 0) {
     clampToWorldAndObstacles(s, u, structureObstacles);
-    return dist2(u, target) <= 2.2 * 2.2;
+    return sameSurface(u, target) && dist2(u, target) <= 2.2 * 2.2;
   }
   const next = !u.flying ? ao.waypoints[0]! : target;
   moveToward(u, next, step);
@@ -632,7 +632,7 @@ export function movement(s: GameState): void {
         const dx = u.order.formationOffsetX ?? 0;
         const dz = u.order.formationOffsetZ ?? 0;
         const side = width ? Math.max(-width*.38,Math.min(width*.38,dz)) : dz;
-        const slot = {x:formation.anchorX+dx,z:formation.anchorZ+side};
+        const slot = {surfaceId:u.order.surfaceId,x:formation.anchorX+dx,z:formation.anchorZ+side};
         if (formation.kind==="arc" && dist2(foe,slot)<u.range*u.range) {
           clampToWorldAndObstacles(s,u,structureObstacles);
         } else moveUnitOnPath(s,u,slot,stepU(u),structureObstacles);
@@ -651,6 +651,7 @@ export function movement(s: GameState): void {
       }
       if (formation) {
         const target = {
+          surfaceId: u.order.surfaceId,
           x: formation.anchorX + (u.order.formationOffsetX ?? 0),
           z: formation.anchorZ + (u.order.formationOffsetZ ?? 0),
         };
@@ -667,10 +668,11 @@ export function movement(s: GameState): void {
         moveUnitOnPath(s, u, target, step, structureObstacles);
         continue;
       }
-      const arrived = moveUnitOnPath(s, u, { x: u.order.x, z: u.order.z }, stepU(u), structureObstacles);
+      const arrived = moveUnitOnPath(s, u, u.order, stepU(u), structureObstacles);
       if (arrived) {
         const next = u.order.queued.shift();
         if (next) {
+          u.order.surfaceId = next.surfaceId;
           u.order.x = next.x;
           u.order.z = next.z;
           u.order.waypoints = [];

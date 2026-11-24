@@ -1,3 +1,4 @@
+import { containsSurface, sameSurface } from "../../surfaces";
 import { getCatalogEntry } from "../../catalog";
 import {
   DOCTRINE_COMMANDS_ENABLED,
@@ -128,10 +129,6 @@ function commandHeroMove(s: GameState, pos: Vec2, shiftKey: boolean): void {
   const x = Math.max(-half, Math.min(half, pos.x));
   const z = Math.max(-half, Math.min(half, pos.z));
   const h = s.hero;
-  if (h.claimChannelTarget !== null) {
-    h.claimChannelTarget = null;
-    h.claimChannelTicksRemaining = 0;
-  }
   if (shiftKey) {
     if (h.targetX !== null && h.targetZ !== null) {
       if (h.moveWaypoints.length >= HERO_MOVE_WAYPOINT_CAP) {
@@ -156,6 +153,7 @@ function tapIndexNearForCaptureOrder(s: GameState, pos: Vec2): number | null {
   let bestD = r2;
   for (let i = 0; i < s.taps.length; i++) {
     const t = s.taps[i]!;
+    if (!sameSurface(t, pos)) continue;
     if (t.active && t.ownerTeam === "player") continue;
     const d = dist2(pos, t);
     if (d <= bestD) {
@@ -195,15 +193,15 @@ export function orderPlayerUnits(
     const jz = ((id * 11) % 9) - 4;
     const tap = captureTapIdx !== null ? s.taps[captureTapIdx]! : null;
     const target = tap
-      ? { x: tap.x + jx * 0.45, z: tap.z + jz * 0.45 }
-      : { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9 };
+      ? { x: tap.x + jx * 0.45, z: tap.z + jz * 0.45, surfaceId: tap.surfaceId }
+      : { x: pos.x + jx * 0.9, z: pos.z + jz * 0.9, surfaceId: pos.surfaceId };
     if (queue && u.order) {
       u.order.queued.push(target);
     } else {
       u.order =
         captureTapIdx !== null
-          ? { mode, x: target.x, z: target.z, waypoints: [], queued: [], captureTapIndex: captureTapIdx }
-          : { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+          ? { mode, ...target, waypoints: [], queued: [], captureTapIndex: captureTapIdx }
+          : { mode, ...target, waypoints: [], queued: [] };
     }
   }
   if (n > 0) {
@@ -226,7 +224,7 @@ function setUnitOrderTarget(u: UnitRuntime, target: Vec2, mode: UnitOrderMode, q
   if (queue && u.order) {
     u.order.queued.push(target);
   } else {
-    u.order = { mode, x: target.x, z: target.z, waypoints: [], queued: [] };
+    u.order = { mode, ...target, waypoints: [], queued: [] };
   }
 }
 
@@ -268,7 +266,7 @@ function orderPlayerUnitsFormation(
   const resolvedSlots: { u: UnitRuntime; target: Vec2 }[] = [];
   for (const u of units) {
     const raw = byId.get(u.id) ?? to;
-    const target = { x: raw.x, z: raw.z };
+    const target = { x: raw.x, z: raw.z, surfaceId: to.surfaceId };
     resolveCircleAgainstMapObstacles(
       s.map,
       target,
@@ -322,6 +320,7 @@ function orderPlayerUnitsFormation(
       const oz = target.z - goal.z;
       u.order = {
         mode,
+        surfaceId: target.surfaceId,
         x: anchor.x + ox,
         z: anchor.z + oz,
         waypoints: [],
@@ -370,7 +369,9 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   const dx = dest.x - s.hero.x;
   const dz = dest.z - s.hero.z;
   const r2 = HERO_TELEPORT_UNIT_RADIUS * HERO_TELEPORT_UNIT_RADIUS;
-  const carried = s.units.filter((u) => u.team === "player" && u.hp > 0 && dist2(u, s.hero) <= r2);
+  const surface = s.map.surfaces?.find(deck => deck.id === pos.surfaceId && containsSurface(deck, dest));
+  const carried = s.units.filter((u) => sameSurface(u, s.hero) && u.team === "player" && u.hp > 0 && dist2(u, s.hero) <= r2);
+  s.hero.surfaceId = surface?.id;
   s.hero.x = dest.x;
   s.hero.z = dest.z;
   s.hero.targetX = null;
@@ -382,6 +383,7 @@ function tryHeroTeleport(s: GameState, pos: Vec2): void {
   for (const u of carried) {
     u.x += dx;
     u.z += dz;
+    u.surfaceId = surface && containsSurface(surface, u) ? surface.id : undefined;
     u.x = Math.max(-half, Math.min(half, u.x));
     u.z = Math.max(-half, Math.min(half, u.z));
   }
@@ -1057,7 +1059,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
     } else if (it.type === "hero_teleport") {
       if (s.phase !== "playing") continue;
       s.heroCaptainLastManualTick = s.tick;
-      tryHeroTeleport(s, { x: it.x, z: it.z });
+      tryHeroTeleport(s, it);
     } else if (it.type === "clear_placement") {
       s.pendingPlacementCatalogId = null;
       s.selectedDoctrineIndex = null;
@@ -1089,7 +1091,7 @@ export function applyPlayerIntents(s: GameState, intents: PlayerIntent[]): void 
       orderPlayerUnits(
         s,
         s.selectedUnitIds,
-        { x: it.x, z: it.z },
+        it,
         it.mode,
         it.queue === true,
         it.includeNearbyIdle === true,

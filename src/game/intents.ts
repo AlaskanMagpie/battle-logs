@@ -17,6 +17,7 @@ export type PlayerIntent =
   | { type: "select_units"; unitIds: number[] }
   | {
       type: "command_selected_units";
+      surfaceId?: string;
       x: number;
       z: number;
       mode: "move" | "attack_move" | "stay";
@@ -42,7 +43,7 @@ export type PlayerIntent =
   | { type: "set_formation_preset"; formationKind: UnitFormationKind }
   | { type: "toggle_formation_preset" }
   | { type: "begin_hero_teleport" }
-  | { type: "hero_teleport"; x: number; z: number }
+  | { type: "hero_teleport"; x: number; z: number; surfaceId?: string }
   | { type: "hero_move"; x: number; z: number; surfaceId?: string; shiftKey?: boolean }
   /**
    * Strafe / forward from keyboard (-1, 0, 1) in **camera** space when `camFx`…`camRz` are set

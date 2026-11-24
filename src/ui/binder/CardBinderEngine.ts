@@ -237,7 +237,7 @@ function binderPlacementNearlyEqual(a: BinderPlacement, b: BinderPlacement): boo
 const roomLoader = new GLTFLoader();
 const roomDracoLoader = new DRACOLoader();
 /** `KHR_draco_mesh_compression` (e.g. Meshy “compressed” GLBs) — decoders load from Google CDN once. */
-roomDracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.6/");
+roomDracoLoader.setDecoderPath("/draco/gltf/");
 roomLoader.setDRACOLoader(roomDracoLoader);
 
 function dragAngleShaped(raw: number): number {

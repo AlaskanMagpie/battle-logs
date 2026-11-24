@@ -357,6 +357,7 @@ export type UnitOrderMode = "move" | "attack_move" | "stay";
 export const HERO_SELECTION_ID = -1;
 
 export interface UnitOrderRuntime {
+  surfaceId?: string;
   mode: UnitOrderMode;
   x: number;
   z: number;

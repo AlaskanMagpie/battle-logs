@@ -1326,8 +1326,10 @@ function runMatch(
       startY: number;
       startHitX: number;
       startHitZ: number;
+      startSurfaceId?: string;
       hitX: number;
       hitZ: number;
+      surfaceId?: string;
       shiftKey: boolean;
       altKey: boolean;
       hasSelection: boolean;
@@ -1345,6 +1347,7 @@ function runMatch(
       startY: number;
       hitX: number;
       hitZ: number;
+      surfaceId?: string;
       moved: boolean;
       longPressArmed: boolean;
       longPressTriggered: boolean;
@@ -1415,9 +1418,9 @@ function runMatch(
 
     const issueMobileTapCommand = (ev: PointerEvent, tap: NonNullable<typeof mobileTap>): void => {
       const rect = canvas.getBoundingClientRect();
-      const hit = renderer.pickGround(ev.clientX, ev.clientY, rect) ?? { x: tap.hitX, z: tap.hitZ };
+      const hit = renderer.pickGround(ev.clientX, ev.clientY, rect) ?? { x: tap.hitX, z: tap.hitZ, surfaceId: tap.surfaceId };
       if (state.teleportClickPending) {
-        pendingIntents.push({ type: "hero_teleport", x: hit.x, z: hit.z });
+        pendingIntents.push({ type: "hero_teleport", ...hit });
         return;
       }
       const pickedUnitId = renderer.pickUnitId(ev.clientX, ev.clientY, rect);
@@ -1477,6 +1480,7 @@ function runMatch(
           startY: ev.clientY,
           hitX: hit.x,
           hitZ: hit.z,
+          surfaceId: hit.surfaceId,
           moved: false,
           longPressArmed: !state.teleportClickPending,
           longPressTriggered: false,
@@ -1495,8 +1499,10 @@ function runMatch(
                 startY: mobileTap.startY,
                 startHitX: mobileTap.hitX,
                 startHitZ: mobileTap.hitZ,
+                startSurfaceId: mobileTap.surfaceId,
                 hitX: mobileTap.hitX,
                 hitZ: mobileTap.hitZ,
+                surfaceId: mobileTap.surfaceId,
                 shiftKey: false,
                 altKey: false,
                 hasSelection: true,
@@ -1505,7 +1511,7 @@ function runMatch(
               };
               state.lastMessage = "Touch hold: drag to shape formation, release to command.";
             } else {
-              pendingIntents.push({ type: "hero_move", x: mobileTap.hitX, z: mobileTap.hitZ, shiftKey: false });
+              pendingIntents.push({ type: "hero_move", x: mobileTap.hitX, z: mobileTap.hitZ, surfaceId: mobileTap.surfaceId, shiftKey: false });
               state.lastMessage = "Touch hold: hero move issued.";
             }
           }, CONTROL_PROFILE.longPressMs);
@@ -1539,7 +1545,7 @@ function runMatch(
 
       if (state.teleportClickPending) {
         ev.preventDefault();
-        pendingIntents.push({ type: "hero_teleport", x: hit.x, z: hit.z });
+        pendingIntents.push({ type: "hero_teleport", ...hit });
         return;
       }
 
@@ -1569,8 +1575,10 @@ function runMatch(
           startY: ev.clientY,
           startHitX: hit.x,
           startHitZ: hit.z,
+          startSurfaceId: hit.surfaceId,
           hitX: hit.x,
           hitZ: hit.z,
+          surfaceId: hit.surfaceId,
           shiftKey: ev.shiftKey,
           altKey: ev.altKey,
           hasSelection,
@@ -1587,7 +1595,7 @@ function runMatch(
 
       if (state.teleportClickPending) {
         ev.preventDefault();
-        pendingIntents.push({ type: "hero_teleport", x: hit.x, z: hit.z });
+        pendingIntents.push({ type: "hero_teleport", ...hit });
         return;
       }
 
@@ -1663,8 +1671,8 @@ function runMatch(
         if (snap.formationDragging) {
           pendingIntents.push({
             type: "command_selected_units_formation",
-            from: { x: snap.startHitX, z: snap.startHitZ },
-            to: { x: snap.hitX, z: snap.hitZ },
+            from: { x: snap.startHitX, z: snap.startHitZ, surfaceId: snap.startSurfaceId },
+            to: { x: snap.hitX, z: snap.hitZ, surfaceId: snap.surfaceId },
             mode: snap.altKey ? "attack_move" : "move",
             queue: snap.shiftKey,
             formationKind: state.formationPreset,
@@ -1678,13 +1686,14 @@ function runMatch(
             state.tick,
           );
         } else if (!snap.dragFollow) {
-          pendingIntents.push({ type: "hero_move", x: snap.hitX, z: snap.hitZ, shiftKey: snap.shiftKey });
+          pendingIntents.push({ type: "hero_move", x: snap.hitX, z: snap.hitZ, surfaceId: snap.surfaceId, shiftKey: snap.shiftKey });
           logGame("move", `RMB move → (${snap.hitX.toFixed(1)}, ${snap.hitZ.toFixed(1)})`, state.tick);
           if (snap.hasSelection) {
             pendingIntents.push({
               type: "command_selected_units",
               x: snap.hitX,
               z: snap.hitZ,
+              surfaceId: snap.surfaceId,
               mode: snap.altKey ? "attack_move" : "move",
               queue: snap.shiftKey,
             });
@@ -1736,6 +1745,7 @@ function runMatch(
           if (hitM) {
             mobileTap.hitX = hitM.x;
             mobileTap.hitZ = hitM.z;
+            mobileTap.surfaceId = hitM.surfaceId;
           } else if (!prev) {
             return;
           }
@@ -1795,10 +1805,11 @@ function runMatch(
           if (hitM) {
             rightHold.hitX = hitM.x;
             rightHold.hitZ = hitM.z;
-            if (rightHold.dragFollow) pendingIntents.push({ type: "hero_move", x: hitM.x, z: hitM.z, shiftKey: false });
+            rightHold.surfaceId = hitM.surfaceId;
+            if (rightHold.dragFollow) pendingIntents.push({ type: "hero_move", ...hitM, shiftKey: false });
             if (rightHold.formationDragging) {
-              const from = { x: rightHold.startHitX, z: rightHold.startHitZ };
-              const to = { x: hitM.x, z: hitM.z };
+              const from = { x: rightHold.startHitX, z: rightHold.startHitZ, surfaceId: rightHold.startSurfaceId };
+              const to = { ...hitM };
               renderer.setFormationGhost(from, to, selectedFormationSlots(from, to, ev.shiftKey), true);
               state.lastMessage = `Formation: ${formationKindLabel(state.formationPreset)}${ev.shiftKey ? " wide ranks" : ""}.`;
             }
