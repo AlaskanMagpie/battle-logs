@@ -1109,3 +1109,30 @@ describe("Mana at a layered crossing", () => {
     expect(tap.yieldRemaining).toBe(325);
   });
 });
+
+describe("Geode Monk contact", () => {
+  it.each(["hold","dodge","displace","death"] as const)("resolves one marked blow with response %s", response => {
+    const state=createInitialState(tinyMap,[]);
+    const monk=unit(4200,"enemy","Heavy",null);
+    Object.assign(monk,{x:10,z:0,range:9,producedUnitId:PRODUCED_UNIT_AMBER_GEODE_MONKS});
+    state.units=[monk];
+    Object.assign(state.hero,{x:14,z:0});
+    const hp=state.hero.hp;
+    combat(state);
+    const due=monk.pendingStrike!.due;
+    expect(state.hero.hp).toBe(hp);
+    for(state.tick++;state.tick<due;state.tick++) combat(state);
+    expect(state.hero.hp).toBe(hp);
+    if(response==="dodge") state.hero.z=8;
+    if(response==="displace") monk.z=7;
+    if(response==="death") monk.hp=0;
+    combat(state);
+    const hitHp=state.hero.hp;
+    if(response==="hold") expect(hitHp).toBeLessThan(hp);
+    else expect(hitHp).toBe(hp);
+    state.hero.z=14;
+    state.tick++;
+    combat(state);
+    expect(state.hero.hp).toBe(hitHp);
+  });
+});
