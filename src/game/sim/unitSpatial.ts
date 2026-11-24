@@ -40,7 +40,7 @@ export function nearestFoeInBuckets(
       const list = buckets.get(`${gx + ox},${gz + oz}`);
       if (!list) continue;
       for (const o of list) {
-        if (o === from || o.team !== foeTeam || o.hp <= 0) continue;
+        if (o.surfaceId !== from.surfaceId || o === from || o.team !== foeTeam || o.hp <= 0) continue;
         const d = dist2(from, o);
         if (d <= bestD) {
           bestD = d;

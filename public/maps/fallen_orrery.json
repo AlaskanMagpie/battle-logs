@@ -7,7 +7,7 @@
   },
   "useAuthorTapSlots": true,
   "visual": {
-    "groundPreset": "glacier_grid",
+    "groundPreset": "orrery_snow",
     "skyHex": 12178938,
     "sunHex": 16770478
   },

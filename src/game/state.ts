@@ -280,6 +280,8 @@ export interface StructureRuntime {
 }
 
 export interface UnitRuntime {
+  pendingStrike?: { x:number; z:number; surfaceId?:string; originX:number; originZ:number; due:number; radius:number; ember:boolean; delayed?:boolean };
+
   surfaceId?: string;
   id: number;
   team: TeamId;
@@ -383,6 +385,7 @@ export interface UnitAutoOrderRuntime {
 }
 
 export interface FormationMarchRuntime {
+  kind?: UnitFormationKind;
   id: number;
   issuedTick: number;
   anchorX: number;
@@ -466,6 +469,7 @@ export interface SurvivalRuntime {
 }
 
 export interface GameState {
+  pendingFirestorms?: Array<Vec2 & {radius:number;damage:number;due:number;surfaceId?:string}>;
   evacuationTicks?: number;
   evacuationSecured?: boolean;
   orreryOpenUntil?: number;

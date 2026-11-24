@@ -6,20 +6,20 @@ import type { MapData, MapGroundPreset } from "../game/types";
 import { createGroundShaderMaterial, isShaderGroundPreset } from "./groundShader";
 
 describe("authored map ground materials", () => {
-  it("assigns all five published maps distinct supported terrain styles", () => {
+  it("assigns all published maps distinct supported terrain styles", () => {
     const presets = MAP_REGISTRY.map(({ url }) => {
       const map = JSON.parse(readFileSync(`public${url}`, "utf8")) as MapData;
       return map.visual?.groundPreset;
     });
-    expect(presets).toHaveLength(5);
-    expect(new Set(presets).size).toBe(5);
+    expect(presets).toHaveLength(MAP_REGISTRY.length);
+    expect(new Set(presets).size).toBe(presets.length);
     expect(presets.every((preset) => isShaderGroundPreset(preset))).toBe(true);
     expect(isShaderGroundPreset("solid")).toBe(false);
     expect(isShaderGroundPreset(undefined)).toBe(false);
   });
 
   it("keeps style values finite, distinct and bounded below combat highlights", () => {
-    const presets: MapGroundPreset[] = ["ember_wastes", "forge_slag", "cinder_field", "glacier_grid", "mesa_band"];
+    const presets: MapGroundPreset[] = ["ember_wastes", "forge_slag", "cinder_field", "glacier_grid", "mesa_band", "abbey_silt", "root_basalt", "orrery_snow"];
     const signatures = new Set<string>();
     for (const preset of presets) {
       if (!isShaderGroundPreset(preset)) throw new Error(`Unsupported test preset ${preset}`);

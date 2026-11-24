@@ -1,4 +1,4 @@
-import { sameSurface, updateSurface } from "../../surfaces";
+import { containsSurface, sameSurface, updateSurface } from "../../surfaces";
 import {
   FORMATION_ASSEMBLY_CATCHUP_MULT,
   FORMATION_ASSEMBLY_TICKS,
@@ -360,7 +360,7 @@ function applyUnitSeparation(s: GameState, structureObstacles: MapObstacleFootpr
           const cell = buckets.get(`${gx + ox},${gz + oz}`);
           if (!cell) continue;
           for (const o of cell) {
-            if (o.id <= u.id) continue;
+            if (o.id <= u.id || o.surfaceId !== u.surfaceId) continue;
             const ro = unitSeparationRadiusXZ(o.sizeClass, o.flying);
             const minD = ru + ro;
             let dx = o.x - u.x;
@@ -555,7 +555,7 @@ export function movement(s: GameState): void {
   const half = s.map.world.halfExtents;
   const structureObstacles = structureObstacleFootprints(s);
   const stepU = (u: UnitRuntime) =>
-    u.speedPerSec *
+    (u.pendingStrike ? 0 : u.speedPerSec) *
     stepScale *
     tacticsFieldSpeedMult(s, u.team, u.x, u.z) *
     unitSpellStatusSpeedMult(u) *
@@ -627,6 +627,17 @@ export function movement(s: GameState): void {
         ? nearestEnemyUnit(s, u, playerAcquireRadius(half, u.range) ** 2)
         : null;
       const formation = activeFormationMarch(s, u);
+      if (formation && foe && s.map.surfaces?.length) {
+        const width = s.map.surfaces.find(deck => containsSurface(deck, {x:formation.anchorX,z:formation.anchorZ}))?.width;
+        const dx = u.order.formationOffsetX ?? 0;
+        const dz = u.order.formationOffsetZ ?? 0;
+        const side = width ? Math.max(-width*.38,Math.min(width*.38,dz)) : dz;
+        const slot = {x:formation.anchorX+dx,z:formation.anchorZ+side};
+        if (formation.kind==="arc" && dist2(foe,slot)<u.range*u.range) {
+          clampToWorldAndObstacles(s,u,structureObstacles);
+        } else moveUnitOnPath(s,u,slot,stepU(u),structureObstacles);
+        continue;
+      }
       if (formation && foe) {
         clearFormationMarch(s, formation.id);
       }

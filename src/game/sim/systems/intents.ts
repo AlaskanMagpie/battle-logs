@@ -66,7 +66,7 @@ function applyRadialSpellStatus(
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     if (teams === "enemy" && u.team !== "enemy") continue;
-    if (dist2(u, center) > r2) continue;
+    if (u.surfaceId !== center.surfaceId || dist2(u, center) > r2) continue;
     applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
   }
 }
@@ -82,6 +82,7 @@ function applyRadialImpulseToEnemyUnits(
   if (radius <= 0) return;
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
+    if (u.surfaceId !== center.surfaceId) continue;
     const distance = Math.hypot(u.x - center.x, u.z - center.z);
     if (distance > radius) continue;
     const strength = minSpeed + (maxSpeed - minSpeed) * (1 - distance / radius);
@@ -101,7 +102,7 @@ function applyLineSpellStatus(
 ): void {
   for (const u of s.units) {
     if (u.team !== "enemy" || u.hp <= 0) continue;
-    if (!pointInCorridor(u.x, u.z, from.x, from.z, to.x, to.z, halfWidth)) continue;
+    if (u.surfaceId !== s.hero.surfaceId || !pointInCorridor(u.x, u.z, from.x, from.z, to.x, to.z, halfWidth)) continue;
     applyUnitSpellStatus(s, u, kind, Math.round(seconds * TICK_HZ), strength);
   }
 }
@@ -307,6 +308,7 @@ function orderPlayerUnitsFormation(
     s.formationMarches.push({
       id: groupId,
       issuedTick: s.tick,
+      kind: formationKind,
       anchorX: anchor.x,
       anchorZ: anchor.z,
       goalX: goal.x,
@@ -578,6 +580,65 @@ function corridorKnockNormal(
   return { nx, nz };
 }
 
+type FireImpact = NonNullable<GameState["pendingFirestorms"]>[number];
+export function resolveDueFirestorms(s: GameState): void {
+  if (!s.pendingFirestorms?.length) return;
+  for (const impact of s.pendingFirestorms) if (impact.due <= s.tick) resolveFirestorm(s,impact);
+  s.pendingFirestorms = s.pendingFirestorms.filter(impact => impact.due > s.tick);
+}
+function resolveFirestorm(s: GameState, impact: FireImpact): void {
+  const pos = impact;
+      const r = impact.radius;
+      const r2 = r * r;
+      for (const u of s.units) {
+        if (u.team !== "enemy" || u.hp <= 0) continue;
+        if (u.surfaceId !== impact.surfaceId || dist2(u, pos) > r2) continue;
+        damageEnemyUnitFromCommand(s, u, impact.damage);
+        applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
+        applyUnitSpellStatus(s, u, "winded", Math.round(1.2 * TICK_HZ), 0.5);
+      }
+      for (const er of s.enemyRelays) {
+        if (er.hp <= 0) continue;
+        if (!impact.surfaceId && dist2(er, pos) <= r2) {
+          const dd = impact.damage * 0.5;
+          er.hp -= dd;
+          recordDamageDealtBy(s, "player", dd);
+        }
+      }
+
+      applyRadialSpellStatus(s, pos, impact.radius, "winded", 2.3, 0.54);
+      applyRadialImpulseToEnemyUnits(s, pos, impact.radius * 1.08, SPELL_KNOCKBACK_SPEED * 1.36, SPELL_AOE_KNOCKBACK);
+
+      emitFx(s, "lightning", pos);
+      pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: pos.x,
+        z: pos.z,
+        element: "fire",
+        shape: "meteor",
+        impactRadius: r,
+        visualSeed: s.tick,
+      });
+      pushFx(s, {
+        kind: "elemental_spell",
+        x: pos.x,
+        z: pos.z,
+        element: "fire",
+        shape: "aoe",
+        impactRadius: r,
+        visualSeed: s.tick + 31,
+      });
+      pushFx(s, {
+        kind: "combat_boom",
+        x: pos.x,
+        z: pos.z,
+        impactRadius: r,
+        rangeBand: classifyAttackRangeBand(r),
+      });
+      s.lastMessage = `Firestorm detonated.`;
+}
+
 function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
   if (!DOCTRINE_COMMANDS_ENABLED) return;
   const id = s.doctrineSlotCatalogIds[slotIdx] ?? null;
@@ -602,7 +663,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       let hits = 0;
       for (const u of s.units) {
         if (u.team !== "enemy" || u.hp <= 0) continue;
-        if (!pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
+        if (u.surfaceId !== s.hero.surfaceId || !pointInCorridor(u.x, u.z, hx, hz, ex, ez, hw)) continue;
         damageEnemyUnitFromCommand(s, u, fx.damage);
         const { nx, nz } = corridorKnockNormal(u.x, u.z, hx, hz, ex, ez);
         applyAttackImpulse(u, { x: u.x - nx, z: u.z - nz }, SPELL_KNOCKBACK_SPEED);
@@ -624,7 +685,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       }
       for (const t of s.taps) {
         if (!t.active || t.ownerTeam !== "enemy" || (t.anchorHp ?? 0) <= 0) continue;
-        if (!pointInCorridor(t.x, t.z, hx, hz, ex, ez, hw)) continue;
+        if (t.surfaceId !== s.hero.surfaceId || !pointInCorridor(t.x, t.z, hx, hz, ex, ez, hw)) continue;
         const tapDmg = fx.damage * 0.55;
         t.anchorHp = Math.max(0, (t.anchorHp ?? 0) - tapDmg);
         recordDamageDealtBy(s, "player", tapDmg);
@@ -665,55 +726,11 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       return;
     }
     case "aoe_damage": {
-      const r = fx.radius;
-      const r2 = r * r;
-      for (const u of s.units) {
-        if (u.team !== "enemy" || u.hp <= 0) continue;
-        if (dist2(u, pos) > r2) continue;
-        damageEnemyUnitFromCommand(s, u, fx.damage);
-        applyUnitSpellStatus(s, u, "burning", Math.round(2.1 * TICK_HZ), 0.72);
-        applyUnitSpellStatus(s, u, "winded", Math.round(1.2 * TICK_HZ), 0.5);
-      }
-      for (const er of s.enemyRelays) {
-        if (er.hp <= 0) continue;
-        if (dist2(er, pos) <= r2) {
-          const dd = fx.damage * 0.5;
-          er.hp -= dd;
-          recordDamageDealtBy(s, "player", dd);
-        }
-      }
-      s.hero.spellFacingToward = { x: pos.x, z: pos.z };
-      applyRadialSpellStatus(s, pos, fx.radius, "winded", 2.3, 0.54);
-      applyRadialImpulseToEnemyUnits(s, pos, fx.radius * 1.08, SPELL_KNOCKBACK_SPEED * 1.36, SPELL_AOE_KNOCKBACK);
-      consumeCommandSlot(s, slotIdx, cmd);
-      emitFx(s, "lightning", pos);
-      pushFx(s, { kind: "firestorm", x: pos.x, z: pos.z, impactRadius: r });
-      pushFx(s, {
-        kind: "elemental_spell",
-        x: pos.x,
-        z: pos.z,
-        element: "fire",
-        shape: "meteor",
-        impactRadius: r,
-        visualSeed: s.tick,
-      });
-      pushFx(s, {
-        kind: "elemental_spell",
-        x: pos.x,
-        z: pos.z,
-        element: "fire",
-        shape: "aoe",
-        impactRadius: r,
-        visualSeed: s.tick + 31,
-      });
-      pushFx(s, {
-        kind: "combat_boom",
-        x: pos.x,
-        z: pos.z,
-        impactRadius: r,
-        rangeBand: classifyAttackRangeBand(r),
-      });
-      s.lastMessage = `${cmd.name} detonated.`;
+      const impact = { ...pos, radius:fx.radius, damage:fx.damage, due:s.tick+10, surfaceId:pos.surfaceId };
+      consumeCommandSlot(s,slotIdx,cmd);
+      s.hero.spellFacingToward = {...pos};
+      if (s.map.surfaces?.length) (s.pendingFirestorms ??= []).push(impact);
+      else resolveFirestorm(s,impact);
       return;
     }
     case "aoe_tactics_field": {
@@ -845,6 +862,7 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
           const sid = Number(bestKey.slice(2));
           const st = s.structures.find((x) => x.id === sid);
           if (st) {
+            st.productionSilenceUntilTick = Math.max(st.productionSilenceUntilTick,s.tick + Math.round(fx.silenceSeconds*TICK_HZ));
             st.hp -= dmg;
             recordDamageDealtBy(s, "player", dmg);
           }

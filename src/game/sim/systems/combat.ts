@@ -18,6 +18,7 @@ import {
 import { enemyAttackSpeedScalar } from "../../difficulty";
 import { structureObstacleRadius } from "../../structureObstacles";
 import {
+  pushFx,
   classifyAttackRangeBand,
   liveSquadCount,
   recordDamageDealtBy,
@@ -67,7 +68,7 @@ function tickAttackCooldowns(units: UnitRuntime[]): void {
 }
 
 function attackReady(u: UnitRuntime): boolean {
-  return (u.attackCooldownTicksRemaining ?? 0) <= 0;
+  return !u.pendingStrike && (u.attackCooldownTicksRemaining ?? 0) <= 0;
 }
 
 function commitAttack(s: GameState, u: UnitRuntime): void {
@@ -163,6 +164,49 @@ function pushAttackMark(
   });
 }
 
+function beginMarkedStrike(s: GameState, u: UnitRuntime, victim: Vec2 & {surfaceId?:string}): boolean {
+  const ember = u.producerCatalogId === "emberroot_bastion";
+  if (!ember && u.producedUnitId !== "amber_geode_monks") return false;
+  const radius = ember ? 10 : 5;
+  u.pendingStrike = {x:victim.x,z:victim.z,surfaceId:victim.surfaceId,originX:u.x,originZ:u.z,
+    due:s.tick+(ember ? 17 : 10), radius, ember};
+  commitAttack(s,u);
+  return true;
+}
+
+function resolveMarkedStrikes(s: GameState, buckets: ReturnType<typeof buildCombatUnitBuckets>, markMax:number, marked:Set<number>): void {
+  for (const u of s.units) {
+    const strike=u.pendingStrike;
+    if (!strike) continue;
+    if (u.hp<=0 || Math.hypot(u.x-strike.originX,u.z-strike.originZ)>4) {
+      delete u.pendingStrike;
+      continue;
+    }
+    if (!strike.delayed && unitsNearXZ(buckets,strike.x,strike.z,null,cell,18).some(ally => ally.hp>0 && ally.team!==u.team &&
+        ally.producerCatalogId==="aionroot_observatory" && dist2(ally,strike)<=18*18 && ally.surfaceId===strike.surfaceId)) {
+      strike.due += 7;
+      strike.delayed=true;
+    }
+    if (s.tick<strike.due) continue;
+    delete u.pendingStrike;
+    const r2=strike.radius**2;
+    for(const foe of unitsNearXZ(buckets,strike.x,strike.z,u,cell,strike.radius)) {
+      if(foe.team===u.team || foe.hp<=0 || foe.surfaceId!==strike.surfaceId || dist2(foe,strike)>r2) continue;
+      applyUnitDamage(s,u,foe);
+      applyAttackImpulse(foe,strike,ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
+    }
+    const wizard=u.team==="player"?s.enemyHero:s.hero;
+    if(wizard.hp>0 && wizard.surfaceId===strike.surfaceId && dist2(wizard,strike)<=r2) {
+      const raw=attackDamageFromPerTick(u,u.dmgPerTick)*(u.team==="enemy"?.4:1)
+        * tacticsFieldOutgoingDamageMult(s,u.team,u.x,u.z) * tacticsFieldIncomingDamageMult(s,u.team==="player"?"enemy":"player",wizard.x,wizard.z);
+      wizard.hp=Math.max(0,wizard.hp-raw);
+      recordDamageDealtBy(s,u.team,raw);
+    }
+    pushAttackMark(s,u,strike,markMax,marked);
+    pushFx(s,{kind:"elemental_spell",x:strike.x,z:strike.z,element:strike.ember?"fire":"earth",shape:"impact",impactRadius:strike.radius});
+  }
+}
+
 export function combat(s: GameState): void {
   s.lastSiegeHit = null;
   s.combatHitMarks.length = 0;
@@ -172,13 +216,16 @@ export function combat(s: GameState): void {
   const markMax = combatMarkBudget(s.units.length);
   const structureRadii = new Map(s.structures.map((st) => [st.id, structureObstacleRadius(st)]));
 
+  resolveMarkedStrikes(s,buckets,markMax,markAttackers);
+
   // Unit vs unit (w/ AoE breath for units with aoeRadius).
   for (const u of s.units) {
     if (u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     const foeTeam = u.team === "player" ? "enemy" : "player";
     const best = nearestFoeInBuckets(u, foeTeam, u.range * u.range, buckets, cell);
-    if (!best) continue;
+    if (!best || best.surfaceId !== u.surfaceId) continue;
+    if (beginMarkedStrike(s,u,best)) continue;
     applyUnitDamage(s, u, best);
     applyAttackImpulse(best, u, ATTACK_IMPULSE_BY_CLASS[u.sizeClass]);
     if (u.aoeRadius && u.aoeRadius > 0) {
@@ -235,7 +282,8 @@ export function combat(s: GameState): void {
     if (u.team !== "enemy" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     if (s.hero.hp <= 0) break;
-    if (dist2(u, s.hero) <= u.range * u.range) {
+    if (u.surfaceId === s.hero.surfaceId && dist2(u, s.hero) <= u.range * u.range) {
+      if (beginMarkedStrike(s,u,s.hero)) continue;
       const raw =
         attackDamageFromPerTick(u, u.dmgPerTick) *
         0.4 *
@@ -253,7 +301,8 @@ export function combat(s: GameState): void {
     if (u.team !== "player" || u.hp <= 0) continue;
     if (!attackReady(u)) continue;
     if (s.enemyHero.hp <= 0) break;
-    if (dist2(u, s.enemyHero) <= u.range * u.range) {
+    if (u.surfaceId === s.enemyHero.surfaceId && dist2(u, s.enemyHero) <= u.range * u.range) {
+      if (beginMarkedStrike(s,u,s.enemyHero)) continue;
       const raw =
         attackDamageFromPerTick(u, u.dmgPerTick) *
         tacticsFieldOutgoingDamageMult(s, "player", u.x, u.z) *

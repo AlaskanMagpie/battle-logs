@@ -589,7 +589,7 @@ function wireDoctrineDragToMap(
       pendingIntents.push({ type: "select_doctrine_slot", index: snap.slotIndex });
       pendingIntents.push({
         type: "try_click_world",
-        pos: { x: hit.x, z: hit.z },
+        pos: { ...hit },
         shiftKey: ev.shiftKey,
         altKey: ev.altKey,
         pickedUnitId,
@@ -1429,7 +1429,7 @@ function runMatch(
         if (shouldCancelRepeatedInvalidCommandTarget(hit)) return;
         pendingIntents.push({
           type: "try_click_world",
-          pos: { x: hit.x, z: hit.z },
+          pos: { ...hit },
           shiftKey: false,
           altKey: false,
           pickedUnitId: null,
@@ -1595,7 +1595,7 @@ function runMatch(
       if (shouldCancelRepeatedInvalidCommandTarget(hit)) return;
       pendingIntents.push({
         type: "try_click_world",
-        pos: { x: hit.x, z: hit.z },
+        pos: { ...hit },
         shiftKey: ev.shiftKey,
         altKey: ev.altKey,
         pickedUnitId,
@@ -1639,7 +1639,7 @@ function runMatch(
             if (shouldCancelRepeatedInvalidCommandTarget(hit)) return;
             pendingIntents.push({
               type: "try_click_world",
-              pos: { x: hit.x, z: hit.z },
+              pos: { ...hit },
               shiftKey: ev.shiftKey,
               altKey: ev.altKey,
               pickedUnitId: null,

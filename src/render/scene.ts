@@ -1788,11 +1788,17 @@ export class GameRenderer {
     this.controls.update();
   }
 
-  pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number } | null {
+  pickGround(clientX: number, clientY: number, rect: DOMRect): { x: number; z: number; surfaceId?: string } | null {
     const x = ((clientX - rect.left) / rect.width) * 2 - 1;
     const y = -(((clientY - rect.top) / rect.height) * 2 - 1);
     this.ndc.set(x, y);
     this.raycaster.setFromCamera(this.ndc, this.camera);
+    for (const deck of this.currentState?.map.surfaces ?? []) {
+      const point = new THREE.Vector3();
+      const top = this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-deck.height),point);
+      if (top && Math.abs(top.x-deck.x) <= deck.length/2-deck.ramp && Math.abs(top.z-deck.z)<=deck.width/2)
+        return {x:top.x,z:top.z,surfaceId:deck.id};
+    }
     if (this.terrainHits.length > 0) {
       const hits = this.raycaster.intersectObjects(this.terrainHits, false);
       const p = hits[0]?.point;
@@ -1956,6 +1962,7 @@ export class GameRenderer {
     this.syncKeepMarker(state);
     this.syncStructures(state);
     this.syncUnits(state);
+    this.syncWarnings(state);
     this.syncHero(state);
     this.syncEnemyHero(state);
     this.syncHoldCubes(state);
@@ -1965,6 +1972,27 @@ export class GameRenderer {
     this.consumeCastEvents(state);
   }
 
+  private readonly warningRings: THREE.Mesh[] = [];
+  private syncWarnings(s: GameState): void {
+    let count = 0;
+    const show = (p: {x:number; z:number; radius:number; surfaceId?:string}, color:number) => {
+      let mesh = this.warningRings[count];
+      if (!mesh) {
+        mesh = new THREE.Mesh(new THREE.RingGeometry(.89,1,40),new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:.88,depthWrite:false}));
+        mesh.rotation.x=-Math.PI/2;
+        this.markers.add(mesh);
+        this.warningRings.push(mesh);
+      }
+      count++;
+      mesh.visible=true;
+      mesh.position.set(p.x,surfaceHeight(s.map,p)+.4,p.z);
+      mesh.scale.setScalar(p.radius);
+      (mesh.material as THREE.MeshBasicMaterial).color.setHex(color);
+    };
+    for(const impact of s.pendingFirestorms ?? []) show(impact,0xff943a);
+    for(const u of s.units) if(u.pendingStrike) show(u.pendingStrike,u.pendingStrike.delayed?0xa3cfff:u.pendingStrike.ember?0xff6446:0xffcb75);
+    for(let i=count;i<this.warningRings.length;i++) this.warningRings[i]!.visible=false;
+  }
   private useGlb = false;
 
   /** Snap the live refresh estimate to a standard rate for a stable target budget (sec). */
@@ -2854,6 +2882,13 @@ export class GameRenderer {
           }),
         );
         ring.rotation.x = -Math.PI / 2;
+        for(let i=0;i<4;i++) {
+          const rib=new THREE.Mesh(new THREE.ConeGeometry(.075,.22,5),new THREE.MeshStandardMaterial({color:0xa6c8b4}));
+          const angle=i*Math.PI/2;
+          rib.position.set(.94*Math.cos(angle),.94*Math.sin(angle),.09);
+          rib.rotation.x=Math.PI/2;
+          ring.add(rib);
+        }
         ring.position.y = 0.072;
         this.markers.add(ring);
         this.tacticsFieldRings.set(key, ring);
@@ -3097,6 +3132,21 @@ export class GameRenderer {
       });
 
       const dims = structureDims(structEntry);
+      if (st.catalogId === "emberroot_bastion" || st.catalogId === "aionroot_observatory") {
+        const ember = st.catalogId === "emberroot_bastion";
+        let crown = g.getObjectByName("production-crown") as THREE.Mesh | undefined;
+        if (!crown) {
+          crown = new THREE.Mesh(new THREE.TorusGeometry(Math.max(1,dims.h*.23),.2,5,30), new THREE.MeshBasicMaterial({color:ember?0xfe803c:0x86d7fd}));
+          crown.name = "production-crown";
+          crown.position.y = dims.h*.85;
+          g.add(crown);
+        }
+        const paused = st.productionSilenceUntilTick > state.tick;
+        const charge = 1-st.productionTicksRemaining/Math.max(1,(structEntry?.productionSeconds ?? 1)*TICK_HZ);
+        crown.rotation.set(ember?Math.PI/2:charge*Math.PI,0,ember?0:charge*Math.PI*2);
+        crown.scale.setScalar(.65+.35*Math.max(0,Math.min(1,charge)));
+        (crown.material as THREE.MeshBasicMaterial).color.setHex(paused?0x65587a:ember?0xfe803c:0x86d7fd);
+      }
       const fg = st.team === "player" ? 0x7ec8ff : 0xff8a7a;
       const pair = this.ensureHpBarPair(g, "st", dims.h * buildT + 0.9 * STRUCTURE_MESH_VISUAL_SCALE, fg);
       this.setHpBarFrac(pair, st.maxHp > 0 ? st.hp / st.maxHp : 0);

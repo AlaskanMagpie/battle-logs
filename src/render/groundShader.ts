@@ -100,6 +100,19 @@ const PRESETS: Record<
     seamStrength: 0.23,
     seamGlow: 0.055,
   },
+  root_basalt: {
+    colorA: new THREE.Vector3(.09,.055,.05),
+    colorB: new THREE.Vector3(.24,.13,.12),
+    colorC: new THREE.Vector3(.42,.23,.16),
+    accent: new THREE.Vector3(.99,.38,.07),
+    flow: new THREE.Vector2(0.86, 0.51),
+    noiseScale: 0.045,
+    strataScale: 0.09,
+    crackScale: 0.15,
+    bandStrength: 0.18,
+    seamStrength: 0.65,
+    seamGlow: 0.2,
+  },
   forge_slag: {
     colorA: new THREE.Vector3(0.075, 0.071, 0.071),
     colorB: new THREE.Vector3(0.23, 0.135, 0.095),
@@ -126,6 +139,19 @@ const PRESETS: Record<
     seamStrength: 0.16,
     seamGlow: 0.05,
   },
+  orrery_snow: {
+    colorA: new THREE.Vector3(.11,.16,.22),
+    colorB: new THREE.Vector3(.29,.37,.46),
+    colorC: new THREE.Vector3(.49,.54,.58),
+    accent: new THREE.Vector3(.88,.77,.48),
+    flow: new THREE.Vector2(0.68, 0.73),
+    noiseScale: 0.037,
+    strataScale: 0.052,
+    crackScale: 0.11,
+    bandStrength: 0.27,
+    seamStrength: 0.45,
+    seamGlow: 0.04,
+  },
   glacier_grid: {
     colorA: new THREE.Vector3(0.075, 0.145, 0.195),
     colorB: new THREE.Vector3(0.2, 0.34, 0.42),
@@ -138,6 +164,19 @@ const PRESETS: Record<
     bandStrength: 0.27,
     seamStrength: 0.45,
     seamGlow: 0.04,
+  },
+  abbey_silt: {
+    colorA: new THREE.Vector3(.07,.12,.11),
+    colorB: new THREE.Vector3(.20,.29,.25),
+    colorC: new THREE.Vector3(.35,.42,.33),
+    accent: new THREE.Vector3(.23,.49,.44),
+    flow: new THREE.Vector2(0.98, -0.2),
+    noiseScale: 0.034,
+    strataScale: 0.07,
+    crackScale: 0.065,
+    bandStrength: 0.8,
+    seamStrength: 0.15,
+    seamGlow: 0.025,
   },
   mesa_band: {
     colorA: new THREE.Vector3(0.18, 0.12, 0.08),
@@ -178,5 +217,5 @@ export function createGroundShaderMaterial(preset: Exclude<MapGroundPreset, "sol
 }
 
 export function isShaderGroundPreset(p: MapGroundPreset | undefined): p is Exclude<MapGroundPreset, "solid"> {
-  return p === "ember_wastes" || p === "forge_slag" || p === "cinder_field" || p === "glacier_grid" || p === "mesa_band";
+  return p !== undefined && Object.hasOwn(PRESETS,p);
 }

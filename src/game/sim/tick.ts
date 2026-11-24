@@ -8,7 +8,7 @@ import { cleanupDead } from "./systems/deaths";
 import { economy, salvageTrickle, tickDoctrineCooldowns } from "./systems/economy";
 import { enemyHeroSystem } from "./systems/enemyHero";
 import { heroSystem } from "./systems/hero";
-import { applyPlayerIntents } from "./systems/intents";
+import { applyPlayerIntents, resolveDueFirestorms } from "./systems/intents";
 import { portals } from "./systems/portals";
 import { buildProgress, production } from "./systems/production";
 import { survivalHordeDirector } from "./systems/survival";
@@ -43,6 +43,7 @@ export function advanceTick(s: GameState, intents: PlayerIntent[]): void {
   movement(s);
   advanceWorldObjectives(s);
   portals(s);
+  resolveDueFirestorms(s);
   combat(s);
   cleanupDead(s);
   respawnDeadHeroAtKeep(s);

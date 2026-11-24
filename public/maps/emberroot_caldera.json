@@ -7,7 +7,7 @@
   },
   "useAuthorTapSlots": true,
   "visual": {
-    "groundPreset": "forge_slag",
+    "groundPreset": "root_basalt",
     "skyHex": 15185563,
     "sunHex": 16757876
   },

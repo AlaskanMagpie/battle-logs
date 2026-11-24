@@ -10,6 +10,7 @@ export type DoctrineEntryKind = "structure" | "command";
 export type GamePhase = "playing" | "win" | "lose";
 
 export interface Vec2 {
+  surfaceId?: string;
   x: number;
   z: number;
 }
@@ -109,7 +110,7 @@ export type MapDecorDef =
     } & MapDecorBlock);
 
 /** Ground appearance for the default plane (ignored when `terrainGlbUrl` loads). */
-export type MapGroundPreset = "solid" | "ember_wastes" | "forge_slag" | "cinder_field" | "glacier_grid" | "mesa_band";
+export type MapGroundPreset = "solid" | "ember_wastes" | "forge_slag" | "cinder_field" | "glacier_grid" | "mesa_band" | "abbey_silt" | "root_basalt" | "orrery_snow";
 
 export interface MapVisualSettings {
   groundPreset?: MapGroundPreset;
