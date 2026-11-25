@@ -445,6 +445,7 @@ function tryPlaceStructure(
     catalogId,
     x: pos.x,
     z: pos.z,
+    surfaceId: pos.surfaceId,
     hp: hp0,
     maxHp: hp0,
     buildTicksRemaining: buildTicks,
@@ -731,12 +732,16 @@ function tryCastCommand(s: GameState, pos: Vec2, slotIdx: number): void {
       const impact = { ...pos, radius:fx.radius, damage:fx.damage, due:s.tick+10, surfaceId:pos.surfaceId };
       consumeCommandSlot(s,slotIdx,cmd);
       s.hero.spellFacingToward = {...pos};
-      if (s.map.surfaces?.length) (s.pendingFirestorms ??= []).push(impact);
+      if (s.map.surfaces?.length) {
+        (s.pendingFirestorms ??= []).push(impact);
+        s.fxQueue.push({ kind: "battle_cue", cue: "fire_warning", x: pos.x, z: pos.z, tick: s.tick });
+      }
       else resolveFirestorm(s,impact);
       return;
     }
     case "aoe_tactics_field": {
       s.tacticsFieldZones.push({
+        surfaceId: pos.surfaceId,
         x: pos.x,
         z: pos.z,
         radius: fx.radius,

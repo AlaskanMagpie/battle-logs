@@ -223,9 +223,9 @@ function syncCameraFollowUi(root: HTMLElement, follow: boolean): void {
   btn.setAttribute("aria-pressed", follow ? "true" : "false");
 }
 
-function bindReplayDebugGlobals(getReplay: () => ReplayCapture): void {
+function bindReplayDebugGlobals(getReplay: () => ReplayCapture | import("./net/networkReplay").NetworkReplay): void {
   const w = window as Window & {
-    __signalWarsReplay?: ReplayCapture;
+    __signalWarsReplay?: ReturnType<typeof getReplay>;
     __signalWarsReplayJson?: () => string;
   };
   w.__signalWarsReplay = getReplay();
@@ -817,12 +817,14 @@ function runMatch(
     } else if (resolvedLaunch.mode === "pve_survival") {
       state.lastMessage = "Survival: central base online. Claim nodes, build outward, and hold as the horde ramps for 10 minutes.";
     }
+    let networkReplay: import("./net/networkReplay").NetworkReplay | undefined;
     let onlineSession: OnlineMatchSession | null = null;
     if (resolvedLaunch.mode === "pvp") {
       const room = getActiveBattleRoom();
       if (room) {
         onlineSession = attachOnlineMatchRoom(room, {
           matchId: resolvedLaunch.matchId,
+          onReplay: (capture) => {networkReplay=capture; bindReplayDebugGlobals(()=>capture);},
           onSnapshot: (snapshot) => {
             if (snapshot.world) {
               const effects = [...state.fxQueue, ...snapshot.world.fxQueue];
@@ -1859,7 +1861,7 @@ function runMatch(
       }
     }, { signal });
 
-    bindReplayDebugGlobals(() => replay);
+    bindReplayDebugGlobals(() => networkReplay ?? replay);
     rafId = requestAnimationFrame(tick);
   })().catch((e) => {
     // eslint-disable-next-line no-console

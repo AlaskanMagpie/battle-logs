@@ -19,6 +19,7 @@ export const MATCH_HELP_INNER_HTML = `
   <div class="hud-help-item"><kbd>MMB</kbd> drag pan · <kbd>Shift</kbd>+<kbd>MMB</kbd> orbit · <kbd>C</kbd> follow wizard · <kbd>Z</kbd> battle cam</div>
   <div class="hud-help-item"><kbd>LMB</kbd> select troop · drag <strong>card</strong> to map to build</div>
   <div class="hud-help-item"><kbd>V</kbd> formation · <kbd>Shift</kbd>+<kbd>RMB</kbd> queue/wide · <kbd>Alt</kbd>+<kbd>RMB</kbd> attack-move · <kbd>R</kbd> rally · <kbd>G</kbd> stance</div>
+  <button type="button" data-battle-audio>Toggle battle sound</button>
   <div class="hud-help-item"><kbd>Shift</kbd>+tower <span class="hud-help-muted">Muster</span> · <kbd>Alt</kbd>+tower Hold</div>
 </div>
 `.trim();

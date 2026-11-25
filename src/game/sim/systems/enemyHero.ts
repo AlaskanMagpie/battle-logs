@@ -71,7 +71,7 @@ function moveEnemyHeroToward(s: GameState): void {
     return;
   }
   h.facing = Math.atan2(dx, dz);
-  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "enemy", h.x, h.z);
+  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "enemy", h.x, h.z, h.surfaceId);
   if (len <= step) {
     h.x = h.targetX;
     h.z = h.targetZ;

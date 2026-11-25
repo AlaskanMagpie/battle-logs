@@ -557,7 +557,7 @@ export function movement(s: GameState, pass: "all" | "firstSeat" | "secondSeat" 
   const stepU = (u: UnitRuntime) =>
     (u.pendingStrike ? 0 : u.speedPerSec) *
     stepScale *
-    tacticsFieldSpeedMult(s, u.team, u.x, u.z) *
+    tacticsFieldSpeedMult(s, u.team, u.x, u.z, u.surfaceId) *
     unitSpellStatusSpeedMult(u) *
     UNIT_MOVEMENT_SPEED_SCALE;
 

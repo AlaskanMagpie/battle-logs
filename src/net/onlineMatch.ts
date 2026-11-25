@@ -1,4 +1,5 @@
 import type { Room } from "@colyseus/sdk";
+import type { NetworkReplay } from "./networkReplay";
 import type { PlayerIntent } from "../game/intents";
 import { MULTIPLAYER_PROTOCOL_VERSION, type NetworkGameSnapshot, type SeatIntentBatch } from "./protocol";
 
@@ -84,6 +85,7 @@ export interface OnlineMatchSession {
 export function attachOnlineMatchRoom(
   room: Room,
   handlers: {
+    onReplay?: (replay: NetworkReplay) => void;
     onSnapshot?: (snapshot: NetworkGameSnapshot) => void;
     onOpponentAiTakeover?: (seat: string) => void;
     onInvalidMessage?: (reason: string) => void;
@@ -106,6 +108,7 @@ export function attachOnlineMatchRoom(
   const lifecycleHandler = (payload: { event?: string }): void => {
     handlers.onLifecycle?.(payload.event ?? "unknown", payload);
   };
+  room.onMessage("network_replay",(replay:NetworkReplay)=>handlers.onReplay?.(replay));
   room.onMessage("snapshot", snapshotHandler);
   room.onMessage("opponent_ai_takeover", takeoverHandler);
   room.onMessage("invalid_message", invalidHandler);

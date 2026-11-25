@@ -1,3 +1,4 @@
+import { BattleAudio } from "./battleAudio";
 import { buildWorldLandmark } from "./brokenWorlds";
 import { sameSurface, surfaceHeight } from "../game/surfaces";
 import * as THREE from "three";
@@ -973,6 +974,7 @@ function buildUnitMesh(signal: SignalType | undefined, team: "player" | "enemy",
 }
 
 export class GameRenderer {
+  private battleAudio = new BattleAudio();
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
@@ -1364,6 +1366,7 @@ export class GameRenderer {
   }
 
   dispose(): void {
+    this.battleAudio.dispose();
     this.rendererDisposed = true;
     this.heroLocomotionPrev = { x: 0, z: 0, valid: false };
     this.enemyHeroLocomotionPrev = { x: 0, z: 0, valid: false };
@@ -2097,6 +2100,8 @@ export class GameRenderer {
     const q = state.fxQueue;
     if (q.length > 0) {
       for (const fxEvt of q) {
+        this.battleAudio.play(fxEvt);
+        if (fxEvt.kind === "battle_cue") continue;
         const boltFrom =
           fxEvt.fromX !== undefined && fxEvt.fromZ !== undefined
             ? { from: { x: fxEvt.fromX, z: fxEvt.fromZ } }
@@ -2643,9 +2648,10 @@ export class GameRenderer {
 
         let ringColor = 0xc1ccd8;
         if (contested) ringColor = 0xffd36a;
+        else if (t.shattered) ringColor = 0xe09a61;
+        else if (t.active && t.yieldRemaining <= 0) ringColor = 0x7d8895;
         else if (t.active && t.ownerTeam === "player") ringColor = 0x54c7ff;
         else if (t.active && t.ownerTeam === "enemy") ringColor = 0xff6b6b;
-        else if (t.active && t.yieldRemaining <= 0) ringColor = 0x7d8895;
         else if (enemyChanneling) ringColor = 0xff8a8a;
         else if (playerChanneling) ringColor = 0x6ae1ff;
         else if (playerTerritory && !enemyTerritory) ringColor = 0x54c7ff;
@@ -2711,7 +2717,7 @@ export class GameRenderer {
           this.markers.add(label.sprite);
           this.tapLabels.set(t.defId, label);
         }
-        const text = depleted ? (claimedByPlayer ? "Your anchor · exhausted" : "Enemy anchor · exhausted") : contested ? "Contested Mana" : "Claim Mana node";
+        const text = depleted ? (claimedByPlayer ? "Your anchor · exhausted" : "Enemy anchor · exhausted") : contested ? "Contested Mana" : t.shattered ? "Shattered · reclaim" : "Claim Mana node";
         const accent = depleted ? "#8a96a6" : contested ? "#ffd36a" : "#6ae1ff";
         drawLabel(label, text, accent);
         label.sprite.position.set(t.x, surfaceHeight(state.map,t) + Math.max(5.2, claimR * 0.45 + 3.8), t.z);
@@ -2922,7 +2928,7 @@ export class GameRenderer {
         this.tacticsFieldRings.set(key, ring);
       }
       const lifeFrac = Math.max(0, Math.min(1, (zf.untilTick - state.tick) / Math.max(1, 14 * TICK_HZ)));
-      ring.position.set(zf.x, 0.072, zf.z);
+      ring.position.set(zf.x, surfaceHeight(state.map, zf) + 0.072, zf.z);
       ring.scale.setScalar(Math.max(1, zf.radius));
       const mat = ring.material as THREE.MeshBasicMaterial;
       mat.opacity = 0.16 + lifeFrac * 0.24;

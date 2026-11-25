@@ -169,6 +169,7 @@ export function buildProgress(s: GameState): void {
     st.buildTicksRemaining -= 1;
     if (st.buildTicksRemaining <= 0) {
       st.complete = true;
+      s.fxQueue.push({kind:"battle_cue", cue:"tower_complete", x:st.x, z:st.z, tick:s.tick});
       st.buildTicksRemaining = 0;
       const def = getCatalogEntry(st.catalogId);
       if (def && isStructureEntry(def) && typeof def.structureLocalPopCapBonus === "number") {
@@ -188,6 +189,9 @@ export function production(s: GameState): void {
     if (st.team !== "player") continue;
     if (!st.complete) continue;
     if (st.productionSilenceUntilTick > s.tick) continue;
+    if (s.tick > 0 && st.productionSilenceUntilTick === s.tick) {
+      s.fxQueue.push({kind:"battle_cue", cue:"producer_restart", x:st.x, z:st.z, tick:s.tick});
+    }
     const def = getCatalogEntry(st.catalogId);
     if (!def || !isStructureEntry(def)) continue;
     st.productionTicksRemaining -= 1;
@@ -206,6 +210,9 @@ export function production(s: GameState): void {
     if (st.team !== "enemy") continue;
     if (!st.complete) continue;
     if (st.productionSilenceUntilTick > s.tick) continue;
+    if (s.tick > 0 && st.productionSilenceUntilTick === s.tick) {
+      s.fxQueue.push({kind:"battle_cue", cue:"producer_restart", x:st.x, z:st.z, tick:s.tick});
+    }
     const def = getCatalogEntry(st.catalogId);
     if (!def || !isStructureEntry(def)) continue;
     st.productionTicksRemaining -= 1;

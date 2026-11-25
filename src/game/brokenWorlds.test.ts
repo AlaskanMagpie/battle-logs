@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chapters, expeditionMap, expeditionSave, finishChapter, startExpedition } from "./expedition";
-import { createInitialState, armTapClaimAnchor, shatterTapAnchor, inPlayerTerritory, wizardTier } from "./state";
+import { createInitialState, armTapClaimAnchor, shatterTapAnchor, inPlayerTerritory, tacticsFieldSpeedMult, tacticsFieldIncomingDamageMult, wizardTier } from "./state";
 import { advanceWorldObjectives, updateSurface } from "./surfaces";
 import { applyPlayerIntents } from "./sim/systems/intents";
 import { economy } from "./sim/systems/economy";
@@ -16,6 +16,35 @@ function map(chapter: number): MapData {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Broken Worlds expedition", () => {
+  it("keeps Fortify on its own deck through entry, exit and expiry", () => {
+    const state = createInitialState(map(0), []);
+    const deck = state.map.surfaces![0].id;
+    state.tacticsFieldZones.push({
+      x: 0, z: 0, surfaceId: deck, radius: 10, untilTick: 5,
+      allySpeedMult: 1.2, enemySpeedMult: 0.8, allyDamageMult: 1.2,
+      enemyDamageMult: 0.9, allyIncomingDamageMult: 0.8, enemyIncomingDamageMult: 1.1,
+    });
+    expect(tacticsFieldSpeedMult(state, "player", 0, 0)).toBe(1);
+    expect(tacticsFieldSpeedMult(state, "player", 10, 0, deck)).toBe(1.2);
+    expect(tacticsFieldSpeedMult(state, "enemy", 10.1, 0, deck)).toBe(1);
+    expect(tacticsFieldIncomingDamageMult(state, "enemy", 0, 0, deck)).toBe(1.1);
+    state.tick = 5;
+    expect(tacticsFieldSpeedMult(state, "player", 0, 0, deck)).toBe(1);
+  });
+  it("reports an anchor breaking once and clears the shattered marker on rearm", () => {
+    const state = createInitialState(map(0), []);
+    const tap = state.taps[0];
+    Object.assign(tap, { active: true, ownerTeam: "player" });
+    shatterTapAnchor(state, tap);
+    shatterTapAnchor(state, tap);
+    expect(tap.shattered).toBe(true);
+    expect(state.fxQueue.filter(event => event.cue === "anchor_break")).toEqual([
+      {kind:"battle_cue", cue:"anchor_break", x:tap.x, z:tap.z, tick:state.tick},
+    ]);
+    armTapClaimAnchor(tap);
+    expect(tap.shattered).toBeUndefined();
+    expect(tap.anchorHp).toBe(200);
+  });
   it.each([true,false])("carries the evacuation decision (%s) through both reloads and resets after the ending", rescued => {
     const saved = new Map<string,string>();
     vi.stubGlobal("localStorage", {

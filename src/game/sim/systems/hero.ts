@@ -105,7 +105,7 @@ function moveHeroToward(s: GameState): void {
     return;
   }
   h.facing = Math.atan2(dx, dz);
-  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
+  const step = (h.speedPerSec / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z, h.surfaceId);
   if (len <= step) {
     h.x = h.targetX;
     h.z = h.targetZ;
@@ -132,7 +132,7 @@ function applyWasd(s: GameState): boolean {
   dx /= len;
   dz /= len;
   h.facing = Math.atan2(dx, dz);
-  const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z);
+  const step = (HERO_WASD_SPEED / TICK_HZ) * tacticsFieldSpeedMult(s, "player", h.x, h.z, h.surfaceId);
   h.x += dx * step;
   h.z += dz * step;
   const half = s.map.world.halfExtents;
@@ -415,6 +415,7 @@ export function respawnDeadHeroAtKeep(s: GameState): void {
   const keep = findKeep(s);
   if (!keep) return;
   h.hp = h.maxHp;
+  h.surfaceId = keep.surfaceId;
   const pos = heroStandPositionNearKeepAnchor({ x: keep.x, z: keep.z }, s.map, "player");
   h.x = pos.x;
   h.z = pos.z;

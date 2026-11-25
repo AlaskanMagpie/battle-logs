@@ -112,7 +112,8 @@ export type HeroStrikeFxVariant =
   | "rival_vs_keep";
 
 export interface CastFxEvent {
-  kind: CastFxKind;
+  kind: CastFxKind | "battle_cue";
+  cue?: "anchor_break" | "heavy_windup" | "tower_complete" | "producer_restart" | "fire_warning";
   x: number;
   z: number;
   tick: number;
@@ -172,6 +173,7 @@ export function emitHeroStrikeFx(
 export type ArmyStance = "offense" | "defense";
 
 export interface TapRuntime {
+  shattered?: boolean;
   surfaceId?: string;
   defId: string;
   x: number;
@@ -191,6 +193,7 @@ export interface TapRuntime {
 
 /** Instantly spawn full anchor HP when a wizard finishes claiming a node. */
 export function armTapClaimAnchor(tap: TapRuntime): void {
+  delete tap.shattered;
   tap.anchorMaxHp = TAP_ANCHOR_MAX_HP;
   tap.anchorHp = TAP_ANCHOR_MAX_HP;
 }
@@ -199,6 +202,8 @@ export function armTapClaimAnchor(tap: TapRuntime): void {
 export function shatterTapAnchor(s: GameState, tap: TapRuntime): void {
   if (!tap.active) return;
   const wasPlayer = tap.ownerTeam === "player";
+  tap.shattered = true;
+  s.fxQueue.push({ kind: "battle_cue", cue: "anchor_break", x: tap.x, z: tap.z, tick: s.tick });
   tap.active = false;
   tap.ownerTeam = undefined;
   tap.anchorHp = undefined;
@@ -253,6 +258,7 @@ export interface EnemyRelayRuntime {
 }
 
 export interface StructureRuntime {
+  surfaceId?: string;
   id: number;
   team: TeamId;
   catalogId: string;
@@ -424,6 +430,7 @@ export function recordDamageDealtBy(s: GameState, attackerTeam: TeamId, amount: 
 
 /** Player Fortify (and similar): persistent ground zone that buffs allies and debuffs enemies. */
 export interface TacticsFieldZone {
+  surfaceId?: string;
   x: number;
   z: number;
   radius: number;
@@ -565,10 +572,10 @@ function inTacticsFieldAt(zf: TacticsFieldZone, x: number, z: number, tick: numb
 }
 
 /** Movement speed multiplier from active tactics fields at (x,z). */
-export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: number): number {
+export function tacticsFieldSpeedMult(s: GameState, team: TeamId, x: number, z: number, surfaceId?: string): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (zf.surfaceId !== surfaceId || !inTacticsFieldAt(zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allySpeedMult;
     else m *= zf.enemySpeedMult;
   }
@@ -615,10 +622,10 @@ export function unitSpellStatusSpeedMult(u: UnitRuntime): number {
 }
 
 /** Outgoing attack damage multiplier for a team at (x,z). */
-export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
+export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: number, z: number, surfaceId?: string): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (zf.surfaceId !== surfaceId || !inTacticsFieldAt(zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyDamageMult;
     else m *= zf.enemyDamageMult;
   }
@@ -626,10 +633,10 @@ export function tacticsFieldOutgoingDamageMult(s: GameState, team: TeamId, x: nu
 }
 
 /** Incoming damage multiplier for a team at (x,z) (lower = tougher). */
-export function tacticsFieldIncomingDamageMult(s: GameState, team: TeamId, x: number, z: number): number {
+export function tacticsFieldIncomingDamageMult(s: GameState, team: TeamId, x: number, z: number, surfaceId?: string): number {
   let m = 1;
   for (const zf of s.tacticsFieldZones) {
-    if (!inTacticsFieldAt(zf, x, z, s.tick)) continue;
+    if (zf.surfaceId !== surfaceId || !inTacticsFieldAt(zf, x, z, s.tick)) continue;
     if (team === "player") m *= zf.allyIncomingDamageMult;
     else m *= zf.enemyIncomingDamageMult;
   }
