@@ -91,7 +91,7 @@ function roomPayload(room: Room<BattleRoomState>, request: MatchmakingRequest): 
   const playerSession = state.playerSession;
   const enemySession = state.enemySession;
   const seat = sessionId === playerSession ? "player" : sessionId === enemySession ? "enemy" : null;
-  if (!seat || !state.matchId || typeof state.seed !== "number") return null;
+  if (!playerSession || !enemySession || !seat || !state.matchId || typeof state.seed !== "number") return null;
   return {
     version: MULTIPLAYER_PROTOCOL_VERSION,
     roomId: room.roomId,
@@ -122,10 +122,7 @@ function messagePayload(room: Room<BattleRoomState>, message: MatchFoundMessage,
     matchId: message.matchId,
     seed: message.seed >>> 0,
     mapUrl: message.mapUrl || request.mapUrl,
-    doctrineSlotsBySeat: {
-      player: request.doctrineSlots,
-      enemy: request.doctrineSlots,
-    },
+    doctrineSlotsBySeat: message.doctrineSlotsBySeat ?? {player:request.doctrineSlots,enemy:request.doctrineSlots},
     startsAtMs: typeof message.startsAtMs === "number" ? message.startsAtMs : Date.now() + 600,
   };
 }
@@ -178,7 +175,10 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
           finish("abort");
         } else {
           if (abortSig) abortSig.addEventListener("abort", onAbort, { once: true });
-          fallbackTimer = window.setTimeout(() => finish(roomPayload(result, request)), fallbackMs);
+          fallbackTimer = window.setTimeout(() => {
+            const ready=roomPayload(result,request);
+            if(ready) finish(ready);
+          },fallbackMs);
         }
         result.onMessage("match_found", (message: MatchFoundMessage) => {
           finish(messagePayload(result, message, request));
@@ -192,7 +192,7 @@ export async function findHumanMatch(options: MatchmakingClientOptions): Promise
     }
     if (!payload) {
       void result.leave(true);
-      return strict ? humanNotFound("invalid_response") : fallback("invalid_response");
+      return strict ? humanNotFound("timeout") : fallback("timeout");
     }
     activeBattleRoom = result;
     return { mode: "pvp", room: payload };

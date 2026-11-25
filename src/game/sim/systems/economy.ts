@@ -12,8 +12,8 @@ import type { GameState } from "../../state";
 import type { TeamId } from "../../types";
 import { tapYieldMultForOwner } from "./homeDistance";
 
-export function economy(s: GameState): void {
-  if (s.phase === "playing") {
+export function economy(s: GameState, rivalPassiveIncome = true): void {
+  if (s.phase === "playing" && rivalPassiveIncome) {
     s.enemyFlux += (ENEMY_AI_PASSIVE_FLUX_PER_SEC * enemyEconomyScalar(s)) / TICK_HZ;
   }
   const perTap = TAP_FLUX_PER_SEC / TICK_HZ;

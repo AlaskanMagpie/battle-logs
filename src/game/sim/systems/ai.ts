@@ -550,7 +550,7 @@ function advanceFormationMarches(s: GameState, stepScale: number): void {
   }
 }
 
-export function movement(s: GameState): void {
+export function movement(s: GameState, pass: "all" | "firstSeat" | "secondSeat" = "all"): void {
   const stepScale = 1 / TICK_HZ;
   const half = s.map.world.halfExtents;
   const structureObstacles = structureObstacleFootprints(s);
@@ -563,13 +563,13 @@ export function movement(s: GameState): void {
 
   for (const u of s.units) {
     if (u.hp <= 0) continue;
-    integrateKnockback(s, u, stepScale, structureObstacles);
+    if (pass !== "secondSeat") integrateKnockback(s, u, stepScale, structureObstacles);
   }
   advanceFormationMarches(s, stepScale);
 
   const anyEnemyCampAwake =
     s.map.enemyCamps.length === 0 || s.map.enemyCamps.some((c) => s.enemyCampAwake[c.id]);
-  if (anyEnemyCampAwake) {
+  if (pass === "all" && anyEnemyCampAwake) {
     for (const u of s.units) {
       if (u.team !== "enemy" || u.hp <= 0) continue;
       const tgt = nearestEnemyAttackTarget(s, u);
@@ -743,6 +743,7 @@ export function movement(s: GameState): void {
     moveUnitAutonomousOnPath(s, u, target, stepU(u), structureObstacles);
   }
 
+  if (pass === "firstSeat") return;
   applyUnitSeparation(s, structureObstacles);
   for (const u of s.units) {
     if (u.hp <= 0 || u.flying) continue;

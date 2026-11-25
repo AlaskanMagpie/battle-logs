@@ -1,7 +1,7 @@
 import type { PlayerIntent } from "../game/intents";
 import type { GamePhase } from "../game/types";
 
-export const MULTIPLAYER_PROTOCOL_VERSION = 1;
+export const MULTIPLAYER_PROTOCOL_VERSION = 2;
 
 export type MatchMode = "ai" | "matchmake" | "matchmake_strict" | "pvp" | "fallback_ai" | "pve_survival";
 export type MatchSeat = "player" | "enemy";
@@ -65,6 +65,8 @@ export interface SeatIntentBatch {
 }
 
 export interface NetworkGameSnapshot {
+  appliedInputs?: {tick:number;player:PlayerIntent[];enemy:PlayerIntent[]}[];
+  world?: import("../game/state").GameState;
   version: number;
   matchId: string;
   serverTick: number;

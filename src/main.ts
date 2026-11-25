@@ -781,7 +781,7 @@ function runMatch(
     } finally {
       dismissMatchmakingOverlay?.();
     }
-    const selectedMap = await loadMapMerged(resolvedMapUrl);
+    const selectedMap = await loadMapMerged(resolvedLaunch.room?.mapUrl ?? resolvedMapUrl);
     const run = launchOptions.expedition;
     const loadedMap = run ? expeditionMap(selectedMap, run) : selectedMap;
     const difficultyOverride = queryDifficultyOverride(window.location.search);
@@ -824,21 +824,15 @@ function runMatch(
         onlineSession = attachOnlineMatchRoom(room, {
           matchId: resolvedLaunch.matchId,
           onSnapshot: (snapshot) => {
-            if (snapshot.phase === "playing") {
-              const syncStats = onlineSession?.stats();
-              const gapCopy = syncStats && syncStats.gaps > 0 ? ` (${syncStats.gaps} net gap${syncStats.gaps === 1 ? "" : "s"})` : "";
-              state.lastMessage = `Online sync tick ${snapshot.serverTick}${gapCopy} — rendering authoritative snapshots.`;
+            if (snapshot.world) {
+              const effects = [...state.fxQueue, ...snapshot.world.fxQueue];
+              const map = state.map;
+              Object.assign(map,snapshot.world.map);
+              Object.assign(state,snapshot.world,{map,fxQueue:effects});
             }
           },
           onOpponentAiTakeover: () => {
-            resolvedLaunch = {
-              ...resolvedLaunch,
-              mode: "fallback_ai",
-              fallbackReason: "opponent_left",
-              aiOpponentId: aiOpponent.id,
-              aiBattle: false,
-            };
-            state.lastMessage = "Opponent disconnected — AI has taken over.";
+            state.lastMessage = "Opponent disconnected. Captain has taken command.";
           },
           onInvalidMessage: (reason) => {
             console.warn("[multiplayer] invalid message", reason);
@@ -937,7 +931,7 @@ function runMatch(
       });
     testWindow.advanceTime = (ms: number) => {
       const steps = Math.max(1, Math.round(ms / (1000 / TICK_HZ)));
-      if (!renderer.isMatchIntroActive()) {
+      if (!onlineSession && !renderer.isMatchIntroActive()) {
         for (let i = 0; i < steps; i++) advanceTick(state, []);
       }
       if (state.portal.pendingRedirectUrl) return;
@@ -1116,9 +1110,11 @@ function runMatch(
           const chunk = first ? pendingIntents.splice(0, pendingIntents.length) : [];
           first = false;
           const tickBefore = state.tick;
-          if (onlineSession && chunk.length > 0) onlineSession.sendIntents(tickBefore, chunk);
-          advanceTick(state, chunk);
-          captureReplayTick(replay, tickBefore, chunk, state);
+          if (onlineSession) onlineSession.sendIntents(tickBefore, chunk);
+          else {
+            advanceTick(state, chunk);
+            captureReplayTick(replay, tickBefore, chunk, state);
+          }
           if (state.portal.pendingRedirectUrl) {
             window.location.assign(state.portal.pendingRedirectUrl);
             return;

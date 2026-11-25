@@ -347,7 +347,7 @@ function canTeleportHeroTo(s: GameState, pos: Vec2): string | null {
   if (s.heroTeleportCooldownTicks > 0) {
     return `Teleport cooling down (${heroTeleportCooldownSeconds(s)}s).`;
   }
-  if (pos.x > 0) return "Teleport can only target your half of the map.";
+  if (pos.x * s.map.playerStart.x < 0) return "Teleport can only target your half of the map.";
   if (circleOverlapsMapObstacles(s.map, pos, HERO_TELEPORT_DEST_RADIUS, structureObstacleFootprints(s))) {
     return "Teleport destination is blocked.";
   }
@@ -357,7 +357,7 @@ function canTeleportHeroTo(s: GameState, pos: Vec2): string | null {
 function tryHeroTeleport(s: GameState, pos: Vec2): void {
   const half = s.map.world.halfExtents;
   const dest = {
-    x: Math.max(-half, Math.min(0, pos.x)),
+    x: s.map.playerStart.x > 0 ? Math.max(0, Math.min(half, pos.x)) : Math.max(-half, Math.min(0, pos.x)),
     z: Math.max(-half, Math.min(half, pos.z)),
   };
   const err = canTeleportHeroTo(s, dest);

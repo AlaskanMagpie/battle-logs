@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { BattleAuthority } from "../../src/net/battleAuthority";
+import { MAP_REGISTRY } from "../../src/game/loadMap";
+import { normalizeDoctrineSlotsForMatch } from "../../src/game/state";
+import type { PlayerIntent } from "../../src/game/intents";
+import { validRoomIntent } from "./roomIntents";
 import { randomUUID } from "node:crypto";
 import { Client, Room } from "colyseus";
 import { Schema, defineTypes } from "@colyseus/schema";
 
-const PROTOCOL_VERSION = 1;
+import { MULTIPLAYER_PROTOCOL_VERSION as PROTOCOL_VERSION } from "../../src/net/protocol";
 const TICK_HZ = 20;
 const MAX_INTENTS_PER_TICK = 32;
 const RECONNECT_GRACE_SECONDS = 20;
@@ -13,7 +19,7 @@ const MAP_URL_PATTERN = /^\/[a-zA-Z0-9_./-]+\.json$/;
 type Seat = "player" | "enemy";
 type ClientIntent = { type?: unknown };
 type SeatIntentBatch = { tick?: unknown; intents?: unknown };
-type JoinOptions = { version?: unknown; mapUrl?: unknown; username?: unknown; timeoutMs?: unknown };
+type JoinOptions = { doctrineSlots?:unknown; version?: unknown; mapUrl?: unknown; username?: unknown; timeoutMs?: unknown };
 type SnapshotAck = { snapshotSeq?: unknown };
 type LifecycleEvent =
   | "room_created"
@@ -28,19 +34,36 @@ type LifecycleEvent =
   | "room_disposed";
 
 class BattleState extends Schema {
-  matchId = "";
-  mapUrl = "";
-  seed = 0;
-  startsAtMs = 0;
-  phase = "waiting";
-  serverTick = 0;
-  snapshotSeq = 0;
-  playerSession = "";
-  enemySession = "";
-  playerConnected = false;
-  enemyConnected = false;
-  playerDamage = 0;
-  enemyDamage = 0;
+  declare matchId: string;
+  declare mapUrl: string;
+  declare seed: number;
+  declare startsAtMs: number;
+  declare phase: string;
+  declare serverTick: number;
+  declare snapshotSeq: number;
+  declare playerSession: string;
+  declare enemySession: string;
+  declare playerConnected: boolean;
+  declare enemyConnected: boolean;
+  declare playerDamage: number;
+  declare enemyDamage: number;
+
+  constructor() {
+    super();
+    this.matchId = "";
+    this.mapUrl = "";
+    this.seed = 0;
+    this.startsAtMs = 0;
+    this.phase = "waiting";
+    this.serverTick = 0;
+    this.snapshotSeq = 0;
+    this.playerSession = "";
+    this.enemySession = "";
+    this.playerConnected = false;
+    this.enemyConnected = false;
+    this.playerDamage = 0;
+    this.enemyDamage = 0;
+  }
 }
 
 defineTypes(BattleState, {
@@ -77,7 +100,7 @@ function seatForClient(state: BattleState, client: Client): Seat | null {
 function sanitizeMapUrl(value: unknown): string {
   if (typeof value !== "string") return "/map.json";
   const trimmed = value.trim().slice(0, 128);
-  return MAP_URL_PATTERN.test(trimmed) ? trimmed : "/map.json";
+  return MAP_URL_PATTERN.test(trimmed) && MAP_REGISTRY.some(map=>map.url===trimmed) ? trimmed : "/map.json";
 }
 
 function validJoinOptions(options: JoinOptions): boolean {
@@ -93,6 +116,10 @@ function validIntentBatch(value: SeatIntentBatch): boolean {
 export class BattleRoom extends Room<{ state: BattleState }> {
   maxClients = 2;
   maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
+  private authority?: BattleAuthority;
+  private readonly hands:Record<Seat,(string|null)[]>={player:[],enemy:[]};
+  private readonly appliedInputs: {tick:number;player:PlayerIntent[];enemy:PlayerIntent[]}[]=[];
+  private readonly pending:Record<Seat,PlayerIntent[]>={player:[],enemy:[]};
   private invalidMessageCount = new Map<string, number>();
   private messageWindow = new Map<string, { t: number; n: number }>();
   private aiControlledSeats = new Set<Seat>();
@@ -120,7 +147,8 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       return;
     }
     const seat: Seat = this.state.playerSession ? "enemy" : "player";
-    void options.username;
+    this.hands[seat]=normalizeDoctrineSlotsForMatch(Array.isArray(options.doctrineSlots) ?
+      options.doctrineSlots.slice(0,10).map(v=>typeof v==="string"?v:null) : []);
     if (seat === "player") {
       this.state.playerSession = client.sessionId;
       this.state.playerConnected = true;
@@ -129,6 +157,9 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.state.enemySession = client.sessionId;
       this.state.enemyConnected = true;
       this.lock();
+      const path = new URL("../../public"+this.state.mapUrl,import.meta.url);
+      this.authority=new BattleAuthority(JSON.parse(readFileSync(path,"utf8")),this.state.seed,this.hands);
+      this.state.startsAtMs=Date.now()+1000;
       this.state.phase = "starting";
       this.lifecycle("match_found", null, { player: this.state.playerSession, enemy: this.state.enemySession });
       this.clock.setTimeout(() => this.broadcast("match_found", this.matchFoundPayload()), 100);
@@ -177,6 +208,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       seed: this.state.seed,
       mapUrl: this.state.mapUrl,
       startsAtMs: this.state.startsAtMs,
+      doctrineSlotsBySeat:this.hands,
       seats: {
         player: this.state.playerSession,
         enemy: this.state.enemySession,
@@ -210,11 +242,13 @@ export class BattleRoom extends Room<{ state: BattleState }> {
       this.rejectInvalid(client, "unknown_seat");
       return;
     }
-    if (!validIntentBatch(message)) {
+    if (!message || !this.authority || !validIntentBatch(message) || !(message.intents as unknown[]).every(it=>validRoomIntent(it,this.authority!.state.map))) {
       this.rejectInvalid(client, "invalid_intent_batch");
       return;
     }
-    this.broadcast("intent_batch", { seat, tick: message.tick, intents: message.intents }, { except: client });
+    const intents=message.intents as PlayerIntent[];
+    if(this.pending[seat].length+intents.length>MAX_INTENTS_PER_TICK) return this.rejectInvalid(client,"tick_capacity");
+    this.pending[seat].push(...intents);
   }
 
   private handleSnapshotAck(client: Client, message: SnapshotAck): void {
@@ -232,21 +266,34 @@ export class BattleRoom extends Room<{ state: BattleState }> {
   private step(): void {
     if (this.state.phase === "starting" && Date.now() >= this.state.startsAtMs) this.state.phase = "playing";
     if (this.state.phase !== "playing") return;
-    this.state.serverTick += 1;
-    if (this.state.serverTick % 4 !== 0) return;
-    this.state.snapshotSeq += 1;
-    this.broadcast("snapshot", {
-      version: PROTOCOL_VERSION,
-      matchId: this.state.matchId,
-      serverTick: this.state.serverTick,
-      snapshotSeq: this.state.snapshotSeq,
-      phase: this.state.phase,
-      checksum: this.state.serverTick ^ this.state.seed,
-      damage: { player: this.state.playerDamage, enemy: this.state.enemyDamage },
-      hero: { x: 0, z: -20, hp: 1 },
-      enemyHero: { x: 0, z: 20, hp: 1 },
-      units: [],
-    });
+    const battle=this.authority;
+    if(!battle) return;
+    const player=this.pending.player.splice(0);
+    const enemy=this.pending.enemy.splice(0);
+    if(player.length || enemy.length) this.appliedInputs.push({tick:battle.state.tick,player,enemy});
+    battle.step(player,enemy);
+    const world=battle.state;
+    this.state.serverTick=world.tick;
+    this.state.phase=world.phase;
+    this.state.playerDamage=world.stats.damageDealtPlayer;
+    this.state.enemyDamage=world.stats.damageDealtEnemy;
+    if(world.tick%4!==0 && world.phase==="playing") return;
+    const snapshotSeq=++this.state.snapshotSeq;
+    const checksum=battle.checksum();
+    for(const client of this.clients){
+      const seat=seatForClient(this.state,client);
+      if(!seat) continue;
+      const view=battle.forSeat(seat);
+      client.send("snapshot",{
+        version:PROTOCOL_VERSION,matchId:this.state.matchId,serverTick:world.tick,snapshotSeq,
+        phase:view.phase,checksum,damage:{player:this.state.playerDamage,enemy:this.state.enemyDamage},
+        hero:world.hero,enemyHero:world.enemyHero,
+        units:world.units.map(({id,team,x,z,hp,maxHp,surfaceId})=>({id,team,x,z,hp,maxHp,surfaceId})),
+        world:view,appliedInputs:this.appliedInputs,
+      });
+    }
+    this.appliedInputs.length=0;
+    world.fxQueue.length=0;
   }
 
   private convertDroppedSeatToAi(client: Client): void {
@@ -254,6 +301,7 @@ export class BattleRoom extends Room<{ state: BattleState }> {
     if (!seat) return;
     if (this.aiControlledSeats.has(seat)) return;
     this.aiControlledSeats.add(seat);
+    this.pending[seat].push({type:"set_hero_captain",enabled:true});
     if (seat === "player") this.state.playerConnected = false;
     else this.state.enemyConnected = false;
     this.lifecycle("ai_takeover", seat, { sessionId: client.sessionId });

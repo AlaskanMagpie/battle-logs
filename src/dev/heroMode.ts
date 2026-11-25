@@ -1,7 +1,7 @@
 import type { GameState } from "../game/state";
 
 export const TRAILER_HERO_MODE =
-  import.meta.env.MODE !== "test" && import.meta.env.VITE_TRAILER_HERO_MODE === "true";
+  import.meta.env?.MODE !== "test" && import.meta.env?.VITE_TRAILER_HERO_MODE === "true";
 
 export const TRAILER_HERO_MODE_MANA = 999_999;
 

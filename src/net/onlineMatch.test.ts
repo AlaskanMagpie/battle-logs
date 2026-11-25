@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { MULTIPLAYER_PROTOCOL_VERSION } from "./protocol";
 import { SnapshotBuffer } from "./onlineMatch";
 import type { NetworkGameSnapshot } from "./protocol";
 
 function snapshot(seq: number, tick = seq * 4, matchId = "m1"): NetworkGameSnapshot {
   return {
-    version: 1,
+    version: MULTIPLAYER_PROTOCOL_VERSION,
     matchId,
     serverTick: tick,
     snapshotSeq: seq,
